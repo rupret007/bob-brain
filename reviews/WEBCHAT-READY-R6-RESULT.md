@@ -1,7 +1,7 @@
 # Web Bob READY-FOR-PHONE — Round 6 result (Cursor lane)
 
 **Branch:** `draft/webchat-failover-20260927`  
-**Round 5 base:** `d9b8ddc0` (R5 RESULT doc) · **Round 6 commit:** _(see git rev-parse after commit)_  
+**Round 5 base:** `d9b8ddc0` (R5 RESULT doc) · **Round 6 commit:** `12d22721f6cbc3ebe0d0198f7eb913eb9c4ab75c`  
 **Design note:** `conductor/reviews/WEBCHAT-READY-R6-DESIGN.md` (research-first; sources in table)  
 **Council (no Grok):** `conductor/reviews/webchat-ready-r6-council/20260927-021437-917612.md` (Gemini, MiniMax, Claude critique, Codex synthesize; Cursor lane busy). **Vote:** stale dashboard → show last ops with honest `live_ops_meta` (fail-closed on implying live refresh when inline snapshot fails); inline `runtime.snapshot()` only when `dashboard.json` older than 120s. Applied: allowlisted `public_live_ops`, handoff full snapshot (`needs_handoff_context`), handback drill fix + `r6-*` tags, conductor read API, live job cards in UI.  
 **Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
