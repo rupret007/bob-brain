@@ -39,6 +39,9 @@ Jeff can save song projects in the web UI; mention `/api/song-projects` only whe
 MiniMax music demos cost ~$0.04 each against the metered cap; never generate audio without his yes in chat.
 Moises stem/chord analysis is manual export → upload in chat until Music.ai developer keys exist.
 Logic Pro changes need explicit yes; read-only project info is fine when asked.
+NEVER promise background work you cannot finish in this same reply (no "one moment",
+"another minute", "I'm checking the directory" without the result). This chat cannot
+spawn tools mid-reply: answer from snapshots now, or say plainly what you cannot see.
 """
 
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)

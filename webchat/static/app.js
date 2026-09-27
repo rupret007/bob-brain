@@ -67,7 +67,7 @@ if ($("login-form")) {
   const conductorPrompts = {
     round: "start a job: Web Bob ready round (draft only, no merge)",
     council: "run council on: score Web Bob iPhone tab UI and handback failover",
-    status: "From BOB-STATE and handback: what's running and what needs my yes?",
+    status: "status",
     stop: "stop the current screen job if it's safe (draft only)",
   };
   document.querySelector(".app")?.addEventListener("click", (event) => {
@@ -135,7 +135,7 @@ if ($("login-form")) {
   });
   $("new-chat-dialog")?.addEventListener("click", () => { $("new-chat")?.click(); $("chats-dialog")?.close(); });
   const chipActions = {
-    status: "From BOB-STATE and handback: what's running and what needs my yes?",
+    status: "status",
     round: "start a job: Web Bob ready round (draft only, no merge)",
     council: "run council on: score Web Bob mobile UX after bottom tab bar",
     song: "",
@@ -589,15 +589,24 @@ if ($("login-form")) {
       return card;
     }));
   }
+  function plainJobTitle(job) {
+    const round = job.round ? `Round ${job.round}` : "Job";
+    const engine = (job.engine || "worker").replace(/_/g, " ");
+    if (job.live_screen) return `${round} · live on screen`;
+    return `${round} · ${engine}`;
+  }
   function renderLiveJobs(jobs) {
     const host = $("live-jobs");
+    const empty = $("jobs-empty");
     if (!host) return;
-    host.replaceChildren(...(jobs || []).slice(0, 6).map((job) => {
+    const rows = (jobs || []).slice(0, 6);
+    if (empty) empty.hidden = rows.length > 0;
+    host.replaceChildren(...rows.map((job) => {
       const card = document.createElement("article");
       card.className = "live-job";
       const header = document.createElement("header");
       const title = document.createElement("strong");
-      title.textContent = `${job.engine || "job"} · R${job.round || "?"}`;
+      title.textContent = plainJobTitle(job);
       const stall = document.createElement("span");
       stall.className = `stall ${job.stall_state === "stalled" ? "stalled" : "running"}`;
       stall.textContent = job.stall_state || "unknown";
@@ -619,8 +628,10 @@ if ($("login-form")) {
         : (job.log_tail || []).slice(-3);
       tail.textContent = lines.length ? lines.join("\n") : "";
       const commit = document.createElement("p");
+      commit.className = "job-commit muted";
       if (job.last_commit?.sha) {
-        commit.textContent = `${job.last_commit.sha}${job.last_commit.message ? " — " + job.last_commit.message : ""}`;
+        const msg = job.last_commit.message ? job.last_commit.message.replace(/\.md\b/gi, "").slice(0, 80) : "";
+        commit.textContent = `Latest commit ${job.last_commit.sha}${msg ? " — " + msg : ""}`;
       }
       card.append(header, now, tail, commit);
       return card;
@@ -657,8 +668,9 @@ if ($("login-form")) {
         }
       }
       $("status-summary").textContent = `${freshness}${scoreStamp} · ${jobLead} · MiniMax ${spendText} · round ${ops.webchat_round || "?"}`;
-      renderScoresTable(ops.scores);
       renderLiveJobs(jobs);
+      lastPanelScores = ops.scores;
+      if (activeBottomTab === "lanes") renderScoresTable(ops.scores);
       const c = data.conductor || {};
       $("conductor-summary").textContent = `Draft work on ${c.draft_branch || "unknown branch"}`;
       const autopilot = liveCards.length
@@ -686,12 +698,21 @@ if ($("login-form")) {
         : (age != null ? "Self-improve log stale (>48h)" : "");
       const loaded = si.launchd_loaded === true ? "Scheduled tick loaded" : (si.launchd_loaded === false ? "Tick not loaded in launchd" : (si.launchd_loaded === null ? "Launchd probe unavailable" : ""));
       $("self-improve-status").textContent = [loaded, logFresh, si.summary || "Self-improve tick runs on the mini (launchd)."].filter(Boolean).join(" · ");
+      const cl = data.round_changelog || {};
+      const clHost = $("changelog-line");
+      if (clHost) {
+        clHost.textContent = cl.round
+          ? `Round ${cl.round}: ${(cl.line || "").replace(/\*\*/g, "")}`
+          : (cl.line || "Round notes load from the latest RESULT file on the mini.");
+      }
     } catch (_) {
       $("status-summary").textContent = "Jobs panel unavailable";
     }
   }
+  let lastPanelScores = null;
   async function refreshLanes() {
     try {
+      renderScoresTable(lastPanelScores);
       const data = await api("/api/lanes" + (current ? "?conversation_id=" + encodeURIComponent(current) : ""));
       const entries = Object.entries(data.providers);
       const cooling = entries.filter(([, lane]) => lane.state === "cooldown").length;

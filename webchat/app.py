@@ -31,6 +31,7 @@ from handback import append_turn, public_digest
 from job_queue import council_job_description, parse_confirm, parse_council, parse_council_cancel, parse_council_confirm, parse_start
 from actions import queue_once
 from music_notebook import get_project, list_projects, save_project, try_music_coach_reply
+from reply_guard import repair_hollow_progress
 from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
 from ops_panel import conductor_snapshot, draft_head_sha, load_live_ops
 
@@ -464,7 +465,7 @@ class Chat:
                 value = self.get(identifier)
                 value["codex_thread_id"] = answer.pop("codex_thread_id", None)
                 value.pop("retry_prompt", None)
-                answer["content"] = self.redact(answer["content"])
+                answer["content"] = repair_hollow_progress(self.redact(answer["content"]))
                 value["messages"][-1].update(answer, status="done")
                 value["messages"][-1].pop("retry_at", None)
                 self.save(value)
@@ -664,6 +665,37 @@ class Chat:
             "summary": summary,
         }
 
+    def round_changelog(self) -> dict:
+        import re
+
+        paths = sorted(
+            self.root.glob("conductor/reviews/WEBCHAT-READY-R*-RESULT.md"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not paths:
+            return {}
+        path = paths[0]
+        name = path.name
+        round_no = None
+        if match := re.search(r"R(\d+)", name):
+            round_no = int(match.group(1))
+        line = ""
+        try:
+            text = path.read_text(errors="replace")
+            for row in text.splitlines():
+                if "**beat**" in row or "Time-to-value" in row or "visible improvement" in row.lower():
+                    line = row.strip().lstrip("|").rstrip("|").strip()[:220]
+                    break
+            if not line:
+                for row in text.splitlines():
+                    if row.startswith("|") and "iPhone" in row:
+                        line = row.strip().lstrip("|").rstrip("|").strip()[:220]
+                        break
+        except OSError:
+            pass
+        return {"round": round_no, "file": name, "line": line or "See latest round result on the mini."}
+
     def panel(self):
         lanes = self.providers.health()
         jobs = self.jobs()
@@ -703,7 +735,9 @@ class Chat:
             alignment_events = {}
         if live_ops.get("dashboard_freshness_seconds") is None and dashboard_age is not None:
             live_ops = {**live_ops, "dashboard_freshness_seconds": round(max(0, time.time() - dashboard_age))}
-        return {"lanes": lanes, "jobs": jobs, "recent_results": results, "dashboard_modified_at": dashboard_age,
+        changelog = self.round_changelog()
+        return {"lanes": lanes, "jobs": jobs, "recent_results": results, "round_changelog": changelog,
+                "dashboard_modified_at": dashboard_age,
                 "live_ops": live_ops, "live_ops_meta": meta, "conductor": conductor_snapshot(self.root),
                 "handback": self.handback(), "self_improve": self.self_improve_status(),
                 "alignment": alignment, "alignment_events": alignment_events,

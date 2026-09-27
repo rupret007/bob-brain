@@ -38,7 +38,8 @@ async function box(page, selector) {
     await page.screenshot({ path: path.join(evidence, `${tag}-chat.png`) });
     for (const tab of tabs.slice(1)) {
       await page.locator(`.bottom-tab[data-bottom="${tab}"]`).click();
-      await page.locator(`#view-${tab}.active`).waitFor({ timeout: 45_000 });
+      await page.locator(`.bottom-tab[data-bottom="${tab}"].active`).waitFor({ timeout: 45_000 });
+      await page.locator(`[data-view="${tab}"]:not([hidden])`).waitFor({ timeout: 45_000 });
       await page.screenshot({ path: path.join(evidence, `${tag}-${tab}-tab.png`) });
     }
     await page.locator('.bottom-tab[data-bottom="chat"]').click();

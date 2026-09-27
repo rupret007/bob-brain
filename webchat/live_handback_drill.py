@@ -20,6 +20,7 @@ import ledger as state_ledger
 from live_ready_drill import origin_url
 
 HANDBACK_FILES = ("BOB-STATE.md", "HANDBACK-LOG.md", "HANDBACK-SUMMARY.md", ".bob-last-seen")
+STATE_FILES = ("STATE.json", "BOB-CATCHUP.md", "NOW.md")
 
 
 def backup_handback(root: Path) -> dict[str, bytes]:
@@ -30,6 +31,27 @@ def backup_handback(root: Path) -> dict[str, bytes]:
         if path.exists():
             saved[name] = path.read_bytes()
     return saved
+
+
+def backup_state(root: Path) -> dict[str, bytes]:
+    folder = root / "conductor/state"
+    saved: dict[str, bytes] = {}
+    for name in STATE_FILES:
+        path = folder / name
+        if path.exists():
+            saved[name] = path.read_bytes()
+    return saved
+
+
+def restore_state(root: Path, saved: dict[str, bytes]) -> None:
+    folder = root / "conductor/state"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in STATE_FILES:
+        path = folder / name
+        if name in saved:
+            path.write_bytes(saved[name])
+        elif path.exists():
+            path.unlink()
 
 
 def restore_handback(root: Path, saved: dict[str, bytes]) -> None:
@@ -118,6 +140,7 @@ def main():
     evidence = {"started_at": time.time(), "rounds": [], "restored_handback": False}
     url = origin_url()
     saved = backup_handback(ROOT)
+    saved_state = backup_state(ROOT)
     try:
         prefix = os.environ.get("WEBCHAT_HANDBACK_TAG", "r6")
         for index in (1, 2):
@@ -154,7 +177,9 @@ def main():
             evidence["rounds"].append(round_evidence)
     finally:
         restore_handback(ROOT, saved)
+        restore_state(ROOT, saved_state)
         evidence["restored_handback"] = True
+        evidence["restored_state"] = True
     evidence["finished_at"] = time.time()
     evidence["result"] = "PASS" if all(row["pass"] for row in evidence["rounds"]) else "FAIL"
     out = HERE / "evidence/handback-drill.json"

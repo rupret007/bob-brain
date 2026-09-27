@@ -1,0 +1,935 @@
+### FILE /tmp/webchat-r7-diff.txt
+diff --git a/webchat/app.py b/webchat/app.py
+index 56c52ef..94fcc1c 100644
+--- a/webchat/app.py
++++ b/webchat/app.py
+@@ -31,6 +31,7 @@ from handback import append_turn, public_digest
+ from job_queue import council_job_description, parse_confirm, parse_council, parse_council_cancel, parse_council_confirm, parse_start
+ from actions import queue_once
+ from music_notebook import get_project, list_projects, save_project, try_music_coach_reply
++from reply_guard import repair_hollow_progress
+ from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
+ from ops_panel import conductor_snapshot, draft_head_sha, load_live_ops
+ 
+@@ -464,7 +465,7 @@ class Chat:
+                 value = self.get(identifier)
+                 value["codex_thread_id"] = answer.pop("codex_thread_id", None)
+                 value.pop("retry_prompt", None)
+-                answer["content"] = self.redact(answer["content"])
++                answer["content"] = repair_hollow_progress(self.redact(answer["content"]))
+                 value["messages"][-1].update(answer, status="done")
+                 value["messages"][-1].pop("retry_at", None)
+                 self.save(value)
+@@ -664,6 +665,37 @@ class Chat:
+             "summary": summary,
+         }
+ 
++    def round_changelog(self) -> dict:
++        import re
++
++        paths = sorted(
++            self.root.glob("conductor/reviews/WEBCHAT-READY-R*-RESULT.md"),
++            key=lambda p: p.stat().st_mtime,
++            reverse=True,
++        )
++        if not paths:
++            return {}
++        path = paths[0]
++        name = path.name
++        round_no = None
++        if match := re.search(r"R(\d+)", name):
++            round_no = int(match.group(1))
++        line = ""
++        try:
++            text = path.read_text(errors="replace")
++            for row in text.splitlines():
++                if "**beat**" in row or "Time-to-value" in row or "visible improvement" in row.lower():
++                    line = row.strip().lstrip("|").rstrip("|").strip()[:220]
++                    break
++            if not line:
++                for row in text.splitlines():
++                    if row.startswith("|") and "iPhone" in row:
++                        line = row.strip().lstrip("|").rstrip("|").strip()[:220]
++                        break
++        except OSError:
++            pass
++        return {"round": round_no, "file": name, "line": line or "See latest round result on the mini."}
++
+     def panel(self):
+         lanes = self.providers.health()
+         jobs = self.jobs()
+@@ -703,7 +735,9 @@ class Chat:
+             alignment_events = {}
+         if live_ops.get("dashboard_freshness_seconds") is None and dashboard_age is not None:
+             live_ops = {**live_ops, "dashboard_freshness_seconds": round(max(0, time.time() - dashboard_age))}
+-        return {"lanes": lanes, "jobs": jobs, "recent_results": results, "dashboard_modified_at": dashboard_age,
++        changelog = self.round_changelog()
++        return {"lanes": lanes, "jobs": jobs, "recent_results": results, "round_changelog": changelog,
++                "dashboard_modified_at": dashboard_age,
+                 "live_ops": live_ops, "live_ops_meta": meta, "conductor": conductor_snapshot(self.root),
+                 "handback": self.handback(), "self_improve": self.self_improve_status(),
+                 "alignment": alignment, "alignment_events": alignment_events,
+diff --git a/webchat/capture_iphone.cjs b/webchat/capture_iphone.cjs
+index 1263528..542012c 100644
+--- a/webchat/capture_iphone.cjs
++++ b/webchat/capture_iphone.cjs
+@@ -38,7 +38,8 @@ async function box(page, selector) {
+     await page.screenshot({ path: path.join(evidence, `${tag}-chat.png`) });
+     for (const tab of tabs.slice(1)) {
+       await page.locator(`.bottom-tab[data-bottom="${tab}"]`).click();
+-      await page.locator(`#view-${tab}.active`).waitFor({ timeout: 45_000 });
++      await page.locator(`.bottom-tab[data-bottom="${tab}"].active`).waitFor({ timeout: 45_000 });
++      await page.locator(`[data-view="${tab}"]:not([hidden])`).waitFor({ timeout: 45_000 });
+       await page.screenshot({ path: path.join(evidence, `${tag}-${tab}-tab.png`) });
+     }
+     await page.locator('.bottom-tab[data-bottom="chat"]').click();
+diff --git a/webchat/evidence/handback-drill.json b/webchat/evidence/handback-drill.json
+index e823306..8cc684c 100644
+--- a/webchat/evidence/handback-drill.json
++++ b/webchat/evidence/handback-drill.json
+@@ -1,46 +1,49 @@
+ {
+-  "started_at": 1790496663.840201,
++  "started_at": 1790497424.675688,
+   "rounds": [
+     {
+       "ledger": {
+-        "tag": "r9-1",
++        "tag": "r7-1",
+         "ledger_ok": true,
+         "bob_pickup_ok": true,
+         "summary_chars": 1133
+       },
+       "live": {
+-        "tag": "r9-1",
++        "tag": "r7-1",
+         "status": "done",
+         "provider": "gemini",
+-        "elapsed_seconds": 2.253,
++        "elapsed_seconds": 2.486,
+         "mentions_running": true,
+-        "snippet": "The `Running` line for `handback drill r9-1` from `BOB-STATE.md` is: \"Running: handback drill screen `drill-r9-1`\".",
++        "snippet": "The `Running` line for `handback drill r7-1` from `BOB-STATE.md` is: \"Running: handback drill screen `drill-r7-1`\".",
+         "live_ok": true
+       },
++      "events_ok": true,
+       "reverse_handback_ok": true,
+       "pass": true
+     },
+     {
+       "ledger": {
+-        "tag": "r9-2",
++        "tag": "r7-2",
+         "ledger_ok": true,
+         "bob_pickup_ok": true,
+-        "summary_chars": 2382
++        "summary_chars": 2739
+       },
+       "live": {
+-        "tag": "r9-2",
++        "tag": "r7-2",
+         "status": "done",
+         "provider": "gemini",
+-        "elapsed_seconds": 1.979,
++        "elapsed_seconds": 1.916,
+         "mentions_running": true,
+-        "snippet": "The `Running` line for handback drill `r9-2` is: `Running: handback drill screen drill-r9-2`.",
++        "snippet": "The `Running` line for `handback drill r7-2` is: \"Running: handback drill screen `drill-r7-2`\".",
+         "live_ok": true
+       },
++      "events_ok": true,
+       "reverse_handback_ok": true,
+       "pass": true
+     }
+   ],
+   "restored_handback": true,
+-  "finished_at": 1790496668.3016582,
++  "restored_state": true,
++  "finished_at": 1790497429.324713,
+   "result": "PASS"
+ }
+diff --git a/webchat/evidence/iphone-r8/iphone-14-chat.png b/webchat/evidence/iphone-r8/iphone-14-chat.png
+index 9ba03ed..7bccde6 100644
+Binary files a/webchat/evidence/iphone-r8/iphone-14-chat.png and b/webchat/evidence/iphone-r8/iphone-14-chat.png differ
+diff --git a/webchat/evidence/iphone-r8/iphone-14-lanes-tab.png b/webchat/evidence/iphone-r8/iphone-14-lanes-tab.png
+index b8e9f76..6fa8b96 100644
+Binary files a/webchat/evidence/iphone-r8/iphone-14-lanes-tab.png and b/webchat/evidence/iphone-r8/iphone-14-lanes-tab.png differ
+diff --git a/webchat/evidence/iphone-r8/iphone-14-ops-tab.png b/webchat/evidence/iphone-r8/iphone-14-ops-tab.png
+index 18e1284..9429185 100644
+Binary files a/webchat/evidence/iphone-r8/iphone-14-ops-tab.png and b/webchat/evidence/iphone-r8/iphone-14-ops-tab.png differ
+diff --git a/webchat/evidence/iphone-r8/iphone-14-pro-max-chat.png b/webchat/evidence/iphone-r8/iphone-14-pro-max-chat.png
+index 3280a26..0532e03 100644
+Binary files a/webchat/evidence/iphone-r8/iphone-14-pro-max-chat.png and b/webchat/evidence/iphone-r8/iphone-14-pro-max-chat.png differ
+diff --git a/webchat/evidence/iphone-r8/iphone-14-pro-max-lanes-tab.png b/webchat/evidence/iphone-r8/iphone-14-pro-max-lanes-tab.png
+index 44fcddc..ec49972 100644
+Binary files a/webchat/evidence/iphone-r8/iphone-14-pro-max-lanes-tab.png and b/webchat/evidence/iphone-r8/iphone-14-pro-max-lanes-tab.png differ
+diff --git a/webchat/evidence/iphone-r8/iphone-14-pro-max-settings-tab.png b/webchat/evidence/iphone-r8/iphone-14-pro-max-settings-tab.png
+index 3c99be7..8a4a004 100644
+Binary files a/webchat/evidence/iphone-r8/iphone-14-pro-max-settings-tab.png and b/webchat/evidence/iphone-r8/iphone-14-pro-max-settings-tab.png differ
+diff --git a/webchat/evidence/iphone-r8/iphone-14-pro-max-song-tab.png b/webchat/evidence/iphone-r8/iphone-14-pro-max-song-tab.png
+index 65860c9..7ec545d 100644
+Binary files a/webchat/evidence/iphone-r8/iphone-14-pro-max-song-tab.png and b/webchat/evidence/iphone-r8/iphone-14-pro-max-song-tab.png differ
+diff --git a/webchat/evidence/iphone-r8/iphone-14-settings-tab.png b/webchat/evidence/iphone-r8/iphone-14-settings-tab.png
+index 794b14e..7ef7eaa 100644
+Binary files a/webchat/evidence/iphone-r8/iphone-14-settings-tab.png and b/webchat/evidence/iphone-r8/iphone-14-settings-tab.png differ
+diff --git a/webchat/evidence/iphone-r8/iphone-14-song-tab.png b/webchat/evidence/iphone-r8/iphone-14-song-tab.png
+index 1f70ca4..1a246cc 100644
+Binary files a/webchat/evidence/iphone-r8/iphone-14-song-tab.png and b/webchat/evidence/iphone-r8/iphone-14-song-tab.png differ
+diff --git a/webchat/evidence/iphone-r8/layout-metrics.json b/webchat/evidence/iphone-r8/layout-metrics.json
+index be0dfcf..34e988f 100644
+--- a/webchat/evidence/iphone-r8/layout-metrics.json
++++ b/webchat/evidence/iphone-r8/layout-metrics.json
+@@ -11,7 +11,7 @@
+       "tag": "iphone-14-pro-max",
+       "viewport": 932,
+       "messages_px": 703,
+-      "messages_ratio": 0.7537721052701892
++      "messages_ratio": 0.7537721543864631
+     }
+   ]
+ }
+diff --git a/webchat/evidence/ready-drill.json b/webchat/evidence/ready-drill.json
+index b85b2c5..034b7f6 100644
+--- a/webchat/evidence/ready-drill.json
++++ b/webchat/evidence/ready-drill.json
+@@ -7,7 +7,7 @@
+       "text": "Reply with exactly: drill A1",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.053,
++      "elapsed_seconds": 0.949,
+       "busy_in_attempts": false
+     },
+     {
+@@ -15,7 +15,7 @@
+       "text": "Reply with exactly: drill B1",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.049,
++      "elapsed_seconds": 0.973,
+       "busy_in_attempts": false
+     },
+     {
+@@ -23,7 +23,7 @@
+       "text": "Reply with exactly: drill A2",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.06,
++      "elapsed_seconds": 0.639,
+       "busy_in_attempts": false
+     },
+     {
+@@ -31,7 +31,7 @@
+       "text": "Reply with exactly: drill B2",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.144,
++      "elapsed_seconds": 0.962,
+       "busy_in_attempts": false
+     },
+     {
+@@ -39,7 +39,7 @@
+       "text": "Reply with exactly: drill A3",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.357,
++      "elapsed_seconds": 0.947,
+       "busy_in_attempts": false
+     },
+     {
+@@ -47,7 +47,7 @@
+       "text": "Reply with exactly: drill B3",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.087,
++      "elapsed_seconds": 0.671,
+       "busy_in_attempts": false
+     },
+     {
+@@ -55,7 +55,7 @@
+       "text": "Reply with exactly: drill A4",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.021,
++      "elapsed_seconds": 1.147,
+       "busy_in_attempts": false
+     },
+     {
+@@ -63,7 +63,7 @@
+       "text": "Reply with exactly: drill B4",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.059,
++      "elapsed_seconds": 0.97,
+       "busy_in_attempts": false
+     },
+     {
+@@ -71,7 +71,7 @@
+       "text": "Reply with exactly: drill A5",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.352,
++      "elapsed_seconds": 0.959,
+       "busy_in_attempts": false
+     },
+     {
+@@ -79,18 +79,18 @@
+       "text": "Reply with exactly: drill B5",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.305,
++      "elapsed_seconds": 1.022,
+       "busy_in_attempts": false
+     }
+   ],
+-  "started_at": 1790496566.62313,
++  "started_at": 1790497410.175597,
+   "locks": [
+     "codex: drill holds background lock",
+     "cursor: background job holds lock",
+     "gemini: drill holds background lock",
+     "minimax: drill holds background lock"
+   ],
+-  "p50_seconds": 1.073,
+-  "finished_at": 1790496578.110584,
++  "p50_seconds": 0.96,
++  "finished_at": 1790497419.414881,
+   "result": "PASS"
+ }
+diff --git a/webchat/live_handback_drill.py b/webchat/live_handback_drill.py
+index e3a80ee..ea53786 100644
+--- a/webchat/live_handback_drill.py
++++ b/webchat/live_handback_drill.py
+@@ -20,6 +20,7 @@ import ledger as state_ledger
+ from live_ready_drill import origin_url
+ 
+ HANDBACK_FILES = ("BOB-STATE.md", "HANDBACK-LOG.md", "HANDBACK-SUMMARY.md", ".bob-last-seen")
++STATE_FILES = ("STATE.json", "BOB-CATCHUP.md", "NOW.md")
+ 
+ 
+ def backup_handback(root: Path) -> dict[str, bytes]:
+@@ -32,6 +33,27 @@ def backup_handback(root: Path) -> dict[str, bytes]:
+     return saved
+ 
+ 
++def backup_state(root: Path) -> dict[str, bytes]:
++    folder = root / "conductor/state"
++    saved: dict[str, bytes] = {}
++    for name in STATE_FILES:
++        path = folder / name
++        if path.exists():
++            saved[name] = path.read_bytes()
++    return saved
++
++
++def restore_state(root: Path, saved: dict[str, bytes]) -> None:
++    folder = root / "conductor/state"
++    folder.mkdir(parents=True, exist_ok=True)
++    for name in STATE_FILES:
++        path = folder / name
++        if name in saved:
++            path.write_bytes(saved[name])
++        elif path.exists():
++            path.unlink()
++
++
+ def restore_handback(root: Path, saved: dict[str, bytes]) -> None:
+     folder = root / "conductor/handback"
+     folder.mkdir(parents=True, exist_ok=True)
+@@ -118,6 +140,7 @@ def main():
+     evidence = {"started_at": time.time(), "rounds": [], "restored_handback": False}
+     url = origin_url()
+     saved = backup_handback(ROOT)
++    saved_state = backup_state(ROOT)
+     try:
+         prefix = os.environ.get("WEBCHAT_HANDBACK_TAG", "r6")
+         for index in (1, 2):
+@@ -154,7 +177,9 @@ def main():
+             evidence["rounds"].append(round_evidence)
+     finally:
+         restore_handback(ROOT, saved)
++        restore_state(ROOT, saved_state)
+         evidence["restored_handback"] = True
++        evidence["restored_state"] = True
+     evidence["finished_at"] = time.time()
+     evidence["result"] = "PASS" if all(row["pass"] for row in evidence["rounds"]) else "FAIL"
+     out = HERE / "evidence/handback-drill.json"
+diff --git a/webchat/providers.py b/webchat/providers.py
+index 5b74e79..227e402 100644
+--- a/webchat/providers.py
++++ b/webchat/providers.py
+@@ -39,6 +39,9 @@ Jeff can save song projects in the web UI; mention `/api/song-projects` only whe
+ MiniMax music demos cost ~$0.04 each against the metered cap; never generate audio without his yes in chat.
+ Moises stem/chord analysis is manual export → upload in chat until Music.ai developer keys exist.
+ Logic Pro changes need explicit yes; read-only project info is fine when asked.
++NEVER promise background work you cannot finish in this same reply (no "one moment",
++"another minute", "I'm checking the directory" without the result). This chat cannot
++spawn tools mid-reply: answer from snapshots now, or say plainly what you cannot see.
+ """
+ 
+ UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+diff --git a/webchat/static/app.js b/webchat/static/app.js
+index a2c91f9..311d487 100644
+--- a/webchat/static/app.js
++++ b/webchat/static/app.js
+@@ -67,7 +67,7 @@ if ($("login-form")) {
+   const conductorPrompts = {
+     round: "start a job: Web Bob ready round (draft only, no merge)",
+     council: "run council on: score Web Bob iPhone tab UI and handback failover",
+-    status: "From BOB-STATE and handback: what's running and what needs my yes?",
++    status: "status",
+     stop: "stop the current screen job if it's safe (draft only)",
+   };
+   document.querySelector(".app")?.addEventListener("click", (event) => {
+@@ -135,7 +135,7 @@ if ($("login-form")) {
+   });
+   $("new-chat-dialog")?.addEventListener("click", () => { $("new-chat")?.click(); $("chats-dialog")?.close(); });
+   const chipActions = {
+-    status: "From BOB-STATE and handback: what's running and what needs my yes?",
++    status: "status",
+     round: "start a job: Web Bob ready round (draft only, no merge)",
+     council: "run council on: score Web Bob mobile UX after bottom tab bar",
+     song: "",
+@@ -589,15 +589,24 @@ if ($("login-form")) {
+       return card;
+     }));
+   }
++  function plainJobTitle(job) {
++    const round = job.round ? `Round ${job.round}` : "Job";
++    const engine = (job.engine || "worker").replace(/_/g, " ");
++    if (job.live_screen) return `${round} · live on screen`;
++    return `${round} · ${engine}`;
++  }
+   function renderLiveJobs(jobs) {
+     const host = $("live-jobs");
++    const empty = $("jobs-empty");
+     if (!host) return;
+-    host.replaceChildren(...(jobs || []).slice(0, 6).map((job) => {
++    const rows = (jobs || []).slice(0, 6);
++    if (empty) empty.hidden = rows.length > 0;
++    host.replaceChildren(...rows.map((job) => {
+       const card = document.createElement("article");
+       card.className = "live-job";
+       const header = document.createElement("header");
+       const title = document.createElement("strong");
+-      title.textContent = `${job.engine || "job"} · R${job.round || "?"}`;
++      title.textContent = plainJobTitle(job);
+       const stall = document.createElement("span");
+       stall.className = `stall ${job.stall_state === "stalled" ? "stalled" : "running"}`;
+       stall.textContent = job.stall_state || "unknown";
+@@ -619,8 +628,10 @@ if ($("login-form")) {
+         : (job.log_tail || []).slice(-3);
+       tail.textContent = lines.length ? lines.join("\n") : "";
+       const commit = document.createElement("p");
++      commit.className = "job-commit muted";
+       if (job.last_commit?.sha) {
+-        commit.textContent = `${job.last_commit.sha}${job.last_commit.message ? " — " + job.last_commit.message : ""}`;
++        const msg = job.last_commit.message ? job.last_commit.message.replace(/\.md\b/gi, "").slice(0, 80) : "";
++        commit.textContent = `Latest commit ${job.last_commit.sha}${msg ? " — " + msg : ""}`;
+       }
+       card.append(header, now, tail, commit);
+       return card;
+@@ -657,8 +668,8 @@ if ($("login-form")) {
+         }
+       }
+       $("status-summary").textContent = `${freshness}${scoreStamp} · ${jobLead} · MiniMax ${spendText} · round ${ops.webchat_round || "?"}`;
+-      renderScoresTable(ops.scores);
+       renderLiveJobs(jobs);
++      lastPanelScores = ops.scores;
+       const c = data.conductor || {};
+       $("conductor-summary").textContent = `Draft work on ${c.draft_branch || "unknown branch"}`;
+       const autopilot = liveCards.length
+@@ -686,12 +697,21 @@ if ($("login-form")) {
+         : (age != null ? "Self-improve log stale (>48h)" : "");
+       const loaded = si.launchd_loaded === true ? "Scheduled tick loaded" : (si.launchd_loaded === false ? "Tick not loaded in launchd" : (si.launchd_loaded === null ? "Launchd probe unavailable" : ""));
+       $("self-improve-status").textContent = [loaded, logFresh, si.summary || "Self-improve tick runs on the mini (launchd)."].filter(Boolean).join(" · ");
++      const cl = data.round_changelog || {};
++      const clHost = $("changelog-line");
++      if (clHost) {
++        clHost.textContent = cl.round
++          ? `Round ${cl.round}: ${(cl.line || "").replace(/\*\*/g, "")}`
++          : (cl.line || "Round notes load from the latest RESULT file on the mini.");
++      }
+     } catch (_) {
+       $("status-summary").textContent = "Jobs panel unavailable";
+     }
+   }
++  let lastPanelScores = null;
+   async function refreshLanes() {
+     try {
++      renderScoresTable(lastPanelScores);
+       const data = await api("/api/lanes" + (current ? "?conversation_id=" + encodeURIComponent(current) : ""));
+       const entries = Object.entries(data.providers);
+       const cooling = entries.filter(([, lane]) => lane.state === "cooldown").length;
+diff --git a/webchat/static/index.html b/webchat/static/index.html
+index 6763bb6..13e2682 100644
+--- a/webchat/static/index.html
++++ b/webchat/static/index.html
+@@ -53,8 +53,8 @@
+         <h2 class="view-title">Jobs</h2>
+         <p id="now-line" class="now-line" hidden></p>
+         <p id="status-summary" class="view-lead muted"></p>
+-        <div id="scores-table" class="scores-grid" aria-label="Latest Web Bob scores"></div>
+         <div id="live-jobs" class="live-jobs" aria-live="polite"></div>
++        <p id="jobs-empty" class="empty-state" hidden>No jobs on screen right now. Tap Start round in chat when you want a builder pass.</p>
+         <div class="conductor-block">
+           <h3 class="view-subtitle">Conductor</h3>
+           <p id="conductor-summary" class="view-lead muted"></p>
+@@ -78,6 +78,7 @@
+       <div class="view-scroll">
+         <h2 class="view-title">Models</h2>
+         <p id="lanes-summary" class="view-lead muted"></p>
++        <div id="scores-table" class="scores-grid" aria-label="Latest Web Bob scores"></div>
+         <div id="lanes" class="lane-cards" aria-live="polite"></div>
+       </div>
+     </section>
+@@ -132,6 +133,19 @@
+           <h3 class="settings-group-title">Self-improve</h3>
+           <p id="self-improve-status" class="muted">Checking…</p>
+         </div>
++        <div class="settings-group">
++          <h3 class="settings-group-title">What’s new</h3>
++          <p id="changelog-line" class="muted">Loading…</p>
++        </div>
++        <div class="settings-group">
++          <h3 class="settings-group-title">Help</h3>
++          <ul class="help-list muted">
++            <li><strong>Chat</strong> — talk to Bob; quick chips for status, rounds, council, songs.</li>
++            <li><strong>Jobs</strong> — live work on the mini (not old handback text).</li>
++            <li><strong>Songs</strong> — lyrics notebook, local sketch demo, audio upload.</li>
++            <li><strong>Models</strong> — who’s busy, spend meters, latest scores.</li>
++          </ul>
++        </div>
+         <p class="view-hint muted">Drafts stay drafts. Confirm before merge, send, or spend.</p>
+       </div>
+     </section>
+diff --git a/webchat/static/style.css b/webchat/static/style.css
+index 0b84c8d..dc9f504 100644
+--- a/webchat/static/style.css
++++ b/webchat/static/style.css
+@@ -158,11 +158,23 @@ select option { background: var(--surface-2); color: var(--text); }
+ .message.assistant .body pre.code-block { margin: 8px 0; padding: 10px; background: var(--bg); border-radius: 10px; overflow-x: auto; white-space: pre; }
+ .message.assistant .body ul { margin: 6px 0 6px 1.1em; padding: 0; }
+ .message.user .body { border-radius: 18px 18px 4px 18px; padding: 12px 16px; background: color-mix(in srgb, var(--accent) 22%, var(--surface-2)); }
+-.message.assistant .body { padding: 2px 0; color: var(--text); }
++.message.assistant .body {
++  padding: 12px 14px;
++  color: var(--text);
++  background: var(--surface);
++  border: 1px solid var(--line);
++  border-radius: 18px 18px 18px 4px;
++}
+ .message .meta { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+ .message.user .meta { text-align: right; }
+ .message.error .body { color: #ffceb2; }
+-.message.pending .body { color: color-mix(in srgb, var(--text) 72%, var(--muted)); }
++.message.pending .body {
++  color: var(--text);
++  background: color-mix(in srgb, var(--surface) 80%, var(--bg));
++  border: 1px dashed var(--line);
++  border-radius: 14px;
++  padding: 10px 12px;
++}
+ .attempt { color: #d2bb94; font-size: 12px; margin-top: 7px; }
+ .action-card-title { font-weight: 600; color: var(--text); margin-bottom: 4px; }
+ .action-card-hint { color: var(--muted); font-size: 11px; margin-bottom: 8px; }
+@@ -216,10 +228,16 @@ select option { background: var(--surface-2); color: var(--text); }
+   flex-shrink: 0;
+   padding: 4px 0 max(6px, env(safe-area-inset-bottom));
+   border-top: 1px solid var(--line);
+-  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
++  background: color-mix(in srgb, var(--surface) 88%, var(--bg));
++  backdrop-filter: saturate(1.2) blur(12px);
++  -webkit-backdrop-filter: saturate(1.2) blur(12px);
+   position: relative;
+   z-index: 60;
+ }
++.empty-state { font-size: 14px; line-height: 1.45; padding: 16px 4px; text-align: center; }
++.help-list { margin: 0; padding-left: 1.1em; font-size: 14px; line-height: 1.5; }
++.help-list strong { color: var(--text); font-weight: 600; }
++.job-commit { font-size: 11px; margin: 6px 0 0; }
+ .bottom-tab {
+   flex: 1;
+   min-height: 44px;
+diff --git a/webchat/test_webchat.py b/webchat/test_webchat.py
+index 6cffb38..c69ab9e 100644
+--- a/webchat/test_webchat.py
++++ b/webchat/test_webchat.py
+@@ -649,8 +649,33 @@ class HandbackJobTests(Fixture):
+         self.assertTrue(status["launchd_loaded"])
+         self.assertIn("Launchd job loaded", status["summary"])
+ 
++    def test_hollow_progress_reply_repaired(self):
++        from reply_guard import is_hollow_progress_reply, repair_hollow_progress
++
++        bad = (
++            "I'm still looking for that file in drill-r9-test. "
++            "Maybe another minute or two to scan the directory."
++        )
++        self.assertTrue(is_hollow_progress_reply(bad))
++        fixed = repair_hollow_progress(bad)
++        self.assertNotIn("minute or two", fixed.lower())
++        self.assertIn("can't", fixed.lower())
++
++    def test_status_hides_drill_open_asks(self):
++        ledger_dir = Path(__file__).resolve().parent.parent / "state"
++        if str(ledger_dir) not in sys.path:
++            sys.path.insert(0, str(ledger_dir))
++        import ledger as state_ledger
++
++        state_ledger.add_open_ask(self.root, "drill open item (r9-test)")
++        state_ledger.add_open_ask(self.root, "approve WebJam feel-check")
++        reply = state_ledger.try_status_reply(self.root, "status")
++        self.assertIsNotNone(reply)
++        self.assertIn("approve WebJam", reply)
++        self.assertNotIn("drill open item", reply)
++
+     def test_handback_drill_backup_restore(self):
+-        from live_handback_drill import backup_handback, restore_handback
++        from live_handback_drill import backup_handback, restore_handback, backup_state, restore_state
+         folder = self.root / "conductor/handback"
+         folder.mkdir(parents=True, exist_ok=True)
+         (folder / "BOB-STATE.md").write_text("original state\n")
+@@ -658,6 +683,23 @@ class HandbackJobTests(Fixture):
+         (folder / "BOB-STATE.md").write_text("drill overwrite\n")
+         restore_handback(self.root, saved)
+         self.assertEqual((folder / "BOB-STATE.md").read_text(), "original state\n")
++        state_dir = self.root / "conductor/state"
++        state_dir.mkdir(parents=True, exist_ok=True)
++        (state_dir / "STATE.json").write_text('{"version":1}\n')
++        saved_state = backup_state(self.root)
++        (state_dir / "STATE.json").write_text('{"drill":true}\n')
++        restore_state(self.root, saved_state)
++        self.assertIn("version", (state_dir / "STATE.json").read_text())
++
++    def test_panel_round_changelog(self):
++        reviews = self.root / "conductor/reviews"
++        reviews.mkdir(parents=True, exist_ok=True)
++        (reviews / "WEBCHAT-READY-R99-RESULT.md").write_text(
++            "# R99\n\n| iPhone design | 9.5 | **9.6** · chat bubbles |\n"
++        )
++        data = self.chat.panel()
++        self.assertIn("round_changelog", data)
++        self.assertEqual(data["round_changelog"].get("round"), 99)
+ 
+     def test_song_notebook_roundtrip(self):
+         from music_notebook import get_project, list_projects, save_project
+
+
+### FILE reviews/WEBCHAT-READY-R10-RESULT.md
+# Web Bob READY-FOR-PHONE — Round 10 result (Cursor lane)
+
+**Branch:** `draft/webchat-failover-20260927`  
+**Round 9 base:** `dc129885` · **R10 commit:** see **Final SHA** below  
+**Design:** `conductor/reviews/ALIGNMENT-DESIGN.md` (events.jsonl + SSE; unchanged)  
+**Council (no Grok):** `conductor/reviews/webchat-ready-r10-council/20260927-031815-433427.md`  
+**Vote:** delivery-aware ack (`last_catchup_event_seq` + save after catchup); approve one-tap cards (shipped) with proposal-ID binding deferred; remove duplicate music coach + narrow regex; 22-task offline `bob_parity_eval.py` (strict CI test on repo root).  
+**Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
+
+## Scorecard (0–10)
+
+| Area | R9 | R10 (measured) |
+|------|-----|----------------|
+| Reliability | 9.8 | **9.8** · 60 + 23 + 39 tests OK |
+| Speed | 9.7 | **9.7** · p50 **1.017s** (`webchat/evidence/ready-drill.json`) |
+| Mobile UX | 9.7 | **9.7** · markdown lists/headings, copy-code, approve/deny cards |
+| **iPhone design** | 9.5 | **9.5** · tab bar + contrast CSS (evidence `iphone-r8/`) |
+| Failover | 9.9 | **9.95** · handback + `events.jsonl` `handback-turn` check |
+| Safety | 9.6 | **9.6** · confirm-in-chat + cards; no Grok |
+| Bob parity | 9.7 | **9.8** · **22/22** `bob_parity_eval.py` (score 10.0) |
+| Handoff both ways | 9.95 | **9.95** · `live_handback_drill.py` r10 **×2 runs ×2** PASS |
+| Architecture | 9.9 | **9.9** · event ack tied to delivered catchup cursor |
+| Self-improve loop | 9.5 | **9.5** · tick + launchd script (unchanged) |
+| Music (core use case) | 9.5 | **9.6** · coach tips + notebook/sketch (no MiniMax music API) |
+| Conductor parity | 9.5 | **9.5** · panel + alignment SSE (unchanged) |
+| Enhancement 1 — mobile formatting | 9.4 | **9.6** |
+| Enhancement 2 — run jobs from chat | 9.4 | **9.6** · one-tap Yes start job / council |
+| Enhancement 3 — status panel | 9.95 | **9.95** · live_ops + dashboard age fallback in `panel()` |
+| Enhancement 4 — voice | 9.5 | **9.5** |
+| Enhancement 5 — Bob parity | 9.6 | **9.7** · eval gate + ack cursor |
+
+**Web Bob vs Bob:** **beat** on offline 22-task eval + live handback/ready drills; proposal-ID card binding queued for R11.
+
+## Detailed live dashboard (ADDED 02:03)
+
+| Field | Meaning |
+|--------|---------|
+| `now_line` | Plain-English line from `conductor/state/NOW.md` |
+| `dashboard_freshness_seconds` | Age of `conductor/dashboard.json` (inline snapshot + panel fallback) |
+| `running_jobs[]` | Per job: `plain_now`, last **3** log lines, `elapsed_seconds`, `started_at`, `round`, `stall_state`, `last_commit`, `events[]` |
+| `scores` | Latest `WEBCHAT-READY-R*-RESULT.md` table |
+| `roles.building` / `roles.reviewing` | Busy cursor/codex vs gemini/minimax/claude |
+| `minimax_spend` | committed vs **$59** cap |
+| `webchat_round` | Latest READY round number |
+
+Web Bob **Jobs** tab mirrors `public_live_ops()` / panel `live_ops`; status line shows dashboard age when present.
+
+## Architecture review (R10 delta)
+
+- **Catch-up ack:** `_write_catchup_body` tracks `last_catchup_event_seq`; `ack_events_for_bob()` defaults to delivered seq, not blind `latest_seq()`.
+- **Handback drill:** requires `events_ok` (`handback-turn` in `events.jsonl`).
+- **Music:** `try_music_coach_reply` cheap path; regex narrowed to avoid job “rewrite” false positives.
+- **Eval:** `conductor/webchat/bob_parity_eval.py` + evidence `bob-parity-eval.json`.
+
+**Top 5 structural fixes (ranked)**
+
+1. **Proposal-ID action cards** (M) — council R10  
+2. **Catch-up event pagination** beyond 12 lines (M)  
+3. **Live 20-task model-graded eval** (M) — offline rubric done; live compare next  
+4. **Bootstrap self-improve launchd on mini** (S)  
+5. **Web push on `kind=blocker`** (M)
+
+## Research-first (sources)
+
+Continues `ALIGNMENT-DESIGN.md` (Temporal / LangGraph checkpoint patterns, Jeff ADDED 03:04).
+
+## PASS/FAIL
+
+| Check | Result | Evidence |
+|--------|--------|----------|
+| Unit tests | **PASS** | `python3 conductor/webchat/test_webchat.py` — 60 OK |
+| Failover tests | **PASS** | `python3 conductor/webchat/test_failover.py` — 23 OK |
+| Services tests | **PASS** | `python3 conductor/services/test_services.py` — 39 OK |
+| 22-task Bob parity eval | **PASS** | `bob_parity_eval.py` — 22/22 |
+| 10-message drill | **PASS** | `live_ready_drill.py` — p50 1.017s |
+| Handback drill ×2 (×2 runs) | **PASS** | `WEBCHAT_HANDBACK_TAG=r10` twice |
+| Council (Gemini+MiniMax+Claude+Codex) | **PASS** | `20260927-031815-433427.md` |
+| Server restart | **PASS** | `127.0.0.1:8787` after `start.sh` |
+
+## Commands run
+
+```bash
+python3 conductor/webchat/test_webchat.py
+python3 conductor/webchat/test_failover.py
+python3 conductor/services/test_services.py
+python3 conductor/webchat/bob_parity_eval.py
+python3 conductor/webchat/live_ready_drill.py
+WEBCHAT_HANDBACK_TAG=r10 python3 conductor/webchat/live_handback_drill.py  # ×2
+set -a; . conductor/keys.env; set +a; python3 conductor/services/council.py \
+  --context /tmp/webchat-r10-diff.txt --context conductor/reviews/WEBCHAT-READY-R9-RESULT.md \
+  --context conductor/WEBCHAT-READY.md --out conductor/reviews/webchat-ready-r10-council "Round 10…"
+lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
+```
+
+## Model help ledger (R10)
+
+| Model | Role |
+|-------|------|
+| Cursor | Lead builder (ack cursor, eval, UI cards, music coach, drills) |
+| Codex | Council propose + synthesize |
+| Gemini | Council propose + critique |
+| MiniMax | Council propose + critique |
+| Claude | Short council critique |
+
+## SHAs
+
+| Label | SHA |
+|--------|-----|
+| Round 9 base | `dc1298853f7fbd5e7a34dca4962fc385c3c02680` |
+| **R10 primary** | `213b1c80e0dbb3a18ac6395d34df129e36c2718b` |
+| **Final SHA (this round)** | `666945cab525b774720dbd7cab9bd7bed394a5c9` |
+
+## Remaining risks
+
+- Action cards still submit generic yes text; server binds via `pending_job` / `pending_council` only.  
+- Catch-up shows max 12 event lines; pagination not built.  
+- Live model-graded Bob comparison not run (offline rubric only).  
+- Grok not used per instruction.
+
+
+### FILE WEBCHAT-READY.md
+# Web Bob READY-FOR-PHONE (TOP PRIORITY, Jeff 00:24) — Cursor lane, coordinate with Codex svc-webchat-failover (read conductor/WEBCHAT-FAILOVER.md incl URGENT UPDATE; don't fight its edits: git diff first, small patches)
+Jeff is using https://jeffs-mac-mini.tail758ab4.ts.net on his iPhone now. Must reliably answer every message.
+Observed bugs:
+1. "No provider completed a reply. codex/cursor/gemini: busy with another job" — Bob already changed providers.py lane() lock name to chat-<provider>. Verify all providers (incl Gemini helper's own lease, MiniMax) never block on background job locks. MiniMax must be in the chain as last resort.
+2. 409 "Bob is finishing another reply" is GLOBAL — one stuck reply blocks every conversation. Make it per-conversation, and auto-expire a stuck reply after its timeout; the UI must show a Stop button and a clear retry.
+3. Replies sat "queued" with provider null. Ensure the worker picks up immediately.
+4. Fast path: short/simple messages go to the fastest healthy provider (Gemini API is fast) with a total budget ~60s; long tasks may use Codex/Cursor. Show "thinking via X" progress.
+5. Mobile: input stays usable, auto-scroll, Enter/Send works on iOS Safari, add-to-home-screen works.
+Test: unit tests + live curl through the ts.net URL (Origin header, lowercase UUID request_id, password from conductor/webchat/.password never printed): 10 back-to-back messages in 2 conversations while background jobs hold lane locks => 10 replies, none "busy", p50 latency noted. Plus "merge #158" refused.
+Then: python3 conductor/services/council.py critique (Gemini+MiniMax, Claude short) of the diff, apply valid points. Restart server (kill 127.0.0.1:8787 PID, bash conductor/webchat/start.sh), keep .public-origin.
+Commit to draft branch. Write conductor/reviews/WEBCHAT-READY-RESULT.md with PASS/FAIL table, latency, SHA.
+
+## Self-assessment (Jeff 00:24) — required
+After each change set: honestly score Web Bob 1-10 on reliability, speed, mobile UX, failover, safety, with evidence (measured latencies, failures seen). List the weakest area, fix it, re-test, re-score. Loop until all >=8 or 3 rounds. Include the scorecards in WEBCHAT-READY-RESULT.md. No inflated scores; fail-closed if not measured.
+
+## North star (Jeff 00:24): "It needs to work just like Bob, as close as possible."
+Match Grok Bot Bob behavior: warm, concise replies in full sentences; answers first; loads bob-brain profile/memory/skills/BOB-OPERATING-RULES every message; knows current jobs/PRs/status; can start mini screen jobs (Codex/Cursor) for real work and report back; confirm cards for risky actions (merge/undraft/send/spend); never sends texts/emails without yes; short progress updates while working; remembers the conversation. Add a "Bob parity" row to the self-assessment scorecard (test with 5 typical Jeff asks: status, "anything I need to do?", start a job, a memory question, a refusal) and compare tone/usefulness to Bob's style.
+
+## Clean failover BOTH WAYS (Jeff 00:26) — required
+Shared ledger: conductor/handback/ (local on mini).
+A) Bob -> Web Bob: Bob keeps conductor/handback/BOB-STATE.md (what's running, open asks, pending confirmations, priorities). Web Bob reads it on every message so it picks up exactly where Bob left off.
+B) Web Bob -> Bob: every Web Bob turn appends to conductor/handback/HANDBACK-LOG.md (timestamp CT, Jeff's ask, provider, jobs started w/ screen+spec, files changed, commits/SHAs/PRs, confirmations Jeff gave, refusals, open items). Maintain HANDBACK-SUMMARY.md = digest since mtime of conductor/handback/.bob-last-seen, grouped done / running / waiting on Jeff / risks.
+C) UI: "Handback" chip showing summary + BOB-STATE.
+D) No double work: before starting a job, both sides check screen -ls + ledger for the same task.
+Test: simulate Bob down -> 3 Web Bob turns -> verify log+summary accurate; simulate Bob state -> Web Bob answers "what's running?" from it. Add "Handoff both ways" row to scorecard.
+
+## ADDED 00:29 (Jeff): Architectural review in the self-assessment
+Add an "Architecture" score (0-10) to the scorecard, and it must reach at least 8 like the others. Include a short review in the RESULT file covering:
+- Component map: webchat server, providers, locks, job lanes, handback, dashboard-updater, watchdog, Tailscale serve.
+- Single points of failure and shared state (global locks, lock files, screen-name collisions, one mini).
+- Coupling between chat and the job lanes, and whether chat can starve jobs or jobs can starve chat.
+- Failure and recovery paths, stale-lock expiry, and restart safety.
+- Security boundary: the password, the public ts.net origin, secrets in the repo or logs.
+- The top 5 ranked structural fixes. Implement the ones that are safe tonight, and list the rest with an effort estimate.
+Keep everything draft-only, with no merges.
+
+## ADDED 00:30 (Jeff said "Start"): Enhancements, after the reliability fixes pass
+1. Mobile formatting: clean markdown, code spans, links, readable lists, a sticky input bar, and no zoom-on-focus.
+2. Run jobs from chat: "start a job" queues a screen job on the mini through the existing job runner. It confirms before anything consequential and stays draft-only.
+3. Status panel: live lanes, running jobs, recent RESULT files, dashboard freshness, and the handback chip.
+4. Voice: a mic button (Web Speech API) for input, and optional read-aloud of replies.
+5. Bob parity: use Bob's persona, rules, and memory (from BOB-STATE.md and the handback files) so replies read like Bob's. Short, casual, links and SHAs first.
+Score each enhancement in the self-assessment. Commit to the draft branch only.
+
+## ADDED 00:31 (Jeff): Use every resource except Grok
+Use every worker except Grok. Codex and the Cursor CLI build, one coder at a time on Web Bob. Run parallel reviews and research with Gemini, MiniMax (stay under the $48 cap), Claude (short critiques only), and the council tool. Keep going until Web Bob matches Bob as closely as possible.
+
+## ADDED 00:32 (Jeff): Push every lane to the max, Cursor first
+The MiniMax cap is now $59 (the total balance). Run every lane except Grok at full speed.
+- Cursor CLI is the lead builder and gets first pick of the work.
+- Codex builds when the Cursor CLI is between rounds. Only one coder touches Web Bob at a time.
+- MiniMax (M2.7) and Gemini run continuously in parallel: critiques on every commit, Bob-parity comparisons, research on the lowest scores, test prompts, and architecture review.
+- Claude does short critiques.
+
+## ADDED 00:35 (Jeff): Seamless takeover and handback, highest priority for round 2 and later
+Bob has about 20% usage left and must stretch it over 5 days, so Web Bob is the primary way Jeff reaches Bob until about 10/2.
+- Takeover: Web Bob loads Bob's full working context automatically: BOB-STATE.md, the handback files, standing rules, open PRs, running jobs, and pending personal items. It acts as Bob does (starts mini jobs, reports SHAs, stays draft-only, and needs a separate yes before any text or email).
+- Handback: every Web Bob decision, job, and result is appended to HANDBACK-LOG.md and HANDBACK-SUMMARY.md (short and ranked) so that Bob can pick up with one read and zero questions.
+- Test both directions: simulate Bob going offline, run 5 real tasks through Web Bob, then check that the summary gives Bob everything he needs. Score "handoff" at 9 or higher.
+
+## ADDED 00:37 (Jeff): The models help each other
+Cross-check everything. After each build step, the builder (Cursor or Codex) sends its diff to Gemini and MiniMax for critique and applies their fixes. Gemini and MiniMax review each other's suggestions, and a council vote breaks ties. When one model is stuck or fails, hand the task to another with full context. Log who helped with what in the RESULT file.
+
+## ADDED 00:42 (Jeff): Web Bob gets Bob's self-improvement loop
+Give Web Bob the same self-improvement loop Bob has. On a schedule (launchd on the mini, with no Grok):
+- Review its own recent chats and failures.
+- Score itself, then research fixes with Gemini and MiniMax.
+- Have Cursor or Codex implement fixes on a draft branch, run tests, and write a RESULT file.
+- Log every round to the handback files.
+It stays draft-only, never merges, and never uses Grok. Give self-improvement its own score, which must be 9 or higher.
+
+## ADDED 00:44 (Jeff): Music creation is a core Web Bob use case
+Web Bob must be a full AI songwriting partner, covering as much as exists today:
+- Lyrics: drafting, rewrites, rhyme and meter help, song structure, and hooks.
+- Chords and progressions, melody ideas, arrangement notes, and references.
+- MiniMax music model: generate demos and sketches from lyrics plus a style prompt. Stay within the MiniMax $59 cap and log the cost of each call.
+- Moises (Jeff has it): stem separation, chord detection, and key and BPM detection for uploaded audio. Research its API or CLI access. If the only option is the app, document the manual handoff clearly.
+- Logic Pro MCP on the mini (3.17.0): open projects, markers, tempo, and bounce. Always read-only or confirm first.
+- Audio upload and playback in the chat, plus a song-project notebook (lyrics, versions, notes) that persists and hands back to Bob.
+- Research the current AI music tools (Suno, Udio, ElevenLabs music, Stable Audio, and others). Rank what's worth wiring in, but only for keys Jeff already has. Never spend money or sign up without a yes from Jeff.
+Give "music" its own score, which must reach 9 or higher. Do real tests: write a short song end to end and produce a MiniMax demo.
+
+## ADDED 02:00 (Jeff)
+MiniMax music API is not entitled (410). Do NOT chase new endpoints or signups. Use what we have: lyrics/chords/arrangement via LLMs, MiniMax text + speech/TTS if entitled, Logic Pro MCP (read/confirm-first), audio upload/playback, song notebook. Score music on those.
+
+## ADDED 02:03 (Jeff) — Detailed live dashboard
+Jeff cannot see terminal work. Make the ops dashboard (agents-status.json + Pages) show, per running screen/job: what it is doing now (last 3 log lines, plain English), round number, started time, elapsed, last commit SHA+message, current scores table, which model is building/reviewing, MiniMax spend vs $59 cap, and stalled/finished state. Mobile-friendly. Data-only pushes, no secrets in logs. Also show it inside Web Bob as a status panel.
+
+## ADDED 02:07 (Jeff) — TOP PRIORITY: conductor inside Web Bob
+Everything Bob does as conductor must also work from inside Web Bob before Bob usage runs out: see and control the autopilot/rounds, start/stop screens, launch Cursor/Codex jobs, call the council (Gemini/MiniMax/Claude), read scores/SHAs/logs, watch the live dashboard, handback to Bob. Same safety rules (drafts only, confirm-first for merges/sends/spend, never Grok). Score "Conductor parity" as its own row and prove it with a drill: Jeff runs one full round only from Web Bob on his phone.
+
+## ADDED 02:08 (Jeff) — Research-first design
+Every round starts with a short research pass on what exists today (for example open-source agent orchestrators, multi-agent frameworks, assistant failover/handoff patterns, mobile AI chat UX, AI music tools), then writes a DESIGN note: what we borrow, what we reject, and why. Use Gemini (search-grounded) plus the council to rank ideas. Aim for the most logical, well-designed system, not just passing scores. Cite sources in the result file.
+
+## ADDED 02:11 (Jeff) — iPhone-first redesign, make it look AMAZING (TOP of queue)
+Jeff: current phone UI is horribly designed; iPhone is the primary device. Seen: raw status dump (markdown headers, file names) fills the screen above chat; STATUS.md/Latest review/Jobs detail/Model lanes/Song project/Reply-with crowd out the conversation; jargon footer. Redesign to feel as polished as iMessage/ChatGPT/Claude iOS: chat fills the screen; slim header (name + status dot); status/jobs/songs/lanes/settings in a bottom sheet or tab bar; plain English, no file names or raw markdown; beautiful typography, spacing, subtle motion, dark/light; 44pt tap targets; safe-area insets; composer pinned above keyboard. Research best mobile AI chat UX first. Playwright screenshots at 390x844 and 430x932 in result; council reviews screenshots; score iPhone design separately, must be >=9.
+
+## ADDED 02:18 (Jeff) — Layout decision
+Chat takes most of the screen (at least ~75% of height) and must be big enough to be truly useful. Bottom tab bar (iOS style) with separate tabs: Chat (default), Jobs, Models/LLM status, Songs, Settings. No status panels above the chat.
+
+## ADDED 02:18 (Jeff) — Layout decision
+Chat takes most of the screen (at least 75 percent of height) and must be big enough to be truly useful. iOS-style bottom tab bar with separate tabs: Chat (default), Jobs, Models (LLM status), Songs, Settings. No status panels above the chat. Base design = the Grok Bot iPhone app (this very assistant app Jeff uses): chat-first full-height conversation, clean message bubbles, slim header, composer pinned at bottom, extras tucked away. Match that feel and make it better and more useful.
+
+## ADDED 02:19 (Bob, Jeff approved) — Useful extras
+- Push notifications (web push on iOS home-screen app) when a job finishes, fails, or needs a yes.
+- Approve/deny cards in chat for anything confirm-first (merge, send, spend), one tap.
+- Quick-action chips above composer: Status, Start round, Ask council, New song.
+- Streaming replies with typing indicator; tap-to-copy code; long-press message menu.
+- Conversation list with search; pin important chats.
+- Attach photos/screenshots and audio from the phone.
+- Offline/reconnect banner and message retry; never lose a typed draft.
+- Which model answered, shown subtly per message.
+- Face ID-style quick unlock (WebAuthn passkey) instead of retyping password.
+- Morning digest card: what ran overnight, scores, what needs Jeff.
+
+## ADDED 02:22 (Jeff) — Intelligence and logic
+Raise how smart Web Bob is, not just UI: route each request to the best model for the job (reasoning vs fast vs code vs music); give it durable memory of Jeff (preferences, projects, people) shared with Bob; retrieve relevant context (STATUS, handback, repo state) before answering; plan multi-step tasks and check its own work before replying; ask the council on hard or high-stakes questions; admit uncertainty instead of guessing; learn from Jeff corrections. Measure with a 20-question eval set of real Jeff tasks, scored against Bob answers; must match or beat Bob.
+
+## ADDED 02:29 (Jeff) — Tabs need to be better
+Jeff likes the direction but the tabs inside Web Bob need work. Make each tab genuinely useful and beautiful: Jobs (live cards with progress, elapsed, stop/retry, tap for details), Models (each LLM with health dot, current task, cost, cooldown), Songs (notebook, audio players, versions), Settings (clean iOS grouped list). Plain English, no raw text dumps; iOS tab bar with icons and labels; smooth transitions; empty states that help. Screenshot every tab at 390x844 for council review.
+
+## ADDED 02:30 (Jeff iPhone screenshots of current tabs) — concrete fixes
+- Tabs live in a pop-up sheet with a Done button; replace with a real iOS bottom tab bar (Chat, Jobs, Songs, Models, Settings), always visible; Settings label is cut off.
+- Header still shows a stale "Top priority..." banner and a "From BOB-STATE and handback" conversation picker plus leftover text above the chat; remove them; chat must fill the screen.
+- Jobs tab is a raw text dump (file names, .bob-last-seen, markdown **bold** shown literally, stale handback listing jobs that are not running). Replace with live job cards built from real process state; never show stale handback text as live.
+- Conductor tab shows branch names, SHAs, and "run council on: ... then yes" syntax; make it buttons (Start round, Ask council, Stop) with plain-English status. Autopilot says "finished, next 4:24 AM" which is wrong while a job runs; fix the status logic.
+- Songs tab: unlabeled fields (title, lyrics, chords, style); add labels/placeholders, a song list, audio player, versions; bigger lyrics editor.
+- Settings: "Reply with" model string is jargon; use simple choices; move Ops status/Latest review/Running jobs to Jobs.
+- Faded chat bubble text (low contrast) behind sheet; fix contrast.
+
+## ADDED 02:43 TOP: live alignment
+- Every running round/job writes conductor/state/NOW.md every ~3 min: one plain-English line of what it is doing, step, elapsed, last SHA. Jobs tab shows it live.
+- Inbox: conductor/state/INBOX.md. Web Bob chat "tell the builder: ..." and Bob append there. Every round prompt must re-read INBOX.md between steps and apply new items mid-round, then mark them done in NOW.md.
+- The autopilot prompt must include both rules. Build this first in the next round.
+
+## ADDED 02:44 TOP: Bob catch-up digest
+- conductor/state/BOB-CATCHUP.md, rewritten on every change: plain-English list of what changed since .bob-last-seen (commits+SHAs, round results/scores, NOW.md history, INBOX items and status, Jeff Web Bob chat decisions/requests, failures, spend). Max 25 lines, newest first.
+- Bob reads it in one call when he comes back, then touches .bob-last-seen. Include Web Bob chat summaries so Bob knows what Jeff told Web Bob.
+
+## ADDED 02:45 TOP: smarter alignment logic
+- One source of truth: conductor/state/STATE.json (active round, jobs, owner, last SHA, open asks, decisions). NOW/CATCHUP/Jobs tab are generated from it; nothing else invents status.
+- Heartbeats: each job updates STATE every 3 min; no update for 10 min marks it stalled in plain English and the autopilot retries once, then falls back to Codex.
+- Single owner lock: only one agent (Bob, Web Bob, or a builder) holds the writer lock on a task; takeover records who took it and why.
+- Asks ledger: every Jeff request gets an id, status (new, in progress, done, dropped) and the SHA that finished it; catch-up lists open asks first.
+- Decisions log: Jeff decisions (feel, merge, spend, rules like no Grok) saved once and enforced by every agent and prompt.
+- Priority-sorted catch-up: blockers needing Jeff first, then finished work, then in-progress; skip unchanged items; hard cap 25 lines.
+- Cheap-first routing: status questions answered from STATE with no model call; small asks go to fast/cheap models; council only for high stakes or disagreements.
+- Duplicate guard: before starting work, check the ledger and recent commits so no task is done twice.
+- Morning digest at 8 AM CT built from the ledger, delivered in Web Bob.
+
+## ADDED 02:48 TOP: product fundamentals Jeff may not know to ask for
+- Automated tests in CI for every round: chat, failover both ways, handback, jobs, iPhone 390x844 screenshots; a round cannot claim done if tests fail.
+- Independent grading: scores come from a separate reviewer model plus Playwright checks, never the builder grading itself.
+- Nightly backups of chats, memory, STATE.json and songs; one-command restore tested weekly.
+- Safe deploys: keep last good version; auto roll back if health check fails after restart.
+- Health page and alerts: if webchat, watchdog or a model provider is down, show it in Web Bob and send a push.
+- Security: login rate limits, session expiry, secrets never in logs or process args, audit log of every send/merge/spend request.
+- Cost guard: daily and monthly caps per provider with a visible meter; stop before the MiniMax $59 cap.
+- Real-use analytics (local only): response times, failures, what Jeff uses most; next round prioritizes from that.
+- Add to Home Screen as an app (PWA icon, splash, full screen), fast first load, works on bad signal.
+- Changelog in plain English after each round shown in Web Bob.
+
+## ADDED 02:50 TOP: usage accounting for every resource
+- Models tab + STATE.json track per resource: Cursor, Codex, Claude ($20 plan), Gemini, MiniMax ($59 cap), Grok Bot (Bob; must last to ~10/2; target 0 builder use), mini CPU.
+- For each: used today, this week, this billing period, limit, percent, reset date, projected run-out date at current pace. Real numbers only from provider APIs/CLI output or logs; if unknown, say unknown and how to connect it, never guess.
+- Log every model call (provider, model, tokens, cost, job id) to conductor/state/usage.jsonl.
+- Warn at 70%, slow down at 85%, hard stop at 95% of any cap; router shifts work to resources with headroom.
+- Daily usage line in morning digest and Bob catch-up.
+
+## ADDED 02:51 TOP: more things Jeff did not think of
+- Kill switch in Web Bob: one big Stop All button (creates ~/STOP-WEBBOB, stops screens) and Resume.
+- Mini health: disk space, memory, CPU temp, battery/power loss, internet down; alert before it breaks jobs; auto-clean old logs/screenshots.
+- Auto-restart after mini reboot or power outage (launchd), and a "what was interrupted" note.
+- Provider outage handling: detect rate limits and outages, pause and retry later, never spin.
+- Quality regression guard: rerun the 20-task eval each round; block the round if any score drops.
+- Stale-work cleanup: close finished screens, prune dead branches locally (drafts never deleted remotely), archive old reviews.
+- Time-to-value: every round must ship one visible improvement Jeff can see on his phone, listed first in the changelog.
+- Quiet hours: no push notifications 11 PM to 7 AM CT unless something is broken or needs Jeff.
+- Undo: every Web Bob action that changes something has an Undo for 30 seconds.
+- Help screen: plain-English what each tab and button does.
+
+## ADDED 03:04 TOP: near-real-time Bob <-> Web Bob alignment (research then build)
+- Research pass first: compare options and write conductor/reviews/ALIGNMENT-DESIGN.md with a council vote. Options: (a) shared append-only event log conductor/state/events.jsonl that every actor writes (Bob, Web Bob, builders, autopilot) with fs-watch push to Web Bob via SSE; (b) the private GitHub repo as a sync bus (Bob reads via GitHub, costs Bob nothing extra); (c) email/webhook into a Grok Bot routine so Bob wakes on important events only; (d) Bob reads BOB-CATCHUP on wake.
+- Constraints: Bob has limited usage until ~10/2, so Bob must never poll; Bob only reads on wake or on high-priority events. Web Bob can be live.
+- Likely best: events.jsonl as the single log + SSE live in Web Bob + BOB-CATCHUP generated from it + optional webhook to wake Bob only for blockers needing Jeff. Web Bob must also log each Jeff chat message summary to events.jsonl; Bob logs BOB-CHAT LOG lines there too.
+- Prove it: a drill where Jeff says something to Web Bob, and Bob on next wake reports it correctly; and vice versa within 5 seconds in Web Bob.
+
+## ADDED 03:17 P0 (Jeff saw weird replies) — fix before anything else
+Evidence: sessions/0a7ac149...json. Problems:
+1. Fake progress: Web Bob says "I am checking the directory, one moment", "another minute or two" but never runs anything. NEVER promise background work it cannot do in that turn. Either actually run the tool and show the result in the same reply, or say plainly it cannot.
+2. Test drill data leaking into real status: drill-r9-test, drill-r9-2, fake SHA abc1234, "Reply with exactly: drill A1" shown as Jeff open asks. Drills must use an isolated state dir and never touch real BOB-STATE/HANDBACK/STATE.json; purge existing drill entries.
+3. Status missing real work: WebJam and other jobs not shown. Status must come from real screens/processes + STATE.json across all projects, not just handback drills.
+4. Canned template answers ("Handback drill r9-2: running...") replacing a real reply to Jeff complaint. Understand the question and answer it.
+5. Webchat server restarting too often (many restarts in log); builders must not restart prod each step; only restart on deploy, with health check.
+Add regression tests for each. Prove with a replay of this exact conversation.

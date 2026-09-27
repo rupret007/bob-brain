@@ -649,8 +649,33 @@ class HandbackJobTests(Fixture):
         self.assertTrue(status["launchd_loaded"])
         self.assertIn("Launchd job loaded", status["summary"])
 
+    def test_hollow_progress_reply_repaired(self):
+        from reply_guard import is_hollow_progress_reply, repair_hollow_progress
+
+        bad = (
+            "I'm still looking for that file in drill-r9-test. "
+            "Maybe another minute or two to scan the directory."
+        )
+        self.assertTrue(is_hollow_progress_reply(bad))
+        fixed = repair_hollow_progress(bad)
+        self.assertNotIn("minute or two", fixed.lower())
+        self.assertIn("can't", fixed.lower())
+
+    def test_status_hides_drill_open_asks(self):
+        ledger_dir = Path(__file__).resolve().parent.parent / "state"
+        if str(ledger_dir) not in sys.path:
+            sys.path.insert(0, str(ledger_dir))
+        import ledger as state_ledger
+
+        state_ledger.add_open_ask(self.root, "drill open item (r9-test)")
+        state_ledger.add_open_ask(self.root, "approve WebJam feel-check")
+        reply = state_ledger.try_status_reply(self.root, "status")
+        self.assertIsNotNone(reply)
+        self.assertIn("approve WebJam", reply)
+        self.assertNotIn("drill open item", reply)
+
     def test_handback_drill_backup_restore(self):
-        from live_handback_drill import backup_handback, restore_handback
+        from live_handback_drill import backup_handback, restore_handback, backup_state, restore_state
         folder = self.root / "conductor/handback"
         folder.mkdir(parents=True, exist_ok=True)
         (folder / "BOB-STATE.md").write_text("original state\n")
@@ -658,6 +683,23 @@ class HandbackJobTests(Fixture):
         (folder / "BOB-STATE.md").write_text("drill overwrite\n")
         restore_handback(self.root, saved)
         self.assertEqual((folder / "BOB-STATE.md").read_text(), "original state\n")
+        state_dir = self.root / "conductor/state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "STATE.json").write_text('{"version":1}\n')
+        saved_state = backup_state(self.root)
+        (state_dir / "STATE.json").write_text('{"drill":true}\n')
+        restore_state(self.root, saved_state)
+        self.assertIn("version", (state_dir / "STATE.json").read_text())
+
+    def test_panel_round_changelog(self):
+        reviews = self.root / "conductor/reviews"
+        reviews.mkdir(parents=True, exist_ok=True)
+        (reviews / "WEBCHAT-READY-R99-RESULT.md").write_text(
+            "# R99\n\n| iPhone design | 9.5 | **9.6** · chat bubbles |\n"
+        )
+        data = self.chat.panel()
+        self.assertIn("round_changelog", data)
+        self.assertEqual(data["round_changelog"].get("round"), 99)
 
     def test_song_notebook_roundtrip(self):
         from music_notebook import get_project, list_projects, save_project

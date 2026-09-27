@@ -53,8 +53,8 @@
         <h2 class="view-title">Jobs</h2>
         <p id="now-line" class="now-line" hidden></p>
         <p id="status-summary" class="view-lead muted"></p>
-        <div id="scores-table" class="scores-grid" aria-label="Latest Web Bob scores"></div>
         <div id="live-jobs" class="live-jobs" aria-live="polite"></div>
+        <p id="jobs-empty" class="empty-state" hidden>No jobs on screen right now. Tap Start round in chat when you want a builder pass.</p>
         <div class="conductor-block">
           <h3 class="view-subtitle">Conductor</h3>
           <p id="conductor-summary" class="view-lead muted"></p>
@@ -78,6 +78,7 @@
       <div class="view-scroll">
         <h2 class="view-title">Models</h2>
         <p id="lanes-summary" class="view-lead muted"></p>
+        <div id="scores-table" class="scores-grid" aria-label="Latest Web Bob scores"></div>
         <div id="lanes" class="lane-cards" aria-live="polite"></div>
       </div>
     </section>
@@ -131,6 +132,19 @@
         <div class="settings-group">
           <h3 class="settings-group-title">Self-improve</h3>
           <p id="self-improve-status" class="muted">Checking…</p>
+        </div>
+        <div class="settings-group">
+          <h3 class="settings-group-title">What’s new</h3>
+          <p id="changelog-line" class="muted">Loading…</p>
+        </div>
+        <div class="settings-group">
+          <h3 class="settings-group-title">Help</h3>
+          <ul class="help-list muted">
+            <li><strong>Chat</strong> — talk to Bob; quick chips for status, rounds, council, songs.</li>
+            <li><strong>Jobs</strong> — live work on the mini (not old handback text).</li>
+            <li><strong>Songs</strong> — lyrics notebook, local sketch demo, audio upload.</li>
+            <li><strong>Models</strong> — who’s busy, spend meters, latest scores.</li>
+          </ul>
         </div>
         <p class="view-hint muted">Drafts stay drafts. Confirm before merge, send, or spend.</p>
       </div>

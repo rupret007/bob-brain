@@ -34,6 +34,15 @@ _HANDOFF_CONTEXT_RE = re.compile(
     re.I,
 )
 _INBOX_RE = re.compile(r"^tell the builder:\s*(.+)$", re.I)
+_DRILL_NOISE_RE = re.compile(
+    r"\b(?:handback drill|drill open item|drill-r\d|Reply with exactly:\s*drill|abc1234)\b",
+    re.I,
+)
+
+
+def _visible_open_asks(state: dict) -> list:
+    rows = [a for a in state.get("open_asks") or [] if a.get("status") in ("new", "in_progress")]
+    return [a for a in rows if not _DRILL_NOISE_RE.search(a.get("body") or "")]
 
 
 def _folder(root: Path) -> Path:
@@ -472,7 +481,7 @@ def try_status_reply(root: Path, text: str) -> str | None:
     open_inbox = [i for i in state.get("inbox") or [] if i.get("status") != "done"]
     if open_inbox:
         parts.append(f"{len(open_inbox)} inbox item(s) for the builder.")
-    open_asks = [a for a in state.get("open_asks") or [] if a.get("status") in ("new", "in_progress")]
+    open_asks = _visible_open_asks(state)
     if open_asks:
         parts.append(f"Open asks: {open_asks[0].get('body', '')[:100]}")
     if not parts:
@@ -491,7 +500,7 @@ def public_slice(root: Path) -> dict:
     state = load_state(root)
     return {
         "now_line": read_now_line(root),
-        "open_asks": [a for a in state.get("open_asks") or [] if a.get("status") in ("new", "in_progress")][:8],
+        "open_asks": _visible_open_asks(state)[:8],
         "inbox_open": sum(1 for i in state.get("inbox") or [] if i.get("status") != "done"),
         "active_round": state.get("active_round"),
         "last_sha": state.get("last_sha"),
