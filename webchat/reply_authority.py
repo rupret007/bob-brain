@@ -4,7 +4,6 @@ import re
 from live_status_snapshot import build_live_status_snapshot
 from chat_intent import PROJECT, blocked_scopes, hold_reply, projects, state_for
 from worker_activity import WORKER_NAMES, task_label
-from swarm_status import format_boards
 
 QUEUE_CLAIM = re.compile(
     r"\b(?:i|we)(?:['’]ve| have)?\s+(?:(?:just|already|now)\s+)?(?:queued|scheduled|launched|started|created|dispatched|added|submitted|assigned|delegated|asked|kicked off)\b"
@@ -19,7 +18,7 @@ NO_JOB_NOTICE = re.compile(
     r"\b(?:nothing|no work) (?:was |is |has been )?(?:queued|started|running)\b|"
     r"\bstart a job\s*:", re.I)
 STATUS_QUESTION = re.compile(
-    r"\b(?:status|resources?|workers? doing|who(?:['’]s| is)? working|what(?:['’]s| is) working on what|each (?:worker|model)|all (?:workers|models)|"
+    r"\b(?:status|resources?|workers? doing|each (?:worker|model)|all (?:workers|models)|"
     r"everything (?:going|running)|how(?:['’]s| is| we)? (?:everything|it going|we doing)|"
     r"(?:is|are) (?:it|anything|everything|things|the (?:work|jobs?|workers?)) "
     r"(?:going(?: now)?|moving(?: along)?|running|making progress)|(?:any|making) progress|"
@@ -146,9 +145,6 @@ def format_operational_reply(snap, provider="server", text=""):
                 entries = [row["job_id"] if detailed else task_label(row) for row in rows]
                 lines.append({"queued": "Waiting", "done": "Recently finished", "failed": "Recently failed"}[state]
                              + ": " + ", ".join(entries) + ".")
-    board_status = format_boards(snap.get("project_boards", {}), detailed=detailed)
-    if board_status:
-        lines.append(board_status)
     return "\n\n".join(lines)
 
 

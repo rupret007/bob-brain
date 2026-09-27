@@ -1,8 +1,9 @@
 # Mini conductor
 
-Opt-in same-project swarm services (`planner.py`, `leases.py`, `merge_train.py`)
-are documented in [SWARM-V1.md](../docs/SWARM-V1.md). They use explicit state
-roots and a separate project board; existing loops and deployment stay unchanged.
+The swarm draft now owns only optional lease, task-contract and integration-policy
+modules; see [SWARM-V1.md](../docs/SWARM-V1.md). Reuse this runner, its worktrees,
+screens, reviewers and status views, plus a host-native merge queue. There is no
+second planner, board, merge executor or scheduled swarm service.
 
 Start or recover with `bash conductor/services/start-all.sh`. `launchd/install.sh`
 installs and loads bob-services (5 minute guard) and bob-watchdog (3 minute guard)

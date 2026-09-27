@@ -8,7 +8,6 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from swarm_status import read_boards
 
 LIVE_OPS_MAX_AGE = 120.0
 _REFRESH_COOLDOWN = 45.0
@@ -207,7 +206,6 @@ def conductor_snapshot(root: Path) -> dict:
         round_match = re.search(r"R(\d+)-RESULT", latest_result["name"])
     return {
         "draft_branch": branch,
-        "project_boards": read_boards(root),
         "head_sha": head,
         "maintenance": maintenance,
         "webchat_round": int(round_match.group(1)) if round_match else None,

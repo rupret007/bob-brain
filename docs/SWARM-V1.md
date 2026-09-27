@@ -1,181 +1,122 @@
-# Swarm v1 operator contract
+# Swarm draft: thin policy module contract
 
-This implements [the September 27 architecture](MULTI-LLM-SWARM-ARCH-0927.md)
-as opt-in Python services. No existing runner, launchd job, deployment pin, or
-service startup is changed. The planner records assignments; an executor calls
-`start`/`finish` around its worker. The train CLI processes finished assignments
-once, so an operator can schedule it later without an always-on loop in v1.
+The original v1 planner/train/board is removed. Reuse Git worktrees, the existing
+conductor runner/screens/reviewers/status views, and native GitHub/GitLab queues;
+we only own `leases.py`, `task_contracts.py` and `integration_policy.py`.
+The [trimmed architecture](MULTI-LLM-SWARM-ARCH-0927.md) maps each responsibility
+and points to [SWARM-RESEARCH-0927.md](../../../conductor/reviews/SWARM-RESEARCH-0927.md),
+especially §8–§10. Existing job/review acceptance continues to use
+`result_acceptance.py`; it is not replaced by the integration gate.
 
-## State and ownership
+## Fenced leases
 
-All entrypoints require an explicit conductor directory and a project ID.
-Project IDs and worker IDs use letters, digits, underscores, and hyphens, up to
-64 characters. Use a single project ID for each repository/integration train.
+```python
+from services.leases import LeaseStore
 
-| File | Content |
+leases = LeaseStore(conductor_path, "webbob", repository_path)
+lease = leases.claim("attempt-one", ["webchat/reply_authority.py"],
+                     shared_resources=["webbob-test-db"], ttl=300)
+leases.renew("attempt-one", lease["token"], ttl=300)
+with leases.guard("attempt-one", lease["token"]):
+    pass  # Short, trusted acceptance operation; never run an agent/CI job here.
+leases.release("attempt-one", lease["token"])
+```
+
+Use one project ID per repository and one coordinator host/time authority.
+`leases/<project>.sqlite3` holds only integration ownership, not jobs or status.
+SQLite transactions serialize all-scope grants; committed generations increase
+and tokens change on reacquisition. Case/Unicode aliases, subtrees and named
+exclusive resources conflict conservatively. Traversal, globs, Git metadata and
+symlink aliases are rejected. The caller supplies a real repository path when
+checking filesystem aliases. All runtime databases are ignored by Git.
+
+TTL is at most one hour; renewal cannot extend a grant beyond 24 hours from its
+creation. A lease guards integration authority, not OS writes. Worktrees and
+runtime isolation remain the existing runner's responsibility. Best-of-N attempts
+can compute in isolated worktrees under one logical task; only the selected
+attempt receives the integration grant. These leases are separate from existing
+model-lane capacity locks.
+
+An expired grant cannot renew, release or submit. It still blocks conflicting
+grants until the runner stops/quarantines the old attempt and supplies an observed
+recovery receipt: `leases.recover(owner, token, receipt="runner/observed-stop")`.
+Recovery is idempotent for that receipt; a fresh claim gets a new fence. Committed
+grants and recovery survive restart; interrupted transactions roll back. Inspect
+`list()` after a lost response and resume only the verified owner. There is no
+implicit lease stealing, workspace deletion or separate recovery daemon.
+
+Legacy `leases/<project>.json` causes a refusal. Reconcile its writers and archive
+it explicitly before opting into SQLite; there is no automatic migration that
+could grant duplicate ownership. Keep the database private to the coordinator.
+Never restore an old ledger while workers retain authority.
+
+## Versioned task packages
+
+`task_contracts.contract_id(contract)` validates a JSON-compatible package and
+returns its SHA-256 identity. Required fields are:
+
+| Field | Meaning |
 | --- | --- |
-| `leases/<project>.json` | Current owner, token, literal paths, claim time |
-| `state/projects/<project>.json` | Repository, integration contract, worker records, resolver queue, revision |
-| `locks/leases-<project>.lock` | Serializes claim, transfer, and release |
-| `locks/plan-<project>.lock` | Serializes planner assignment and completion |
-| `locks/train-<project>.lock` | Allows one integration attempt at a time |
+| `schema`, `version`, `task`, `owner` | Schema 1, positive revision, task ID and responsible owner |
+| `goal`, `invariants` | Nonempty goal and behavioral invariants |
+| `paths`, `resources` | Canonical exclusive paths and named runtime resources |
+| `dependencies` | Task ID → immutable contract digest, including semantic read dependencies |
+| `checks` | Check ID → trusted suite/config digest; includes `tests`, `evals`, `acceptance` |
 
-Writes use temporary files, fsync, atomic replacement, and process locks.
-Corrupt state fails closed. Runtime JSON is intentionally ignored by Git; the
-planner creates the real board rather than committing fictional live workers.
+`require_current(contract, current_contracts)` checks the current task and all
+transitive dependency pins. Missing or superseded packages block acceptance.
+Store immutable packages in the existing job artifacts or reviewed configuration;
+this library creates no new task registry. A change proposal must bump the version,
+receive separate review and replace the authoritative current package. Suspend
+and rebase/restart affected work, then regenerate its evidence. The digest also
+invalidates evidence if someone edits content without bumping the version.
 
-Leases cover a file or its entire subtree. `webchat` conflicts with
-`webchat/app.py`; `webchat/app.py` does not conflict with `webchat/app.py.bak`.
-`.` reserves the whole repository. Globs, traversal, absolute paths, Git
-metadata, and symlink aliases are refused. Case and Unicode aliases conflict
-conservatively. Refactor assignments reserve `.` so shared hot-file extraction
-finishes before parallel features start. Read-only roles do not take write leases.
+Independent acceptance definitions come from trusted configuration outside worker
+control. Pin their contents and execution environment, not just a command name.
+Changes to the evaluator cannot approve the same patch that weakened it.
 
-Leases never silently expire. Stop the owner before releasing an abandoned
-lease. A stale token cannot release a newer claim. A bounced worker retains its
-paths; a successful integration releases them. Conflict resolution transfers
-the fence directly to the resolver without a gap.
+## Exact-candidate gate
 
-## API workflow
+`integration_policy.authorize(candidate, contract=..., current_contracts=...,
+policy=..., checks=..., review=..., leases=..., current_train_sha=...,
+current_source_sha=...)` raises `ValueError` on rejection. On success it returns
+`accepted`, the exact candidate `sha`/`tree`, and `binding=digest(candidate)`.
+The executable fixture in `services/test_integration_policy.py` shows complete
+input records and a disjoint-file semantic regression.
 
-Run from this repository, or use `PYTHONPATH=services` with the short module
-names. The source repo must already contain the integration branch and its
-committed interface/test contract. Keep that integration branch unchecked out;
-the train refuses to advance a ref attached to a worktree.
+The candidate envelope contains `project`, `task`, `attempt`, `source_sha`,
+`train_sha`, `sha`, `tree`, `contract`, `policy`, `lease_owner`, `lease_token`,
+`authors`, `provenance_complete`, and host-observed `changed_paths`. Every receipt
+binds the entire envelope, including authorship and the lease fence. Observe
+both rename endpoints and the final candidate delta; never trust worker paths.
 
-```python
-from services.planner import Planner
-from services.merge_train import MergeTrain
+The policy specifies schema/version, exact `identities`, `check_issuers`,
+`review_issuers` and a pinned `review_config`. An identity records actual `model`,
+`creator`, `provider`, `harness`, and `harness_version`. Include delegated writers
+and resolvers; unknown provenance, forbidden Grok/xAI and unlisted fallbacks fail.
+Reviewer model/creator must differ from every writer, regardless of harness.
 
-planner = Planner("/private/swarm/conductor", "webbob")
-planner.initialize("/private/repos/webbob", "integration/webbob", contract_sha)
+Each required check has exactly one receipt with `check`, `config`, `binding`,
+`passed: true`, trusted `issuer`, `environment` and an `artifact` reference.
+A review supplies `binding`, `config`, trusted `issuer`, effective `identity`,
+`provenance_complete: true` and `approved: true`. Strings or integer truth values
+are not approvals. Missing, duplicated, red, stale or untrusted receipts fail.
 
-# Create an isolated worker worktree/branch from the integration contract first.
-assignment = planner.assign(
-    "cursor-leases", "Implement the agreed path lease interface",
-    "feature", "draft/worker-leases", ["services/leases.py", "services/test_leases.py"],
-    model_vendor="openai",  # Actual underlying Cursor model vendor.
-)
-planner.start(assignment["worker"], assignment["lease"]["token"])
-# Executor works only inside this lease and commits in its private worktree.
-planner.finish(assignment["worker"], assignment["lease"]["token"], full_worker_sha)
+These records are not cryptographic attestations. The adapter authenticates the
+issuer and observes Git/state; the validator enforces the acceptance rules. Run
+checks with the existing runner/CI and reviews with the existing reviewers.
+The host queue performs the ref update and invalidates obsolete candidates.
+Publishing the validator as a required check and invalidating contract/policy
+changes remain explicit prerequisites; no active host adapter is included here.
+No module merges, pushes, rewrites branches, changes PR draft state or deploys.
 
-train = MergeTrain(
-    "/private/swarm/conductor", "webbob",
-    tests=[["python3", "-m", "unittest", "discover", "-s", "services"],
-           ["python3", "-m", "unittest", "discover", "-s", "webchat"]],
-    evals=[["python3", "services/swarm_eval.py"]],
-    reviewer=cross_vendor_review,
-)
-results = train.tick()
-```
+## Validation
 
-`cross_vendor_review(context)` receives the exact rebased candidate SHA,
-integration SHA, original worker SHA, task intent, authors, diff, and candidate
-worktree. It must perform the review and return a receipt like:
-
-```json
-{"llm": "claude", "vendor": "anthropic", "sha": "FULL_REBASED_CANDIDATE_SHA", "approved": true}
-```
-
-The receipt must be for the candidate, not the original worker SHA. The reviewer
-must differ from every contributing author by both model lane and vendor,
-including the original author and any resolvers. Cursor requires an explicit
-underlying vendor. Unknown vendors and Grok/xAI are rejected. Review adapters
-and gate configuration are trusted operator inputs, not files supplied by a worker.
-The receipt protocol validates identity and SHA; it does not authenticate a
-remote reviewer or independently establish review quality.
-
-## Integration and conflicts
-
-Each attempt snapshots the current train tip, verifies the finished branch and
-its lease, checks the worker diff (including both sides of renames) against that
-lease, and rebases a detached disposable worktree onto the tip. The author's
-branch is never rewritten. Tests and evals must both be configured and succeed;
-the strict eval wrapper runs the existing Web Bob parity cases against private
-temporary state and rejects even one failing case. Gate subprocesses receive
-a private `BOB_ROOT`, bounded timeouts, and no shell expansion.
-
-After cross-vendor review, the train checks that the candidate stayed unchanged,
-the worker stayed at the submitted SHA, and the lease still belongs to it. It
-proves the candidate descends from the old train tip, then advances the local ref
-with an atomic `update-ref <new> <expected-old>`. A moved tip bounces the worker;
-the next submission reruns the gates against the new tip. The service never
-pushes, merges a PR, changes draft state, or deploys.
-
-Red tests/evals/review set the original worker to `bounced` with stage, command,
-exit code, and bounded output recorded on the board. The executor calls `start`,
-fixes its branch, and calls `finish` again. Output and ownership tokens stay out
-of the Web Bob projection.
-
-A content conflict sets the worker to `conflict` and atomically queues a
-`resolver_jobs` record on the project board. It contains both diffs from the
-merge base, conflicting paths, original intent, the two SHAs, a new draft branch
-name, and a pinned `codex` conflict-resolution role. Consume it with:
-
-```python
-resolver = planner.claim_resolver(job_id, "codex-resolver-1")
-# Create a private worktree for resolver["branch"]. That branch starts at the
-# original worker SHA. The Codex executor rebases onto the saved integration SHA,
-# resolves conflicts, runs checks, and commits/continues the rebase.
-planner.start(resolver["worker"], resolver["lease"]["token"])
-planner.finish(resolver["worker"], resolver["lease"]["token"], full_resolved_sha)
-train.tick()  # Repeat tests, evals, and a review independent of both authors.
-```
-
-Resolver claiming is retryable across interruption of branch creation, lease
-transfer, and board writes. The train also reconciles an interrupted green ref
-advance or lease release on its next tick. An orphaned ordinary assignment lease
-after a storage failure remains held for inspection; it is never stolen.
-
-## Roles and status
-
-`planner.route` chooses Codex for architecture, hard fixes, conflicts, and deploy
-roles; Claude for long-context design, reply/UX quality, careful refactors, and
-final review; Cursor for features and tests; Gemini for audits, gap analysis,
-planning, and second review; MiniMax for volume reviews, test cases, eval grading,
-and push critique. Review fallback is cross-vendor. Cheap models cannot become
-deployers or conflict resolvers; routine features do not fall back to expensive
-lanes. Deploy is a routing designation only: these services contain no deploy action.
-
-Each worker record includes `worker`, `llm`, `vendor`, `lease`, `task`, `role`,
-`branch`, `sha`, `status`, and `updated_at`. Status moves through
-`assigned → running → finished → integrating → merged`, or to `bounced` or
-`conflict`. `integrated_sha` records the rebased commit separately from the
-original worker SHA. Resolver jobs have `queued/claiming/claimed/resolved` states.
-
-Web Bob reads boards directly in live status snapshots, the tab overview,
-`/api/status`, the conductor API, and conversational status including “Who is
-working on what?”.
-It projects only assignment fields and lease paths, never lease tokens, diffs,
-gate output, or private repository paths. Saved assignment states do not inflate
-live worker counts. Missing boards are empty; damaged boards are reported as
-unavailable. Assignments older than five minutes are labeled stale.
-
-## One-shot CLI and validation
-
-`python3 services/leases.py --conductor PATH --project ID claim OWNER PATH...`
-claims paths; `release OWNER TOKEN` releases them; `list` inspects them.
-
-`python3 services/planner.py --conductor PATH --project ID ACTION --spec FILE`
-accepts `init`, `assign`, `start`, `finish`, `claim-resolver`, or `board`.
-`FILE` is a JSON object with the API method's keyword arguments; `board` needs no
-spec. The CLI is an operator interface and may include private ownership tokens.
-
-`python3 services/merge_train.py --conductor PATH --project ID --config FILE`
-processes one tick; `--worker ID` limits it to one worker. The trusted config has
-`tests` and `evals` arrays of argv arrays, `timeout` seconds, and `review_command`
-as an argv array. The adapter appends a context JSON file path, runs in the
-candidate worktree, and expects the receipt JSON on stdout. A failed/conflicted
-tick exits nonzero. Nothing installs or schedules the CLI automatically.
-
-```sh
-python3 -m unittest discover -s services -p 'test_*.py'
-python3 -m unittest discover -s webchat -p 'test_*.py'
-python3 services/swarm_eval.py
-git diff --check
-```
-
-The tests use temporary repositories and mocked model boundaries. They exercise
-real Git rebases and fast-forwards, conflict-to-resolver-to-green flow, red gates,
-ownership and ref races, process-interruption recovery, and read-only Web Bob status.
+Run the existing service and webchat unittest discovery suites. New tests cover
+cross-process lease races, rollback after a killed transaction, restart recovery,
+fence/expiry rejection, contract/dependency changes, exact evidence, independent
+review and semantic acceptance. Reuse `webchat/bob_parity_eval.py:run_eval` for an
+offline fixture and require all cases to pass; the removed wrapper added no suite.
+All tests and parity fixtures must use private state with no live model calls.
+On macOS, keep temporary repositories outside the tested source tree so the real
+sandbox write boundary can distinguish allowed workspaces from protected code.

@@ -729,12 +729,8 @@ class Chat(TaskDispatch):
                 modified = os.fstat(handle.fileno()).st_mtime
         except OSError:
             raise RequestError(404, "This report is not available yet.") from None
-        report = {"text": self.redact(value[:200_000]), "truncated": len(value) > 200_000,
-                  "modified_at": modified, "read_at": time.time()}
-        if relative == "conductor/STATUS.md":
-            from swarm_status import read_boards
-            report["project_boards"] = json.loads(self.redact(json.dumps(read_boards(self.root))))
-        return report
+        return {"text": self.redact(value[:200_000]), "truncated": len(value) > 200_000,
+                "modified_at": modified, "read_at": time.time()}
 
     def handback(self):
         return public_digest(self.root, self.redact)

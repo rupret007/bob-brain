@@ -1,11 +1,13 @@
-"""Filesystem ownership tests, including independent-process claim races."""
+"""Real SQLite races, restart recovery and stale authority rejection."""
 import concurrent.futures
-import json
+import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from leases import LeaseConflict, LeaseStore
 
@@ -17,79 +19,112 @@ class LeaseTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.store = LeaseStore(self.root, "webbob", self.root)
 
-    def test_claim_is_persistent_idempotent_and_explicitly_released(self):
-        row = self.store.claim("cursor-one", ["./webchat//app.py", "services/"])
-        self.assertEqual(row["paths"], ["services", "webchat/app.py"])
-        self.assertEqual(row, LeaseStore(self.root, "webbob").claim("cursor-one", row["paths"]))
-        self.assertFalse(self.store.release("another", row["token"]))
-        with self.assertRaises(ValueError):
-            self.store.release("cursor-one", "wrong-token")
-        self.assertEqual(self.store.list(), [row])
-        self.assertTrue(self.store.release("cursor-one", row["token"]))
-        self.assertFalse(self.store.release("cursor-one", row["token"]))
-        new = self.store.claim("cursor-one", row["paths"])
-        with self.assertRaises(ValueError):
-            self.store.release("cursor-one", row["token"])
-        self.assertNotEqual(new["token"], row["token"])
+    def test_reload_renew_release_and_reacquire_fence(self):
+        first = self.store.claim("one", ["./webchat//app.py", "services/"])
+        self.assertEqual(first["paths"], ["services", "webchat/app.py"])
+        again = LeaseStore(self.root, "webbob", self.root)
+        self.assertEqual(again.list(), [first])
+        with patch("leases.time.time", return_value=first["heartbeat"] + 1):
+            again.renew("one", first["token"], ttl=600)
+        self.assertGreater(again.list()[0]["expires"], first["expires"])
+        again.release("one", first["token"])
+        second = again.claim("one", first["paths"])
+        self.assertGreater(second["generation"], first["generation"])
+        self.assertNotEqual(second["token"], first["token"])
+        for method in (again.release, again.renew):
+            with self.assertRaises(ValueError):
+                method("one", first["token"])
+        with self.assertRaises(ValueError), again.guard("one", first["token"]):
+            pass
 
-    def test_ancestor_descendant_exact_root_and_case_alias_overlap(self):
+    def test_overlap_aliases_and_atomic_multiscope_acquisition(self):
         for owned, proposed in [("webchat", "webchat/app.py"), ("webchat/app.py", "webchat"),
                                 ("webchat/app.py", "WEBCHAT/APP.py"), (".", "anywhere"),
                                 ("anywhere", "."), ("café", "cafe\u0301/file")]:
             with self.subTest(owned=owned, proposed=proposed):
                 row = self.store.claim("one", [owned])
                 with self.assertRaises(LeaseConflict):
-                    self.store.claim("two", [proposed])
+                    self.store.claim("two", ["new.py", proposed])
+                self.assertEqual(len(self.store.list()), 1)
                 self.store.release("one", row["token"])
-
-    def test_prefix_siblings_are_parallel_and_multifile_claim_is_all_or_nothing(self):
-        self.store.claim("one", ["webchat/app.py"])
-        self.store.claim("two", ["webchat/app.py.bak", "webchat2"])
+        self.store.claim("one", ["code.py"], shared_resources=["test-db"])
         with self.assertRaises(LeaseConflict):
-            self.store.claim("three", ["new.py", "webchat/app.py"])
-        self.assertEqual(len(self.store.list()), 2)
-        self.store.claim("four", ["new.py"])
-        LeaseStore(self.root, "another-project").claim("one", ["webchat/app.py"])
+            self.store.claim("two", ["code.py.bak"], shared_resources=["TEST-DB"])
+        self.store.claim("two", ["code.py.bak"], shared_resources=["isolated-db"])
 
-    def test_invalid_and_symlink_paths_never_claim(self):
+    def test_invalid_paths_symlinks_and_ttls_fail_closed(self):
         (self.root / "alias").symlink_to(self.root, target_is_directory=True)
-        for paths in [[], "app.py", ["../a"], ["/tmp/a"], ["a/../b"], ["*.py"], [".git/config"],
+        for paths in [[], "code.py", ["../a"], ["/tmp/a"], ["*.py"], [".git/config"],
                       ["a\\b"], ["a\nfile"], ["alias/file"], [""]]:
             with self.subTest(paths=paths), self.assertRaises(ValueError):
                 self.store.claim("one", paths)
-        for project in ("..", "../webbob", "/root", ""):
-            with self.assertRaises(ValueError):
-                LeaseStore(self.root, project)
+        for ttl in (0, -1, 3601, float("nan"), float("inf"), True):
+            with self.subTest(ttl=ttl), self.assertRaises(ValueError):
+                self.store.claim("one", ["code"], ttl=ttl)
         self.assertEqual(self.store.list(), [])
 
-    def test_corruption_fails_closed(self):
-        self.store.path.parent.mkdir(parents=True)
-        for text in ("{broken", "[]", '{"version":1,"project":"webbob","leases":[{}]}'):
-            self.store.path.write_text(text)
+    def test_expired_worker_cannot_renew_submit_release_or_steal_reassignment(self):
+        first = self.store.claim("one", ["code"], ttl=1)
+        with patch("leases.time.time", return_value=first["expires"]):
+            for method in (self.store.renew, self.store.release):
+                with self.assertRaises(ValueError):
+                    method("one", first["token"])
+            with self.assertRaises(ValueError), self.store.guard("one", first["token"]):
+                pass
+            with self.assertRaises(LeaseConflict):
+                self.store.claim("two", ["code"])
             with self.assertRaises(ValueError):
-                self.store.claim("one", ["code"])
-            self.assertEqual(self.store.path.read_text(), text)
+                self.store.recover("one", first["token"], receipt="")
+            self.store.recover("one", first["token"], receipt="runner/quarantine-one")
+            restarted = LeaseStore(self.root, "webbob", self.root)
+            restarted.recover("one", first["token"], receipt="runner/quarantine-one")
+            second = restarted.claim("one", ["code"])
+            with self.assertRaises(ValueError), restarted.guard("one", first["token"]):
+                pass
+            self.assertGreater(second["generation"], first["generation"])
+        with sqlite3.connect(self.store.path) as db:
+            self.assertEqual(db.execute("SELECT recovery_receipt FROM leases WHERE token=?", (first["token"],)).fetchone()[0],
+                             "runner/quarantine-one")
 
-    def test_transfer_invalidates_author_and_preserves_paths(self):
-        row = self.store.claim("author", ["code"])
-        resolver = self.store.transfer("author", row["token"], "resolver")
-        self.assertEqual(resolver["paths"], row["paths"])
-        self.assertNotEqual(resolver["token"], row["token"])
-        self.assertFalse(self.store.release("author", row["token"]))
-        with self.assertRaises(LeaseConflict):
-            self.store.claim("third", ["code"])
+    def test_guard_rechecks_expiry_and_renewal_has_absolute_deadline(self):
+        first = self.store.claim("one", ["code"])
+        with patch("leases.time.time", side_effect=[first["heartbeat"], first["expires"]]):
+            with self.assertRaises(ValueError), self.store.guard("one", first["token"]):
+                pass
+        with patch("leases.time.time", return_value=first["heartbeat"]):
+            with self.store._transaction() as db:
+                db.execute("UPDATE leases SET deadline=?", (first["heartbeat"] + 10,))
+            self.store.renew("one", first["token"], ttl=3600)
+            self.assertEqual(self.store.list()[0]["expires"], first["heartbeat"] + 10)
 
-    def test_independent_processes_cannot_both_claim_overlapping_paths(self):
-        script = Path(__file__).with_name("leases.py")
+    def test_independent_processes_grant_one_owner_and_crash_rolls_back(self):
+        script = ("from leases import LeaseStore; import sys; "
+                  "LeaseStore(sys.argv[1], 'webbob').claim(sys.argv[2], ['shared'])")
+        environment = dict(os.environ, PYTHONPATH=str(Path(__file__).parent))
         def claim(index):
-            return subprocess.run([sys.executable, str(script), "--conductor", str(self.root),
-                "--project", "webbob", "claim", "worker-" + str(index), "shared/file.py"],
-                capture_output=True, text=True, timeout=10)
+            return subprocess.run([sys.executable, "-c", script, str(self.root), "worker-" + str(index)],
+                                  env=environment, capture_output=True, timeout=15).returncode
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-            results = list(pool.map(claim, range(8)))
-        self.assertEqual(sum(r.returncode == 0 for r in results), 1)
-        self.assertEqual(len(json.loads(self.store.path.read_text())["leases"]), 1)
+            self.assertEqual(list(pool.map(claim, range(8))).count(0), 1)
+        first = self.store.list()[0]
+        script = ("import sqlite3,os,sys; db=sqlite3.connect(sys.argv[1]); "
+                  "db.execute('BEGIN IMMEDIATE'); db.execute(\"UPDATE leases SET state='released'\"); os._exit(9)")
+        result = subprocess.run([sys.executable, "-c", script, str(self.store.path)], capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 9)
+        self.assertEqual(LeaseStore(self.root, "webbob").list(), [first])
 
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_corrupt_unsupported_and_legacy_state_is_never_replaced(self):
+        self.store.path.write_bytes(b"not a SQLite database")
+        with self.assertRaises(sqlite3.DatabaseError):
+            LeaseStore(self.root, "webbob")
+        self.assertEqual(self.store.path.read_bytes(), b"not a SQLite database")
+        legacy = self.store.path.with_name("legacy.json")
+        legacy.write_text('{"leases": []}')
+        with self.assertRaises(ValueError):
+            LeaseStore(self.root, "legacy")
+        self.assertFalse(legacy.with_suffix(".sqlite3").exists())
+        future = LeaseStore(self.root, "future")
+        with sqlite3.connect(future.path) as db:
+            db.execute("PRAGMA user_version=99")
+        with self.assertRaises(ValueError):
+            LeaseStore(self.root, "future")

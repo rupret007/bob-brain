@@ -9,7 +9,6 @@ from pathlib import Path
 
 from live_status_snapshot import observe_work
 from jobs_view import is_drill, labels
-from swarm_status import read_boards
 
 
 def recorded_usage(root: Path, name: str, *, now: float) -> dict:
@@ -73,7 +72,6 @@ def overview(chat, conversation_id=None) -> dict:
         automation = {}
     return dict(
         captured_at=captured_at,
-        project_boards=read_boards(chat.root, now=now),
         inspection=observed["inspection"],
         work=[{**row, "title": labels(observed["records"].get(row.get("job_id"), {}), row)["task"]}
               for row in work],

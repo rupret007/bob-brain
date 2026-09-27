@@ -1,3 +1,7 @@
+> Historical report for `c027334`. Superseded by the research-based trim;
+> see [current architecture](../docs/MULTI-LLM-SWARM-ARCH-0927.md).
+> The planner, local train and duplicate board described below were removed.
+
 # Swarm architecture v1 review — 2026-09-27
 
 Implemented in `../workspaces/swarm-arch-1730`, branch `draft/swarm-arch-1730`,

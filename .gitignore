@@ -35,4 +35,4 @@ webchat/uploads/
 webchat/node_modules/
 state/task-runs/
 state/dispatch-code-root
-state/swarm-runs/
+leases/*.sqlite3*
