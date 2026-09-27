@@ -62,8 +62,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=("run", "resume", "verify"))
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
+    parser.add_argument("--receipt", type=Path, help="Select a preserved private receipt without replacing the current run")
     args = parser.parse_args()
-    path = args.root / "conductor/state/webbob-maxmode-proof-0927.json"
+    path = args.receipt or args.root / "conductor/state/webbob-maxmode-proof-0927.json"
     client = Client(args.root)
     if args.mode == "run":
         if path.exists():
