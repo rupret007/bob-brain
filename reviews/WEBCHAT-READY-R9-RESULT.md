@@ -3,8 +3,8 @@
 **Branch:** `draft/webchat-failover-20260927`  
 **R11 base (pre-R9 refresh):** `704c3291325e37a1e0717f869039d1eaf228bf82` · **Pre-commit HEAD:** `eed24ce55fdbaf884b150a140caebe0dc99bd0f2`  
 **Design:** `conductor/reviews/WEBCHAT-READY-R9-DESIGN.md` + `conductor/reviews/ALIGNMENT-DESIGN.md`  
-**Council (no Grok):** `conductor/reviews/webchat-ready-r9-council/20260927-033955-161734.md`  
-**Vote:** **Ship** isolated overlay after P0 fixes (inbox blocked on overlay; fingerprint includes state tree; ready-drill handback noise skipped; purge outside drill; drills opt-in via `run.sh`). Codex HOLD resolved by council synthesizer + verification re-run.  
+**Council (no Grok):** `conductor/reviews/webchat-ready-r9-council/20260927-034102-289229.md`  
+**Vote:** Initial **DEFER** (Codex/MiniMax) on isolation proof + 75% gate → **Ship** after builder applied synthesizer plan: fingerprint before drill (no purge in runner), `purge_drill_open_asks` at server startup only, drills opt-in in `run.sh` / `start.py` enables for mini, ≥0.75 layout gate, gear Settings icon, 44pt message menu.  
 **Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
 
 ## Changelog (time-to-value on phone)
@@ -18,7 +18,7 @@ Isolated handback drills no longer touch production handback or STATE; Jobs tab 
 | Reliability | 9.8 | **9.85** · 65 + 23 + 39 tests OK; P0 fake-progress guard + drill isolation |
 | Speed | 9.7 | **9.7** · p50 **0.958s** (`webchat/evidence/ready-drill.json`) |
 | Mobile UX | 9.7 | **9.75** · offline banner + composer contrast |
-| **iPhone design** | 9.7 | **9.8** · `evidence/iphone-r9/` 390×844 + 430×932 (0.725 / 0.751) |
+| **iPhone design** | 9.7 | **9.9** · `evidence/iphone-r9/` 390×844 + 430×932 (0.759 / 0.781); council screenshot review |
 | Failover | 9.95 | **9.98** · isolated overlay; handback **×2 runs ×2** PASS; `drill0001` marker |
 | Safety | 9.7 | **9.8** · overlay inbox block; drills default off |
 | Bob parity | 9.8 | **9.8** · **22/22** `bob_parity_eval.py` |
@@ -63,7 +63,7 @@ Isolated handback drills no longer touch production handback or STATE; Jobs tab 
 
 ## Research-first (sources)
 
-See `WEBCHAT-READY-R9-DESIGN.md` — Temporal/LangGraph handoff patterns; Apple HIG; Jeff ADDED 03:04 / 03:17 P0.
+See `WEBCHAT-IPHONE-R9-DESIGN.md` (borrow/reject table) + `ALIGNMENT-DESIGN.md`; Apple HIG; Jeff ADDED 02:11 / 03:17 P0.
 
 ## PASS/FAIL
 
@@ -75,7 +75,7 @@ See `WEBCHAT-READY-R9-DESIGN.md` — Temporal/LangGraph handoff patterns; Apple 
 | 22-task Bob parity eval | **PASS** | 22/22 |
 | 10-message drill | **PASS** | p50 0.958s |
 | Handback drill ×2 (×2 runs) | **PASS** | `WEBCHAT_HANDBACK_TAG=r9` twice |
-| Council (Gemini+MiniMax+Codex) | **PASS** | `20260927-033955-161734.md` (Claude lane busy) |
+| Council (Gemini+MiniMax+Claude+Codex) | **PASS** | `20260927-034102-289229.md` (Cursor propose skipped: lane lock) |
 | iPhone screenshots | **PASS** | `webchat/evidence/iphone-r9/` |
 | Server restart | **PASS** | `127.0.0.1:8787` |
 
@@ -101,7 +101,7 @@ lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
 | Codex | Council propose + synthesize (P0 overlay/inbox) |
 | Gemini | Council propose + critique (ship after fixes) |
 | MiniMax | Council propose + critique |
-| Claude | Short critique (lane busy) |
+| Claude | Short council critique |
 
 ## SHAs
 

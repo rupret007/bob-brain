@@ -1,10 +1,10 @@
 {
-  "started_at": 1790498520.365197,
+  "started_at": 1790498589.673128,
   "rounds": [
     {
       "ledger": {
         "tag": "r9-1",
-        "fixture_id": "cd7435eb-3e55-42a1-b575-c79d81a70341",
+        "fixture_id": "9b2e0c3c-d752-4fb5-b95b-3bd1b2deff7b",
         "ledger_ok": true,
         "bob_pickup_ok": true,
         "summary_chars": 957
@@ -13,12 +13,12 @@
         "tag": "r9-1",
         "status": "done",
         "provider": "state",
-        "elapsed_seconds": 0.058,
+        "elapsed_seconds": 0.051,
         "mentions_running": true,
         "snippet": "Running: handback drill screen `drill-r9-1`",
         "live_ok": true
       },
-      "fixture_id": "cd7435eb-3e55-42a1-b575-c79d81a70341",
+      "fixture_id": "9b2e0c3c-d752-4fb5-b95b-3bd1b2deff7b",
       "reverse_handback_ok": true,
       "events_ok": true,
       "pass": true
@@ -26,7 +26,7 @@
     {
       "ledger": {
         "tag": "r9-2",
-        "fixture_id": "e3af711b-ab4e-40b9-9070-fcc396a6a506",
+        "fixture_id": "890433d1-496a-41d4-87a8-5584ae3a9528",
         "ledger_ok": true,
         "bob_pickup_ok": true,
         "summary_chars": 957
@@ -35,12 +35,12 @@
         "tag": "r9-2",
         "status": "done",
         "provider": "state",
-        "elapsed_seconds": 0.062,
+        "elapsed_seconds": 0.05,
         "mentions_running": true,
         "snippet": "Running: handback drill screen `drill-r9-2`",
         "live_ok": true
       },
-      "fixture_id": "e3af711b-ab4e-40b9-9070-fcc396a6a506",
+      "fixture_id": "890433d1-496a-41d4-87a8-5584ae3a9528",
       "reverse_handback_ok": true,
       "events_ok": true,
       "pass": true
@@ -48,7 +48,7 @@
   ],
   "isolated": true,
   "prod_unchanged": true,
-  "finished_at": 1790498520.7521012,
+  "finished_at": 1790498590.040297,
   "result": "PASS",
   "drill_commit_marker": "drill0001"
 }

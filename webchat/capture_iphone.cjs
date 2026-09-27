@@ -50,7 +50,7 @@ async function box(page, selector) {
     await context.close();
   }
   await browser.close();
-  const ok = layout.every((row) => row.messages_ratio >= 0.7);
+  const ok = layout.every((row) => row.messages_ratio >= 0.75);
   fs.writeFileSync(path.join(evidence, "layout-metrics.json"), JSON.stringify({ ok, layout }, null, 2) + "\n");
   console.log(JSON.stringify({ ok, folder: evidence, layout }));
   if (!ok) process.exitCode = 1;

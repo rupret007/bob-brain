@@ -115,6 +115,10 @@ class Chat:
         self.state = folder / "sessions"
         self.state.mkdir(mode=0o700, exist_ok=True)
         self.state.chmod(0o700)
+        try:
+            state_ledger.purge_drill_open_asks(self.root)
+        except OSError:
+            pass
         self.lock = threading.RLock()
         self.sessions, self.conversations = {}, {}
         self.overlay_roots: dict[str, Path] = {}
