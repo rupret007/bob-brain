@@ -57,6 +57,12 @@ def redact(text):
                   "[secret removed]", text)
 
 
+def blocked_answer(answer):
+    markers = re.findall(r"(?im)^\s*(?:```\s*)?(?:#{1,6}\s*)?(?:\*\*)?BLOCKER\s*:\s*([^\n]*)", answer)
+    return any(not re.match(r"(?i)(?:none\b|no blockers?\b|not blocked\b)", text.strip(" *\t"))
+               for text in markers)
+
+
 def execute(identifier, token):
     row = task_queue.tasks(ROOT).get(identifier)
     if not row or row.get("claim_token") != token or row["status"] not in task_queue.ACTIVE:
@@ -123,7 +129,7 @@ def execute(identifier, token):
                                 timeout=90 if row["kind"] == "artifact" else 1800 if coding else 240,
                                 purpose="small-file" if row["kind"] == "artifact" else "small-review" if row["worker"] == "claude" else "webbob-" + identifier,
                                 locked=True)).strip()
-            if not answer or re.search(r"(?im)^\s*(?:```\s*)?(?:#{1,6}\s*)?(?:\*\*)?BLOCKER\s*:", answer):
+            if not answer or blocked_answer(answer):
                 raise RuntimeError(answer[:1500] or "Worker returned an empty answer")
             if row["kind"] == "artifact":
                 if target.is_symlink() or target.read_text().rstrip("\n") != contents:

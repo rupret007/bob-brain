@@ -188,7 +188,7 @@ class DispatchTests(unittest.TestCase):
             with self.assertRaises(BlockingIOError):
                 with state.lock("lane-gemini", blocking=False):
                     pass
-            return "The evidence shows a missing consumer; add a durable result outbox."
+            return "**BLOCKER: none — completed.**\nThe evidence shows a missing consumer; add a durable result outbox."
         with patch.object(dispatch_worker, "prepare_task", return_value=self.root), patch.object(dispatch_worker, "ask", side_effect=answer):
             self.assertEqual(dispatch_worker.execute(row["id"], row["claim_token"]), 0)
         result = queue.tasks(self.root)[row["id"]]
@@ -196,6 +196,13 @@ class DispatchTests(unittest.TestCase):
         self.assertLessEqual(result["claimed_at"], result["started_at"])
         self.assertLessEqual(result["started_at"], result["finished_at"])
         self.assertTrue((self.core / "state/task-runs" / row["id"] / "RESULT.md").exists())
+
+    def test_blocker_none_is_not_a_provider_failure(self):
+        for text in ("BLOCKER: none", "**BLOCKER:** no blockers", "## BLOCKER: not blocked"):
+            self.assertFalse(dispatch_worker.blocked_answer(text))
+        for text in ("## BLOCKER: Ask mode", "Progress\n**BLOCKER:** permission denied",
+                     "BLOCKER: none\n## BLOCKER: cannot read the requested file"):
+            self.assertTrue(dispatch_worker.blocked_answer(text))
 
     def test_small_file_worker_must_actually_write_before_success(self):
         target = Path('/tmp') / ('webbob-unit-' + __import__('uuid').uuid4().hex + '.txt')
