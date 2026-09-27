@@ -1,5 +1,9 @@
 # Mini conductor
 
+Opt-in same-project swarm services (`planner.py`, `leases.py`, `merge_train.py`)
+are documented in [SWARM-V1.md](../docs/SWARM-V1.md). They use explicit state
+roots and a separate project board; existing loops and deployment stay unchanged.
+
 Start or recover with `bash conductor/services/start-all.sh`. `launchd/install.sh`
 installs and loads bob-services (5 minute guard) and bob-watchdog (3 minute guard)
 for this user's login. Reboot startup occurs after login; no login settings are

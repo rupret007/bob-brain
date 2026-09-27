@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from worker_activity import collect_work, process_table
+from swarm_status import read_boards
 
 LANE_NAMES = ("codex", "claude", "cursor", "gemini", "minimax", "mini")
 SERVICE_INTERVALS = {"job-runner": 60, "reviewer": 300, "dashboard-updater": 300, "watchdog": 180}
@@ -439,6 +440,7 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
 
     return {
         "captured_at": _stamp(now),
+        "project_boards": read_boards(root, now=now),
         "live_ops_source": live_ops_meta.get("source"),
         "live_ops_stale": bool(live_ops_meta.get("stale")),
         "now_line": now_line,
@@ -474,6 +476,8 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
             "snapshot in short plain English: say what is moving, the worker/model, and elapsed time from work. "
             "Live process observations in work include lane screens and workers outside the queue. "
             "Running means a live worker process, not proof of forward progress or completion. "
+            "project_boards lists saved project assignments, leases, branches and SHAs; it does not prove liveness. "
+            "Report stale assignment updates as stale, not as fresh progress. "
             "An unverified screen has no confirmed worker; a claimed entry is only a queue record. "
             "Missing model or elapsed time is unknown; do not invent it. "
             "Hide internal IDs, screen names, history and raw fields unless Jeff asks for those details. Never print None. "
