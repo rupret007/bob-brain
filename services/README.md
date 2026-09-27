@@ -7,7 +7,7 @@ changed. `loop.sh` and old queue entrypoints only defer to these services.
 
 | Service | Interval | Responsibility |
 | --- | --- | --- |
-| job-runner | 60s | Cursor login check, recover, harvest, fill idle lanes |
+| job-runner | 60s | Consume state/queue.jsonl, assign lanes, recover, retry/fallback, promote |
 | reviewer | 300s | Short Claude + Cursor/MiniMax/Gemini critiques with cached receipts |
 | dashboard-updater | 300s | Local dashboard.json; optional draft branch publication |
 | watchdog | 180s | Heartbeats, verified restarts, three attempts/hour cap |
@@ -18,18 +18,68 @@ loop process as well as its screen; macOS can orphan the shell on screen exit.
 `MAINTENANCE` pauses automatic entrypoints while an operator changes the core.
 Service logs retain a bounded tail backup once they exceed 5 MiB.
 
-`jobs.jsonl` is an append-only/fsynced journal. States are queued, launched,
-running, blocked, harvested. Only verified results become harvested. BLOCKERs
-remain unfinished, retry with backoff and escalate after three attempts. Legacy
+`state/queue.jsonl` is the durable request and promotion journal; `jobs.jsonl`
+records executions. Both append complete rows under locks and fsync each write.
+Only verified results become harvested. BLOCKERs remain unfinished. Each provider
+gets an initial attempt and one retry with backoff before moving to the next
+eligible provider. Exhausted fallback chains remain blocked. Legacy
 blocked closeouts are reopened as blocked; old shell scripts are never replayed.
 A completed result arriving later can still be harvested idempotently.
 
-The scheduler reads `services/backlog.json`, `services/projects.json`, and READY
-rows in `../next-prompts/INDEX.md` (optional adjacent JSON specs). It prioritizes
-WebJam > StoryBoard > AdoptIQ > shelf, with explicit #159/#160 CI fixes before UX.
+The scheduler consumes the durable queue even when INDEX.md is absent. It also
+imports `services/backlog.json`, `services/projects.json`, and READY rows in
+`../next-prompts/INDEX.md` (optional adjacent JSON specs), including WebBob requests.
+Lower numeric priority runs first, with FIFO ordering at equal priority.
 Cursor is preferred for coding and is also a council/reviewer member. Codex and Cursor own coding and orchestration. Claude only provides short council critiques and small reviews: one call at a time, bounded context, 120s maximum, and a durable one-hour rate-limit cooldown. The five
-shared lane leases permit one call per lane across every entrypoint. The scheduler
-allows five jobs, one WebJam coder and separate Git worktrees under ../workspaces/.
+shared model lane leases permit one call per lane across every entrypoint. A sixth
+`mini` lane runs explicit local test commands without a model. Multiple coders in
+the same repo, including WebJam, use separate worktrees and draft branches with
+non-overlapping file scopes. Overlapping scopes serialize. Missing scope means
+the whole repo; an external WebJam worker without scope still holds that repo.
+
+Queue producers use `queue_store.enqueue(spec)` or
+`BOB_ROOT=/path/to/root python3 conductor/services/queue_store.py enqueue request.json`.
+`list` prints the current queue. The minimal request has `id` (stable producer id),
+`goal`, `repo` (local Git checkout), `role`, and `priority`. Roles are `build`,
+`review`, `research`, `critique`, `test`, and `council`. Example:
+
+```json
+{
+  "id": "scheduler-fix",
+  "goal": "Fix the scheduler regression and commit/push the assigned draft branch",
+  "repo": "/path/to/repo",
+  "role": "build",
+  "priority": 1,
+  "scope": ["services/"],
+  "test_commands": [["python3", "-m", "unittest", "discover", "-s", "services"]]
+}
+```
+
+`scope` accepts literal relative file/directory paths, not globs. Build and test
+jobs require explicit `test_commands` argv lists before execution. Producers split
+large goals by supplying `parts`, an array of child specifications with their own
+goals and scopes. The scheduler expands these idempotently; children inherit repo,
+role, priority, scope, base_ref and test commands unless overridden. It does not
+guess file ownership or test commands from prose. `depends_on` optionally lists
+request ids that must reach completed/Jeff-draft before dispatch.
+
+Workers pulse heartbeat every 15 seconds. The 90-second stale threshold and
+30-second launch grace preserve reservations through screen startup/restart.
+Stale workers are stopped only after process identity verification; an unverified
+live worker keeps its lane. Tokens reject stale attempt updates. Scheduling pauses
+under MAINTENANCE or STOP-WEBBOB. Backoff and provider attempts survive restarts.
+
+Verified work promotes to a Claude review (with coding-lane fallback), then two
+independent council jobs (Gemini/MiniMax preferred, coding-lane fallback), then
+`jeff-draft`. Each review/council receipt must contain a single `VERDICT: PASS`;
+missing/negative verdicts do not advance. This gate schedules independent council
+assessments through the shared queue; the separate interactive `council.py` workflow
+remains available. Split parents reach Jeff-draft only after every part does.
+Build promotion requires tests at the exact result SHA plus Git conflict checks
+across sibling build drafts. Conflict checks compute object trees and never merge
+branches. Result files are hashed after verification. Promotion does not merge,
+undraft, or publish a final build. All queue stages/results appear on the runtime
+lane board in STATUS.md and in `snapshot()["lane_board"]`.
 
 Every job has an explicit repo, worktree, draft/ branch, kind, prompt and lane.
 Existing PR targets are checked as OPEN + draft before execution. Push hooks allow
@@ -70,3 +120,9 @@ flags were checked locally and against the [official CLI reference](https://lear
 Validation: `python3 -m unittest discover -s services -p 'test_*.py'`,
 `python3 bootstrap.py check`, and the live smoke harness `python3 services/smoke.py`
 with keys.env exported. Smoke evidence is in reviews/SMOKE.md.
+
+Scheduler-only screen drill: `python3 services/scheduler_smoke.py`. It queues three
+split goals, occupies all six lanes, and exercises branch tests and promotion to
+Jeff-draft using temporary Git repos and real screen workers. Provider replies are
+explicit fixture adapters; no paid/network provider calls occur. Evidence can be
+written with `--evidence state/queue-proof.md`.

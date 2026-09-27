@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic five-lane scheduler, durable blockers, and legacy migration."""
+"""Worker execution journal, durable blockers, and legacy queue migration."""
 from __future__ import annotations
 
 import hashlib
@@ -39,8 +39,9 @@ def closeout(job_dir):
 def blocked(record, reason):
     attempt = record.get("attempts", 0)
     job_event(record["job_id"], "blocked", outcome="blocked", recovery=reason,
-              retry_at=time.time() + min(3600, 60 * 2 ** attempt), escalated=attempt >= MAX_ATTEMPTS)
-    if attempt >= MAX_ATTEMPTS or record.get("legacy"):
+              retry_at=time.time() + min(3600, 60 * 2 ** attempt),
+              escalated=attempt >= record.get("max_attempts", MAX_ATTEMPTS))
+    if attempt >= record.get("max_attempts", MAX_ATTEMPTS) or record.get("legacy"):
         alert("job-" + record["job_id"], record["job_id"] + " blocked: " + reason)
 
 
@@ -102,11 +103,19 @@ def recover(refill=None):
         folder = Path(record.get("job_dir", ROOT / record["job_id"]))
         result = closeout(folder)
         live = record["job_id"] in sessions
+        if record.get("queue_id") and record["state"] in ("launched", "running"):
+            from scheduler import recover_worker
+            if recover_worker(record, live):
+                continue
         if live:
             if record["state"] in ("queued", "launched"):
                 job_event(record["job_id"], "running", recovery="live worker adopted after restart")
             continue  # do not harvest files an active writer may still be changing
         if result:
+            if record.get("queue_id") and record.get("verified") and hashlib.sha256(result.read_bytes()).hexdigest() != record.get("verified_sha256"):
+                job_event(record["job_id"], "blocked", invalidate_result=True, verified=False,
+                          outcome="blocked", recovery="result changed after worker verification", retry_at=time.time() + 300)
+                continue
             if record.get("managed") and re.search(r"(?im)^\s*(?:\*\*)?BLOCKER\s*:", result.read_text()):
                 if record["state"] != "blocked" or record.get("verified"):
                     job_event(record["job_id"], "blocked", invalidate_result=True, verified=False,
@@ -146,9 +155,7 @@ def queue_specs():
             parts = [p.strip().strip("`") for p in line.split("|")]
             if len(parts) < 8 or not parts[1].isdigit() or parts[5] != "READY":
                 continue
-            project = next((p for p in PROJECTS if parts[3].lower().startswith(p.lower())), None)
-            if not project:
-                continue
+            project = next((p for p in PROJECTS if parts[3].lower().startswith(p.lower())), parts[3])
             # Dedicated per-PR jobs supersede the old shared-worktree CI prompt.
             if parts[2] == "20-webjam-ci-fix-choice-helper.md":
                 continue
@@ -160,7 +167,7 @@ def queue_specs():
                              kind="non-coding" if "non-coding" in parts[4] else "coding",
                              priority=int(parts[1]) + 20, prompt=prompt.read_text(), **sidecar))
     # Unknown legacy work is retained for escalation, not silently relaunched.
-    return sorted(configured + rows, key=lambda r: (PROJECTS.index(r["project"]), r.get("priority", 99), r["id"]))
+    return sorted(configured + rows, key=lambda r: (PROJECTS.index(r["project"]) if r["project"] in PROJECTS else len(PROJECTS), r.get("priority", 99), r["id"]))
 
 
 def evidence(spec, repo):
@@ -179,17 +186,18 @@ def evidence(spec, repo):
 
 def create_record(spec, lane):
     projects = read_json(CONDUCTOR / "services/projects.json", {})
-    project = projects[spec["project"]]
+    project = projects.get(spec.get("project"), {})
     job_id = lane + "-" + spec["id"][:48] + "-" + uuid.uuid4().hex[:8]
     folder = ROOT / "jobs" / job_id
     folder.mkdir(parents=True)
-    repo = str(Path(spec.get("repo", project["repo"])).expanduser().resolve())
+    repo = str(Path(spec.get("repo") or project.get("repo") or CONDUCTOR).expanduser().resolve())
     record = dict(spec, job_id=job_id, spec_id=spec["id"], job_dir=str(folder), repo=repo,
-                  remote=project["remote"], engine=lane, worktree=str(ROOT / "workspaces" / job_id),
+                  remote=spec.get("remote", project.get("remote")), engine=lane, worktree=str(ROOT / "workspaces" / job_id),
                   branch="draft/" + job_id, managed=True, attempts=0, legacy=False)
     atomic_write(folder / "PROMPT.txt", spec["prompt"])
-    atomic_write(folder / "run.sh", "#!/bin/bash\nexec python3 " + shlex.quote(str(CONDUCTOR / "bootstrap.py")) +
-                 " worker " + shlex.quote(job_id) + " < /dev/null\n")
+    atomic_write(folder / "run.sh", "#!/bin/bash\nexec " + shlex.quote(sys.executable) + " " +
+                 shlex.quote(str(CONDUCTOR / "bootstrap.py")) + " worker " + shlex.quote(job_id) +
+                 ' "${1:-}" < /dev/null\n')
     (folder / "run.sh").chmod(0o755)
     return job_event(job_id, "queued", **{k: v for k, v in record.items() if k != "job_id"})
 
@@ -204,6 +212,9 @@ def setup_record(record):
         record.update(fetch_ref=pr["headRefName"], publish_branch=record["branch"] if record.get("publish_new_draft") else pr["headRefName"], pr_url=pr["url"])
         job_event(record["job_id"], **{k: record[k] for k in ("fetch_ref", "publish_branch", "pr_url")})
     workspace = prepare(record)
+    if record.get("queue_id") and not record.get("base_sha"):
+        record["base_sha"] = git(workspace, "rev-parse", "HEAD")
+        job_event(record["job_id"], base_sha=record["base_sha"])
     body = evidence(record, workspace)
     if body:
         atomic_write(Path(record["job_dir"]) / "EVIDENCE.txt", body)
@@ -213,7 +224,17 @@ def setup_record(record):
 def launch_record(record):
     folder = Path(record["job_dir"])
     attempt = record.get("attempts", 0) + 1
-    job_event(record["job_id"], "launched", attempts=attempt, verified=False, recovery="launch intent")
+    lane_attempts = dict(record.get("lane_attempts", {}))
+    lane_attempts[record["engine"]] = lane_attempts.get(record["engine"], 0) + 1
+    token = uuid.uuid4().hex
+    job_event(record["job_id"], "launched", attempts=attempt, lane_attempts=lane_attempts,
+              attempt_token=token, started_at=time.time(), heartbeat=time.time(), worker_pid=None,
+              verified=False, recovery="launch intent")
+    if record.get("queue_id"):
+        import queue_store
+        queue_store.update(record["queue_id"], status="running", execution_id=record["job_id"],
+                           owner=record["engine"], heartbeat=time.time(), started_at=time.time(),
+                           attempt_token=token, attempts=attempt)
     try:
         for name in ("BLOCKER.txt", "RESULT.txt", "RESULT.md"):
             path = folder / name
@@ -227,23 +248,34 @@ def launch_record(record):
 
 
 def launch(job_name, job_dir):
-    run(["screen", "-dmS", job_name, "/bin/bash", str(job_dir / "run.sh")],
+    record = jobs()[job_name]
+    run(["screen", "-dmS", job_name, "/bin/bash", str(job_dir / "run.sh"), record.get("attempt_token", "")],
         capture_output=True, text=True, timeout=15, check=True, detach=True)
-    job_event(job_name, "running", recovery="worker launched")
+    # The child can finish or block before screen returns. Never overwrite it.
+    if jobs()[job_name]["state"] == "launched":
+        job_event(job_name, "running", expected_token=record.get("attempt_token"),
+                  expected_states=("launched",), recovery="worker launched")
     update_index(jobs()[job_name], "RUNNING")
 
 
 def can_assign(spec, lane, active, health):
-    if health[lane]["state"] != "ready" or any(r.get("engine") == lane for r in active):
+    if health.get(lane, {}).get("state") != "ready" or any(r.get("engine") == lane for r in active):
         return False
-    if spec["kind"] == "coding" and lane in ("gemini", "minimax"):
+    if lane == "mini" and spec.get("role") != "test":
         return False
-    if lane == "claude" and (spec["kind"] == "coding" or not spec.get("small_review")):
+    if spec.get("role") == "test" and lane != "mini":
         return False
-    if spec["kind"] == "coding" and spec["project"] == "WebJam":
-        if any(r.get("project", "").startswith("WebJam") and r.get("kind") == "coding" for r in active):
+    if spec["kind"] == "coding" and lane not in ("cursor", "codex"):
+        return False
+    if lane == "claude" and (spec["kind"] == "coding" or not (spec.get("small_review") or spec.get("role") in ("review", "critique", "council"))):
+        return False
+    if spec["kind"] == "coding":
+        from queue_store import overlaps
+        from scheduler import repo_key
+        if any(r.get("kind") == "coding" and repo_key(r) == repo_key(spec) and
+               overlaps(spec.get("scope"), r.get("scope")) for r in active):
             return False
-    return len(active) < 5
+    return len(active) < len(lanes.SCHEDULER_LANES)
 
 
 def external_webjam_lease(sessions):
@@ -255,47 +287,5 @@ def external_webjam_lease(sessions):
 
 
 def tick():
-    with lock("queue", blocking=False):
-        if (CONDUCTOR / "MAINTENANCE").exists():
-            log("maintenance: scheduling paused")
-            return 0
-        health = lanes.refresh()  # Cursor login checked every tick, even with an empty queue.
-        recover()
-        from runtime import screen_sessions
-        sessions = screen_sessions()
-        records = jobs()
-        # Count live legacy coders too; never start beside an inherited WebJam edit.
-        active = [dict(r, project=r.get("project") or ("WebJam" if "webjam" in r["job_id"] else "unknown"),
-                       kind=r.get("kind") or "coding") for r in records.values()
-                  if r["job_id"] in sessions and r["state"] != "harvested"]
-        external_coder = external_webjam_lease(sessions)
-        alert("external-webjam", "WebJam coding held for the separately requested local test build; other lanes continue" if external_coder else None)
-        known = {r.get("spec_id") for r in records.values()}
-        candidates = [r for r in records.values() if r.get("managed") and r["state"] in ("queued", "blocked")
-                      and r.get("retry_at", 0) <= time.time() and r.get("attempts", 0) < MAX_ATTEMPTS]
-        specs = queue_specs()
-        for spec in specs:
-            if spec["id"] not in known:
-                candidates.append(spec)
-        candidates.sort(key=lambda r: (PROJECTS.index(r["project"]), r.get("priority", 99)))
-        for spec in candidates:
-            if external_coder and spec["project"] == "WebJam" and spec["kind"] == "coding":
-                continue
-            lane_order = ("cursor", "codex") if spec["kind"] == "coding" else ("gemini", "minimax", "cursor", "codex", "claude")
-            for lane in lane_order:
-                if not can_assign(spec, lane, active, health):
-                    continue
-                record = spec if "job_id" in spec else create_record(spec, lane)
-                if record["engine"] != lane:
-                    job_event(record["job_id"], engine=lane)
-                    record = jobs()[record["job_id"]]
-                launch_record(record)
-                current = jobs()[record["job_id"]]
-                if current["state"] == "running":
-                    active.append(current)
-                else:
-                    # Do not repeatedly spend the same lane on setup errors this tick.
-                    health[lane]["state"] = "deferred"
-                break
-        log("tick complete; %d active jobs; five lane ceiling" % len(active))
-        return 0
+    from scheduler import tick as schedule
+    return schedule()

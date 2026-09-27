@@ -114,6 +114,12 @@ def job_event(job_id, state=None, **fields):
     with lock("jobs"):
         path = CONDUCTOR / "jobs.jsonl"
         previous = next((r for r in reversed(_rows(path)) if r["job_id"] == job_id), {})
+        expected = fields.pop("expected_token", None)
+        if expected is not None and previous.get("attempt_token") != expected:
+            return previous
+        expected_states = fields.pop("expected_states", None)
+        if expected_states is not None and previous.get("state") not in expected_states:
+            return previous
         row = dict(previous, **fields)
         row.update(job_id=job_id, state=state or previous.get("state", "launched"))
         # Reconciliation may discover a closeout after the launch but before running.
