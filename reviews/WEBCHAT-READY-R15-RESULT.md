@@ -111,7 +111,8 @@ lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
 |--------|-----|
 | Round 14 final | `6d70901` |
 | Pre-R15 HEAD | `55840a6` |
-| **R15 commit** | *(see `git rev-parse HEAD` in conductor repo after commit)* |
+| **R15 primary (code)** | `e482927` |
+| **Final SHA (this round)** | `e482927` (`draft/webchat-failover-20260927`) |
 
 ## Remaining risks
 
