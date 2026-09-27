@@ -240,3 +240,52 @@ The final proof ran **2026-09-27T20:05:36.760896+00:00 → 2026-09-27T20:05:39.2
 # and BOB_CHROMIUM_PATH when they are outside the default module/cache paths.
 python3 webchat/isolated_jobs_proof.py --live-root /path/to/bob-overnight-inject
 ```
+
+
+## Follow-up 5: all five tabs, phone first
+
+PASS. Chat, Jobs, Songs, Models and Settings now use the same spacing, readable text, touch targets and collapsed details. This follow-up builds on the finished Jobs redesign and source-error fixes (`fd2967a`), preserving grouped work cards, the five most recent results, safe result/PR links and the saved-result viewer.
+
+| Tab | Cleanup and resulting behavior | Phone screenshot |
+| --- | --- | --- |
+| Chat | Removed unfinished attachments and canned round/council requests. View jobs opens current work without sending a message. One conversation picker, compact reply tools, collapsed/deduplicated retry details in plain words, and an honest empty conversation. Unsupported voice controls are hidden. | [Chat](webbob-tab-chat-0927.png) |
+| Jobs | Current project/task/model/time remains first. Added Refresh, omitted unreported metadata, removed duplicated model/cost rows, and kept queue/check details collapsed. Failed or expired refreshes clear working and finished cards. A service name is not used as a task description. | [Jobs](webbob-tab-jobs-0927.png) |
+| Songs | A real empty library leads to New song. Lyrics and Save come first; chords, notes, audio and saved versions are collapsed. Actual saved timestamps replace vague status text. New/switch clears prior audio and versions. Save failures retain edits and never claim they were saved. Audio's temporary association with the editor is stated plainly. | [Songs](webbob-tab-songs-0927.png), [empty editor](webbob-tab-songs-editor-0927.png) |
+| Models | One card per model, showing current activity and reply availability. Removed dashboard, score, round and builder rows. Measured costs, plan use, retry times and dated last replies appear only when present, inside Details. Live workers override a cached ready label. | [Models](webbob-tab-models-0927.png) |
+| Settings | Reply selection is first and persists on the device. All supported model choices say “first,” with fallback explained. Voice and actual scheduling status are collapsed. Removed repeated chats, old changelog, setup commands and internal loop/tick language. | [Settings](webbob-tab-settings-0927.png) |
+
+Models and Settings read the authenticated, redacted, read-only `/api/overview`; Jobs keeps `/api/jobs/activity` and its existing result endpoint. These tab reads do not use or refresh the old dashboard or handback ledger. Usage comes directly from saved measurements: a missing, damaged or unknown ledger does not become $0, no budget ceiling is invented, and expired or day-old plan observations are omitted. Jobs and Models discard responses older than 30 seconds and clear old values when checks fail. Missing checks remain distinct from confirmed empty state. Open details survive polling.
+
+### Validation
+
+| Check | Result |
+| --- | --- |
+| `python3 -m unittest discover -s webchat -p 'test_*.py'` | **235 passed**, 14.436 s |
+| `python3 -m unittest discover -s services -p 'test_*.py'` | **111 passed**, 2.697 s |
+| `node --test webchat/test_quiet_hours_js.mjs` | **1 passed** |
+| `python3 bootstrap.py check` | **syntax: PASS** |
+| JavaScript syntax and `git diff --check` | **Passed** |
+| All-tab headless Chromium proof | **23 layout checks passed**: all five tabs at 320/390/430 px, all five in light mode at 390 px, and the song editor at all three phone widths |
+| Existing Jobs browser proof after integration | **Passed**: grouped worker/queue evidence, five-result limit, safe result dialog/links, preserved disclosure state, empty/unavailable/unreadable-queue cases, no legacy-dashboard requests, 320/390/430/900 px in dark and light mode |
+
+No tests were skipped. The service-suite restart lines are mocked watchdog output. New regressions cover authenticated/redacted read-only data, damaged queues, live claim/process deduplication, missing/stale/invalid usage, provider-status failure isolation, and service names not masquerading as task descriptions. Browser cases also exercise real private song saves and reloads, failed saves, unsaved-edit protection, cleared audio/history, persisted model preference, stale/error response removal, duplicate rows and plain retry details.
+
+### Capture and isolation
+
+The five requested PNGs are **390 × 844 CSS pixels at 2× scale**. The final images were visually reviewed. They come from an authenticated temporary data root and an ephemeral loopback listener, with actual empty private chat/song data and read-only host worker observations. Model status is the private instance's real unchecked state plus current worker activity; the captures do not claim successful model generation. The extra editor capture is a blank unsaved song. Fixture payloads and test-authored lyrics are used only in later regression cases, not in these screenshots.
+
+[All-tab evidence](WEBBOB-CLEAN-0927.tabs-evidence.json) records the observed data, layout measurements, source/image SHA-256 hashes and before/after listener/service identities. [Jobs integration evidence](WEBBOB-CLEAN-0927.tabs-jobs-evidence.json) records the retained Jobs behavior; its extra screenshots are temporary proof files. One earlier concurrent capture failed its host-observation comparison even though the UI assertions passed. An immediate read and the final serial capture matched the original listener and seven services. The proof now retains both observations even when that comparison fails.
+
+The final all-tab capture kept the live web listener at **PID 99149**, started **Sun Sep 27 12:40:03 2026**, and matched all seven service identities before and after. No live restart, deployment, merge, force-push, worker execution or external model call was performed by this follow-up. No Grok was invoked.
+
+Reproduce with Playwright and a compatible cached Chromium (the two environment variables can be omitted when installed normally):
+
+```sh
+BOB_PLAYWRIGHT_MODULE=/path/to/playwright BOB_CHROMIUM_PATH=/path/to/chromium \
+  python3 webchat/isolated_tabs_proof.py --output-dir reviews
+
+BOB_PLAYWRIGHT_MODULE=/path/to/playwright BOB_CHROMIUM_PATH=/path/to/chromium \
+  python3 webchat/isolated_jobs_proof.py --live-root .. \
+  --screenshot /tmp/webbob-followup5-jobs-integration.png \
+  --output reviews/WEBBOB-CLEAN-0927.tabs-jobs-evidence.json
+```

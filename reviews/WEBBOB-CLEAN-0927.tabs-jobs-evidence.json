@@ -1,0 +1,279 @@
+{
+  "started_at": "2026-09-27T20:11:43.776300+00:00",
+  "live_before": {
+    "listener": [
+      "99149 Sun Sep 27 12:40:03 2026     /opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python"
+    ],
+    "services": [
+      "17509.svc-dashboard-updater",
+      "45974.svc-reviewer",
+      "53542.svc-watchdog",
+      "77277.svc-webbob-reviewers",
+      "94801.svc-disk-watch",
+      "99081.svc-job-runner",
+      "99147.svc-webchat"
+    ]
+  },
+  "screenshot_kind": "Actual read-only host observations through an isolated authenticated instance. Browser regressions use private journal/process fixtures.",
+  "browser": {
+    "layouts": [
+      {
+        "width": 288,
+        "colorScheme": "dark",
+        "scrollWidth": 288,
+        "documentWidth": 320,
+        "viewport": 320,
+        "overflowing": 0
+      },
+      {
+        "width": 288,
+        "colorScheme": "light",
+        "scrollWidth": 288,
+        "documentWidth": 320,
+        "viewport": 320,
+        "overflowing": 0
+      },
+      {
+        "width": 358,
+        "colorScheme": "dark",
+        "scrollWidth": 358,
+        "documentWidth": 390,
+        "viewport": 390,
+        "overflowing": 0
+      },
+      {
+        "width": 358,
+        "colorScheme": "light",
+        "scrollWidth": 358,
+        "documentWidth": 390,
+        "viewport": 390,
+        "overflowing": 0
+      },
+      {
+        "width": 398,
+        "colorScheme": "dark",
+        "scrollWidth": 398,
+        "documentWidth": 430,
+        "viewport": 430,
+        "overflowing": 0
+      },
+      {
+        "width": 398,
+        "colorScheme": "light",
+        "scrollWidth": 398,
+        "documentWidth": 430,
+        "viewport": 430,
+        "overflowing": 0
+      },
+      {
+        "width": 866,
+        "colorScheme": "dark",
+        "scrollWidth": 866,
+        "documentWidth": 900,
+        "viewport": 900,
+        "overflowing": 0
+      },
+      {
+        "width": 866,
+        "colorScheme": "light",
+        "scrollWidth": 866,
+        "documentWidth": 900,
+        "viewport": 900,
+        "overflowing": 0
+      }
+    ],
+    "screenshot": {
+      "width": 390,
+      "height": 844,
+      "deviceScaleFactor": 2,
+      "source": "live"
+    },
+    "finished_screenshot": "/private/tmp/webbob-followup5-jobs-integration.finished.png",
+    "live": {
+      "checked_at": 1790539905.995446,
+      "inspection": {
+        "screens_available": true,
+        "processes_available": true,
+        "queue_available": true
+      },
+      "working": [
+        {
+          "key": "lane-webbob-ui",
+          "project": "Web Bob",
+          "task": "Interface updates",
+          "models": [
+            "Codex"
+          ],
+          "state": "running",
+          "elapsed_seconds": 284
+        },
+        {
+          "key": "17983",
+          "project": "Web Bob",
+          "task": "Review and clean up every Web Bob tab",
+          "models": [
+            "Codex"
+          ],
+          "state": "running",
+          "elapsed_seconds": 1857
+        },
+        {
+          "key": "lane-webbob-voice",
+          "project": "Web Bob",
+          "task": "Voice updates",
+          "models": [
+            "Codex"
+          ],
+          "state": "running",
+          "elapsed_seconds": 1864
+        }
+      ],
+      "recently_finished": [
+        {
+          "key": "cursor-queue-22-webjam-novice-busy-session-remedy-f9df52cf",
+          "project": "WebJam",
+          "task": "WebJam \u2014 novice F02 busy-session remedy (CODING, one commit)",
+          "state": "done",
+          "finished_at": 1790539837.8834748,
+          "result_url": "/api/jobs/result?id=cursor-queue-22-webjam-novice-busy-session-remedy-f9df52cf",
+          "pr_url": null,
+          "external_result_url": null
+        },
+        {
+          "key": "adoptiq-ci-fix-1831",
+          "project": "AdoptIQ",
+          "task": "Build checks fix",
+          "state": "done",
+          "finished_at": 1790539523.0289018,
+          "result_url": "/api/jobs/result?id=adoptiq-ci-fix-1831",
+          "pr_url": null,
+          "external_result_url": null
+        },
+        {
+          "key": "claude-adoptiq-ci-1958",
+          "project": "AdoptIQ",
+          "task": "Build checks",
+          "state": "done",
+          "finished_at": 1790539200.673612,
+          "result_url": "/api/jobs/result?id=claude-adoptiq-ci-1958",
+          "pr_url": null,
+          "external_result_url": null
+        },
+        {
+          "key": "claude-adoptiq-r169-2003",
+          "project": "AdoptIQ",
+          "task": "Task details unavailable",
+          "state": "done",
+          "finished_at": 1790538897.8497028,
+          "result_url": "/api/jobs/result?id=claude-adoptiq-r169-2003",
+          "pr_url": null,
+          "external_result_url": null
+        },
+        {
+          "key": "claude-adoptiq-sync-1802",
+          "project": "AdoptIQ",
+          "task": "Sync",
+          "state": "done",
+          "finished_at": 1790538583.208809,
+          "result_url": "/api/jobs/result?id=claude-adoptiq-sync-1802",
+          "pr_url": null,
+          "external_result_url": null
+        }
+      ],
+      "details": {
+        "queued": 0,
+        "unconfirmed": 0,
+        "costs": [
+          {
+            "provider": "Gemini",
+            "spent_usd": 5.7565,
+            "reserved_usd": 0.0855
+          },
+          {
+            "provider": "MiniMax",
+            "spent_usd": 2.4615,
+            "reserved_usd": 1.1735
+          }
+        ],
+        "health": [
+          {
+            "provider": "Codex",
+            "state": "ready",
+            "age_seconds": 6284
+          },
+          {
+            "provider": "Claude",
+            "state": "ready",
+            "age_seconds": 13397
+          },
+          {
+            "provider": "Cursor",
+            "state": "ready",
+            "age_seconds": 13364
+          },
+          {
+            "provider": "Gemini",
+            "state": "ready",
+            "age_seconds": 2705
+          },
+          {
+            "provider": "MiniMax",
+            "state": "ready",
+            "age_seconds": 9757
+          }
+        ],
+        "sources": [
+          {
+            "label": "Queue",
+            "age_seconds": 7909
+          },
+          {
+            "label": "Job history",
+            "age_seconds": 68
+          },
+          {
+            "label": "Provider health",
+            "age_seconds": 75
+          }
+        ]
+      }
+    },
+    "fixture_card_count": 2,
+    "finished_limit": 5,
+    "result_opened": true,
+    "empty_and_unavailable_passed": true,
+    "unreadable_queue_passed": true,
+    "legacy_dashboard_requests": 0,
+    "page_errors": []
+  },
+  "provider_calls": 0,
+  "live_after": {
+    "listener": [
+      "99149 Sun Sep 27 12:40:03 2026     /opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python"
+    ],
+    "services": [
+      "17509.svc-dashboard-updater",
+      "45974.svc-reviewer",
+      "53542.svc-watchdog",
+      "77277.svc-webbob-reviewers",
+      "94801.svc-disk-watch",
+      "99081.svc-job-runner",
+      "99147.svc-webchat"
+    ]
+  },
+  "finished_at": "2026-09-27T20:11:46.693398+00:00",
+  "source_sha256": {
+    "webchat/app.py": "3189210cf84054d5629027d6017cbc9965eabcfca211d69a4c95f8dddee946c8",
+    "webchat/jobs_view.py": "714b2330bb96a973757d50713bbb12c4faac97f5c81f8855aa7a1b9648dca421",
+    "webchat/live_status_snapshot.py": "53b93e1ef610400517462fc7aa9c042355341bae7f9448b28e73eca1008af73c",
+    "webchat/worker_activity.py": "ff21ead2a1a36ed8cd34f79dad056621b4e57c37477ac783a385dee1a7383a89",
+    "webchat/test_jobs_view.py": "b07461effc48b74ab1958e2caa99e847d0d5587178a98a280aa0af0410f617c1",
+    "webchat/isolated_jobs_proof.py": "ae5d0c8d9430ad8343829b6606a8b3afa28487ea7cfd5890d7dff2d23711407a",
+    "webchat/browser_jobs.cjs": "639f1bfc03a6ba31080d4818f73dbc581f02c714af8caa5e9724031867336b04",
+    "webchat/static/app.js": "29219bd3f5fb6f1a18eb29782c47eee0b90674e3f357b524da6865a60540da2e",
+    "webchat/static/index.html": "d28695f541fea0f3cee8f82f43aec179d5bb1457b7f15751c2185165065cae1d",
+    "webchat/static/style.css": "0d5b5fe7cf6c00c8cd695bdb6be4b254ae72ba93cc2c659b8596a8e7fcbf1726"
+  },
+  "screenshot_sha256": "b6baf6beae6ec669cc830acd374ad6dd948c80bad04191d3953c5f07838a9002",
+  "result": "PASS"
+}

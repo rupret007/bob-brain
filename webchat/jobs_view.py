@@ -33,7 +33,9 @@ def is_drill(record):
 
 def labels(record, work=None):
     work = work or {}
-    slug = work.get("screen") or record.get("job_id") or ""
+    screen = work.get("screen")
+    task_screen = screen if screen and screen != "svc-job-runner" else None
+    slug = task_screen or record.get("job_id") or ""
     # Queue titles and an explicit Project line take precedence over lane names.
     project_line = re.search(r"(?m)^Project:\s*([^\n]+)", record.get("prompt") or "")
     candidates = [record.get("project"), project_line[1] if project_line else None,
@@ -42,7 +44,7 @@ def labels(record, work=None):
                     if re.search(pattern, str(value).replace("_", " "), re.I)), None)
     project = project or plain(record.get("project"), 60) or "Project not specified"
     title = plain(record.get("title"))
-    if not title and not work.get("screen") and work.get("title") != "Task details unavailable":
+    if not title and not task_screen and work.get("title") != "Task details unavailable":
         title = plain(work.get("title"))
     if not title or title.lower() == project.lower():
         prompt = record.get("prompt") or ""

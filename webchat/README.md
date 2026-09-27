@@ -12,10 +12,12 @@ Claude subscription are needed. The messenger supports mobile layouts, dark mode
 saved conversation selection, new conversations, polling replies, and Stop.
 Enter sends on a desktop; Shift+Enter adds a line. On a phone, use Send.
 
-Status opens `conductor/STATUS.md`; Gemini review opens the saved
-`conductor/reviews/LATEST.md`; Jobs shows `screen -ls` and
-`next-prompts/INDEX.md`. Reports show their file timestamps. Opening a report
-does not request a new model review or change the queue.
+The five tabs are Chat, Jobs, Songs, Models and Settings. Jobs shows current
+workers and saved results; View jobs in Chat opens it without sending a message.
+Models shows current activity and reply availability, with measured usage in
+collapsed details. Songs puts lyrics and Save first, with chords, audio and saved
+versions below. Settings saves your preferred first-choice model on this device.
+Opening these tabs does not request a model answer or change the queue.
 
 ## Conversation and provider behavior
 

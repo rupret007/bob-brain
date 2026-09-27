@@ -1210,6 +1210,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, chat.handback())
         if route == "/api/panel":
             return self.send(200, chat.panel())
+        if route == "/api/overview":
+            from tab_status import overview
+
+            identifier = parse_qs(urlsplit(self.path).query).get("conversation_id", [None])[0]
+            if identifier:
+                chat.get(identifier)
+            return self.send(200, chat.redact(json.dumps(overview(chat, identifier))))
         if route == "/api/panel/refresh":
             return self.send(405, {"error": "Use POST to refresh dashboard."})
         if route == "/api/conductor":

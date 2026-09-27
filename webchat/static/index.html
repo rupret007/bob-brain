@@ -14,20 +14,18 @@
 </head>
 <body>
   <div class="app">
-    <div id="offline-banner" class="offline-banner" role="status" hidden>Reconnecting to the mini…</div>
+    <div id="offline-banner" class="offline-banner" role="status" hidden>Reconnecting to Bob…</div>
     <header class="top-bar">
-      <button type="button" class="icon-btn top-back quiet" aria-hidden="true" tabindex="-1" disabled>‹</button>
       <div class="header-pill identity" role="banner">
         <span class="avatar" aria-hidden="true">b</span>
         <div class="titles">
           <h1>Bob</h1>
           <span class="status-dot" id="status-dot" aria-label="Connection status"></span>
         </div>
-        <p id="connection" class="sr-only">Connected</p>
+        <p id="connection" class="sr-only">Connecting</p>
       </div>
       <div class="top-actions">
-        <button type="button" id="open-chats" class="icon-btn" aria-label="Conversations" title="Conversations">💬</button>
-        <button type="button" id="logout" class="quiet">Log out</button>
+        <button type="button" id="open-chats" class="icon-btn quiet" aria-label="Conversations" title="Conversations"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-12.3 7.6L3 21l1.9-5.7A8.5 8.5 0 1 1 21 11.5Z"/><path d="M8 9h8M8 13h5"/></svg></button>
       </div>
     </header>
 
@@ -35,14 +33,11 @@
       <main id="messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions text"></main>
       <div id="notice" class="notice" role="status"></div>
       <div class="quick-chips" id="quick-chips" role="toolbar" aria-label="Quick actions">
-        <button type="button" class="chip" data-chip="status">Status</button>
-        <button type="button" class="chip" data-chip="round">Start round</button>
-        <button type="button" class="chip" data-chip="council">Ask council</button>
-        <button type="button" class="chip" data-chip="song">New song</button>
+        <button type="button" class="chip" data-chip="status">View jobs</button>
+        <button type="button" class="chip" data-chip="song">Write a song</button>
       </div>
       <form id="composer" class="composer">
         <label class="sr-only" for="message">Message Bob</label>
-        <button type="button" id="attach-plus" class="composer-plus quiet icon-btn" aria-label="Attach file" title="Attach (coming soon)" disabled>+</button>
         <div class="composer-pill">
           <button type="button" id="mic" class="composer-mic quiet icon-btn" aria-label="Voice input" title="Voice input">🎤</button>
           <textarea id="message" name="message" placeholder="Ask Bob…" rows="1" maxlength="6000" required enterkeyhint="send"></textarea>
@@ -62,6 +57,7 @@
           <div class="jobs-heading">
             <h2 id="working-title">Working now</h2>
             <span id="working-count" class="jobs-count" hidden></span>
+            <button type="button" id="refresh-jobs" class="refresh-dash">Refresh</button>
           </div>
           <p id="jobs-notice" class="jobs-note muted" role="status">Checking live work…</p>
           <div id="live-jobs" class="job-cards"></div>
@@ -72,7 +68,7 @@
           <div id="finished-jobs" class="finished-jobs"></div>
           <p id="finished-empty" class="jobs-empty muted" hidden>No finished jobs yet.</p>
         </section>
-        <details id="jobs-details" class="jobs-details">
+        <details id="jobs-details" class="jobs-details disclosure">
           <summary>Details</summary>
           <div id="jobs-detail-body" class="jobs-detail-body"></div>
         </details>
@@ -81,37 +77,62 @@
 
     <section id="view-lanes" class="main-view" data-view="lanes" hidden>
       <div class="view-scroll">
-        <h2 class="view-title">Models</h2>
-        <p id="lanes-summary" class="view-lead muted"></p>
-        <div id="ops-detail" class="ops-detail" aria-label="Live dashboard detail" hidden></div>
-        <div id="scores-table" class="scores-grid" aria-label="Latest Web Bob scores"></div>
+        <div class="view-title-row">
+          <h2 class="view-title">Models</h2>
+          <button type="button" class="refresh-dash" data-refresh>Refresh</button>
+        </div>
+        <p id="lanes-summary" class="view-lead muted" role="status">Checking models…</p>
         <div id="lanes" class="lane-cards" aria-live="polite"></div>
+        <p id="models-empty" class="empty-state" hidden>No model status is available. Try Refresh.</p>
       </div>
     </section>
 
     <section id="view-song" class="main-view" data-view="song" hidden>
       <div class="view-scroll">
-        <h2 class="view-title">Songs</h2>
-        <label class="field-label" for="song-picker">Your songs</label>
-        <select id="song-picker" aria-label="Song project"></select>
-        <button type="button" id="song-new" class="quiet song-new">New song</button>
-        <label class="field-label" for="song-title">Title</label>
-        <input id="song-title" type="text" placeholder="Working title" maxlength="120">
-        <label class="field-label" for="song-lyrics">Lyrics</label>
-        <textarea id="song-lyrics" placeholder="Verse, chorus, hooks…" rows="10" maxlength="120000"></textarea>
-        <label class="field-label" for="song-chords">Chords</label>
-        <textarea id="song-chords" placeholder="e.g. Am · F · C · G" rows="3" maxlength="120000"></textarea>
-        <label class="field-label" for="song-notes">Style &amp; notes</label>
-        <textarea id="song-notes" placeholder="Tempo, vibe, arrangement ideas" rows="3" maxlength="120000"></textarea>
-        <div class="song-actions">
-          <button type="button" id="song-save" class="primary">Save</button>
-          <button type="button" id="song-coach">Writing tips</button>
-          <button type="button" id="song-demo">Local sketch ($0)</button>
-          <label class="upload-label"><input id="song-upload" type="file" accept="audio/*"> Upload audio</label>
+        <div class="view-title-row">
+          <h2 class="view-title">Songs</h2>
+          <button type="button" id="song-new">New song</button>
         </div>
+        <p id="song-summary" class="view-lead muted" role="status">Loading your songs…</p>
+        <div id="song-library" hidden>
+          <label class="field-label" for="song-picker">Your songs</label>
+          <select id="song-picker" aria-label="Song project"></select>
+        </div>
+        <div id="songs-empty" class="empty-state" hidden>
+          <h3>Your first song starts here</h3>
+          <p>Write a few lyrics or chords, then save your draft.</p>
+        </div>
+        <div id="song-editor" hidden>
+        <label class="field-label" for="song-title">Title</label>
+        <input id="song-title" type="text" maxlength="120">
+        <label class="field-label" for="song-lyrics">Lyrics</label>
+        <textarea id="song-lyrics" rows="8" maxlength="120000"></textarea>
+        <div class="song-actions">
+          <button type="button" id="song-save" class="primary">Save song</button>
+          <button type="button" id="song-coach">Writing help</button>
+        </div>
+        <p id="song-notice" class="view-hint muted" role="status"></p>
+        <details class="disclosure" id="song-arrangement">
+        <summary>Chords &amp; notes</summary>
+        <label class="field-label" for="song-chords">Chords</label>
+        <textarea id="song-chords" rows="3" maxlength="120000"></textarea>
+        <label class="field-label" for="song-notes">Style &amp; notes</label>
+        <textarea id="song-notes" rows="3" maxlength="120000"></textarea>
+        </details>
+        <details class="disclosure" id="song-audio">
+        <summary>Audio</summary>
+        <div class="song-actions">
+          <button type="button" id="song-demo">Create rough audio</button>
+          <label class="upload-label" for="song-upload">Upload a recording<input id="song-upload" type="file" accept="audio/*"></label>
+        </div>
+        <p class="view-hint muted">Audio plays here until you switch songs or reload. It is not saved with the song.</p>
         <audio id="song-player" controls hidden></audio>
-        <ul id="song-versions" class="song-versions muted" hidden aria-label="Lyric versions"></ul>
-        <p id="song-notice" class="muted"></p>
+        </details>
+        <details class="disclosure" id="song-history" hidden>
+          <summary>Saved versions</summary>
+          <ul id="song-versions" class="song-versions muted" aria-label="Lyric versions"></ul>
+        </details>
+        </div>
       </div>
     </section>
 
@@ -122,38 +143,25 @@
           <h3 class="settings-group-title">Replies</h3>
           <label class="field-label" for="provider-choice">Who answers</label>
           <select id="provider-choice">
-            <option value="auto">Auto · fast for quick asks, Codex/Cursor for heavy work</option>
-            <option value="claude">Claude only · short critique</option>
+            <option value="auto">Choose automatically</option>
+            <option value="codex">Codex first</option>
+            <option value="cursor">Cursor first</option>
+            <option value="gemini">Gemini first</option>
+            <option value="minimax">MiniMax first</option>
+            <option value="claude">Claude first</option>
           </select>
+          <p class="view-hint muted">If your choice cannot reply, Bob tries another model.</p>
         </div>
-        <div class="settings-group">
-          <h3 class="settings-group-title">Chats</h3>
-          <label class="field-label" for="conversations">Active conversation</label>
-          <select id="conversations" aria-label="Conversation"></select>
-          <button type="button" id="new-chat" class="quiet">Start new chat</button>
-        </div>
-        <div class="settings-group">
-          <h3 class="settings-group-title">Voice</h3>
-          <p class="muted view-hint">Tap 🎤 for dictation or the waveform button for a live call (hands-free listen + speak). Read-aloud uses your device voices.</p>
-        </div>
-        <div class="settings-group">
-          <h3 class="settings-group-title">Self-improve</h3>
-          <p id="self-improve-status" class="muted">Checking…</p>
-        </div>
-        <div class="settings-group">
-          <h3 class="settings-group-title">What’s new</h3>
-          <p id="changelog-line" class="muted">Loading…</p>
-        </div>
-        <div class="settings-group">
-          <h3 class="settings-group-title">Help</h3>
-          <ul class="help-list muted">
-            <li><strong>Chat</strong> — talk to Bob; quick chips for status, rounds, council, songs.</li>
-            <li><strong>Jobs</strong> — live work on the mini (not old handback text).</li>
-            <li><strong>Songs</strong> — lyrics notebook, local sketch demo, audio upload.</li>
-            <li><strong>Models</strong> — who’s busy, spend meters, latest scores.</li>
-          </ul>
-        </div>
-        <p class="view-hint muted">Drafts stay drafts. Confirm before merge, send, or spend.</p>
+        <details class="disclosure">
+          <summary>Voice</summary>
+          <p id="voice-status" class="muted"></p>
+          <p id="quiet-hours-hint" class="view-hint muted"></p>
+        </details>
+        <details class="disclosure">
+          <summary>Automatic improvements</summary>
+          <p id="self-improve-status" class="muted">Checking schedule…</p>
+        </details>
+        <button type="button" id="logout" class="quiet settings-logout">Log out</button>
       </div>
     </section>
 
@@ -178,9 +186,8 @@
 
   <dialog id="chats-dialog">
     <div class="report-heading"><h2>Conversations</h2><button type="button" id="close-chats" aria-label="Close">Close</button></div>
-    <p class="muted sheet-hint">Switch chats here; your draft message is kept on this device.</p>
-    <select id="conversations-dialog" size="8" aria-label="Pick conversation"></select>
-    <button type="button" id="new-chat-dialog" class="primary">New chat</button>
+    <select id="conversations" size="8" aria-label="Pick conversation"></select>
+    <button type="button" id="new-chat" class="primary">New chat</button>
   </dialog>
 
   <dialog id="report">

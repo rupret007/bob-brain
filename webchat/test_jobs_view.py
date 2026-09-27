@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from jobs_view import build_jobs_view, result_text
+from jobs_view import build_jobs_view, labels, result_text
 from test_worker_activity import PS, SCREENS
 from worker_activity import parse_processes
 
@@ -69,6 +69,13 @@ class JobsViewTests(unittest.TestCase):
         self.assertEqual(row["project"], "Web Bob")
         self.assertEqual(row["task"], "Redesign Web Bob's Jobs tab")
         self.assertNotIn("Private", json.dumps(row))
+
+    def test_service_name_is_not_a_task_description(self):
+        unknown = labels({}, dict(screen="svc-job-runner", title="Task details unavailable"))
+        self.assertEqual(unknown["task"], "Task details unavailable")
+        known = labels({}, dict(screen="svc-job-runner", title="Review Web Bob login"))
+        self.assertEqual(known["task"], "Review Web Bob login")
+        self.assertEqual(known["project"], "Web Bob")
 
     def test_finished_last_five_use_terminal_time_not_delivery_time(self):
         rows = [dict(id=f"job-{i}", status="succeeded", title=f"WebJam fix {i}", finished_at=100 + i, result=f"Actual result {i}") for i in range(8)]

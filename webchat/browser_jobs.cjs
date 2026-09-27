@@ -48,7 +48,7 @@ assert(!config.url.endsWith(":8787"), "Proof must use its private listener");
     await page.locator("#jobs-details summary").click();
     await refresh();
     assert.equal(await page.locator("#jobs-details").getAttribute("open"), "", "Polling must preserve disclosure state");
-    assert((await page.locator("#jobs-detail-body").innerText()).includes("Available"));
+    assert((await page.locator("#jobs-detail-body").innerText()).includes("Live check"));
     await page.locator("#jobs-details summary").click();
     const layouts = [];
     for (const width of [320, 390, 430, 900]) {
