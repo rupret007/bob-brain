@@ -203,3 +203,40 @@ The live listener remained **PID 99149**, started **Sun Sep 27 12:40:03 2026**, 
 ```sh
 python3 webchat/isolated_intent_proof.py --output reviews/WEBBOB-CLEAN-0927.intent-recheck-evidence.json
 ```
+
+## Follow-up 4: phone-first Jobs
+
+PASS. Jobs now starts with **Working now**, with one card per observed job or lane screen: project, task, actual worker/model when reported, elapsed time and a live dot. **Recently finished** shows the last five terminal journal entries, with saved results and recorded PR links. A native, initially collapsed **Details** disclosure contains provider health, recorded API cost, waiting assignments and source ages. Cards use Chat's colors, rounded surfaces and spacing.
+
+The new authenticated `/api/jobs/activity` endpoint reads `conductor/state/queue.jsonl`, the legacy job journals, current `screen -ls`/`ps` observations, `provider-health.json` and cost ledgers. Reads do not repair journals, acquire queue claims, refresh dashboards or launch workers. Queue claims, CLI wrappers and workers in the same lane produce one card. Open screens without a verified worker are labeled accordingly; stale claims stay in Details. Missing process checks and failed requests show an unavailable message instead of an idle claim. The verified empty state is exactly **“Nothing running right now.”**
+
+Jobs no longer renders NOW/handback text, dashboard rows, round scores, scheduler copy, self-improve bootstrap instructions, raw commits or placeholder SHAs. Known drill entries are excluded. Standalone CLI assignments can use their explicit “Follow-up …” task header as a label; the rest of the process prompt is omitted. Missing exact model variants are never guessed. Finished rows are ordered by completion time, so later delivery receipts do not reorder old work. Result buttons open saved text in the authenticated report dialog; local result paths must resolve inside the data root, and external links accept only HTTP(S) without embedded credentials.
+
+### Validation
+
+The shared checkout received concurrent tab edits during this task, so this follow-up was completed in a separate worktree. It was rebased onto the already-pushed chat-intent recheck `eb73d23`, preserving that work. The final combined branch passed:
+
+| Command/check | Result |
+| --- | --- |
+| `python3 -m unittest discover -s webchat -p 'test_*.py'` | **222 passed**, 12.990 s |
+| `python3 -m unittest discover -s services -p 'test_*.py'` | **111 passed** |
+| `node --test webchat/test_quiet_hours_js.mjs` | **1 passed** |
+| `python3 bootstrap.py check` | **syntax: PASS** |
+| `node --check webchat/static/app.js` and `git diff --check` | **Passed** |
+| Headless Chromium at 320, 390, 430 and 900 CSS pixels, dark and light | **Passed; no horizontal overflow or page errors** |
+
+Twelve added Python regressions cover queue/process/screen deduplication, live lanes with an empty queue, explicit standalone task labels, stale drill/dashboard exclusion, honest paused/unavailable states, latest-five completion ordering, persisted health/cost, authenticated redacted results, missing files, unsafe URLs and path/symlink escapes. No tests were skipped. Service-suite restart messages are from mocked watchdog tests.
+
+### Phone screenshot and isolated browser proof
+
+[Phone screenshot: webbob-jobs-0927.png](webbob-jobs-0927.png) — **390 × 844 CSS pixels**, device scale 2, dark theme. This is an actual read-only host observation served through a fresh private Chat instance on an ephemeral loopback port, not the live listener. At capture, four workers were active and five recent terminal jobs were available. Details remained collapsed. The screenshot was visually reviewed after capture.
+
+The [browser proof](../webchat/isolated_jobs_proof.py) also uses private journal/process fixtures to check two deduplicated cards, five finished rows, result opening, escaped result content, the recorded PR link, disclosure state across polling, the exact empty state, unavailable process checks and HTTP failure/recovery. The fixture's `test-model` values are test inputs only; the saved screenshot uses actual host observations. No external model or worker was started.
+
+The final proof ran **2026-09-27T19:57:14.326588+00:00 → 2026-09-27T19:57:16.729354+00:00**. [Raw evidence](WEBBOB-CLEAN-0927.jobs-evidence.json) records the viewport checks, sanitized live data, zero provider calls and matching source/screenshot hashes. The private queue was unchanged. The live listener remained **PID 99149**, started **Sun Sep 27 12:40:03 2026**, and all seven service screen identities matched before and after. No live restart, deployment, merge, force-push or Grok invocation occurred.
+
+```sh
+# Use the existing Playwright runtime and Chromium; set BOB_PLAYWRIGHT_MODULE
+# and BOB_CHROMIUM_PATH when they are outside the default module/cache paths.
+python3 webchat/isolated_jobs_proof.py --live-root /path/to/bob-overnight-inject
+```

@@ -523,21 +523,50 @@ button.send-btn {
   background: var(--surface-2);
   border: 1px solid var(--line);
 }
-.live-jobs { display: grid; gap: 8px; margin-top: 10px; }
+.jobs-scroll { padding: 18px 2px 28px; }
+.jobs-section { margin-bottom: 28px; }
+.jobs-section h2 { font-size: 20px; font-weight: 600; letter-spacing: -.4px; }
+.jobs-heading { display: flex; align-items: center; gap: 10px; }
+.jobs-count { color: var(--muted); background: var(--surface-2); border-radius: 999px; padding: 1px 9px; font-size: 13px; }
+.job-cards { display: grid; gap: 12px; margin-top: 14px; }
+.job-card {
+  padding: 16px;
+  border-radius: 20px 20px 20px 6px;
+  background: color-mix(in srgb, var(--surface-2) 72%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+}
+.job-card-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.job-project { font-size: 13px; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
+.job-state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.job-state.is-live { color: var(--accent); }
+.job-dot { height: 6px; width: 6px; border-radius: 50%; background: var(--muted); }
+.is-live .job-dot { background: #6fcf97; box-shadow: 0 0 0 3px color-mix(in srgb, #6fcf97 12%, transparent); }
+.job-task { font-size: 17px; font-weight: 500; line-height: 1.45; margin: 9px 0 14px; overflow-wrap: anywhere; }
+.job-metadata { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-size: 12px; }
+.job-model { overflow-wrap: anywhere; }
+.job-elapsed { white-space: nowrap; }
+.job-unconfirmed { font-size: 12px; margin-top: 8px; }
+.jobs-note, .jobs-empty { font-size: 14px; padding: 14px 0 4px; }
+.finished-jobs { margin-top: 8px; }
+.finished-job { padding: 14px 0 10px; border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent); }
+.finished-job:last-child { border-bottom: 0; }
+.job-outcome { font-size: 12px; color: var(--muted); }
+.job-outcome.is-failed { color: var(--danger); }
+.finished-task { font-size: 14px; line-height: 1.45; margin: 5px 0 4px; overflow-wrap: anywhere; }
+.finished-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 0 16px; font-size: 12px; }
+.finished-footer > .muted:first-child { margin-right: auto; }
+.job-result-link { display: inline-flex; align-items: center; min-height: 44px; border: 0; border-radius: 6px; padding: 0; background: none; font-size: 13px; color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.jobs-details { border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+.jobs-details > summary { cursor: pointer; min-height: 48px; padding: 14px 2px; color: var(--text); }
+.jobs-details summary:focus-visible, .job-result-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.jobs-detail-list { display: grid; grid-template-columns: minmax(95px, 34%) minmax(0, 1fr); gap: 10px 14px; margin: 6px 0 18px; }
+.jobs-detail-list dd { margin: 0; overflow-wrap: anywhere; }
+@media (prefers-color-scheme: light) { .job-card { background: #fff; } }
 .scores-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin: 0 0 12px; }
 .scores-grid-compact { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
 .scores-grid .score-card { background: var(--surface-2); border-radius: 12px; padding: 10px 12px; }
 .scores-grid .score-card strong { display: block; font-size: 18px; margin-top: 4px; }
 .scores-grid .score-card span { font-size: 12px; color: var(--muted); }
-.ops-detail dd.ops-job-snippet { white-space: pre-wrap; font-size: 13px; line-height: 1.45; color: var(--muted); }
-.live-job { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 12px; line-height: 1.4; background: var(--bg); }
-.live-job header { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin-bottom: 4px; color: var(--text); padding: 0; }
-.live-job .stall { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
-.live-job .stall.running { color: #8fd4a8; }
-.live-job .stall.stalled { color: var(--danger); }
-.live-job .log-tail { color: var(--muted); margin: 4px 0 0; white-space: pre-wrap; font-size: 11px; }
-.live-job-actions { display: flex; gap: 8px; margin-top: 10px; }
-.live-job-actions button { flex: 1; min-height: 44px; font-size: 13px; border-radius: 10px; }
 #view-song input, #view-song textarea {
   width: 100%;
   border: 1px solid var(--line);

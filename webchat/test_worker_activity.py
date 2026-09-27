@@ -115,6 +115,13 @@ class WorkerActivityTests(unittest.TestCase):
         for value, expected in (("01:23", 83), ("02:01:23", 7283), ("2-02:01:23", 180083), ("bad", None)):
             self.assertEqual(elapsed_seconds(value), expected)
 
+    def test_standalone_assignment_header_is_a_title_without_prompt_details(self):
+        processes = parse_processes("10 1 04:00 S codex exec Follow-up 4 on draft/webbob-clean-0927: redesign Web Bob's Jobs tab (phone-first). Private instructions and credentials follow\n")
+        row = collect_work({}, [], processes, 10000)[0]
+        self.assertEqual(row["title"], "redesign Web Bob's Jobs tab")
+        self.assertNotIn("Private", json.dumps(row))
+        self.assertNotIn("credentials", json.dumps(row))
+
 
 if __name__ == "__main__":
     unittest.main()

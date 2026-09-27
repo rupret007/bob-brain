@@ -325,15 +325,27 @@ def _plain_summary(
     return " ".join(parts)
 
 
-def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
-    """Single shared live status blob for gemini, minimax, codex, claude, and cursor prompts."""
-    root = Path(root)
+def observe_work(root: Path, *, now: float | None = None) -> dict:
+    """Read journals and inspect workers without dashboard refreshes or writes."""
     now = time.time() if now is None else now
     screen_sample = _screen_sessions(root)
     sessions = screen_sample or {}
     processes = process_table(root)
-    session_names = set(sessions)
     jobs_map = _latest_jobs(root)
+    queue = _queue_jobs(jobs_map, set(sessions), limit=len(jobs_map))
+    return dict(records=jobs_map, sessions=sessions, queue=queue,
+                work=collect_work(sessions, queue["claimed"], processes, now),
+                inspection=dict(screens_available=screen_sample is not None,
+                                processes_available=processes is not None))
+
+
+def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
+    """Single shared live status blob for gemini, minimax, codex, claude, and cursor prompts."""
+    root = Path(root)
+    now = time.time() if now is None else now
+    observed = observe_work(root, now=now)
+    sessions, jobs_map = observed["sessions"], observed["records"]
+    session_names = set(sessions)
     lanes = _read_json(root / "conductor/lanes.json", {})
     live_ops: dict = {}
     live_ops_meta: dict = {}
@@ -347,9 +359,9 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
         live_ops_meta = {"source": "unavailable", "stale": True}
 
     screens = _screen_lanes(sessions, jobs_map, live_ops)
-    queue = _queue_jobs(jobs_map, session_names, limit=len(jobs_map))
+    queue = observed["queue"]
     queue_counts = {key: len(rows) for key, rows in queue.items()}
-    work = collect_work(sessions, queue["claimed"], processes, now)
+    work = observed["work"]
     work_counts = {state: sum(row["state"] == state for row in work)
                    for state in ("running", "paused", "claimed", "unverified")}
     services = _service_health(root, session_names, now)
@@ -374,11 +386,11 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
         "now_line": now_line,
         "plain_summary": _plain_summary(
             screens=screens, queue=queue, services=services, disk=disk, now_line=now_line, work=work,
-            processes_available=processes is not None
+            processes_available=observed["inspection"]["processes_available"]
         ),
         "work": work,
         "work_counts": work_counts,
-        "inspection": {"screens_available": screen_sample is not None, "processes_available": processes is not None},
+        "inspection": observed["inspection"],
         "screen_lanes": screens,
         "queue_counts": queue_counts,
         "queue_jobs": {key: rows[:24] for key, rows in queue.items()},

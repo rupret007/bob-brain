@@ -67,8 +67,8 @@ if ($("login-form")) {
   }
   const stored = (key) => { try { return localStorage.getItem(key); } catch (_) { return null; } };
   const remember = (key, value) => { try { localStorage.setItem(key, value); } catch (_) {} };
-  async function api(path, data) {
-    const response = await fetch(path, { credentials: "same-origin", cache: "no-store",
+  async function api(path, data, signal) {
+    const response = await fetch(path, { credentials: "same-origin", cache: "no-store", signal,
       ...(data === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: JSON.stringify(data) }) });
     if (response.status === 401) { location.assign("/login"); throw new Error("Please log in."); }
     const result = await response.json();
@@ -154,6 +154,7 @@ if ($("login-form")) {
       view.hidden = !on;
       view.classList.toggle("active", on);
     }
+    if (name === "ops") refreshJobs();
     return true;
   }
   for (const btn of document.querySelectorAll(".bottom-tab")) {
@@ -874,18 +875,6 @@ if ($("login-form")) {
     } catch (error) { $("song-notice").textContent = error.message; }
     event.target.value = "";
   });
-  function jobLogLines(job) {
-    const events = (job.events || []).filter((e) => e && (e.text || e.sha || e.state));
-    if (events.length) {
-      return events.filter((e) => e.kind === "log" && e.text).map((e) => e.text).slice(-3);
-    }
-    return (job.log_tail || []).slice(-3);
-  }
-  function jobHeadline(job) {
-    const events = (job.events || []).filter((e) => e && (e.text || e.sha || e.state));
-    const status = events.find((e) => e.kind === "status");
-    return status?.text || job.plain_now || "Working…";
-  }
   function renderOpsDetail(ops, hostId = "ops-detail") {
     const host = $(hostId);
     if (!host) return;
@@ -917,26 +906,7 @@ if ($("login-form")) {
       dd.textContent = value;
       dl.append(dt, dd);
     });
-    if (hostId === "jobs-ops-detail" && allJobs.length) {
-      allJobs.slice(0, 12).forEach((job, index) => {
-        const dt = document.createElement("dt");
-        dt.textContent = `Job ${index + 1}`;
-        const dd = document.createElement("dd");
-        dd.className = "ops-job-snippet";
-        const lines = jobLogLines(job);
-        const sha = job.last_commit?.sha ? ` · ${job.last_commit.sha}` : "";
-        const round = job.round ? ` · round ${job.round}` : "";
-        const elapsed = job.elapsed_seconds != null ? ` · ${Math.round(job.elapsed_seconds / 60)}m elapsed` : "";
-        const stall = job.stall_plain ? ` · ${job.stall_plain}` : (job.stall_state ? ` · ${job.stall_state}` : "");
-        const display = job.display_state ? ` · ${job.display_state}` : "";
-        dd.textContent = `${jobHeadline(job)}${round}${elapsed}${stall}${display}${sha}${lines.length ? "\n" + lines.join("\n") : ""}`;
-        dl.append(dt, dd);
-      });
-    }
     host.replaceChildren(dl);
-    if (hostId === "ops-detail") {
-      renderOpsDetail(ops, "jobs-ops-detail");
-    }
   }
   function renderScoresTable(scores, hostId = "scores-table") {
     const host = $(hostId);
@@ -958,79 +928,127 @@ if ($("login-form")) {
       return card;
     }));
   }
-  function plainJobTitle(job) {
-    const round = job.round ? `Round ${job.round}` : "Job";
-    const engine = (job.engine || "worker").replace(/_/g, " ");
-    const state = job.display_state ? ` · ${job.display_state}` : "";
-    if (job.live_screen) return `${round} · live on screen${state}`;
-    return `${round} · ${engine}${state}`;
+  function jobElement(tag, className, text) {
+    const element = document.createElement(tag);
+    element.className = className;
+    if (text != null) element.textContent = text;
+    return element;
   }
-  function renderLiveJobs(jobs) {
-    const host = $("live-jobs");
-    const empty = $("jobs-empty");
-    if (!host) return;
-    const rows = (jobs || []).slice(0, 6);
-    if (empty) empty.hidden = rows.length > 0;
-    host.replaceChildren(...rows.map((job) => {
-      const card = document.createElement("article");
-      card.className = "live-job";
-      const header = document.createElement("header");
-      const title = document.createElement("strong");
-      title.textContent = plainJobTitle(job);
-      const stall = document.createElement("span");
-      stall.className = "stall";
-      const elapsed = document.createElement("span");
-      const mins = Math.round((job.elapsed_seconds || 0) / 60);
-      const roundNote = job.round ? ` · round ${job.round}` : "";
-      elapsed.textContent = `${mins}m elapsed${roundNote}${job.started_at ? " · " + job.started_at.replace("T", " ").slice(0, 16) : ""}`;
-      header.append(title, stall, elapsed);
-      const now = document.createElement("p");
-      const events = (job.events || []).filter((e) => e && (e.text || e.sha || e.state));
-      const stallEvent = events.find((e) => e.kind === "stall");
-      const resolvedStall = stallEvent?.state || job.stall_state || "unknown";
-      const stallLabel = job.stall_plain || (resolvedStall === "stalled" ? "Stalled" : resolvedStall === "running" ? "Running" : resolvedStall);
-      const isStalled = resolvedStall === "stalled" || /stalled/i.test(stallLabel);
-      stall.textContent = stallLabel;
-      stall.classList.toggle("stalled", isStalled);
-      stall.classList.toggle("running", !isStalled);
-      now.textContent = jobHeadline(job);
-      const tail = document.createElement("pre");
-      tail.className = "log-tail";
-      const logLines = jobLogLines(job);
-      tail.textContent = logLines.length ? logLines.join("\n") : "";
-      const commit = document.createElement("p");
-      commit.className = "job-commit muted";
-      if (job.last_commit?.sha) {
-        const msg = job.last_commit.message ? job.last_commit.message.replace(/\.md\b/gi, "").slice(0, 80) : "";
-        commit.textContent = `Latest commit ${job.last_commit.sha}${msg ? " — " + msg : ""}`;
+  function jobDuration(seconds) {
+    if (!Number.isFinite(seconds)) return "Time not reported";
+    const minutes = Math.floor(Math.max(0, seconds) / 60);
+    if (!minutes) return "Less than a minute";
+    if (minutes < 60) return `${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    return hours < 24 ? `${hours} hr${minutes % 60 ? ` ${minutes % 60} min` : ""}` : `${Math.floor(hours / 24)}d ${hours % 24} hr`;
+  }
+  function jobAge(seconds) {
+    return Number.isFinite(seconds) ? seconds < 60 ? "Just now" : `${jobDuration(seconds)} ago` : "Not reported";
+  }
+  function jobLink(url, label) {
+    if (!url) return null;
+    let parsed;
+    try { parsed = new URL(url, location.origin); } catch (_) { return null; }
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return null;
+    const link = jobElement("a", "job-result-link", label);
+    link.href = parsed.href;
+    link.rel = "noopener noreferrer";
+    link.target = "_blank";
+    return link;
+  }
+  function renderJobs(data) {
+    const rows = data.working || [];
+    const complete = data.inspection?.screens_available && data.inspection?.processes_available;
+    $("working-count").hidden = !rows.length;
+    $("working-count").textContent = String(rows.length);
+    $("jobs-notice").hidden = complete;
+    $("jobs-notice").textContent = complete ? "" : "Some live activity could not be checked. Retrying…";
+    $("jobs-empty").hidden = rows.length > 0 || !complete;
+    $("live-jobs").replaceChildren(...rows.map((job) => {
+      const card = jobElement("article", "job-card");
+      const header = jobElement("div", "job-card-heading");
+      const state = ({ running: "Live", paused: "Paused", unverified: "Session open", claimed: "Unconfirmed" })[job.state] || "Unconfirmed";
+      const status = jobElement("span", `job-state ${job.state === "running" ? "is-live" : ""}`, state);
+      const dot = jobElement("span", "job-dot");
+      dot.setAttribute("aria-hidden", "true");
+      status.prepend(dot);
+      header.append(jobElement("p", "job-project", job.project), status);
+      const metadata = jobElement("div", "job-metadata");
+      metadata.append(jobElement("span", "job-model", job.models.join(" / ")),
+        jobElement("span", "job-elapsed", jobDuration(job.elapsed_seconds)));
+      card.append(header, jobElement("h3", "job-task", job.task), metadata);
+      if (job.state === "unverified" || job.state === "claimed") {
+        card.append(jobElement("p", "job-unconfirmed muted", "Worker activity is not confirmed."));
       }
-      const actions = document.createElement("div");
-      actions.className = "live-job-actions";
-      const stopBtn = document.createElement("button");
-      stopBtn.type = "button";
-      stopBtn.className = "quiet";
-      stopBtn.textContent = "Stop";
-      stopBtn.addEventListener("click", () => {
-        const label = plainJobTitle(job);
-        submitChatText(`stop job: ${label} (draft only)`, { confirmStop: true, confirmMessage: `Stop ${label}?` });
-      });
-      const detailBtn = document.createElement("button");
-      detailBtn.type = "button";
-      detailBtn.className = "quiet";
-      detailBtn.textContent = "Details";
-      detailBtn.setAttribute("aria-label", `Details for ${plainJobTitle(job)}`);
-      detailBtn.addEventListener("click", () => {
-        const bodyParts = [job.plain_now || "", ...logLines, ...(job.log_tail || [])].filter(Boolean);
-        const body = [...new Set(bodyParts)].join("\n\n") || "No extra detail yet.";
-        $("report-title").textContent = plainJobTitle(job);
-        $("report-date").textContent = elapsed.textContent || "";
-        $("report-body").textContent = body;
-        $("report")?.showModal();
-      });
-      actions.append(stopBtn, detailBtn);
-      card.append(header, now, tail, commit, actions);
       return card;
     }));
+    const finished = (data.recently_finished || []).slice(0, 5);
+    $("finished-empty").hidden = finished.length > 0;
+    $("finished-jobs").replaceChildren(...finished.map((job) => {
+      const card = jobElement("article", "finished-job");
+      const heading = jobElement("div", "job-card-heading");
+      heading.append(jobElement("h3", "job-project", job.project),
+        jobElement("span", `job-outcome ${job.state === "failed" ? "is-failed" : ""}`,
+          job.state === "done" ? "Finished" : job.state === "failed" ? "Failed" : "Stopped"));
+      card.append(heading, jobElement("p", "finished-task", job.task));
+      const footer = jobElement("div", "finished-footer");
+      const when = Number.isFinite(job.finished_at) ? jobAge(data.checked_at - job.finished_at) : "Time not reported";
+      footer.append(jobElement("span", "muted", when));
+      if (job.result_url?.startsWith("/api/jobs/result?")) {
+        const result = jobElement("button", "job-result-link", "View result");
+        result.type = "button";
+        result.setAttribute("aria-label", `View result for ${job.project}: ${job.task}`);
+        result.addEventListener("click", async () => {
+          $("report-title").textContent = job.project;
+          $("report-date").textContent = job.task;
+          $("report-body").textContent = "Loading…";
+          $("report").showModal();
+          try { $("report-body").textContent = (await api(job.result_url)).text; }
+          catch (_) { $("report-body").textContent = "This result could not be loaded. Please try again."; }
+        });
+        footer.append(result);
+      }
+      const external = jobLink(job.external_result_url, "View result");
+      const pr = jobLink(job.pr_url, "View PR ↗");
+      if (external && !job.result_url) footer.append(external);
+      if (pr) footer.append(pr);
+      if (!job.result_url && !external && !pr) footer.append(jobElement("span", "muted", "No saved result"));
+      card.append(footer);
+      return card;
+    }));
+    const details = data.details || {};
+    const list = jobElement("dl", "jobs-detail-list");
+    const add = (label, value) => list.append(jobElement("dt", "", label), jobElement("dd", "", value));
+    add("Live check", new Date(data.checked_at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+    add("Waiting", `${details.queued || 0} queued${details.unconfirmed ? ` · ${details.unconfirmed} assigned, activity unconfirmed` : ""}`);
+    (details.health || []).forEach((row) => {
+      const state = ({ ready: "Available", cooldown: "Cooling down", recovery_due: "Needs a new check", unchecked: "Not checked" })[row.state] || "Unknown";
+      add(row.provider, `${state}${row.age_seconds == null ? "" : ` · ${jobAge(row.age_seconds)}`}`);
+    });
+    if (!details.costs?.length) add("API cost", "Not reported");
+    (details.costs || []).forEach((row) => add(`${row.provider} cost`,
+      `$${row.spent_usd.toFixed(2)} recorded${row.reserved_usd ? ` · $${row.reserved_usd.toFixed(2)} reserved` : ""}`));
+    (details.sources || []).forEach((row) => add(`${row.label} updated`, jobAge(row.age_seconds)));
+    $("jobs-detail-body").replaceChildren(list);
+  }
+  let jobsRefreshing = false;
+  async function refreshJobs() {
+    if (jobsRefreshing) return;
+    jobsRefreshing = true;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    try { renderJobs(await api("/api/jobs/activity", undefined, controller.signal)); }
+    catch (_) {
+      $("jobs-notice").hidden = false;
+      $("jobs-notice").textContent = "Live work is unavailable. Retrying…";
+      $("jobs-empty").hidden = true;
+      $("working-count").hidden = true;
+      $("live-jobs").replaceChildren();
+      $("jobs-detail-body").replaceChildren(jobElement("p", "muted", "Live check unavailable."));
+    } finally {
+      clearTimeout(timeout);
+      jobsRefreshing = false;
+    }
   }
   async function refreshPanel() {
     try {
@@ -1039,61 +1057,11 @@ if ($("login-form")) {
       lastPanelMeta = meta;
       const ops = data.live_ops || {};
       lastPanelOps = ops;
-      renderOpsDetail(ops, "jobs-ops-detail");
-      const spend = ops.minimax_spend || {};
-      const roles = ops.roles || {};
-      const jobs = ops.running_jobs || [];
-      const committed = spend.committed_usd;
-      const cap = minimaxCapUsd(spend);
-      const spendText = committed === undefined || committed === null ? "budget unknown" : `$${committed.toFixed(2)} of $${cap}`;
-      const dashAge = ops.dashboard_freshness_seconds;
-      const dashNote = dashAge === null || dashAge === undefined ? "" : ` · dashboard ${dashAge}s ago`;
-      const freshness = meta.stale ? `Stale snapshot${dashNote}` : `Live${dashNote}`;
-      const scoreStamp = ops.generated_at ? ` · scores ${ops.generated_at.replace("T", " ").slice(0, 16)} UTC` : "";
-      const liveCards = jobs.filter((j) => j.live_screen && j.stall_state === "running");
-      const jobLead = liveCards.length
-        ? `${liveCards.length} job${liveCards.length === 1 ? "" : "s"} running on screen`
-        : (jobs.length ? `${jobs.length} tracked — none on screen right now` : "Nothing running on screen");
-      const nowHost = $("now-line");
-      const nowLine = ops.now_line || data.alignment?.now_line;
-      if (nowHost) {
-        if (nowLine) {
-          nowHost.hidden = false;
-          nowHost.textContent = nowLine;
-        } else {
-          nowHost.hidden = true;
-          nowHost.textContent = "";
-        }
-      }
-      $("status-summary").textContent = `${freshness}${scoreStamp} · ${jobLead} · MiniMax ${spendText} · round ${ops.webchat_round || "?"}`;
-      renderLiveJobs(jobs);
       lastPanelScores = ops.scores;
-      lastPanelOps = ops;
-      renderScoresTable(ops.scores, "jobs-scores-table");
       if (activeBottomTab === "lanes") {
         renderOpsDetail(ops);
         renderScoresTable(ops.scores);
       }
-      const c = data.conductor || {};
-      $("conductor-summary").textContent = `Draft work on ${c.draft_branch || "unknown branch"}`;
-      const autopilot = liveCards.length
-        ? `Busy — ${liveCards.length} live job${liveCards.length === 1 ? "" : "s"}`
-        : (c.pass_schedule?.state === "finished" && liveCards.length === 0
-          ? `Idle${c.pass_schedule.next_due ? " · next pass " + new Date(c.pass_schedule.next_due * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""}`
-          : (c.pass_schedule?.state ? `Autopilot ${c.pass_schedule.state}` : "Autopilot idle"));
-      $("conductor-status").textContent = [
-        autopilot,
-        c.maintenance ? "Scheduling paused" : "Scheduler on",
-        `Builder: ${roles.building || "none"} · Reviews: ${roles.reviewing || "idle"}`,
-        (c.head_sha || "").slice(0, 7) ? `Latest commit ${(c.head_sha || "").slice(0, 7)}` : "",
-      ].filter(Boolean).join(" · ");
-      const summary = data.handback?.summary?.text || "";
-      const plainHandback = summary.split("\n")
-        .map((l) => l.replace(/^#+\s*/, "").replace(/\*\*/g, "").trim())
-        .filter((l) => l && !l.startsWith("---"))
-        .slice(0, 5)
-        .join(" ");
-      $("handback-plain").textContent = plainHandback || "Handback will appear after your next chat turn.";
       const si = data.self_improve || {};
       const age = si.log_age_seconds;
       const logFresh = age != null && age < 48 * 3600
@@ -1114,15 +1082,6 @@ if ($("login-form")) {
       const siShort = si.plain_status || health;
       const siLine = [siShort, streak, loaded, logFresh].filter(Boolean).join(" · ");
       $("self-improve-status").textContent = siLine;
-      const jobsSi = $("jobs-self-improve-status");
-      if (jobsSi) {
-        if (siLine.trim()) {
-          jobsSi.hidden = false;
-          jobsSi.textContent = `Self-improve: ${siLine}`;
-        } else {
-          jobsSi.hidden = true;
-        }
-      }
       const qh = data.quiet_hours || {};
       if (qh.active === true || qh.active === false) {
         lastQuietHoursActive = qh.active === true;
@@ -1152,16 +1111,7 @@ if ($("login-form")) {
       lastPanelMeta = { stale: true };
       lastPanelOps = null;
       lastPanelScores = null;
-      $("status-summary").textContent = "Jobs panel unavailable — dashboard may be stale";
-      renderOpsDetail({}, "jobs-ops-detail");
       renderOpsDetail({}, "ops-detail");
-      renderScoresTable(null, "jobs-scores-table");
-      renderLiveJobs([]);
-      const jobsSi = $("jobs-self-improve-status");
-      if (jobsSi) {
-        jobsSi.hidden = false;
-        jobsSi.textContent = "Self-improve status unavailable — refresh when the mini is back.";
-      }
     }
   }
   $("copy-bootstrap")?.addEventListener("click", async () => {
@@ -1260,7 +1210,8 @@ if ($("login-form")) {
       if (speakBtn && !("speechSynthesis" in window)) speakBtn.hidden = true;
       csrf = (await api("/api/session")).csrf; current = stored("bob.conversation");
       await refreshList(); await poll(); $("messages").scrollTop = $("messages").scrollHeight;
-      await refreshPanel(); await refreshLanes(); await loadSong();
+      await refreshJobs(); await refreshPanel(); await refreshLanes(); await loadSong();
+      setInterval(refreshJobs, 8000);
       setInterval(refreshPanel, 8000);
       setInterval(refreshLanes, 5000);
       setInterval(poll, 1200);

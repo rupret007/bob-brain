@@ -213,7 +213,8 @@ class HTTPTests(Fixture):
         self.assertIn("password", body)
         self.assertIn("no-store", headers["Cache-Control"])
         self.assertIn("frame-ancestors 'none'", headers["Content-Security-Policy"])
-        for path in ("/api", "/api/status", "/api/review", "/api/jobs", "/api/conversations", "/api/conversations/" + self.identifier):
+        for path in ("/api", "/api/status", "/api/review", "/api/jobs", "/api/jobs/activity", "/api/jobs/result?id=job",
+                     "/api/conversations", "/api/conversations/" + self.identifier):
             for method in ("GET", "POST"):
                 self.assertEqual(self.request(method, path)[0], 401, (method, path))
         self.assertEqual(self.request("GET", "/.password")[0], 404)
@@ -274,6 +275,26 @@ class HTTPTests(Fixture):
         code, _, body = self.request("GET", "/api/conversations/" + self.identifier)
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(body)["messages"][-1]["content"], "A saved reply.")
+
+    def test_jobs_activity_and_result_are_read_only_and_redacted(self):
+        self.login()
+        journal = self.root / "conductor/state/queue.jsonl"
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        journal.write_text(json.dumps(dict(id="job", status="succeeded", title="Web Bob result", finished_at=time.time(),
+                                            result="Saved result " + self.chat.password)) + "\n")
+        before = journal.read_bytes()
+        code, _, body = self.request("GET", "/api/jobs/activity")
+        self.assertEqual(code, 200)
+        view = json.loads(body)
+        self.assertEqual(view["working"], [])
+        self.assertEqual(view["recently_finished"][0]["result_url"], "/api/jobs/result?id=job")
+        code, _, body = self.request("GET", "/api/jobs/result?id=job")
+        self.assertEqual(code, 200)
+        self.assertIn("Saved result", body)
+        self.assertNotIn(self.chat.password, body)
+        self.assertEqual(self.request("GET", "/api/jobs/result?id=missing")[0], 404)
+        self.assertEqual(before, journal.read_bytes())
+        self.assertEqual(self.fake.calls, [])
 
     def test_explicit_providers_reach_model_and_reject_unknown_provider(self):
         self.login()

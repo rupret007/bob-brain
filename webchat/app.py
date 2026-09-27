@@ -47,6 +47,7 @@ from ops_panel import conductor_snapshot, draft_head_sha, enrich_live_ops, load_
 from quiet_hours import in_quiet_hours
 from task_dispatch import FOLLOW_UP, PREAMBLE, TaskDispatch, followup_work, needs_task_detail, parse_work, task_queue
 import chat_intent
+from jobs_view import build_jobs_view, result_text
 
 HERE = Path(os.environ.get("BOB_WEBCHAT_DIR", Path(__file__).resolve().parent)).resolve()
 ROOT = Path(os.environ.get("BOB_ROOT", HERE.parent.parent)).resolve()
@@ -1197,6 +1198,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, chat.report("conductor/STATUS.md" if route.endswith("status") else "conductor/reviews/LATEST.md"))
         if route == "/api/jobs":
             return self.send(200, chat.jobs())
+        if route == "/api/jobs/activity":
+            return self.send(200, json.loads(chat.redact(json.dumps(build_jobs_view(chat.root)))))
+        if route == "/api/jobs/result":
+            identifier = parse_qs(urlsplit(self.path).query).get("id", [""])[0]
+            result = result_text(chat.root, identifier)
+            if result is None:
+                raise RequestError(404, "No saved result for this job.")
+            return self.send(200, json.loads(chat.redact(json.dumps(result))))
         if route == "/api/handback":
             return self.send(200, chat.handback())
         if route == "/api/panel":

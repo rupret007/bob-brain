@@ -57,31 +57,25 @@
     </section>
 
     <section id="view-ops" class="main-view" data-view="ops" hidden>
-      <div class="view-scroll">
-        <h2 class="view-title">Jobs</h2>
-        <p id="now-line" class="now-line" hidden></p>
-        <p id="status-summary" class="view-lead muted"></p>
-        <p id="jobs-self-improve-status" class="view-hint muted" hidden></p>
-        <div id="jobs-ops-detail" class="ops-detail" aria-label="Live dashboard on Jobs" hidden></div>
-        <div id="jobs-scores-table" class="scores-grid scores-grid-compact" aria-label="Latest Web Bob scores on Jobs" hidden></div>
-        <div id="live-jobs" class="live-jobs" aria-live="polite"></div>
-        <p id="jobs-empty" class="empty-state" hidden>No jobs on screen right now. Tap Start round in chat when you want a builder pass.</p>
-        <div class="conductor-block">
-          <h3 class="view-subtitle">Conductor</h3>
-          <p id="conductor-summary" class="view-lead muted"></p>
-          <p id="conductor-status" class="conductor-status"></p>
-          <div class="conductor-actions" role="toolbar" aria-label="Conductor actions">
-            <button type="button" class="chip" data-conductor="round">Start round</button>
-            <button type="button" class="chip" data-conductor="council">Ask council</button>
-            <button type="button" class="chip" data-conductor="status">Status</button>
-            <button type="button" class="chip" data-conductor="stop">Stop job</button>
+      <div class="view-scroll jobs-scroll">
+        <section class="jobs-section" aria-labelledby="working-title">
+          <div class="jobs-heading">
+            <h2 id="working-title">Working now</h2>
+            <span id="working-count" class="jobs-count" hidden></span>
           </div>
-          <p class="view-hint muted">Draft-only. Merge, send, and spend still need your yes in chat.</p>
-        </div>
-        <div class="handback-block">
-          <h3 class="view-subtitle">Handback</h3>
-          <p id="handback-plain" class="handback-plain muted"></p>
-        </div>
+          <p id="jobs-notice" class="jobs-note muted" role="status">Checking live work…</p>
+          <div id="live-jobs" class="job-cards"></div>
+          <p id="jobs-empty" class="jobs-empty muted" hidden>Nothing running right now.</p>
+        </section>
+        <section class="jobs-section" aria-labelledby="finished-title">
+          <h2 id="finished-title">Recently finished</h2>
+          <div id="finished-jobs" class="finished-jobs"></div>
+          <p id="finished-empty" class="jobs-empty muted" hidden>No finished jobs yet.</p>
+        </section>
+        <details id="jobs-details" class="jobs-details">
+          <summary>Details</summary>
+          <div id="jobs-detail-body" class="jobs-detail-body"></div>
+        </details>
       </div>
     </section>
 

@@ -115,6 +115,16 @@ def task_label(record=None, screen=None):
     return "Task details unavailable"
 
 
+def task_header(command):
+    """Recognize an explicit assignment header, never expose the whole prompt."""
+    match = re.search(r"\bFollow-up \d+ on [\w./-]+:\s*([^\n]{1,500}?)(?:\.\s|\n|$)", command)
+    if not match:
+        return None
+    title = re.split(r"[;(]", match[1], maxsplit=1)[0].replace("EVERY", "every")
+    title = re.sub(r"/(?:Users|home|tmp)/\S+|\b[0-9a-f]{7,64}\b", "", title, flags=re.I)
+    return " ".join(title.split()).strip(" .")[:140] or None
+
+
 def collect_work(sessions, claimed_jobs, processes, now):
     """Join queue claims and live workers without counting a wrapper twice."""
     table = processes or {}
@@ -146,7 +156,10 @@ def collect_work(sessions, claimed_jobs, processes, now):
         # has none. Never guess a model from a lane's name or cached lock.
         model = model or next((workers[child][1] for child in descendants if workers[child][1]), None)
         state = "paused" if any(table[child]["process_state"].startswith("T") for child in descendants) else "running"
-        activity.append(dict(title=task_label(record, screen if screen and not screen.startswith("svc-") else None),
+        title = task_label(record, screen if screen and not screen.startswith("svc-") else None)
+        if title == "Task details unavailable":
+            title = task_header(row["command"]) or title
+        activity.append(dict(title=title,
                              worker=worker, model=model, state=state, elapsed_seconds=row["elapsed_seconds"],
                              pid=pid, screen=screen, job_id=record["job_id"] if record else None,
                              source="process"))
