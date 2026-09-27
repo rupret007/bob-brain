@@ -17,9 +17,10 @@ from contextlib import contextmanager
 
 from failover import AllDown, Cancelled, Circuit, NAMES, ORDER, ProviderError, REASONS, classify
 
-RULES = """Read BOB-HANDOFF.md + bob-brain/ and act as Bob.
+RULES = """Read BOB-HANDOFF.md + bob-brain/ + conductor/handback/ (BOB-STATE.md, HANDBACK-SUMMARY.md) and act as Bob.
 You are Jeff's Bob web chat on his Mac mini. Answer Jeff's latest message naturally,
-briefly, and honestly. The current handoff overrides older brain memories.
+briefly, and honestly — warm, casual, links and SHAs first when relevant. The current
+handoff and BOB-STATE override older brain memories.
 HARD RULES: Drafts only. Never merge, undraft, force-push, purchase, change logins,
 or send texts, emails, posts or DMs. Outward messages require Jeff's separate yes
 to the exact text; this chat only prepares drafts and does not send them.
@@ -163,7 +164,9 @@ def parse_codex(output):
         if event.get("type") == "thread.started" and UUID.fullmatch(str(event.get("thread_id", ""))):
             thread_id = event["thread_id"]
         if event.get("type") == "item.completed":
-            item = event.get("item") or {}
+            item = event.get("item")
+            if not isinstance(item, dict):
+                continue
             if item.get("type") == "agent_message" and isinstance(item.get("text"), str):
                 answer = item["text"].strip()
         completed |= event.get("type") == "turn.completed"
@@ -206,23 +209,35 @@ class Providers:
         self.timeout = max(15, min(600, int(os.environ.get("BOB_WEBCHAT_TIMEOUT", "180"))))
         self.timeouts = {name: max(15, min(600, int(os.environ.get("BOB_WEBCHAT_TIMEOUT_" + name.upper(), str(self.timeout if name in ("codex", "cursor") else 120))))) for name in (*ORDER, "claude")}
         self.resume_supported = None
+        self.current_call = threading.local()
         self.circuit = Circuit(root / "conductor/webchat/sessions/provider-health.json", root / "logs/webchat-failover.log")
         self.probe_cancel, self.probe_thread = threading.Event(), None
         self.probe_interval = 600
+        self.drill_circuit = None
 
-    def drill(self):
+    def drill(self, conversation_id=None):
         forced = {name.strip(): "nonzero_exit" for name in os.environ.get("BOB_WEBCHAT_FORCE_FAIL", "").split(",") if name.strip() in (*ORDER, "claude")}
         value = {"force_fail": forced}
         if os.environ.get("BOB_WEBCHAT_DRILLS") == "1":
             path = self.root / "conductor/webchat/.drill.json"
             if path.exists():
-                value.update(json.loads(path.read_text()))
+                settings = json.loads(path.read_text())
+                if "conversation_ids" not in settings or conversation_id in settings["conversation_ids"]:
+                    value.update(settings)
         return value
+
+    def circuit_for(self, conversation_id):
+        settings = self.drill(conversation_id)
+        if conversation_id and conversation_id in settings.get("conversation_ids", []):
+            with self.circuit.lock:
+                if self.drill_circuit is None:
+                    self.drill_circuit = Circuit(self.root / "conductor/webchat/sessions/drill-provider-health.json", self.circuit.log_path, audit_context="live-drill")
+            return self.drill_circuit
+        return self.circuit
 
     @contextmanager
     def lane(self, provider):
-        # Reuse the conductor's advisory lane-lock names without importing or
-        # changing its live scheduler. Gemini's helper acquires its own lease.
+        # Interactive slots are separate from every background lane lock.
         folder = self.root / "conductor/locks"
         folder.mkdir(parents=True, exist_ok=True)
         with (folder / ("chat-" + provider + ".lock")).open("a+") as handle:
@@ -243,6 +258,8 @@ class Providers:
             ("conductor/MAINTENANCE", 1000, False),
             ("conductor/reviews/LATEST.md", 10000, False),
             ("next-prompts/INDEX.md", 8000, False),
+            ("conductor/handback/BOB-STATE.md", 6000, False),
+            ("conductor/handback/HANDBACK-SUMMARY.md", 6000, True),
         ):
             path = self.root / relative
             try:
@@ -269,13 +286,14 @@ class Providers:
             "\nRecent conversation, oldest first. Answer the final user message:\n" + json.dumps(history, ensure_ascii=False))
 
     def call(self, provider, prompt, thread_id, cancel):
+        timeout = getattr(self.current_call, "timeout", None) or self.timeouts[provider]
         if provider in ("codex", "cursor"):
             with self.lane(provider):
                 return self.call_cli(provider, prompt, thread_id, cancel)
         if provider == "claude":
             with self.lane(provider):
                 executable = shutil.which("claude", path=self.env["PATH"]) or "claude"
-                code, out, err = self.run([executable, "-p", "Give a short critique only.\n" + prompt, "--output-format", "json", "--tools", "", "--permission-mode", "plan"], cwd=self.root, env=self.env, cancel=cancel, timeout=self.timeouts[provider])
+                code, out, err = self.run([executable, "-p", "Give a short critique only.\n" + prompt, "--output-format", "json", "--tools", "", "--permission-mode", "plan"], cwd=self.root, env=self.env, cancel=cancel, timeout=timeout)
                 if code:
                     raise failure(code, out + err)
                 return parse_cursor(out), None
@@ -284,7 +302,7 @@ class Providers:
         prompt += "\nTransport format: wrap your entire final reply in <bob-webchat-reply> and </bob-webchat-reply>. Put only your answer inside; no text outside. These tags are removed before Jeff sees the reply."
         script = Path(__file__).with_name("api_call.py")
         code, out, err = self.run([sys.executable, str(script), provider], cwd=self.root, env=self.env,
-                                  cancel=cancel, timeout=self.timeouts[provider], prompt=prompt)
+                                  cancel=cancel, timeout=timeout, prompt=prompt)
         if code:
             raise failure(code, out + err)
         text = out.strip()
@@ -293,6 +311,7 @@ class Providers:
         return usable(text), None
 
     def call_cli(self, provider, prompt, thread_id, cancel):
+        timeout = getattr(self.current_call, "timeout", None) or self.timeouts[provider]
         if provider == "codex":
             executable = shutil.which("codex", path=self.env["PATH"]) or "codex"
             if self.resume_supported is None:
@@ -306,7 +325,7 @@ class Providers:
             if self.resume_supported and thread_id:
                 argv += ["resume", thread_id]
             argv.append("-")
-            code, out, err = self.run(argv, cwd=self.root, env=self.env, cancel=cancel, timeout=self.timeouts[provider], prompt=prompt)
+            code, out, err = self.run(argv, cwd=self.root, env=self.env, cancel=cancel, timeout=timeout, prompt=prompt)
             if code:
                 reason = failure(code, out + err)
                 if thread_id and reason.kind == "session_unavailable":
@@ -317,7 +336,7 @@ class Providers:
         if provider == "cursor":
             executable = shutil.which("cursor-agent", path=self.env["PATH"]) or str(Path.home() / ".local/bin/cursor-agent")
             argv = [executable, "--trust", "--mode", "ask", "--print", "--output-format", "json", prompt]
-            code, out, err = self.run(argv, cwd=self.root, env=self.env, cancel=cancel, timeout=self.timeouts[provider])
+            code, out, err = self.run(argv, cwd=self.root, env=self.env, cancel=cancel, timeout=timeout)
             if code:
                 raise failure(code, out + err)
             return parse_cursor(out), None
@@ -333,6 +352,7 @@ class Providers:
 
     def reply(self, conversation, cancel, progress):
         prompt, attempts = conversation.get("retry_prompt") or self.prompt(conversation), []
+        circuit = self.circuit_for(conversation.get("id"))
         order = self.route_order(conversation)
         fast_deadline = time.monotonic() + FAST_BUDGET_SECONDS if order == FAST_ORDER else None
         request_id = next((m.get("request_id") for m in reversed(conversation["messages"]) if m["role"] == "user"), None)
@@ -341,7 +361,6 @@ class Providers:
         while index < len(order):
             provider = order[index]
             index += 1
-            tried.add(provider)
             if cancel.is_set():
                 raise Cancelled("Reply stopped.")
             if fast_deadline is not None and time.monotonic() >= fast_deadline:
@@ -351,26 +370,25 @@ class Providers:
                     fast_deadline = None
                     continue
                 break
-            health = self.circuit.snapshot()[provider]
-            if not self.circuit.acquire(provider):
+            tried.add(provider)
+            health = circuit.snapshot()[provider]
+            if not circuit.acquire(provider):
                 reason = health["reason"] or "busy"
                 attempts.append({"provider": provider, "kind": reason, "error": REASONS[reason], "skipped": True, "retry_at": health["retry_at"]})
-                self.circuit.log("skip", provider=provider, request_id=request_id, reason=reason, retry_at=health["retry_at"])
+                circuit.log("skip", provider=provider, request_id=request_id, reason=reason, retry_at=health["retry_at"])
                 continue
             if attempts:
                 previous = attempts[-1]
                 previous["message"] = f"{NAMES[previous['provider']]} {previous['error']}; switched to {NAMES[provider]}."
-                self.circuit.log("switch", provider=previous["provider"], next_provider=provider, request_id=request_id, reason=previous["kind"])
-            progress(provider, list(attempts))
-            drill = self.drill()
+                circuit.log("switch", provider=previous["provider"], next_provider=provider, request_id=request_id, reason=previous["kind"])
+            drill = {}
             timeout = self.timeouts[provider]
             if fast_deadline is not None:
-                remaining = int(fast_deadline - time.monotonic())
-                if remaining <= 0:
-                    continue
-                timeout = min(timeout, remaining)
+                timeout = max(.05, min(timeout, fast_deadline - time.monotonic()))
             try:
-                self.circuit.log("attempt", provider=provider, request_id=request_id, half_open=health["state"] == "half_open")
+                progress(provider, list(attempts))
+                drill = self.drill(conversation.get("id"))
+                circuit.log("attempt", provider=provider, request_id=request_id, half_open=health["state"] == "half_open")
                 if provider in drill.get("force_fail", {}):
                     kind = drill["force_fail"][provider]
                     kind = kind if kind in REASONS else "nonzero_exit"
@@ -382,45 +400,44 @@ class Providers:
                 answer = usable(answer)
                 if cancel.is_set():
                     raise Cancelled("Reply stopped.")
-                self.circuit.succeeded(provider)
-                self.circuit.log("success", provider=provider, request_id=request_id)
+                circuit.succeeded(provider)
+                circuit.log("success", provider=provider, request_id=request_id)
                 return {"content": self.redact(answer), "provider": provider,
                         "codex_thread_id": thread_id, "attempts": attempts}
             except Cancelled:
-                self.circuit.log("cancelled", provider=provider, request_id=request_id)
+                circuit.log("cancelled", provider=provider, request_id=request_id)
                 raise
             except (ProviderError, OSError) as exc:
                 error = exc if isinstance(exc, ProviderError) else ProviderError(kind="nonzero_exit")
                 if error.kind == "busy":
                     attempts.append({"provider": provider, "kind": "busy", "error": REASONS["busy"], "skipped": True})
-                    self.circuit.log("skip", provider=provider, request_id=request_id, reason="busy")
+                    circuit.log("skip", provider=provider, request_id=request_id, reason="busy")
                     continue
                 cooldown = max(1, min(1800, float(drill["cooldown_seconds"]))) if "cooldown_seconds" in drill else None
-                retry_at = self.circuit.failed(provider, error, cooldown)
+                retry_at = circuit.failed(provider, error, cooldown)
                 attempts.append({"provider": provider, "kind": error.kind, "error": REASONS[error.kind], "retry_at": retry_at, "partial_discarded": error.partial})
-                self.circuit.log("failure", provider=provider, request_id=request_id, reason=error.kind, retry_at=retry_at, partial_discarded=error.partial, injected=provider in drill.get("force_fail", {}))
+                circuit.log("failure", provider=provider, request_id=request_id, reason=error.kind, retry_at=retry_at, partial_discarded=error.partial, injected=provider in drill.get("force_fail", {}))
             finally:
-                self.circuit.release(provider)
+                circuit.release(provider)
         progress(None, list(attempts))
-        retry_at = self.circuit.next_retry(order)
-        self.circuit.log("all_down", request_id=request_id, retry_at=retry_at)
+        retry_at = circuit.next_retry(order)
+        circuit.log("all_down", request_id=request_id, retry_at=retry_at)
         raise AllDown(attempts, retry_at, prompt)
 
     def _call_timed(self, provider, prompt, thread_id, cancel, timeout):
-        previous = self.timeouts.get(provider)
-        self.timeouts[provider] = timeout
+        previous = getattr(self.current_call, "timeout", None)
+        self.current_call.timeout = timeout
         try:
             return self.call(provider, prompt, thread_id, cancel)
         finally:
-            if previous is not None:
-                self.timeouts[provider] = previous
+            self.current_call.timeout = previous
 
-    def health(self):
-        rows = self.circuit.snapshot()
+    def health(self, conversation_id=None):
+        rows = self.circuit_for(conversation_id).snapshot()
         for name, row in rows.items():
             row["timeout_seconds"] = self.timeouts[name]
             row["spend"] = self.spend(name)
-        return {"providers": rows, "order": list(ORDER), "probe_interval_seconds": self.probe_interval}
+        return {"providers": rows, "order": list(ORDER), "fast_order": list(FAST_ORDER), "probe_interval_seconds": self.probe_interval}
 
     def spend(self, name):
         try:
@@ -428,9 +445,9 @@ class Providers:
             records = {r["call_id"]: r for r in map(json.loads, path.read_text().splitlines())}
             spent = sum(r.get("cost_usd") or 0 for r in records.values())
             reserved = sum(r.get("reserved_usd", 0) for r in records.values() if r.get("cost_usd") is None)
-            return {"spent_usd": round(spent, 6), "reserved_usd": round(reserved, 6), "committed_usd": round(spent + reserved, 6), "cap_usd": 48 if name == "minimax" else None, "billing": "metered API" if name in ("gemini", "minimax") else "plan; webchat dollar usage unavailable"}
+            return {"spent_usd": round(spent, 6), "reserved_usd": round(reserved, 6), "committed_usd": round(spent + reserved, 6), "cap_usd": 96 if name == "minimax" else None, "billing": "metered API" if name in ("gemini", "minimax") else "plan; webchat dollar usage unavailable"}
         except (OSError, ValueError, KeyError, TypeError):
-            return {"billing": "unavailable", "cap_usd": 48 if name == "minimax" else None}
+            return {"billing": "unavailable", "cap_usd": 96 if name == "minimax" else None}
 
     def probe_once(self):
         for name in ORDER:

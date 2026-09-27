@@ -19,7 +19,7 @@ def main():
         import budget
         budget.import_ux_ledger()
         if budget.totals(lane)["committed_usd"] >= budget.CAP_USD:
-            print("MiniMax $48 cap reached")
+            print("MiniMax $96 cap reached")
             return 1
     host = "https://api.minimax.io" if lane == "minimax" else "https://generativelanguage.googleapis.com"
     # Any HTTP response proves reachability; no key is sent, no inference occurs.

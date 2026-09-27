@@ -23,6 +23,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from providers import Cancelled, ProviderError, Providers, Redactor, UUID, clean_env, run
 from failover import AllDown
+from handback import append_turn, public_digest
+from job_queue import parse_confirm, parse_start, queue_draft
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -130,7 +132,7 @@ class Chat:
             return self.public(value)
 
     def public(self, value):
-        return {k: copy.deepcopy(v) for k, v in value.items() if k not in ("codex_thread_id", "retry_prompt")}
+        return {k: copy.deepcopy(v) for k, v in value.items() if k not in ("codex_thread_id", "retry_prompt", "pending_job")}
 
     def get(self, identifier):
         if not isinstance(identifier, str) or not UUID.fullmatch(identifier) or identifier not in self.conversations:
@@ -238,6 +240,50 @@ class Chat:
             ]
             if conversation["title"] == "New conversation":
                 conversation["title"] = text[:65]
+            pending = conversation.get("pending_job")
+            if parse_confirm(text) and pending:
+                conversation.pop("pending_job", None)
+                blocked = hard_rule_refusal(pending) or hard_rule_refusal(text)
+                if blocked:
+                    conversation["messages"][-1].update(status="done", content=blocked,
+                        action_card={"id": request_id, "state": "refused", "executable": False, "reason": "Job blocked by standing rules"})
+                    self.save(conversation)
+                    self.conversations[identifier] = conversation
+                    append_turn(self.root, ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
+                                refusals=[blocked], open_items=[])
+                    return self.public(conversation)
+                result = queue_draft(self.root, pending)
+                if result["ok"]:
+                    reply = f"Queued draft job `{result['file']}` on the mini. The scheduler picks up READY rows; nothing merged or sent."
+                    conversation["messages"][-1].update(status="done", content=reply,
+                        action_card={"id": request_id, "state": "queued", "executable": False, "reason": "Job queued (draft)"})
+                else:
+                    conversation["messages"][-1].update(status="done", content=result["error"],
+                        action_card={"id": request_id, "state": "blocked", "executable": False, "reason": "Duplicate or blocked"})
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                append_turn(self.root, ask=text, provider=None, jobs=[result.get("file", "")] if result.get("ok") else [],
+                            files=[result.get("path", "")] if result.get("ok") else [], commits=[],
+                            confirmations=[text[:200]] if result.get("ok") else [], refusals=[], open_items=[])
+                return self.public(conversation)
+            if pending and not parse_confirm(text):
+                conversation.pop("pending_job", None)
+            job_text = parse_start(text)
+            if job_text:
+                if hard_rule_refusal(job_text):
+                    conversation["messages"][-1].update(status="done", content=hard_rule_refusal(job_text),
+                        action_card={"id": request_id, "state": "refused", "executable": False, "reason": "Standing rule: drafts only"})
+                    self.save(conversation)
+                    self.conversations[identifier] = conversation
+                    return self.public(conversation)
+                conversation["pending_job"] = job_text
+                conversation["messages"][-1].update(status="done",
+                    content="I can queue a **draft** screen job for the conductor scheduler. Reply `yes, start job` to confirm, or edit your request.",
+                    action_card={"id": request_id, "state": "confirm", "executable": True,
+                                 "reason": "Queue job: " + job_text[:120]})
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                return self.public(conversation)
             refusal = hard_rule_refusal(text)
             if refusal:
                 conversation["messages"][-1].update(status="done", content=refusal,
@@ -248,6 +294,8 @@ class Chat:
             if refusal:
                 if hasattr(self.providers, "circuit"):
                     self.providers.circuit.log("action_refused", request_id=request_id, reason="drafts_only")
+                append_turn(self.root, ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
+                            refusals=[refusal], open_items=[])
                 return self.public(conversation)
             self.launch(identifier)
             return self.public(conversation)
@@ -284,6 +332,10 @@ class Chat:
                 value["messages"][-1].update(answer, status="done")
                 value["messages"][-1].pop("retry_at", None)
                 self.save(value)
+                user = next((m["content"] for m in reversed(value["messages"]) if m["role"] == "user"), "")
+                append_turn(self.root, ask=user, provider=answer.get("provider"),
+                            jobs=[], files=[], commits=[], confirmations=[], refusals=[],
+                            open_items=[user[:200]] if user else [])
         except AllDown as exc:
             with self.lock:
                 value = self.get(identifier)
@@ -369,6 +421,23 @@ class Chat:
             raise RequestError(404, "This report is not available yet.") from None
         return {"text": self.redact(value[:200_000]), "truncated": len(value) > 200_000,
                 "modified_at": modified, "read_at": time.time()}
+
+    def handback(self):
+        return public_digest(self.root, self.redact)
+
+    def panel(self):
+        lanes = self.providers.health()
+        jobs = self.jobs()
+        results = []
+        for path in sorted(self.root.glob("conductor/reviews/*RESULT*.md"), key=lambda p: p.stat().st_mtime, reverse=True)[:5]:
+            try:
+                results.append({"name": path.name, "modified_at": path.stat().st_mtime})
+            except OSError:
+                continue
+        status_path = self.root / "conductor/STATUS.md"
+        dashboard_age = status_path.stat().st_mtime if status_path.exists() else None
+        return {"lanes": lanes, "jobs": jobs, "recent_results": results, "dashboard_modified_at": dashboard_age,
+                "handback": self.handback(), "read_at": time.time()}
 
     def jobs(self):
         try:
@@ -519,8 +588,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, chat.report("conductor/STATUS.md" if route.endswith("status") else "conductor/reviews/LATEST.md"))
         if route == "/api/jobs":
             return self.send(200, chat.jobs())
+        if route == "/api/handback":
+            return self.send(200, chat.handback())
+        if route == "/api/panel":
+            return self.send(200, chat.panel())
         if route == "/api/lanes":
-            return self.send(200, chat.providers.health())
+            identifier = parse_qs(urlsplit(self.path).query).get("conversation_id", [None])[0]
+            if identifier:
+                chat.get(identifier)
+            return self.send(200, chat.providers.health(identifier))
         raise RequestError(404, "Not found.")
 
     def post(self, session):

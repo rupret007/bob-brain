@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Draft-only Web Bob job requests into next-prompts (scheduler picks up READY rows)."""
+from __future__ import annotations
+
+import re
+import secrets
+import shutil
+import subprocess
+import time
+from pathlib import Path
+
+START = re.compile(r"^start (?:a )?job[:\s]+(.+)$", re.I | re.S)
+CONFIRM = re.compile(r"^yes[,.]?\s*(?:start|queue|run)\s+(?:the\s+)?job\s*$", re.I)
+
+
+def parse_start(text: str) -> str | None:
+    match = START.match(text.strip())
+    return match.group(1).strip()[:4000] if match else None
+
+
+def parse_confirm(text: str) -> bool:
+    return bool(CONFIRM.match(text.strip()))
+
+
+def running_screens(root: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["/usr/bin/screen", "-ls"], cwd=root, capture_output=True, text=True, timeout=5,
+        )
+        return result.stdout if result.returncode in (0, 1) else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def duplicate_task(screens: str, description: str) -> bool:
+    needle = description.lower()[:80]
+    return needle and needle in screens.lower()
+
+
+def queue_draft(root: Path, description: str) -> dict:
+    screens = running_screens(root)
+    if duplicate_task(screens, description):
+        return {"ok": False, "error": "A screen session may already be running this task. Check Jobs before queueing again."}
+    prompts = root / "next-prompts"
+    prompts.mkdir(parents=True, exist_ok=True)
+    inbox = prompts / "_inbox"
+    inbox.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_hex(4)
+    stamp = time.strftime("%Y%m%d-%H%M")
+    filename = f"webchat-{stamp}-{token}.md"
+    body = (
+        f"# Web Bob job request ({stamp})\n\n"
+        f"**Source:** Web Bob chat (draft only; Jeff must still approve any outward action.)\n\n"
+        f"## Task\n\n{description.strip()}\n\n"
+        f"## Rules\n\nDrafts only. No merge, undraft, or force-push. One WebJam coder at a time.\n"
+    )
+    path = prompts / filename
+    path.write_text(body)
+    index = prompts / "INDEX.md"
+    row = f"| 99 | `{filename}` | WebBob | non-coding | READY | Web Bob queued {stamp} |\n"
+    if index.exists():
+        text = index.read_text()
+        if filename not in text:
+            index.write_text(text.rstrip() + "\n" + row)
+    else:
+        index.write_text("# next-prompts queue\n\n| Pri | File | Project | Kind | Status | Notes |\n| --- | --- | --- | --- | --- | --- |\n" + row)
+    shutil.copy(path, inbox / filename)
+    return {"ok": True, "file": filename, "path": str(path.relative_to(root)), "screen_hint": screens.strip()[:500] or "none"}

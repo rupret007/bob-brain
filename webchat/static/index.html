@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Bob">
@@ -18,10 +18,15 @@
       <div class="identity"><span class="avatar" aria-hidden="true">b</span><div><h1>Bob</h1><p id="connection">Your chat on the mini</p></div></div>
       <button id="logout" class="quiet">Log out</button>
     </header>
+    <div class="handback-chip" id="handback-chip" role="status" aria-live="polite"></div>
+    <details id="status-panel" open>
+      <summary>Status <span id="status-summary" class="muted"></span></summary>
+      <div id="status-body" class="status-body"></div>
+    </details>
     <nav aria-label="Bob reports">
-      <button data-report="status">Status</button>
-      <button data-report="review">Gemini review</button>
-      <button data-report="jobs">Jobs</button>
+      <button data-report="status">STATUS.md</button>
+      <button data-report="review">Latest review</button>
+      <button data-report="jobs">Jobs detail</button>
     </nav>
     <details id="lanes-panel"><summary>Model lanes <span id="lanes-summary"></span></summary><div id="lanes" aria-live="polite"></div></details>
     <div class="conversation-bar">
@@ -34,7 +39,9 @@
     <div class="routing"><label for="provider-choice">Reply with</label><select id="provider-choice"><option value="auto">Automatic · Codex → Cursor → Gemini → MiniMax</option><option value="claude">Claude · short critique (explicit choice)</option></select></div>
     <form id="composer" class="composer">
       <label class="sr-only" for="message">Message Bob</label>
+      <button id="mic" type="button" class="quiet" aria-label="Voice input" title="Voice input">🎤</button>
       <textarea id="message" name="message" placeholder="Message Bob…" rows="1" maxlength="6000" required></textarea>
+      <button id="speak" type="button" class="quiet" aria-label="Read last reply aloud" title="Read aloud">🔊</button>
       <button id="stop" type="button" hidden>Stop</button>
       <button id="send" type="submit" class="primary">Send <span aria-hidden="true">↑</span></button>
     </form>

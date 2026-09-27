@@ -19,8 +19,9 @@ does not request a new model review or change the queue.
 
 ## Conversation and provider behavior
 
-Every message tries **Codex → Cursor → Gemini**. Claude is never in the automatic
-route. Codex uses the existing ChatGPT login with API-key environment variables
+Short messages use a fast path (**Gemini → MiniMax → Cursor → Codex**, ~60s budget).
+Longer work tries **Codex → Cursor → Gemini → MiniMax**. Claude is never in the
+automatic route. Codex uses the existing ChatGPT login with API-key environment variables
 removed and `forced_login_method="chatgpt"`. No credentials are changed. Native
 `codex exec resume <exact-thread-id>` preserves continuity; it never uses `--last`
 and therefore never picks up an unrelated coding job. Unsupported/unavailable
@@ -45,8 +46,11 @@ cannot override those rules.
 inside a mode-700 directory. Conversation history survives server restarts.
 Login cookies expire after 12 hours and are invalidated by logout or a restart.
 An interrupted reply is marked as interrupted; it is never automatically replayed.
-Only one reply runs at a time. CLI calls respect the conductor's shared provider
-locks; a busy lane falls through to the next provider. Retransmitting the same request ID does not run
+Only one reply runs **per conversation** (other chats can reply in parallel). CLI
+calls use `chat-<provider>` locks separate from background `lane-*` locks; a busy
+CLI slot falls through to the next provider. Handback: `conductor/handback/`
+(BOB-STATE in, HANDBACK-LOG out). Say `start a job: …` then `yes, start job` to
+queue a draft READY row (scheduler launches; nothing merges automatically). Retransmitting the same request ID does not run
 the model twice. Stop and the 180-second per-provider deadline terminate only
 process groups started by this chat. Set `BOB_WEBCHAT_TIMEOUT` for a different
 deadline (15–600 seconds).

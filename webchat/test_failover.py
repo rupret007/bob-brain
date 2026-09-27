@@ -198,6 +198,50 @@ class FailoverTests(Fixture):
         with patch.dict(os.environ, {"BOB_WEBCHAT_DRILLS": "0", "BOB_WEBCHAT_FORCE_FAIL": ""}):
             self.assertEqual(self.provider.drill()["force_fail"], {})
 
+    def test_scoped_drill_does_not_change_real_chat_health(self):
+        cid = str(uuid.uuid4())
+        self.turn["id"] = cid
+        path = self.root / "conductor/webchat/.drill.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"conversation_ids": [cid], "force_fail": {n: "network" for n in ORDER}}))
+        with patch.dict(os.environ, {"BOB_WEBCHAT_DRILLS": "1"}), patch.object(self.provider, "call", return_value=("Healthy real chat", None)) as call:
+            with self.assertRaises(AllDown):
+                self.reply()
+            call.assert_not_called()
+            self.assertTrue(all(row["failures"] == 0 for row in self.provider.circuit.entries.values()))
+            self.turn["id"] = str(uuid.uuid4())
+            self.assertEqual(self.reply()["content"], "Healthy real chat")
+
+    def test_api_concurrency_and_single_half_open_probe(self):
+        c = self.provider.circuit
+        for name in ("gemini", "minimax"):
+            self.assertTrue(c.acquire(name))
+            self.assertTrue(c.acquire(name))
+            c.release(name)
+            self.assertEqual(c.snapshot()[name]["state"], "busy")
+            c.release(name)
+            c.failed(name, ProviderError(kind="network"))
+            c.entries[name]["retry_at"] = 0
+            self.assertTrue(c.acquire(name))
+            self.assertFalse(c.acquire(name))
+            c.release(name)
+
+    def test_concurrent_turns_do_not_change_each_others_timeouts(self):
+        barrier = threading.Barrier(2)
+        observed = []
+        def call(*_):
+            barrier.wait(timeout=3)
+            observed.append(self.provider.current_call.timeout)
+            return "Answer", None
+        with patch.object(self.provider, "call", side_effect=call):
+            threads = [threading.Thread(target=self.provider._call_timed, args=("gemini", "prompt", None, self.cancel, duration)) for duration in (7, 29)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(4)
+        self.assertEqual(sorted(observed), [7, 29])
+        self.assertEqual(self.provider.timeouts["gemini"], 120)
+
 
 class QueueTests(Fixture):
     def setUp(self):

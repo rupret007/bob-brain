@@ -8,7 +8,7 @@ import re
 import tempfile
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from email.utils import parsedate_to_datetime
 
 ORDER = ("codex", "cursor", "gemini", "minimax")
@@ -21,8 +21,8 @@ REASONS = {
     "nonzero_exit": "exited unsuccessfully",
     "invalid_output": "returned an empty, incomplete or invalid answer",
     "network": "had a network error",
-    "busy": "is busy with another job",
-    "budget": "cannot fit another request under its $48 cap",
+    "busy": "is answering another chat; trying the next provider",
+    "budget": "cannot fit another request under its $96 cap",
     "not_installed": "is not installed",
     "session_unavailable": "could not resume the saved session",
 }
@@ -72,7 +72,7 @@ def reset_time(text, now):
 
 def classify(code, text):
     text = text.lower()
-    if any(s in text for s in ("$48 cap", "budgetexceeded", "budget exhausted")):
+    if any(s in text for s in ("$96 cap", "$48 cap", "budgetexceeded", "budget exhausted")):
         return "budget"
     if any(s in text for s in ("blockingioerror", "lane reserved", "busy with another job")):
         return "busy"
@@ -126,11 +126,12 @@ def atomic_json(path, data):
 
 
 class Circuit:
-    def __init__(self, path, log_path, clock=time.time, base=300, maximum=1800):
+    def __init__(self, path, log_path, clock=time.time, base=300, maximum=1800, audit_context="production"):
         self.path, self.log_path, self.clock = path, log_path, clock
         self.base, self.maximum = base, maximum
+        self.audit_context = audit_context
         self.lock = threading.RLock()
-        self.active = set()
+        self.active = {}
         self.entries = json.loads(path.read_text()) if path.exists() else {}
         for name in (*ORDER, "claude"):
             self.entries.setdefault(name, {"failures": 0, "retry_at": 0, "reason": None, "checked_at": None})
@@ -142,7 +143,7 @@ class Circuit:
             fd = os.open(self.log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
             with os.fdopen(fd, "a") as handle:
                 os.fchmod(handle.fileno(), 0o600)
-                handle.write(json.dumps({"timestamp": self.clock(), "event": event, **data}) + "\n")
+                handle.write(json.dumps({"timestamp": self.clock(), "event": event, "context": self.audit_context, **data}) + "\n")
                 handle.flush()
                 os.fsync(handle.fileno())
 
@@ -161,14 +162,21 @@ class Circuit:
 
     def acquire(self, name):
         with self.lock:
-            if name in self.active or self.entries[name]["retry_at"] > self.clock():
+            if self.entries[name]["retry_at"] > self.clock():
                 return False
-            self.active.add(name)
+            # HTTP APIs allow concurrent chats. Only a half-open recovery attempt
+            # or an interactive CLI slot is exclusive, never a background job.
+            if name in self.active and (name not in ("gemini", "minimax") or self.entries[name]["failures"]):
+                return False
+            self.active[name] = self.active.get(name, 0) + 1
             return True
 
     def release(self, name):
         with self.lock:
-            self.active.discard(name)
+            if self.active.get(name, 0) > 1:
+                self.active[name] -= 1
+            else:
+                self.active.pop(name, None)
 
     def failed(self, name, error, cooldown=None):
         with self.lock:

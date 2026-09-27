@@ -16,6 +16,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import Chat, RequestError, Server, password_at, private_write
+from handback import append_turn, refresh_summary
+from job_queue import parse_confirm, parse_start, queue_draft
 from failover import AllDown
 from providers import Cancelled, ProviderError, Providers, Redactor, clean_env, parse_codex, parse_cursor, parse_gemini, run
 
@@ -27,6 +29,9 @@ class FakeProviders:
         self.calls = []
         self.hold = threading.Event()
         self.hold.set()
+
+    def health(self, conversation_id=None):
+        return {"providers": {}, "order": [], "fast_order": []}
 
     def reply(self, conversation, cancel, progress):
         self.calls.append(conversation)
@@ -460,6 +465,44 @@ class ProviderTests(Fixture):
             run([sys.executable, "-c", parent], cwd=self.root, env=clean_env(), cancel=threading.Event(), timeout=0.2)
         time.sleep(0.8)
         self.assertFalse(marker.exists())
+
+
+class HandbackJobTests(Fixture):
+    def test_handback_log_and_summary(self):
+        folder = self.root / "conductor/handback"
+        folder.mkdir(parents=True)
+        (folder / "BOB-STATE.md").write_text("Running: test job")
+        append_turn(self.root, ask="status?", provider="gemini", jobs=[], files=[], commits=[], confirmations=[], refusals=[], open_items=["status"])
+        self.assertTrue((folder / "HANDBACK-LOG.md").exists())
+        refresh_summary(self.root)
+        self.assertIn("status?", (folder / "HANDBACK-SUMMARY.md").read_text())
+
+    def test_job_confirm_queues_draft_row(self):
+        (self.root / "next-prompts").mkdir(parents=True)
+        (self.root / "next-prompts/INDEX.md").write_text("| Pri | File | Project | Kind | Status | Notes |\n| --- | --- | --- | --- | --- | --- |\n")
+        self.assertEqual(parse_start("start a job: fix the webchat panel"), "fix the webchat panel")
+        self.assertTrue(parse_confirm("yes, start job"))
+        request_id = str(uuid.uuid4())
+        self.chat.submit(self.identifier, "start a job: fix the webchat panel", request_id)
+        self.assertEqual(self.chat.conversations[self.identifier].get("pending_job"), "fix the webchat panel")
+        self.chat.submit(self.identifier, "yes, start job", str(uuid.uuid4()))
+        self.wait()
+        index = (self.root / "next-prompts/INDEX.md").read_text()
+        self.assertIn("webchat-", index)
+        self.assertIn("READY", index)
+
+    def test_job_merge_refused_before_queue(self):
+        self.chat.submit(self.identifier, "start a job: merge #158", str(uuid.uuid4()))
+        self.assertNotIn("pending_job", self.chat.conversations[self.identifier])
+        self.chat.submit(self.identifier, "start a job: safe task", str(uuid.uuid4()))
+        self.chat.submit(self.identifier, "hello bob", str(uuid.uuid4()))
+        self.assertNotIn("pending_job", self.chat.conversations[self.identifier])
+
+    def test_panel_and_handback_api_shape(self):
+        data = self.chat.panel()
+        self.assertIn("lanes", data)
+        self.assertIn("handback", data)
+        self.assertIn("recent_results", data)
 
 
 class InstallerTests(Fixture):

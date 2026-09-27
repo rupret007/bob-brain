@@ -17,6 +17,22 @@ if ($("login-form")) {
 } else {
   let csrf = "", current = "", busy = false, sending = false, revision = "", polling = false, draftRequest = null;
   const providers = { codex: "Codex", cursor: "Cursor", gemini: "Gemini", minimax: "MiniMax", claude: "Claude" };
+  function escapeHtml(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function renderMarkdown(text) {
+    let html = escapeHtml(text);
+    html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre class="code-block"><code>${code.trim()}</code></pre>`);
+    html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+    html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" rel="noopener noreferrer" target="_blank">$1</a>');
+    html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    html = html.replace(/(?:^|\n)([-*] .+(?:\n[-*] .+)*)/g, (block) => {
+      const items = block.trim().split("\n").map((line) => `<li>${line.replace(/^[-*]\s+/, "")}</li>`).join("");
+      return `<ul>${items}</ul>`;
+    });
+    html = html.replace(/\n/g, "<br>");
+    return html;
+  }
   const stored = (key) => { try { return localStorage.getItem(key); } catch (_) { return null; } };
   const remember = (key, value) => { try { localStorage.setItem(key, value); } catch (_) {} };
   async function api(path, data) {
@@ -60,7 +76,9 @@ if ($("login-form")) {
       const meta = document.createElement("div"); meta.className = "meta";
       meta.textContent = `${message.role === "user" ? "You" : "Bob"}${message.provider ? " · " + providers[message.provider] : ""} · ${new Date(message.created_at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
       const body = document.createElement("div"); body.className = "body";
-      body.textContent = pending ? (message.provider ? `Thinking via ${providers[message.provider]}…` : "One moment…") : message.content;
+      if (pending) body.textContent = message.provider ? `Thinking via ${providers[message.provider]}…` : "One moment…";
+      else if (message.role === "assistant") body.innerHTML = renderMarkdown(message.content || "");
+      else body.textContent = message.content;
       article.append(meta, body);
       if (message.status === "waiting" && message.retry_at) {
         const retry = document.createElement("div"); retry.className = "attempt";
@@ -69,7 +87,8 @@ if ($("login-form")) {
       }
       if (message.action_card) {
         const card = document.createElement("div"); card.className = "action-card";
-        card.textContent = `${message.action_card.reason} · No action executed`;
+        const suffix = message.action_card.state === "queued" ? "Queued for scheduler" : message.action_card.state === "confirm" ? "Awaiting your yes" : "No action executed";
+        card.textContent = `${message.action_card.reason} · ${suffix}`;
         article.append(card);
       }
       if (message.attempts?.length) {
@@ -140,6 +159,32 @@ if ($("login-form")) {
     try { const conversation = await api("/api/conversations", {}); current = conversation.id; revision = ""; await refreshList(); render(conversation); $("message").focus(); }
     catch (error) { $("notice").textContent = error.message; }
   });
+  $("mic").addEventListener("click", () => {
+    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Speech) { $("notice").textContent = "Voice input is not supported in this browser."; return; }
+    const rec = new Speech();
+    rec.lang = "en-US";
+    rec.interimResults = false;
+    $("notice").textContent = "Listening…";
+    rec.onresult = (event) => {
+      const transcript = event.results[0][0].transcript.trim();
+      $("message").value = ($("message").value + " " + transcript).trim();
+      $("message").dispatchEvent(new Event("input"));
+      $("notice").textContent = "";
+    };
+    rec.onerror = () => { $("notice").textContent = "Could not capture voice. Try typing."; };
+    rec.start();
+  });
+  $("speak").addEventListener("click", async () => {
+    if (!("speechSynthesis" in window)) { $("notice").textContent = "Read-aloud is not supported here."; return; }
+    try {
+      const conversation = await api(`/api/conversations/${current}`);
+      const last = conversation.messages.filter((m) => m.role === "assistant" && m.status === "done").at(-1);
+      if (!last?.content) { $("notice").textContent = "No finished reply to read."; return; }
+      speechSynthesis.cancel();
+      speechSynthesis.speak(new SpeechSynthesisUtterance(last.content.slice(0, 4000)));
+    } catch (error) { $("notice").textContent = error.message; }
+  });
   $("stop").addEventListener("click", async () => {
     try { await api("/api/cancel", { conversation_id: current }); $("notice").textContent = "Stopping this reply…"; }
     catch (error) { $("notice").textContent = error.message; }
@@ -160,9 +205,29 @@ if ($("login-form")) {
     } catch (error) { $("report-body").textContent = error.message; }
   });
   $("close-report").addEventListener("click", () => $("report").close());
+  async function refreshPanel() {
+    try {
+      const data = await api("/api/panel");
+      const state = data.handback?.bob_state?.text || "";
+      $("handback-chip").textContent = state ? state.split("\n").find((line) => line.trim() && !line.startsWith("#"))?.slice(0, 140) || state.slice(0, 140) : "Handback: no BOB-STATE yet";
+      const dash = data.dashboard_modified_at ? new Date(data.dashboard_modified_at * 1000).toLocaleString() : "unknown";
+      const results = (data.recent_results || []).map((r) => r.name).join(", ") || "none";
+      $("status-summary").textContent = `dashboard ${dash}`;
+      const lines = [
+        `Dashboard fresh: ${dash}`,
+        `Recent RESULT files: ${results}`,
+        `Screens: ${(data.jobs.screens || "").split("\n")[0] || "n/a"}`,
+        "",
+        (data.handback?.bob_state?.text || "").slice(0, 1200),
+      ];
+      $("status-body").textContent = lines.join("\n");
+    } catch (_) {
+      $("status-summary").textContent = "unavailable";
+    }
+  }
   async function refreshLanes() {
     try {
-      const data = await api("/api/lanes");
+      const data = await api("/api/lanes" + (current ? "?conversation_id=" + encodeURIComponent(current) : ""));
       const entries = Object.entries(data.providers);
       $("lanes-summary").textContent = entries.filter(([, lane]) => lane.state === "cooldown").length + " cooling down";
       $("lanes").replaceChildren(...entries.map(([name, lane]) => {
@@ -182,7 +247,9 @@ if ($("login-form")) {
     try {
       csrf = (await api("/api/session")).csrf; current = stored("bob.conversation");
       await refreshList(); await poll(); $("messages").scrollTop = $("messages").scrollHeight;
-      await refreshLanes(); setInterval(refreshLanes, 5000);
+      await refreshPanel(); await refreshLanes();
+      setInterval(refreshPanel, 8000);
+      setInterval(refreshLanes, 5000);
       setInterval(poll, 1200);
     } catch (error) { $("notice").textContent = error.message; }
   }

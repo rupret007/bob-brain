@@ -39,7 +39,7 @@ def main():
             print("Bob web chat is healthy at " + URL)
             return 0
         result = subprocess.run(["/usr/bin/screen", "-ls"], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=5)
-        if re.search(r"\b\d+\.svc-webchat\s", result.stdout):
+        if re.search(r"\b\d+\.svc-webchat\s+\(", result.stdout):
             print("svc-webchat exists but HTTP is not ready; inspect logs/webchat-server.log. No process was replaced.")
             return 1
         subprocess.run(["/usr/bin/screen", "-dmS", "svc-webchat", "/bin/bash", str(HERE / "run.sh")],
