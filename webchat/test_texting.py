@@ -130,6 +130,18 @@ class TextingTests(unittest.TestCase):
         self.assertFalse(self.chat.conversations[self.identifier]["intent_state"]["holds"])
         self.assertEqual(len(self.private()["audit"]), 1)
 
+    def test_separate_yes_sends_via_mock_andrea_bluebubbles_path(self):
+        self.mock.enable_web_bob_send = True
+        draft = self.draft()
+        before_sends = len(self.mock.sends)
+        value = self.say(draft["confirm_message"])
+        self.assertTrue(value["messages"][-1]["content"].startswith("Sent via Andrea"))
+        self.assertEqual(self.private()["drafts"][draft["id"]]["state"], "sent")
+        self.assertEqual(self.private()["audit"][0]["event"], "owner_sent_via_andrea")
+        self.assertEqual(len(self.mock.sends), before_sends + 1)
+        self.assertEqual(self.mock.sends[-1], {"chatGuid": draft["recipient"]["guid"], "text": draft["body"]})
+        self.assertIn(("POST", "/web-bob/send"), self.mock.calls)
+
     def test_exact_confirmation_consumed_once_and_truthfully_blocked(self):
         draft = self.draft()
         request_id = str(uuid.uuid4())
@@ -144,7 +156,8 @@ class TextingTests(unittest.TestCase):
         self.say(draft["confirm_message"])
         self.assertEqual(len(self.private()["audit"]), 1)
         self.assertEqual(self.providers.calls, [])
-        self.assertEqual(len(self.mock.calls), 1)  # only the original recipient lookup
+        self.assertEqual(len(self.mock.calls), 2)  # recipient lookup plus Andrea send probe
+        self.assertEqual(self.mock.calls[-1], ("POST", "/web-bob/send"))
 
     def test_wrong_conversation_login_or_token_cannot_confirm(self):
         draft = self.draft()

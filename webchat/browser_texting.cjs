@@ -75,19 +75,19 @@ const { chromium } = require(process.env.BOB_PLAYWRIGHT_MODULE || "playwright");
     assert.equal(await page.locator(".message.user").count(), before);
     assert.equal(await page.locator("#message").inputValue(), newConfirmation);
     const result = await say(newConfirmation);
-    assert(result.messages.at(-1).content.startsWith("Not sent."));
-    await screenshot("phone-not-sent");
+    assert(result.messages.at(-1).content.startsWith("Sent via Andrea"));
+    await screenshot("phone-sent");
     await page.setViewportSize({ width: 1100, height: 1000 });
-    await page.locator('.text-draft-card[data-state="confirmed_not_sent"]').scrollIntoViewIfNeeded();
-    await screenshot("desktop-confirmed-not-sent");
+    await page.locator('.text-draft-card[data-state="sent"]').scrollIntoViewIfNeeded();
+    await screenshot("desktop-sent");
     await page.reload();
-    await page.locator('.text-draft-card[data-state="confirmed_not_sent"]').waitFor();
+    await page.locator('.text-draft-card[data-state="sent"]').waitFor();
     assert.equal(await page.locator(".text-confirmation").count(), 0);
     assert.deepEqual(errors, []);
     console.log(JSON.stringify({ ok: true, synthetic_only: true, screenshots, browser_errors: errors,
       checks: ["login", "thread summary", "exact recipient and body", "edit clears consent",
-        "new token after edit", "stale token rejected", "separate chat submission", "honest blocked receipt",
-        "reload preserves consumed consent", "no horizontal phone overflow"] }));
+        "new token after edit", "stale token rejected", "separate chat submission", "mock Andrea send after separate yes",
+        "reload preserves sent draft", "no horizontal phone overflow"] }));
     await context.close();
   } finally {
     await browser.close();

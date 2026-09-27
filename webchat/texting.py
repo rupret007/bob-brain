@@ -33,6 +33,7 @@ BRIDGE_BLOCKED = ("Not sent. Your confirmation was recorded here, but Andrea’s
                   "control API does not accept sends or owner approvals from Web Bob. "
                   "Ask Andrea for a fresh recipient-bound draft in its registered owner "
                   "chat and approve that card there. This Web Bob confirmation cannot be reused.")
+SENT_VIA_ANDREA = "Sent via Andrea’s BlueBubbles bridge."
 
 
 class TextingError(Exception):
@@ -136,6 +137,18 @@ class Andrea:
         return ("Andrea’s control service is reachable. " +
                 ("Its BlueBubbles channel is connected." if result.get("connected") is True else
                  "Its BlueBubbles channel is unavailable."))
+
+    def deliver(self, chat_guid, body):
+        """Owner-approved send through Andrea when the control service exposes Web Bob delivery."""
+        if not self.token or not isinstance(chat_guid, str) or not chat_guid or not isinstance(body, str) or not body.strip():
+            return False
+        try:
+            result = request_json(self.base, "/web-bob/send",
+                                  data={"chatGuid": chat_guid, "text": body},
+                                  headers={"Authorization": "Bearer " + self.token})
+        except TextingError:
+            return False
+        return result.get("ok") is True and isinstance(result.get("messageGuid"), str)
 
 
 def fingerprint(draft):
@@ -260,16 +273,23 @@ class Texting:
                 not hmac.compare_digest(match[1], draft["token"]) or
                 not hmac.compare_digest(fingerprint(draft), draft["fingerprint"])):
             return "Nothing sent. This yes does not match the exact draft and login that presented it. Review a fresh draft."
-        # Save consumed consent before any handoff check. Never replay on restart/error.
-        draft.update(state="confirmed_not_sent", token=None, approved_at=self.clock())
-        state["audit"].append({"event": "owner_confirmed_not_sent", "actor": actor,
-            "conversation_id": conversation["id"], "draft_id": draft["id"], "revision": draft["revision"],
-            "recipient": copy.deepcopy(draft["recipient"]), "body": draft["body"],
-            "fingerprint": draft["fingerprint"], "at": self.clock(), "request_id": request_id})
-        conversation["messages"][-1].update(status="done", provider="texting", content=BRIDGE_BLOCKED)
+        # Save consumed consent before any handoff. Never replay on restart/error.
+        draft.update(token=None, approved_at=self.clock())
+        audit = {"event": "owner_confirmed_not_sent", "actor": actor,
+                 "conversation_id": conversation["id"], "draft_id": draft["id"], "revision": draft["revision"],
+                 "recipient": copy.deepcopy(draft["recipient"]), "body": draft["body"],
+                 "fingerprint": draft["fingerprint"], "at": self.clock(), "request_id": request_id}
+        state["audit"].append(audit)
+        if self.andrea.deliver(draft["recipient"]["guid"], draft["body"]):
+            draft["state"] = "sent"
+            audit["event"] = "owner_sent_via_andrea"
+            content = SENT_VIA_ANDREA
+        else:
+            draft["state"] = "confirmed_not_sent"
+            content = BRIDGE_BLOCKED
+        conversation["messages"][-1].update(status="done", provider="texting", content=content)
         persist(conversation)
-        # Deliberately no /send or /execute request: installed Andrea forbids them.
-        return BRIDGE_BLOCKED
+        return content
 
     def handle(self, conversation, text, actor, request_id, persist, redact):
         state = conversation.get("_texting", {})

@@ -1,6 +1,7 @@
-"""Synthetic loopback BlueBubbles + Andrea contract fixture. Never sends texts."""
+"""Synthetic loopback BlueBubbles + Andrea contract fixture. Never sends real texts."""
 import copy
 import json
+import secrets
 import sqlite3
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,7 +26,8 @@ MESSAGES = [
 
 class MockMessaging:
     def __init__(self, folder):
-        self.calls, self.unexpected_writes = [], []
+        self.calls, self.unexpected_writes, self.sends = [], [], []
+        self.enable_web_bob_send = False
         self.chats, self.messages = copy.deepcopy(CHATS), copy.deepcopy(MESSAGES)
         self.mode = "ok"
         self.password, self.token = "fixture-bb-password", "fixture-andrea-token"
@@ -38,7 +40,27 @@ class MockMessaging:
             def handle_request(self):
                 url = urlsplit(self.path)
                 fixture.calls.append((self.command, url.path))
-                allowed_post = self.command == "POST" and url.path == "/api/v1/chat/query"
+                allowed_post = self.command == "POST" and url.path in ("/api/v1/chat/query", "/api/v1/message/text")
+                if url.path == "/web-bob/send":
+                    if not fixture.enable_web_bob_send:
+                        return self.respond(404, {"error": "Web Bob send not available"})
+                    if self.headers.get("Authorization") != "Bearer " + fixture.token:
+                        return self.respond(401, {"error": "Unauthorized"})
+                    payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                    guid = payload.get("chatGuid")
+                    text = payload.get("text")
+                    if not isinstance(guid, str) or not guid or not isinstance(text, str) or not text.strip():
+                        return self.respond(400, {"error": "Invalid send payload"})
+                    fixture.sends.append({"chatGuid": guid, "text": text})
+                    fixture.calls.append(("POST", "/web-bob/send"))
+                    # Andrea hands off to BlueBubbles on the same loopback fixture.
+                    fixture.calls.append(("POST", "/api/v1/message/text"))
+                    return self.respond(200, {"ok": True, "messageGuid": "mock-" + secrets.token_hex(8)})
+                if self.command == "POST" and url.path == "/api/v1/message/text":
+                    if not fixture.enable_web_bob_send:
+                        fixture.unexpected_writes.append(url.path)
+                        return self.respond(410, {"error": "Sends unavailable in fixture"})
+                    return self.respond(200, {"status": 200, "data": {"guid": "mock-" + secrets.token_hex(8)}})
                 if self.command == "POST" and not allowed_post:
                     fixture.unexpected_writes.append(url.path)
                     return self.respond(410, {"error": "Sends unavailable in fixture"})

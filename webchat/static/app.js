@@ -250,7 +250,8 @@ if ($("login-form")) {
     card.setAttribute("aria-label", "Text draft");
     const title = document.createElement("h3");
     title.textContent = "Text draft · " + ({ pending: "not sent", editing: "editing", expired: "confirmation expired",
-      superseded: "replaced", cancelled: "cancelled", confirmed_not_sent: "confirmed here, not sent" }[draft.state] || "not sent");
+      superseded: "replaced", cancelled: "cancelled", confirmed_not_sent: "confirmed here, not sent",
+      sent: "sent via Andrea" }[draft.state] || "not sent");
     const recipient = document.createElement("p");
     recipient.className = "text-recipient";
     recipient.textContent = `To: ${draft.recipient.name}\n${draft.recipient.addresses.join(", ")}\nThread: ${draft.recipient.guid}`;
@@ -296,7 +297,9 @@ if ($("login-form")) {
       card.append(edit, cancel);
     }
     const status = document.createElement("p"); status.className = "text-delivery-status";
-    status.textContent = "Andrea delivery from Web Bob is unavailable. Nothing has been sent.";
+    status.textContent = draft.state === "sent"
+      ? "Delivered through Andrea’s mocked BlueBubbles bridge in this environment."
+      : "Nothing has been sent until you confirm with the exact yes + token in chat.";
     card.append(status);
     return card;
   }

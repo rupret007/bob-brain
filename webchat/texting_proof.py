@@ -31,6 +31,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix=".texting-proof-", dir=output) as temporary:
         root = Path(temporary)
         mock = MockMessaging(root)
+        mock.enable_web_bob_send = True
         providers = OfflineProviders()
         texting = Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token))
         chat = Chat(root / "conductor/webchat", root, providers, texting=texting)
@@ -47,13 +48,16 @@ def main():
             browser = json.loads(result.stdout)
             audits = [a for c in chat.conversations.values() for a in c.get("_texting", {}).get("audit", [])]
             assert len(audits) == 1 and audits[0]["body"] == "I’ll bring the charts at 7."
+            assert audits[0]["event"] == "owner_sent_via_andrea"
+            assert len(mock.sends) == 1 and mock.sends[0]["text"] == "I’ll bring the charts at 7."
+            assert ("POST", "/web-bob/send") in mock.calls
             assert not mock.unexpected_writes
             assert not providers.calls
             assert not task_queue.tasks(root)
             after = listeners()
             assert before == after, "Live listener identities changed during proof"
             evidence = {"ok": True, "scope": "mock messaging, real isolated HTTP server and browser",
-                "delivery": "BLOCKED: Andrea does not support Web Bob owner approvals; no send attempted",
+                "delivery": "mock_andrea_bluebubbles_send",
                 "started_at": started, "finished_at": datetime.now(timezone.utc).isoformat(),
                 "webchat_url": url, "mock_messaging_url": mock.base,
                 "browser": browser, "mock_requests": mock.calls, "unexpected_writes": mock.unexpected_writes,
@@ -66,7 +70,7 @@ def main():
                     "webchat/texting_proof.py", "webchat/browser_texting.cjs", "webchat/test_texting.py")}}
             (output / "WEBBOB-TEXTING-0927.evidence.json").write_text(json.dumps(evidence, indent=2, ensure_ascii=False) + "\n")
             print(json.dumps({"ok": True, "url": url, "screenshots": browser["screenshots"],
-                              "real_texts_sent": 0, "delivery": "blocked"}))
+                              "real_texts_sent": 0, "delivery": "mock_andrea", "mock_sends": len(mock.sends)}))
         finally:
             server.shutdown()
             server.server_close()
