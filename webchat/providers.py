@@ -45,7 +45,7 @@ UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 KEY = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{25,}|gh[pousr]_[A-Za-z0-9_]{25,}|github_pat_[A-Za-z0-9_]{25,})\b")
 FAST_ORDER = ("gemini", "minimax", "cursor", "codex")
 FAST_BUDGET_SECONDS = 60
-FAST_MAX_CHARS = 280
+FAST_MAX_CHARS = 400
 
 
 class Redactor:

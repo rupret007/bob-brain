@@ -180,7 +180,7 @@ def _try_minimax_hosted(root: Path, *, lyrics: str, style: str) -> dict | None:
                     payload = json.loads(response.read().decode())
             except urllib.error.HTTPError as exc:
                 if exc.code in (410, 403, 404):
-                    continue
+                    return None
                 detail = exc.read().decode(errors="replace")[:500]
                 raise RuntimeError(f"MiniMax music API error ({exc.code}): {detail}") from exc
             except urllib.error.URLError as exc:
