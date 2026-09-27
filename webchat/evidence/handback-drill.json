@@ -1,49 +1,54 @@
 {
-  "started_at": 1790497988.6234272,
+  "started_at": 1790498357.515695,
   "rounds": [
     {
       "ledger": {
-        "tag": "r11-1",
+        "tag": "r9-1",
+        "fixture_id": "019de6fd-7374-4068-97cb-84fb9905d6d0",
         "ledger_ok": true,
         "bob_pickup_ok": true,
-        "summary_chars": 3379
+        "summary_chars": 957
       },
       "live": {
-        "tag": "r11-1",
+        "tag": "r9-1",
         "status": "done",
-        "provider": "gemini",
-        "elapsed_seconds": 1.237,
+        "provider": "state",
+        "elapsed_seconds": 0.065,
         "mentions_running": true,
-        "snippet": "Right now, the `handback drill screen drill-r11-1` is running.",
+        "snippet": "Running: handback drill screen `drill-r9-1`",
         "live_ok": true
       },
-      "events_ok": true,
+      "fixture_id": "019de6fd-7374-4068-97cb-84fb9905d6d0",
       "reverse_handback_ok": true,
+      "events_ok": true,
       "pass": true
     },
     {
       "ledger": {
-        "tag": "r11-2",
+        "tag": "r9-2",
+        "fixture_id": "873553d7-5260-4a38-9f2d-795d26679ac4",
         "ledger_ok": true,
         "bob_pickup_ok": true,
-        "summary_chars": 3522
+        "summary_chars": 957
       },
       "live": {
-        "tag": "r11-2",
+        "tag": "r9-2",
         "status": "done",
-        "provider": "gemini",
-        "elapsed_seconds": 1.926,
+        "provider": "state",
+        "elapsed_seconds": 0.048,
         "mentions_running": true,
-        "snippet": "The `Running` line for handback drill `r11-2` is: \"Running: handback drill screen `drill-r11-2`\".",
+        "snippet": "Running: handback drill screen `drill-r9-2`",
         "live_ok": true
       },
-      "events_ok": true,
+      "fixture_id": "873553d7-5260-4a38-9f2d-795d26679ac4",
       "reverse_handback_ok": true,
+      "events_ok": true,
       "pass": true
     }
   ],
-  "restored_handback": true,
-  "restored_state": true,
-  "finished_at": 1790497993.053397,
-  "result": "PASS"
+  "isolated": true,
+  "prod_unchanged": true,
+  "finished_at": 1790498357.955601,
+  "result": "PASS",
+  "drill_commit_marker": "drill0001"
 }

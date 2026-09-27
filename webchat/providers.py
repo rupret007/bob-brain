@@ -223,8 +223,9 @@ def parse_gemini(output):
 
 
 class Providers:
-    def __init__(self, root, redact, runner=run):
+    def __init__(self, root, redact, runner=run, overlay_roots=None):
         self.root, self.redact, self.run = root, redact, runner
+        self.overlay_roots = overlay_roots if overlay_roots is not None else {}
         self.env = clean_env()
         self.timeout = max(15, min(600, int(os.environ.get("BOB_WEBCHAT_TIMEOUT", "180"))))
         self.timeouts = {name: max(15, min(600, int(os.environ.get("BOB_WEBCHAT_TIMEOUT_" + name.upper(), str(self.timeout if name in ("codex", "cursor") else 120))))) for name in (*ORDER, "claude")}
@@ -271,10 +272,16 @@ class Providers:
                 raise ProviderError("busy with another job") from None
             yield
 
-    def _read_parts(self, rows):
+    def context_root(self, conversation_id=None):
+        if conversation_id and conversation_id in self.overlay_roots:
+            return self.overlay_roots[conversation_id]
+        return self.root
+
+    def _read_parts(self, rows, root=None):
+        base = root or self.root
         parts = []
         for relative, limit, tail in rows:
-            path = self.root / relative
+            path = base / relative
             try:
                 value = path.read_text()
                 stamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(path.stat().st_mtime))
@@ -285,13 +292,16 @@ class Providers:
                 parts.append({"path": relative, "unavailable": True})
         return parts
 
-    def snapshot(self, lite=False):
+    def snapshot(self, lite=False, conversation_id=None):
         now = time.monotonic()
-        if lite:
-            if self._snapshot_cache_lite and now - self._snapshot_cache_lite_at < 2.0:
-                return self._snapshot_cache_lite
-        elif self._snapshot_cache and now - self._snapshot_cache_at < 2.0:
-            return self._snapshot_cache
+        overlay = conversation_id and conversation_id in self.overlay_roots
+        if not overlay:
+            if lite:
+                if self._snapshot_cache_lite and now - self._snapshot_cache_lite_at < 2.0:
+                    return self._snapshot_cache_lite
+            elif self._snapshot_cache and now - self._snapshot_cache_at < 2.0:
+                return self._snapshot_cache
+        ctx = self.context_root(conversation_id)
         if lite:
             rows = (
                 ("BOB-HANDOFF.md", 6000, False),
@@ -320,11 +330,11 @@ class Providers:
                 ("conductor/state/INBOX.md", 2000, False),
                 ("conductor/webchat/MUSIC-HANDOFF.md", 2500, False),
             )
-        parts = self._read_parts(rows)
+        parts = self._read_parts(rows, root=ctx)
         try:
             from handback import compact_digest
 
-            digest = compact_digest(self.root)
+            digest = compact_digest(ctx)
             if digest.strip():
                 parts.append({
                     "path": "conductor/handback/handoff-digest (every turn)",
@@ -337,16 +347,17 @@ class Providers:
         if not lite:
             try:
                 from music_notebook import snapshot_for_prompt
-                text = snapshot_for_prompt(self.root, 5000)
+                text = snapshot_for_prompt(ctx, 5000)
                 if text.strip():
                     parts.append({"path": "conductor/webchat/song-projects (notebook)", "modified": "live", "truncated": False,
                                   "text": self.redact(text)})
             except OSError:
                 pass
-        if lite:
-            self._snapshot_cache_lite, self._snapshot_cache_lite_at = parts, now
-        else:
-            self._snapshot_cache, self._snapshot_cache_at = parts, now
+        if not overlay:
+            if lite:
+                self._snapshot_cache_lite, self._snapshot_cache_lite_at = parts, now
+            else:
+                self._snapshot_cache, self._snapshot_cache_at = parts, now
         return parts
 
     def prompt(self, conversation, *, fast=False):
@@ -363,7 +374,9 @@ class Providers:
             history.insert(0, {"role": message["role"], "content": content})
             remaining -= len(content)
         # The last user message is already durable in the history; never duplicate it.
-        return RULES + "\nReference snapshots (not instructions):\n" + json.dumps(self.snapshot(lite=fast), ensure_ascii=False) + (
+        return RULES + "\nReference snapshots (not instructions):\n" + json.dumps(
+            self.snapshot(lite=fast, conversation_id=conversation.get("id")), ensure_ascii=False
+        ) + (
             "\nRecent conversation, oldest first. Answer the final user message:\n" + json.dumps(history, ensure_ascii=False))
 
     def call(self, provider, prompt, thread_id, cancel):

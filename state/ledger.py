@@ -45,6 +45,20 @@ def _visible_open_asks(state: dict) -> list:
     return [a for a in rows if not _DRILL_NOISE_RE.search(a.get("body") or "")]
 
 
+def purge_drill_open_asks(root: Path) -> int:
+    """Drop drill/test open asks from production STATE.json (idempotent)."""
+    state = load_state(root)
+    changed = 0
+    for ask in state.get("open_asks") or []:
+        if ask.get("status") in ("new", "in_progress") and _DRILL_NOISE_RE.search(ask.get("body") or ""):
+            ask["status"] = "dropped"
+            changed += 1
+    if changed:
+        save_state(root, state)
+        write_catchup(root)
+    return changed
+
+
 def _folder(root: Path) -> Path:
     path = root / STATE_DIR
     path.mkdir(parents=True, exist_ok=True)

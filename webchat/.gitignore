@@ -10,3 +10,4 @@ song-projects/
 __pycache__/
 *.pyc
 *.lock
+drill-fixtures/

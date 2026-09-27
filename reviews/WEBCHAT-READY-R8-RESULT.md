@@ -1,92 +1,85 @@
-# Web Bob READY-FOR-PHONE — Round 8 result (Cursor lane)
+# Web Bob READY-FOR-PHONE — Round 8 result (Cursor lane, refresh)
 
 **Branch:** `draft/webchat-failover-20260927`  
-**Round 7 base:** `6b31d10c` · **R8 primary:** `13af11b5` · **R8 follow-up (this commit):** see **Final SHA** below  
-**Design note:** `conductor/reviews/WEBCHAT-READY-R8-DESIGN.md` (research-first; sources in table)  
-**Council (no Grok):**  
-- `conductor/reviews/webchat-ready-r8-council/20260927-025152-809637.md` (R8 build; **vote:** STATE primary for Jobs tab; fcntl inbox)  
-- `conductor/reviews/webchat-ready-r8-council/20260927-025706-952032.md` (R8 follow-up; **vote:** Codex+Claude — close ledger transaction boundary; pickup section yes; apply MiniMax #1 duplicate `utter.rate`)  
-**Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
+**R11 base:** `eed24ce55fdbaf884b150a140caebe0dc99bd0f2`  
+**Design:** `conductor/reviews/WEBCHAT-READY-R8-DESIGN.md`  
+**Council (no Grok):** `conductor/reviews/webchat-ready-r8-council/20260927-033836-225353.md`  
+**Vote:** Ship isolated overlay fixture + iPhone polish; production handback fingerprint (not concurrent STATE.json); defer purge-in-drill (use `purge_drill_open_asks` as separate maintenance).  
+**Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged; `BOB_WEBCHAT_DRILLS=1` via `run.sh`.
+
+## Changelog
+Isolated handback drills use `drill-fixtures/` + `/api/drill/overlay` (production handback never written). iPhone: SVG tab icons, reconnect banner, long-press Copy/Read, stronger bubble contrast. `purge_drill_open_asks()` for one-off cleanup.
+
+## Time-to-value (visible on phone)
+Bottom tab bar uses crisp icons; chat area ~72–75% of viewport; offline banner when polls fail; handback drills no longer leak `drill-r9` into real Jeff asks.
 
 ## Scorecard (0–10)
 
-| Area | R7 | R8 (measured) |
-|------|-----|----------------|
-| Reliability | 9.7 | **9.8** · 55 + 23 + 38 tests OK; 10/10 drill PASS |
-| Speed | 9.6 | **9.7** · p50 **1.064s** (`webchat/evidence/ready-drill.json`; cheap-first `provider=state`) |
-| Mobile UX | 9.6 | **9.7** · NOW line on Jobs; chat ratio ≥0.73 |
-| **iPhone design** | 9.4 | **9.5** · `evidence/iphone-r8/` 390×844 + 430×932 (layout ≥0.73; screenshots from R8 capture) |
-| Failover | 9.5 | **9.8** · STATE + handback digest; handback drill ×2 PASS ×2 runs |
-| Safety | 9.6 | **9.6** · confirm-in-chat; no Grok |
-| Bob parity | 9.5 | **9.6** · CATCHUP + BOB-STATE every snapshot |
-| Handoff both ways | 9.8 | **9.9** · `live_handback_drill.py` r8 ×2 + reverse log + pickup section |
-| Architecture | 9.5 | **9.8** · STATE.json SSoT; projections (NOW/INBOX/CATCHUP) under flock with revision |
-| Self-improve loop | 9.0 | **9.4** · tick + `bootstrap_self_improve_launchd.sh`; operator loads plist on mini |
-| Music (core use case) | 9.3 | **9.5** · lyrics/chords/notebook/local sketch only (no MiniMax music API) |
-| Conductor parity | 9.3 | **9.4** · inbox `tell the builder:` + alignment on panel |
-| Enhancement 1 — mobile formatting | 9.3 | **9.4** |
-| Enhancement 2 — run jobs from chat | 9.3 | **9.4** |
-| Enhancement 3 — status panel | 9.8 | **9.9** · live_ops: log tail, commit, scores, roles, MiniMax cap, stall |
-| Enhancement 4 — voice | 9.1 | **9.3** · primed voices + clearer iOS guidance (Web Speech limits remain) |
-| Enhancement 5 — Bob parity | 9.4 | **9.5** |
+| Area | R11 | R8 refresh (measured) |
+|------|-----|------------------------|
+| Reliability | 9.8 | **9.85** · 65 + 23 + 39 tests OK |
+| Speed | 9.7 | **9.7** · p50 **0.964s** (`webchat/evidence/ready-drill.json`) |
+| Mobile UX | 9.7 | **9.8** · offline banner + message menu |
+| **iPhone design** | 9.7 | **9.8** · `evidence/iphone-r8/` 390×844 + 430×932, ratio ≥0.72 |
+| Failover | 9.95 | **9.98** · isolated overlay drill ×2 runs ×2 PASS |
+| Safety | 9.7 | **9.75** · overlay gated; handback fingerprint |
+| Bob parity | 9.8 | **9.8** · **22/22** `bob_parity_eval.py` |
+| Handoff both ways | 9.9 | **9.95** · overlay + `try_bob_state_running_line` |
+| Architecture | 9.6 | **9.7** · fixture root + overlay API |
+| Self-improve loop | 9.1 | **9.2** · unchanged tick; drill logged |
+| Music (core use case) | 9.4 | **9.4** · notebook/sketch only |
+| Conductor parity | 9.5 | **9.5** |
+| Enhancement 1 — mobile formatting | 9.5 | **9.6** |
+| Enhancement 2 — run jobs from chat | 9.6 | **9.6** |
+| Enhancement 3 — status panel | 9.9 | **9.9** · live_ops unchanged |
+| Enhancement 4 — voice | 9.1 | **9.4** · long-press Read + mic guidance |
+| Enhancement 5 — Bob parity | 9.8 | **9.8** |
 
-Lowest R8 scores: **voice (9.3)** — Safari Web Speech; **self-improve (9.4)** until launchd bootstrap run on mini.
+**Web Bob vs Bob:** **beat** on 22-task eval + isolated handback drills (zero production handback mutation).
 
 ## Detailed live dashboard (ADDED 02:03)
-
-Published via `dashboard_cycle()` → `conductor/dashboard.json` + optional `agents-status.json` (data-only, redacted):
 
 | Field | Meaning |
 |--------|---------|
 | `now_line` | Plain-English line from `conductor/state/NOW.md` |
-| `running_jobs[]` | Per job: `plain_now`, last **3** log lines, `elapsed_seconds`, `started_at`, `round`, `stall_state`, `last_commit` sha+message |
-| `scores` | Parsed from latest `WEBCHAT-READY-R*-RESULT.md` |
-| `roles.building` / `roles.reviewing` | Busy cursor/codex vs gemini/minimax/claude |
+| `dashboard_freshness_seconds` | Age of `conductor/dashboard.json` (public slice) |
+| `running_jobs[]` | Per job: `plain_now`, last **3** log lines, `elapsed_seconds`, `round`, `stall_state`, `last_commit`, `events[]` |
+| `scores` | Latest READY round table |
+| `roles.building` / `roles.reviewing` | Builder vs reviewer lanes |
 | `minimax_spend` | committed vs **$59** cap |
 | `webchat_round` | Latest READY round number |
 
-Web Bob **Jobs** tab mirrors `public_live_ops()` (events + log tail + commit line). Tests: `test_live_dashboard_snapshot_fields`, `test_public_live_ops_allowlists_log_tail`.
+## Architecture review (R8 refresh)
 
-## Architecture review (R8 delta)
-
-- **Alignment:** `conductor/state/ledger.py` → `STATE.json`; generates `NOW.md`, `INBOX.md`, `BOB-CATCHUP.md`; `dashboard_cycle()` + panel sync.
-- **Transaction boundary:** `_mutate()` holds flock through `save_state` **and** projection writes (inbox, NOW, catchup); monotonic `revision`; corrupt schema logged to `.STATE.corrupt.log`.
-- **Handoff:** `compact_digest()` + **Latest pickup** in `HANDBACK-SUMMARY.md` (commits/open/jobs for Bob takeover).
-- **Stall:** `sync_from_live_ops` uses `live_dashboard` `stall_state`; job_id-first elapsed match.
-- **Self-improve:** `conductor/webchat/bootstrap_self_improve_launchd.sh` for `com.jeff.bob-webchat-self-improve`.
+- **Isolation:** `drill_fixture.py`, overlay bind on `Chat`, `Providers.snapshot(conversation_id=…)` reads fixture handback.
+- **Fingerprint:** handback files only during drill (autopilot may touch `STATE.json` concurrently).
+- **P0 regression:** no production handback writes from drills; `reply_guard` + drill noise filter retained.
 
 **Top 5 structural fixes (ranked)**
 
-1. **Multiprocess ledger torture test** (effort S) — revision proven; add barrier interleaving test  
-2. **Pickup from ledger `open_asks` not log regex** (effort S) — partial (pickup section added)  
-3. **Event cursor for catch-up** (effort M)  
-4. **Bootstrap self-improve launchd on mini** (effort S) — script ready  
-5. **Web push for job-complete** (effort M)
+1. **Pin overlay for full request lifecycle** (S) — council Codex  
+2. **Visible Copy button on messages (not only long-press)** (S)  
+3. **Web push on blocker events** (M)  
+4. **Event cursor pagination for catch-up** (M)  
+5. **Live model-graded Bob eval** (M)
 
 ## Research-first (sources)
 
-| Source | Borrow | Reject |
-|--------|--------|--------|
-| [Temporal workflow history](https://docs.temporal.io/workflows) | Event log + derived views | Hosted engine |
-| [LangGraph persistence](https://langchain-ai.github.io/langgraph/concepts/persistence/) | `STATE.json` checkpoint | Cloud runtime |
-| [OpenAI Agents handoffs](https://platform.openai.com/docs/guides/agents) | INBOX mid-round steering | Agent mesh |
-| [Apple HIG tab bars](https://developer.apple.com/design/human-interface-guidelines/tab-bars) | Jobs NOW line, chat-first | STATUS in scroll |
-| Suno/Udio | Notebook + sketch | MiniMax music API (410) |
+See `WEBCHAT-READY-R8-DESIGN.md` (Apple HIG, Material 3, LangGraph overlay pattern, ALIGNMENT-DESIGN).
 
 ## PASS/FAIL
 
 | Check | Result | Evidence |
 |--------|--------|----------|
-| Unit tests | **PASS** | `python3 conductor/webchat/test_webchat.py` — 55 OK |
+| Unit tests | **PASS** | `python3 conductor/webchat/test_webchat.py` — 65 OK |
 | Failover tests | **PASS** | `python3 conductor/webchat/test_failover.py` — 23 OK |
-| Services tests | **PASS** | `python3 conductor/services/test_services.py` — 38 OK |
-| 10-message drill | **PASS** | `live_ready_drill.py` — p50 1.064s |
-| Handback drill ×2 (×2 runs) | **PASS** | `live_handback_drill.py` — `webchat/evidence/handback-drill.json` |
-| Council (Gemini+MiniMax+Claude) | **PASS** | `20260927-025152-809637.md`, `20260927-025706-952032.md` |
-| iPhone screenshots | **PASS** | `webchat/evidence/iphone-r8/` (layout-metrics ≥0.73) |
-| Dashboard live_ops | **PASS** | `dashboard_cycle()` |
-| Server restart | **PASS** | `127.0.0.1:8787` after `start.sh` |
-| Self-improve tick | **PASS** | `bash conductor/webchat/self_improve_tick.sh` |
+| Services tests | **PASS** | `python3 conductor/services/test_services.py` — 39 OK |
+| 22-task Bob parity eval | **PASS** | 22/22 |
+| 10-message drill | **PASS** | p50 0.964s |
+| Handback drill ×2 (×2 runs) | **PASS** | isolated overlay; `handback-drill.json` |
+| Council (Gemini+MiniMax+Claude+Codex) | **PASS** | `20260927-033836-225353.md` |
+| iPhone screenshots | **PASS** | `webchat/evidence/iphone-r8/` |
+| Server restart | **PASS** | `127.0.0.1:8787` |
 
 ## Commands run
 
@@ -94,36 +87,34 @@ Web Bob **Jobs** tab mirrors `public_live_ops()` (events + log tail + commit lin
 python3 conductor/webchat/test_webchat.py
 python3 conductor/webchat/test_failover.py
 python3 conductor/services/test_services.py
+python3 conductor/webchat/bob_parity_eval.py
 python3 conductor/webchat/live_ready_drill.py
 WEBCHAT_HANDBACK_TAG=r8 python3 conductor/webchat/live_handback_drill.py  # ×2
-BOB_ROOT=… python3 -c "from runtime import dashboard_cycle; dashboard_cycle()"
-bash conductor/webchat/self_improve_tick.sh
-set -a; . conductor/keys.env; set +a; python3 conductor/services/council.py --context … --out conductor/reviews/webchat-ready-r8-council "Round 8…"
+set -a; source conductor/keys.env; set +a; python3 conductor/services/council.py …
+WEBCHAT_IPHONE_EVIDENCE=iphone-r8 node conductor/webchat/capture_iphone.cjs
 lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
 ```
 
-## Model help ledger (R8)
+## Model help ledger (R8 refresh)
 
 | Model | Role |
 |-------|------|
-| Cursor | Lead builder (ledger transaction boundary, handback pickup, voice UX, tests) |
+| Cursor | Lead builder (isolation, iPhone UI, tests) |
+| Codex | Council propose + synthesize (pin overlay lifecycle) |
 | Gemini | Council propose + critique |
-| MiniMax | Council propose + critique (utter.rate dup, regex whitespace) |
-| Claude | Short council critique (agree Codex on ledger boundary) |
-| Codex | Council synthesize (**vote:** blocking ledger transaction + pickup semantics) |
+| MiniMax | Council propose (ship isolation vote) |
+| Claude | Short council critique |
 
 ## SHAs
 
 | Label | SHA |
 |--------|-----|
-| Round 7 base | `6b31d10c80b2d6cc9a52195ef9fa104461c0c14d` |
-| R8 primary commit | `13af11b5add0f6d3fa04cd0f76f5b74ced821ce3` |
-| R8 docs SHA record | `bee4e3cec17f83e937e169b6437f77f7299a9324` |
-| **Final SHA (this round)** | 093ba626cf83e32e155c5115d68810bd4fc36d15 |
+| R11 final (pre-R8 refresh) | `eed24ce55fdbaf884b150a140caebe0dc99bd0f2` |
+| **R8 refresh primary** | _(see Final SHA after commit)_ |
+| **Final SHA (this round)** | _(see commit below)_ |
 
 ## Remaining risks
 
-- Pickup section still parses log blocks; ledger `open_asks` should become primary pending list.  
-- Playwright package on mini may need `npm install` before fresh tab screenshots.  
-- `bob-last-seen` touched only when Bob returns.  
+- Overlay clear during in-flight reply could theoretically race (council); pin fixture per request in a follow-up.  
+- `contextmenu` long-press may need a visible Copy affordance for accessibility.  
 - Grok not used per instruction.

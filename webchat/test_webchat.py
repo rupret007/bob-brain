@@ -674,22 +674,30 @@ class HandbackJobTests(Fixture):
         self.assertIn("approve WebJam", reply)
         self.assertNotIn("drill open item", reply)
 
-    def test_handback_drill_backup_restore(self):
-        from live_handback_drill import backup_handback, restore_handback, backup_state, restore_state
-        folder = self.root / "conductor/handback"
-        folder.mkdir(parents=True, exist_ok=True)
-        (folder / "BOB-STATE.md").write_text("original state\n")
-        saved = backup_handback(self.root)
-        (folder / "BOB-STATE.md").write_text("drill overwrite\n")
-        restore_handback(self.root, saved)
-        self.assertEqual((folder / "BOB-STATE.md").read_text(), "original state\n")
-        state_dir = self.root / "conductor/state"
-        state_dir.mkdir(parents=True, exist_ok=True)
-        (state_dir / "STATE.json").write_text('{"version":1}\n')
-        saved_state = backup_state(self.root)
-        (state_dir / "STATE.json").write_text('{"drill":true}\n')
-        restore_state(self.root, saved_state)
-        self.assertIn("version", (state_dir / "STATE.json").read_text())
+    def test_handback_drill_isolated_fixture(self):
+        from drill_fixture import assert_prod_unchanged, ledger_round, new_fixture_root, prod_fingerprint, try_bob_state_running_line
+
+        before = prod_fingerprint(self.root)
+        fixture = new_fixture_root(self.folder)
+        result = ledger_round(fixture, "unit-test")
+        self.assertTrue(result["ledger_ok"])
+        assert_prod_unchanged(before, self.root)
+        line = try_bob_state_running_line(fixture, "From BOB-STATE only: what's running?")
+        self.assertIn("drill-unit-test", (line or "").lower())
+
+    def test_purge_drill_open_asks(self):
+        ledger_dir = Path(__file__).resolve().parent.parent / "state"
+        if str(ledger_dir) not in sys.path:
+            sys.path.insert(0, str(ledger_dir))
+        import ledger as state_ledger
+
+        state_ledger.add_open_ask(self.root, "drill open item (r9-test)")
+        state_ledger.add_open_ask(self.root, "real Jeff ask")
+        dropped = state_ledger.purge_drill_open_asks(self.root)
+        self.assertGreaterEqual(dropped, 1)
+        reply = state_ledger.try_status_reply(self.root, "status")
+        self.assertIsNotNone(reply)
+        self.assertIn("real Jeff", reply or "")
 
     def test_panel_round_changelog(self):
         reviews = self.root / "conductor/reviews"

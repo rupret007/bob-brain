@@ -259,15 +259,45 @@ if ($("login-form")) {
       pollFailures = 0;
       $("connection").textContent = "On the mini";
       $("status-dot")?.classList.remove("warn");
+      $("offline-banner")?.setAttribute("hidden", "");
       if (!busy && $("notice").textContent === "Stopping this reply…") $("notice").textContent = "";
     } catch (error) {
       pollFailures += 1;
       $("connection").textContent = pollFailures >= 3 ? "Offline — check the mini" : "Reconnecting…";
       if (pollFailures >= 2) $("status-dot")?.classList.add("warn");
+      if (pollFailures >= 2) $("offline-banner")?.removeAttribute("hidden");
       if (pollFailures < 3) $("notice").textContent = error.message;
     }
     finally { polling = false; }
   }
+  $("messages")?.addEventListener("contextmenu", (event) => {
+    const article = event.target.closest(".message");
+    if (!article || article.classList.contains("pending")) return;
+    event.preventDefault();
+    const body = article.querySelector(".body");
+    const text = body?.innerText?.trim();
+    if (!text) return;
+    const menu = document.createElement("div");
+    menu.className = "msg-menu";
+    menu.innerHTML = '<button type="button" data-act="copy">Copy</button><button type="button" data-act="speak">Read aloud</button>';
+    const close = () => { menu.remove(); document.removeEventListener("click", close, true); };
+    menu.addEventListener("click", async (ev) => {
+      const act = ev.target.closest("[data-act]")?.dataset.act;
+      if (act === "copy") {
+        try { await navigator.clipboard.writeText(text); $("notice").textContent = "Copied."; } catch (_) {}
+      }
+      if (act === "speak" && "speechSynthesis" in window) {
+        await ensureSpeechVoices();
+        speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(speechText(text).slice(0, 4000));
+        utter.rate = 1.02;
+        speechSynthesis.speak(utter);
+      }
+      close();
+    });
+    article.append(menu);
+    setTimeout(() => document.addEventListener("click", close, true), 0);
+  });
   $("messages")?.addEventListener("click", async (event) => {
     const btn = event.target.closest(".copy-code");
     if (!btn) return;

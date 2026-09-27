@@ -39,6 +39,7 @@ from job_queue import (
 from actions import queue_once
 from music_notebook import get_project, list_projects, save_project, try_music_coach_reply
 from reply_guard import repair_hollow_progress
+from drill_fixture import try_bob_state_running_line
 from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
 from ops_panel import conductor_snapshot, draft_head_sha, load_live_ops
 
@@ -116,10 +117,11 @@ class Chat:
         self.state.chmod(0o700)
         self.lock = threading.RLock()
         self.sessions, self.conversations = {}, {}
+        self.overlay_roots: dict[str, Path] = {}
         self.failures = deque()
         self.workers = {}
         self.closing, self.queue_thread = threading.Event(), None
-        self.providers = providers or Providers(root, self.redact)
+        self.providers = providers or Providers(root, self.redact, overlay_roots=self.overlay_roots)
         for path in self.state.glob("*.json"):
             if not UUID.fullmatch(path.stem):
                 continue
@@ -144,11 +146,35 @@ class Chat:
         conversation["updated_at"] = time.time()
         private_write(self.state / (conversation["id"] + ".json"), json.dumps(conversation, ensure_ascii=False, indent=2) + "\n")
 
-    def record_turn(self, **data):
+    def ledger_root(self, conversation_id: str | None = None) -> Path:
+        if conversation_id and conversation_id in self.overlay_roots:
+            return self.overlay_roots[conversation_id]
+        return self.root
+
+    def bind_drill_overlay(self, conversation_id: str, fixture_id: str) -> dict:
+        if os.environ.get("BOB_WEBCHAT_DRILLS") != "1":
+            raise RequestError(403, "Drill overlay is disabled.")
+        if not isinstance(fixture_id, str) or not re.fullmatch(r"[0-9a-f-]{36}", fixture_id):
+            raise RequestError(400, "Invalid fixture id.")
+        base = (HERE / "drill-fixtures").resolve()
+        path = (base / fixture_id).resolve()
+        if not str(path).startswith(str(base)) or not path.is_dir():
+            raise RequestError(404, "Fixture not found.")
+        self.get(conversation_id)
+        with self.lock:
+            self.overlay_roots[conversation_id] = path
+        return {"ok": True, "fixture_id": fixture_id}
+
+    def clear_drill_overlay(self, conversation_id: str) -> dict:
+        with self.lock:
+            self.overlay_roots.pop(conversation_id, None)
+        return {"ok": True}
+
+    def record_turn(self, conversation_id=None, **data):
         # The optional handback ledger cannot turn a completed provider reply or
         # a persisted action receipt into a failed/replayed request.
         try:
-            append_turn(self.root, **data)
+            append_turn(self.ledger_root(conversation_id), **data)
         except OSError:
             if hasattr(self.providers, "circuit"):
                 try:
@@ -447,33 +473,44 @@ class Chat:
                             request_id=request_id)
                 state_ledger.record_webchat_turn(self.root, ask=text, provider="inbox", request_id=request_id)
                 return self.public(conversation)
-            try:
-                state_ledger.sync_from_live_ops(
-                    self.root, load_live_ops(self.root).get("live_ops") or {},
-                    head_sha=draft_head_sha(self.root),
-                    webchat_round=(load_live_ops(self.root).get("live_ops") or {}).get("webchat_round"),
-                )
-            except OSError:
-                pass
+            ledger = self.ledger_root(identifier)
+            if ledger == self.root:
+                try:
+                    state_ledger.sync_from_live_ops(
+                        self.root, load_live_ops(self.root).get("live_ops") or {},
+                        head_sha=draft_head_sha(self.root),
+                        webchat_round=(load_live_ops(self.root).get("live_ops") or {}).get("webchat_round"),
+                    )
+                except OSError:
+                    pass
             music_tip = try_music_coach_reply(text)
             if music_tip:
                 conversation["messages"][-1].update(status="done", content=music_tip, provider="state")
                 self.save(conversation)
                 self.conversations[identifier] = conversation
-                self.record_turn(ask=text, provider="state", jobs=[], files=["conductor/webchat/song-projects"],
+                self.record_turn(conversation_id=identifier, ask=text, provider="state", jobs=[], files=["conductor/webchat/song-projects"],
                             commits=[], confirmations=[], refusals=[], open_items=[], request_id=request_id)
-                state_ledger.record_webchat_turn(self.root, ask=text, provider="state", request_id=request_id)
+                state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
                 return self.public(conversation)
-            local_status = state_ledger.try_status_reply(self.root, text)
+            bob_line = try_bob_state_running_line(ledger, text)
+            if bob_line:
+                conversation["messages"][-1].update(status="done", content=bob_line, provider="state")
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                self.record_turn(conversation_id=identifier, ask=text, provider="state", jobs=[], files=["conductor/handback/BOB-STATE.md"],
+                            commits=[], confirmations=[], refusals=[], open_items=[], request_id=request_id)
+                state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
+                return self.public(conversation)
+            local_status = state_ledger.try_status_reply(ledger, text)
             if local_status:
                 conversation["messages"][-1].update(status="done", content=local_status, provider="state")
                 self.save(conversation)
                 self.conversations[identifier] = conversation
                 head = draft_head_sha(self.root)
-                self.record_turn(ask=text, provider="state", jobs=[], files=["conductor/state/STATE.json"],
+                self.record_turn(conversation_id=identifier, ask=text, provider="state", jobs=[], files=["conductor/state/STATE.json"],
                             commits=[head] if head else [], confirmations=[], refusals=[], open_items=[],
                             request_id=request_id)
-                state_ledger.record_webchat_turn(self.root, ask=text, provider="state", request_id=request_id)
+                state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
                 return self.public(conversation)
             self.launch(identifier)
             return self.public(conversation)
@@ -514,13 +551,13 @@ class Chat:
                 user = user_msg.get("content", "")
                 head = draft_head_sha(self.root)
                 commits = [head] if head else []
-                self.record_turn(ask=user, provider=answer.get("provider"),
+                self.record_turn(conversation_id=identifier, ask=user, provider=answer.get("provider"),
                             jobs=[], files=[], commits=commits, confirmations=[], refusals=[],
                             open_items=[user[:200]] if user else [],
                             request_id=user_msg.get("request_id"))
                 try:
                     state_ledger.record_webchat_turn(
-                        self.root, ask=user, provider=answer.get("provider"), request_id=user_msg.get("request_id"),
+                        self.ledger_root(identifier), ask=user, provider=answer.get("provider"), request_id=user_msg.get("request_id"),
                     )
                 except OSError:
                     pass
@@ -1077,6 +1114,17 @@ class Handler(BaseHTTPRequestHandler):
                 raise RequestError(400, str(exc)) from exc
             result["receipt"] = receipt
             return self.send(200, result)
+        if route == "/api/drill/overlay":
+            if os.environ.get("BOB_WEBCHAT_DRILLS") != "1":
+                raise RequestError(403, "Drill overlay is disabled.")
+            data = self.body()
+            return self.send(200, chat.bind_drill_overlay(data.get("conversation_id"), data.get("fixture_id")))
+        if route == "/api/drill/overlay/clear":
+            if os.environ.get("BOB_WEBCHAT_DRILLS") != "1":
+                raise RequestError(403, "Drill overlay is disabled.")
+            data = self.body()
+            chat.get(data.get("conversation_id"))
+            return self.send(200, chat.clear_drill_overlay(data.get("conversation_id")))
         if route == "/api/audio/upload":
             data = self.body(limit=MAX_AUDIO_BODY)
             name = data.get("filename") or "upload.mp3"

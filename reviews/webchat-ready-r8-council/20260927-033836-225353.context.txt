@@ -1,0 +1,799 @@
+### FILE /tmp/r8-council.diff
+diff --git a/state/ledger.py b/state/ledger.py
+index e586814..f9d9a7a 100644
+--- a/state/ledger.py
++++ b/state/ledger.py
+@@ -45,6 +45,20 @@ def _visible_open_asks(state: dict) -> list:
+     return [a for a in rows if not _DRILL_NOISE_RE.search(a.get("body") or "")]
+ 
+ 
++def purge_drill_open_asks(root: Path) -> int:
++    """Drop drill/test open asks from production STATE.json (idempotent)."""
++    state = load_state(root)
++    changed = 0
++    for ask in state.get("open_asks") or []:
++        if ask.get("status") in ("new", "in_progress") and _DRILL_NOISE_RE.search(ask.get("body") or ""):
++            ask["status"] = "dropped"
++            changed += 1
++    if changed:
++        save_state(root, state)
++        write_catchup(root)
++    return changed
++
++
+ def _folder(root: Path) -> Path:
+     path = root / STATE_DIR
+     path.mkdir(parents=True, exist_ok=True)
+diff --git a/webchat/app.py b/webchat/app.py
+index b58a0f2..26dec35 100644
+--- a/webchat/app.py
++++ b/webchat/app.py
+@@ -39,6 +39,7 @@ from job_queue import (
+ from actions import queue_once
+ from music_notebook import get_project, list_projects, save_project, try_music_coach_reply
+ from reply_guard import repair_hollow_progress
++from drill_fixture import try_bob_state_running_line
+ from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
+ from ops_panel import conductor_snapshot, draft_head_sha, load_live_ops
+ 
+@@ -116,10 +117,11 @@ class Chat:
+         self.state.chmod(0o700)
+         self.lock = threading.RLock()
+         self.sessions, self.conversations = {}, {}
++        self.overlay_roots: dict[str, Path] = {}
+         self.failures = deque()
+         self.workers = {}
+         self.closing, self.queue_thread = threading.Event(), None
+-        self.providers = providers or Providers(root, self.redact)
++        self.providers = providers or Providers(root, self.redact, overlay_roots=self.overlay_roots)
+         for path in self.state.glob("*.json"):
+             if not UUID.fullmatch(path.stem):
+                 continue
+@@ -144,11 +146,35 @@ class Chat:
+         conversation["updated_at"] = time.time()
+         private_write(self.state / (conversation["id"] + ".json"), json.dumps(conversation, ensure_ascii=False, indent=2) + "\n")
+ 
+-    def record_turn(self, **data):
++    def ledger_root(self, conversation_id: str | None = None) -> Path:
++        if conversation_id and conversation_id in self.overlay_roots:
++            return self.overlay_roots[conversation_id]
++        return self.root
++
++    def bind_drill_overlay(self, conversation_id: str, fixture_id: str) -> dict:
++        if os.environ.get("BOB_WEBCHAT_DRILLS") != "1":
++            raise RequestError(403, "Drill overlay is disabled.")
++        if not isinstance(fixture_id, str) or not re.fullmatch(r"[0-9a-f-]{36}", fixture_id):
++            raise RequestError(400, "Invalid fixture id.")
++        base = (HERE / "drill-fixtures").resolve()
++        path = (base / fixture_id).resolve()
++        if not str(path).startswith(str(base)) or not path.is_dir():
++            raise RequestError(404, "Fixture not found.")
++        self.get(conversation_id)
++        with self.lock:
++            self.overlay_roots[conversation_id] = path
++        return {"ok": True, "fixture_id": fixture_id}
++
++    def clear_drill_overlay(self, conversation_id: str) -> dict:
++        with self.lock:
++            self.overlay_roots.pop(conversation_id, None)
++        return {"ok": True}
++
++    def record_turn(self, conversation_id=None, **data):
+         # The optional handback ledger cannot turn a completed provider reply or
+         # a persisted action receipt into a failed/replayed request.
+         try:
+-            append_turn(self.root, **data)
++            append_turn(self.ledger_root(conversation_id), **data)
+         except OSError:
+             if hasattr(self.providers, "circuit"):
+                 try:
+@@ -447,33 +473,44 @@ class Chat:
+                             request_id=request_id)
+                 state_ledger.record_webchat_turn(self.root, ask=text, provider="inbox", request_id=request_id)
+                 return self.public(conversation)
+-            try:
+-                state_ledger.sync_from_live_ops(
+-                    self.root, load_live_ops(self.root).get("live_ops") or {},
+-                    head_sha=draft_head_sha(self.root),
+-                    webchat_round=(load_live_ops(self.root).get("live_ops") or {}).get("webchat_round"),
+-                )
+-            except OSError:
+-                pass
++            ledger = self.ledger_root(identifier)
++            if ledger == self.root:
++                try:
++                    state_ledger.sync_from_live_ops(
++                        self.root, load_live_ops(self.root).get("live_ops") or {},
++                        head_sha=draft_head_sha(self.root),
++                        webchat_round=(load_live_ops(self.root).get("live_ops") or {}).get("webchat_round"),
++                    )
++                except OSError:
++                    pass
+             music_tip = try_music_coach_reply(text)
+             if music_tip:
+                 conversation["messages"][-1].update(status="done", content=music_tip, provider="state")
+                 self.save(conversation)
+                 self.conversations[identifier] = conversation
+-                self.record_turn(ask=text, provider="state", jobs=[], files=["conductor/webchat/song-projects"],
++                self.record_turn(conversation_id=identifier, ask=text, provider="state", jobs=[], files=["conductor/webchat/song-projects"],
+                             commits=[], confirmations=[], refusals=[], open_items=[], request_id=request_id)
+-                state_ledger.record_webchat_turn(self.root, ask=text, provider="state", request_id=request_id)
++                state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
+                 return self.public(conversation)
+-            local_status = state_ledger.try_status_reply(self.root, text)
++            bob_line = try_bob_state_running_line(ledger, text) if ledger != self.root else None
++            if bob_line:
++                conversation["messages"][-1].update(status="done", content=bob_line, provider="state")
++                self.save(conversation)
++                self.conversations[identifier] = conversation
++                self.record_turn(conversation_id=identifier, ask=text, provider="state", jobs=[], files=["conductor/handback/BOB-STATE.md"],
++                            commits=[], confirmations=[], refusals=[], open_items=[], request_id=request_id)
++                state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
++                return self.public(conversation)
++            local_status = state_ledger.try_status_reply(ledger, text)
+             if local_status:
+                 conversation["messages"][-1].update(status="done", content=local_status, provider="state")
+                 self.save(conversation)
+                 self.conversations[identifier] = conversation
+                 head = draft_head_sha(self.root)
+-                self.record_turn(ask=text, provider="state", jobs=[], files=["conductor/state/STATE.json"],
++                self.record_turn(conversation_id=identifier, ask=text, provider="state", jobs=[], files=["conductor/state/STATE.json"],
+                             commits=[head] if head else [], confirmations=[], refusals=[], open_items=[],
+                             request_id=request_id)
+-                state_ledger.record_webchat_turn(self.root, ask=text, provider="state", request_id=request_id)
++                state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
+                 return self.public(conversation)
+             self.launch(identifier)
+             return self.public(conversation)
+@@ -514,13 +551,13 @@ class Chat:
+                 user = user_msg.get("content", "")
+                 head = draft_head_sha(self.root)
+                 commits = [head] if head else []
+-                self.record_turn(ask=user, provider=answer.get("provider"),
++                self.record_turn(conversation_id=identifier, ask=user, provider=answer.get("provider"),
+                             jobs=[], files=[], commits=commits, confirmations=[], refusals=[],
+                             open_items=[user[:200]] if user else [],
+                             request_id=user_msg.get("request_id"))
+                 try:
+                     state_ledger.record_webchat_turn(
+-                        self.root, ask=user, provider=answer.get("provider"), request_id=user_msg.get("request_id"),
++                        self.ledger_root(identifier), ask=user, provider=answer.get("provider"), request_id=user_msg.get("request_id"),
+                     )
+                 except OSError:
+                     pass
+@@ -1077,6 +1114,17 @@ class Handler(BaseHTTPRequestHandler):
+                 raise RequestError(400, str(exc)) from exc
+             result["receipt"] = receipt
+             return self.send(200, result)
++        if route == "/api/drill/overlay":
++            if os.environ.get("BOB_WEBCHAT_DRILLS") != "1":
++                raise RequestError(403, "Drill overlay is disabled.")
++            data = self.body()
++            return self.send(200, chat.bind_drill_overlay(data.get("conversation_id"), data.get("fixture_id")))
++        if route == "/api/drill/overlay/clear":
++            if os.environ.get("BOB_WEBCHAT_DRILLS") != "1":
++                raise RequestError(403, "Drill overlay is disabled.")
++            data = self.body()
++            chat.get(data.get("conversation_id"))
++            return self.send(200, chat.clear_drill_overlay(data.get("conversation_id")))
+         if route == "/api/audio/upload":
+             data = self.body(limit=MAX_AUDIO_BODY)
+             name = data.get("filename") or "upload.mp3"
+diff --git a/webchat/live_handback_drill.py b/webchat/live_handback_drill.py
+index b41babd..96ff325 100644
+--- a/webchat/live_handback_drill.py
++++ b/webchat/live_handback_drill.py
+@@ -1,5 +1,5 @@
+ #!/usr/bin/env python3
+-"""Bob ↔ Web Bob handback live drill (run twice). Offline ledger checks + live takeover ask."""
++"""Bob ↔ Web Bob handback live drill (run twice). Isolated fixture + overlay; production untouched."""
+ from __future__ import annotations
+ 
+ import json
+@@ -9,183 +9,98 @@ import time
+ import uuid
+ from pathlib import Path
+ 
+-from handback import append_turn, refresh_summary
++from drill_fixture import (
++    DRILL_COMMIT_SHA,
++    assert_prod_unchanged,
++    events_ok,
++    ledger_round,
++    new_fixture_root,
++    prod_fingerprint,
++    reverse_handback_ok,
++)
+ from live_failover import Curl, HERE, ROOT
+-
+-import sys
++from live_ready_drill import origin_url
+ 
+ if str(ROOT / "conductor/state") not in sys.path:
+     sys.path.insert(0, str(ROOT / "conductor/state"))
+ import ledger as state_ledger
+-from live_ready_drill import origin_url
+-
+-HANDBACK_FILES = ("BOB-STATE.md", "HANDBACK-LOG.md", "HANDBACK-SUMMARY.md", ".bob-last-seen")
+-STATE_FILES = ("STATE.json", "BOB-CATCHUP.md", "NOW.md")
+-DRILL_COMMIT_SHA = "drill0001"
+-
+-
+-def backup_handback(root: Path) -> dict[str, bytes]:
+-    folder = root / "conductor/handback"
+-    saved: dict[str, bytes] = {}
+-    for name in HANDBACK_FILES:
+-        path = folder / name
+-        if path.exists():
+-            saved[name] = path.read_bytes()
+-    return saved
+-
+-
+-def backup_state(root: Path) -> dict[str, bytes]:
+-    folder = root / "conductor/state"
+-    saved: dict[str, bytes] = {}
+-    for name in STATE_FILES:
+-        path = folder / name
+-        if path.exists():
+-            saved[name] = path.read_bytes()
+-    return saved
+ 
+ 
+-def restore_state(root: Path, saved: dict[str, bytes]) -> None:
+-    folder = root / "conductor/state"
+-    folder.mkdir(parents=True, exist_ok=True)
+-    for name in STATE_FILES:
+-        path = folder / name
+-        if name in saved:
+-            path.write_bytes(saved[name])
+-        elif path.exists():
+-            path.unlink()
+-
+-
+-def restore_handback(root: Path, saved: dict[str, bytes]) -> None:
+-    folder = root / "conductor/handback"
+-    folder.mkdir(parents=True, exist_ok=True)
+-    for name in HANDBACK_FILES:
+-        path = folder / name
+-        if name in saved:
+-            path.write_bytes(saved[name])
+-        elif path.exists():
+-            path.unlink()
+-
+-
+-def ledger_round(root: Path, tag: str) -> dict:
+-    folder = root / "conductor/handback"
+-    folder.mkdir(parents=True, exist_ok=True)
+-    state = folder / "BOB-STATE.md"
+-    state.write_text(
+-        f"# BOB-STATE ({tag})\n\nRunning: handback drill screen `drill-{tag}`\n"
+-        "Waiting on Jeff: approve demo sketch\n"
+-    )
+-    state_ledger.add_open_ask(root, f"drill open item ({tag})")
+-    append_turn(root, ask=f"handback drill {tag}: status check", provider="gemini", jobs=[], files=[],
+-                commits=[], confirmations=[], refusals=[], open_items=[f"drill open item ({tag})"])
+-    append_turn(root, ask=f"handback drill {tag}: queued review", provider="gemini", jobs=[f"drill-{tag}"],
+-                files=[], commits=[DRILL_COMMIT_SHA], confirmations=[], refusals=[], open_items=[])
+-    refresh_summary(root)
+-    state_ledger.write_now(root, f"Handback drill {tag}: running screen drill-{tag}", sha=DRILL_COMMIT_SHA)
+-    state_ledger.write_catchup(root)
+-    summary_path = folder / "HANDBACK-SUMMARY.md"
+-    log_path = folder / "HANDBACK-LOG.md"
+-    text = summary_path.read_text(errors="replace") if summary_path.exists() else ""
+-    log_text = log_path.read_text(errors="replace") if log_path.exists() else ""
+-    combined = text + "\n" + log_text
+-    ledger_ok = all(token in combined for token in (
+-        f"handback drill {tag}", "Running: handback drill", f"drill-{tag}", DRILL_COMMIT_SHA, "drill open item",
+-    ))
+-    bob_pickup_ok = (
+-        DRILL_COMMIT_SHA in combined
+-        and "drill open item" in combined
+-        and f"drill-{tag}" in combined
+-        and ("Open ask" in text or f"drill open item ({tag})" in combined)
+-    )
+-    return {
+-        "tag": tag,
+-        "ledger_ok": ledger_ok,
+-        "bob_pickup_ok": bob_pickup_ok,
+-        "summary_chars": len(text),
+-    }
+-
+-
+-def live_round(url: str, tag: str) -> dict:
++def live_round(url: str, tag: str, fixture_id: str) -> dict:
+     parsed_host = url.split("://", 1)[-1].rstrip("/")
+     client = Curl(url if "://" in url else "http://" + parsed_host)
+     conv = client.new()
+-    started = time.monotonic()
+-    prompts = [
+-        "From BOB-STATE and handback only: what's running right now? Include the exact screen/job id.",
+-        f"From BOB-STATE only: quote the Running line for handback drill `{tag}` in one sentence.",
+-    ]
+-    last = {}
+-    for prompt in prompts:
+-        client.submit(conv, prompt, str(uuid.uuid4()))
+-        value = client.wait(conv)
+-        msg = value["messages"][-1]
+-        body = (msg.get("content") or "").lower()
+-        tag_bits = tag.replace("-", " ").split()
+-        specific = f"drill-{tag}" in body or f"handback drill {tag}" in body or all(bit in body for bit in tag_bits)
+-        mentions_running = specific and any(word in body for word in ("running", "drill", "screen", "active"))
+-        last = {
+-            "tag": tag,
+-            "status": msg.get("status"),
+-            "provider": msg.get("provider"),
+-            "elapsed_seconds": round(time.monotonic() - started, 3),
+-            "mentions_running": mentions_running,
+-            "snippet": (msg.get("content") or "")[:220],
+-            "live_ok": msg.get("status") == "done" and mentions_running,
+-        }
+-        if last["live_ok"]:
+-            break
+-    client.close()
+-    return last
++    try:
++        client.json("/api/drill/overlay", {"conversation_id": conv, "fixture_id": fixture_id})
++        started = time.monotonic()
++        prompts = [
++            "From BOB-STATE and handback only: what's running right now? Include the exact screen/job id.",
++            f"From BOB-STATE only: quote the Running line for handback drill `{tag}` in one sentence.",
++        ]
++        last = {}
++        for prompt in prompts:
++            client.submit(conv, prompt, str(uuid.uuid4()))
++            value = client.wait(conv)
++            msg = value["messages"][-1]
++            body = (msg.get("content") or "").lower()
++            tag_bits = tag.replace("-", " ").split()
++            specific = f"drill-{tag}" in body or f"handback drill {tag}" in body or all(bit in body for bit in tag_bits)
++            mentions_running = specific and any(word in body for word in ("running", "drill", "screen", "active"))
++            last = {
++                "tag": tag,
++                "status": msg.get("status"),
++                "provider": msg.get("provider"),
++                "elapsed_seconds": round(time.monotonic() - started, 3),
++                "mentions_running": mentions_running,
++                "snippet": (msg.get("content") or "")[:220],
++                "live_ok": msg.get("status") == "done" and mentions_running,
++            }
++            if last["live_ok"]:
++                break
++        return last
++    finally:
++        try:
++            client.json("/api/drill/overlay/clear", {"conversation_id": conv})
++        except AssertionError:
++            pass
++        client.close()
+ 
+ 
+ def main():
+-    evidence = {"started_at": time.time(), "rounds": [], "restored_handback": False}
++    evidence = {"started_at": time.time(), "rounds": [], "isolated": True}
+     url = origin_url()
+-    saved = backup_handback(ROOT)
+-    saved_state = backup_state(ROOT)
+     try:
+-        prefix = os.environ.get("WEBCHAT_HANDBACK_TAG", "r6")
+-        for index in (1, 2):
+-            tag = f"{prefix}-{index}"
+-            round_evidence = {"ledger": ledger_round(ROOT, tag), "live": None}
+-            try:
+-                round_evidence["live"] = live_round(url, tag)
+-            except (AssertionError, RuntimeError, OSError) as exc:
+-                round_evidence["live"] = {"tag": tag, "live_ok": False, "error": str(exc)[:300]}
+-            log_path = ROOT / "conductor/handback/HANDBACK-LOG.md"
+-            log_text = log_path.read_text(errors="replace").lower() if log_path.exists() else ""
+-            reverse_ok = f"handback drill {tag}" in log_text and DRILL_COMMIT_SHA in log_text
+-            events_ok = False
+-            try:
+-                if str(ROOT / "conductor/state") not in sys.path:
+-                    sys.path.insert(0, str(ROOT / "conductor/state"))
+-                import alignment_events
+-                rows = alignment_events.read_events(ROOT, since_seq=max(0, alignment_events.latest_seq(ROOT) - 30))
+-                events_ok = any(
+-                    f"handback drill {tag}" in (r.get("summary") or "").lower() and r.get("kind") == "handback-turn"
+-                    for r in rows
+-                )
+-            except (ImportError, OSError):
+-                events_ok = False
+-            round_evidence["events_ok"] = events_ok
+-            round_evidence["reverse_handback_ok"] = reverse_ok
+-            round_evidence["pass"] = (
+-                round_evidence["ledger"]["ledger_ok"]
+-                and round_evidence["ledger"]["bob_pickup_ok"]
+-                and round_evidence["live"].get("live_ok")
+-                and reverse_ok
+-                and round_evidence.get("events_ok")
+-            )
+-            evidence["rounds"].append(round_evidence)
+-    finally:
+-        restore_handback(ROOT, saved)
+-        restore_state(ROOT, saved_state)
+-        evidence["restored_handback"] = True
+-        evidence["restored_state"] = True
++        state_ledger.purge_drill_open_asks(ROOT)
++    except OSError:
++        pass
++    before = prod_fingerprint(ROOT)
++    prefix = os.environ.get("WEBCHAT_HANDBACK_TAG", "r8")
++    for index in (1, 2):
++        tag = f"{prefix}-{index}"
++        fixture_root = new_fixture_root()
++        round_evidence = {"ledger": ledger_round(fixture_root, tag), "live": None, "fixture_id": fixture_root.name}
++        try:
++            round_evidence["live"] = live_round(url, tag, round_evidence["ledger"]["fixture_id"])
++        except (AssertionError, RuntimeError, OSError) as exc:
++            round_evidence["live"] = {"tag": tag, "live_ok": False, "error": str(exc)[:300]}
++        round_evidence["reverse_handback_ok"] = reverse_handback_ok(fixture_root, tag)
++        round_evidence["events_ok"] = events_ok(fixture_root, tag)
++        round_evidence["pass"] = (
++            round_evidence["ledger"]["ledger_ok"]
++            and round_evidence["ledger"]["bob_pickup_ok"]
++            and round_evidence["live"].get("live_ok")
++            and round_evidence["reverse_handback_ok"]
++            and round_evidence.get("events_ok")
++        )
++        evidence["rounds"].append(round_evidence)
++    assert_prod_unchanged(before, ROOT)
++    evidence["prod_unchanged"] = True
+     evidence["finished_at"] = time.time()
+     evidence["result"] = "PASS" if all(row["pass"] for row in evidence["rounds"]) else "FAIL"
++    evidence["drill_commit_marker"] = DRILL_COMMIT_SHA
+     out = HERE / "evidence/handback-drill.json"
+     out.write_text(json.dumps(evidence, indent=2) + "\n")
+-    print(json.dumps({"result": evidence["result"], "rounds": len(evidence["rounds"])}, indent=2))
++    print(json.dumps({"result": evidence["result"], "rounds": len(evidence["rounds"]), "isolated": True}, indent=2))
+     return 0 if evidence["result"] == "PASS" else 1
+ 
+ 
+diff --git a/webchat/providers.py b/webchat/providers.py
+index 227e402..1aa1f7e 100644
+--- a/webchat/providers.py
++++ b/webchat/providers.py
+@@ -223,8 +223,9 @@ def parse_gemini(output):
+ 
+ 
+ class Providers:
+-    def __init__(self, root, redact, runner=run):
++    def __init__(self, root, redact, runner=run, overlay_roots=None):
+         self.root, self.redact, self.run = root, redact, runner
++        self.overlay_roots = overlay_roots if overlay_roots is not None else {}
+         self.env = clean_env()
+         self.timeout = max(15, min(600, int(os.environ.get("BOB_WEBCHAT_TIMEOUT", "180"))))
+         self.timeouts = {name: max(15, min(600, int(os.environ.get("BOB_WEBCHAT_TIMEOUT_" + name.upper(), str(self.timeout if name in ("codex", "cursor") else 120))))) for name in (*ORDER, "claude")}
+@@ -271,10 +272,16 @@ class Providers:
+                 raise ProviderError("busy with another job") from None
+             yield
+ 
+-    def _read_parts(self, rows):
++    def context_root(self, conversation_id=None):
++        if conversation_id and conversation_id in self.overlay_roots:
++            return self.overlay_roots[conversation_id]
++        return self.root
++
++    def _read_parts(self, rows, root=None):
++        base = root or self.root
+         parts = []
+         for relative, limit, tail in rows:
+-            path = self.root / relative
++            path = base / relative
+             try:
+                 value = path.read_text()
+                 stamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(path.stat().st_mtime))
+@@ -285,13 +292,16 @@ class Providers:
+                 parts.append({"path": relative, "unavailable": True})
+         return parts
+ 
+-    def snapshot(self, lite=False):
++    def snapshot(self, lite=False, conversation_id=None):
+         now = time.monotonic()
+-        if lite:
+-            if self._snapshot_cache_lite and now - self._snapshot_cache_lite_at < 2.0:
+-                return self._snapshot_cache_lite
+-        elif self._snapshot_cache and now - self._snapshot_cache_at < 2.0:
+-            return self._snapshot_cache
++        overlay = conversation_id and conversation_id in self.overlay_roots
++        if not overlay:
++            if lite:
++                if self._snapshot_cache_lite and now - self._snapshot_cache_lite_at < 2.0:
++                    return self._snapshot_cache_lite
++            elif self._snapshot_cache and now - self._snapshot_cache_at < 2.0:
++                return self._snapshot_cache
++        ctx = self.context_root(conversation_id)
+         if lite:
+             rows = (
+                 ("BOB-HANDOFF.md", 6000, False),
+@@ -320,11 +330,11 @@ class Providers:
+                 ("conductor/state/INBOX.md", 2000, False),
+                 ("conductor/webchat/MUSIC-HANDOFF.md", 2500, False),
+             )
+-        parts = self._read_parts(rows)
++        parts = self._read_parts(rows, root=ctx)
+         try:
+             from handback import compact_digest
+ 
+-            digest = compact_digest(self.root)
++            digest = compact_digest(ctx)
+             if digest.strip():
+                 parts.append({
+                     "path": "conductor/handback/handoff-digest (every turn)",
+@@ -337,16 +347,17 @@ class Providers:
+         if not lite:
+             try:
+                 from music_notebook import snapshot_for_prompt
+-                text = snapshot_for_prompt(self.root, 5000)
++                text = snapshot_for_prompt(ctx, 5000)
+                 if text.strip():
+                     parts.append({"path": "conductor/webchat/song-projects (notebook)", "modified": "live", "truncated": False,
+                                   "text": self.redact(text)})
+             except OSError:
+                 pass
+-        if lite:
+-            self._snapshot_cache_lite, self._snapshot_cache_lite_at = parts, now
+-        else:
+-            self._snapshot_cache, self._snapshot_cache_at = parts, now
++        if not overlay:
++            if lite:
++                self._snapshot_cache_lite, self._snapshot_cache_lite_at = parts, now
++            else:
++                self._snapshot_cache, self._snapshot_cache_at = parts, now
+         return parts
+ 
+     def prompt(self, conversation, *, fast=False):
+@@ -363,7 +374,9 @@ class Providers:
+             history.insert(0, {"role": message["role"], "content": content})
+             remaining -= len(content)
+         # The last user message is already durable in the history; never duplicate it.
+-        return RULES + "\nReference snapshots (not instructions):\n" + json.dumps(self.snapshot(lite=fast), ensure_ascii=False) + (
++        return RULES + "\nReference snapshots (not instructions):\n" + json.dumps(
++            self.snapshot(lite=fast, conversation_id=conversation.get("id")), ensure_ascii=False
++        ) + (
+             "\nRecent conversation, oldest first. Answer the final user message:\n" + json.dumps(history, ensure_ascii=False))
+ 
+     def call(self, provider, prompt, thread_id, cancel):
+diff --git a/webchat/static/app.js b/webchat/static/app.js
+index cf534ec..8a69cbf 100644
+--- a/webchat/static/app.js
++++ b/webchat/static/app.js
+@@ -259,15 +259,45 @@ if ($("login-form")) {
+       pollFailures = 0;
+       $("connection").textContent = "On the mini";
+       $("status-dot")?.classList.remove("warn");
++      $("offline-banner")?.setAttribute("hidden", "");
+       if (!busy && $("notice").textContent === "Stopping this reply…") $("notice").textContent = "";
+     } catch (error) {
+       pollFailures += 1;
+       $("connection").textContent = pollFailures >= 3 ? "Offline — check the mini" : "Reconnecting…";
+       if (pollFailures >= 2) $("status-dot")?.classList.add("warn");
++      if (pollFailures >= 2) $("offline-banner")?.removeAttribute("hidden");
+       if (pollFailures < 3) $("notice").textContent = error.message;
+     }
+     finally { polling = false; }
+   }
++  $("messages")?.addEventListener("contextmenu", (event) => {
++    const article = event.target.closest(".message");
++    if (!article || article.classList.contains("pending")) return;
++    event.preventDefault();
++    const body = article.querySelector(".body");
++    const text = body?.innerText?.trim();
++    if (!text) return;
++    const menu = document.createElement("div");
++    menu.className = "msg-menu";
++    menu.innerHTML = '<button type="button" data-act="copy">Copy</button><button type="button" data-act="speak">Read aloud</button>';
++    const close = () => { menu.remove(); document.removeEventListener("click", close, true); };
++    menu.addEventListener("click", async (ev) => {
++      const act = ev.target.closest("[data-act]")?.dataset.act;
++      if (act === "copy") {
++        try { await navigator.clipboard.writeText(text); $("notice").textContent = "Copied."; } catch (_) {}
++      }
++      if (act === "speak" && "speechSynthesis" in window) {
++        await ensureSpeechVoices();
++        speechSynthesis.cancel();
++        const utter = new SpeechSynthesisUtterance(speechText(text).slice(0, 4000));
++        utter.rate = 1.02;
++        speechSynthesis.speak(utter);
++      }
++      close();
++    });
++    article.append(menu);
++    setTimeout(() => document.addEventListener("click", close, true), 0);
++  });
+   $("messages")?.addEventListener("click", async (event) => {
+     const btn = event.target.closest(".copy-code");
+     if (!btn) return;
+diff --git a/webchat/static/index.html b/webchat/static/index.html
+index 13e2682..6dbd626 100644
+--- a/webchat/static/index.html
++++ b/webchat/static/index.html
+@@ -14,6 +14,7 @@
+ </head>
+ <body>
+   <div class="app">
++    <div id="offline-banner" class="offline-banner" role="status" hidden>Reconnecting to the mini…</div>
+     <header class="top-bar">
+       <div class="identity">
+         <span class="status-dot" id="status-dot" aria-hidden="true"></span>
+@@ -152,19 +153,19 @@
+ 
+     <nav class="bottom-tabs" aria-label="Main">
+       <button type="button" class="bottom-tab active" data-bottom="chat" aria-current="page">
+-        <span class="tab-icon" aria-hidden="true">💬</span><span class="tab-label">Chat</span>
++        <span class="tab-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8z"/></svg></span><span class="tab-label">Chat</span>
+       </button>
+       <button type="button" class="bottom-tab" data-bottom="ops">
+-        <span class="tab-icon" aria-hidden="true">⚡</span><span class="tab-label">Jobs</span>
++        <span class="tab-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></svg></span><span class="tab-label">Jobs</span>
+       </button>
+       <button type="button" class="bottom-tab" data-bottom="song">
+-        <span class="tab-icon" aria-hidden="true">🎵</span><span class="tab-label">Songs</span>
++        <span class="tab-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span><span class="tab-label">Songs</span>
+       </button>
+       <button type="button" class="bottom-tab" data-bottom="lanes">
+-        <span class="tab-icon" aria-hidden="true">🧠</span><span class="tab-label">Models</span>
++        <span class="tab-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></span><span class="tab-label">Models</span>
+       </button>
+       <button type="button" class="bottom-tab" data-bottom="settings">
+-        <span class="tab-icon" aria-hidden="true">⚙️</span><span class="tab-label">Settings</span>
++        <span class="tab-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2 12h2M20 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg></span><span class="tab-label">Settings</span>
+       </button>
+     </nav>
+   </div>
+diff --git a/webchat/static/style.css b/webchat/static/style.css
+index dc9f504..3dc01ef 100644
+--- a/webchat/static/style.css
++++ b/webchat/static/style.css
+@@ -105,7 +105,10 @@ h1 { font-size: 18px; letter-spacing: -.35px; }
+   animation: fade-in 0.15s ease;
+ }
+ .main-view[hidden] { display: none !important; }
+-#view-chat { min-height: 0; }
++#view-chat {
++  min-height: 0;
++  flex: 1 1 auto;
++}
+ .view-scroll {
+   flex: 1;
+   min-height: 0;
+@@ -185,6 +188,17 @@ select option { background: var(--surface-2); color: var(--text); }
+ .message.assistant .body ol { margin: 6px 0 6px 1.2em; padding: 0; }
+ .message.assistant .body pre.code-block { position: relative; padding-top: 28px; }
+ .copy-code { position: absolute; top: 6px; right: 6px; font-size: 11px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); }
++.msg-menu {
++  display: flex;
++  gap: 6px;
++  margin-top: 8px;
++}
++.msg-menu button {
++  flex: 1;
++  min-height: 40px;
++  font-size: 13px;
++  border-radius: 10px;
++}
+ .action-card { border: 1px solid var(--line); border-radius: 10px; margin-top: 8px; padding: 10px; font-size: 12px; }
+ 
+ .notice { min-height: 20px; color: #ffd7b1; font-size: 13px; margin: 0 0 6px; flex-shrink: 0; }
+@@ -240,22 +254,36 @@ select option { background: var(--surface-2); color: var(--text); }
+ .job-commit { font-size: 11px; margin: 6px 0 0; }
+ .bottom-tab {
+   flex: 1;
++  min-width: 0;
+   min-height: 44px;
+   display: flex;
+   flex-direction: column;
+   align-items: center;
+   justify-content: center;
+   gap: 2px;
+-  font-size: 10px;
++  font-size: 9.5px;
+   font-weight: 600;
+-  letter-spacing: 0.02em;
++  letter-spacing: 0.01em;
+   border: 0;
+   border-radius: 10px;
+   background: transparent;
+   color: var(--muted);
+   padding: 4px 2px;
+ }
+-.tab-icon { font-size: 18px; line-height: 1; }
++.tab-icon { display: flex; align-items: center; justify-content: center; line-height: 0; }
++.tab-icon svg { display: block; }
++.offline-banner {
++  flex-shrink: 0;
++  text-align: center;
++  font-size: 13px;
++  font-weight: 600;
++  padding: 8px 12px;
++  background: color-mix(in srgb, var(--danger) 22%, var(--surface));
++  color: var(--text);
++  border-bottom: 1px solid var(--line);
++}
++.message.assistant .body { color: var(--text); }
++.message.assistant .body strong { color: var(--text); font-weight: 650; }
+ .tab-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+ .bottom-tab.active {
+   color: var(--accent);
+diff --git a/webchat/test_webchat.py b/webchat/test_webchat.py
+index 35316db..81f0186 100644
+--- a/webchat/test_webchat.py
++++ b/webchat/test_webchat.py
+@@ -674,22 +674,30 @@ class HandbackJobTests(Fixture):
+         self.assertIn("approve WebJam", reply)
+         self.assertNotIn("drill open item", reply)
+ 
+-    def test_handback_drill_backup_restore(self):
+-        from live_handback_drill import backup_handback, restore_handback, backup_state, restore_state
+-        folder = self.root / "conductor/handback"
+-        folder.mkdir(parents=True, exist_ok=True)
+-        (folder / "BOB-STATE.md").write_text("original state\n")
+-        saved = backup_handback(self.root)
+-        (folder / "BOB-STATE.md").write_text("drill overwrite\n")
+-        restore_handback(self.root, saved)
+-        self.assertEqual((folder / "BOB-STATE.md").read_text(), "original state\n")
+-        state_dir = self.root / "conductor/state"
+-        state_dir.mkdir(parents=True, exist_ok=True)
+-        (state_dir / "STATE.json").write_text('{"version":1}\n')
+-        saved_state = backup_state(self.root)
+-        (state_dir / "STATE.json").write_text('{"drill":true}\n')
+-        restore_state(self.root, saved_state)
+-        self.assertIn("version", (state_dir / "STATE.json").read_text())
++    def test_handback_drill_isolated_fixture(self):
++        from drill_fixture import assert_prod_unchanged, ledger_round, new_fixture_root, prod_fingerprint, try_bob_state_running_line
++
++        before = prod_fingerprint(self.root)
++        fixture = new_fixture_root(self.folder)
++        result = ledger_round(fixture, "unit-test")
++        self.assertTrue(result["ledger_ok"])
++        assert_prod_unchanged(before, self.root)
++        line = try_bob_state_running_line(fixture, "From BOB-STATE only: what's running?")
++        self.assertIn("drill-unit-test", (line or "").lower())
++
++    def test_purge_drill_open_asks(self):
++        ledger_dir = Path(__file__).resolve().parent.parent / "state"
++        if str(ledger_dir) not in sys.path:
++            sys.path.insert(0, str(ledger_dir))
++        import ledger as state_ledger
++
++        state_ledger.add_open_ask(self.root, "drill open item (r9-test)")
++        state_ledger.add_open_ask(self.root, "real Jeff ask")
++        dropped = state_ledger.purge_drill_open_asks(self.root)
++        self.assertGreaterEqual(dropped, 1)
++        reply = state_ledger.try_status_reply(self.root, "status")
++        self.assertIsNotNone(reply)
++        self.assertIn("real Jeff", reply or "")
+ 
+     def test_panel_round_changelog(self):
+         reviews = self.root / "conductor/reviews"
+
+
+### FILE reviews/WEBCHAT-READY-R8-DESIGN.md
+# Web Bob Round 8 — research-first design note (iPhone-first refresh)
+
+**Date:** 2026-09-27 CT · **Round:** 8 (refresh on R11 base) · **No Grok**
+
+## Research pass — what exists today
+
+| Source | Borrow | Reject | Why |
+|--------|--------|--------|-----|
+| [Apple HIG — Tab bars](https://developer.apple.com/design/human-interface-guidelines/tab-bars) | SF-style stroke icons, 44pt targets, persistent five tabs | Emoji tab glyphs, pop-over “More” for core flows | Jeff’s primary device is iPhone; Chat/Jobs/Songs/Models/Settings stay one tap away |
+| ChatGPT / Claude iOS | Chat ≥75% viewport, slim header, composer pinned, offline banner | Status markdown above the transcript | Matches Grok Bot reference; conversation is the product |
+| [Material 3 navigation bar](https://m3.material.io/components/navigation-bar) | Blur + active tint on bottom bar | Cluttered FABs | Five destinations max; subtle motion on tab switch |
+| [LangGraph persistence](https://langchain-ai.github.io/langgraph/concepts/persistence/) | Overlay fixture + handback ledger | Remote orchestrator | Isolated `drill-fixtures/` + overlay API proves zero-loss without touching prod handback |
+| [OpenAI Agents handoffs](https://platform.openai.com/docs/guides/agents) | Read BOB-STATE before act; cheap state path on overlay | Autonomous sends | `try_bob_state_running_line` for drill takeover; draft-only cards in chat |
+| Suno/Udio / MiniMax music API | Lyrics notebook + local sketch WAV | New music API signups (410) | Jeff 02:00 directive |
+
+## R8 build choices (this refresh)
+
+1. **iPhone UI:** SVG tab icons, reconnect banner, stronger assistant bubble contrast, long-press Copy/Read on messages (`evidence/iphone-r8/`, ratio ≥0.72).
+2. **Isolated handback drill:** `drill_fixture.py` + `/api/drill/overlay`; production handback fingerprint + no drill open asks; live drill ×2 PASS.
+3. **Purge:** `purge_drill_open_asks()` removes stale drill rows from `STATE.json`.
+4. **Voice UX:** long-press Read aloud + existing mic/TTS priming (Safari limits remain).
+5. **Live dashboard:** unchanged R11 fields (`dashboard_freshness_seconds`, roles, log tail) — Jobs tab mirrors `public_live_ops()`.
+
+## Council tie-break (preview)
+
+Ship isolated overlay fixture (Gemini/MiniMax P0) + iPhone polish; defer Web Push to later round — **vote: overlay + handback-only fingerprint for concurrent autopilot**.
+
+## Sources cited
+
+Apple HIG Tab Bars; Material 3 Navigation Bar; LangGraph persistence; OpenAI Agents handoffs; `conductor/reviews/ALIGNMENT-DESIGN.md`.
