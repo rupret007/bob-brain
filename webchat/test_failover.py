@@ -160,6 +160,18 @@ class FailoverTests(Fixture):
             self.assertEqual(call.call_count, 1)
             self.assertEqual(self.provider.circuit.entries["codex"]["failures"], 0)
 
+    def test_explicit_provider_never_silently_falls_back(self):
+        for selected in (*ORDER, "claude"):
+            with self.subTest(provider=selected):
+                self.turn["preferred_provider"] = selected
+                with patch.object(self.provider, "call", return_value=("Selected provider answered", None)) as call:
+                    self.assertEqual(self.reply()["provider"], selected)
+                    self.assertEqual([c.args[0] for c in call.call_args_list], [selected])
+                with patch.object(self.provider, "call", side_effect=ProviderError(kind="network")) as call:
+                    with self.assertRaises(AllDown):
+                        self.reply()
+                    self.assertEqual([c.args[0] for c in call.call_args_list], [selected])
+
     def test_minimax_uses_metered_helper_and_per_provider_timeouts(self):
         with patch.object(self.provider, "run", return_value=(0, "<bob-webchat-reply>Fine</bob-webchat-reply>", "")) as call:
             self.provider.call("minimax", "context", None, self.cancel)

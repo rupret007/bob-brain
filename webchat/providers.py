@@ -48,6 +48,9 @@ NEVER promise background work you cannot finish in this same reply (no "one mome
 "another minute", "I'm checking the directory" without the result). You cannot run
 shell/git from inside the model reply — answer from snapshots now, or say plainly what
 you cannot see and point Jeff to a job/council/inbox phrase the server can execute.
+When Jeff asks what workers, lanes, jobs, or services are doing, use live_status_snapshot
+in Reference snapshots: cite real job_id, screen, worker, log tail, health, and disk fields—
+never claim you cannot see workers if that snapshot lists them.
 """
 
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
@@ -360,6 +363,20 @@ class Providers:
                 })
         except OSError:
             pass
+        try:
+            from live_status_snapshot import build_live_status_snapshot, encode_snapshot
+
+            live = build_live_status_snapshot(ctx)
+            cap = 8000 if lite else 16000
+            payload, clipped = encode_snapshot(live, cap)
+            parts.append({
+                "path": "live_status_snapshot (every turn; cite for worker/status questions)",
+                "modified": live.get("captured_at", "live"),
+                "truncated": clipped,
+                "text": self.redact(payload),
+            })
+        except OSError:
+            pass
         if not lite:
             try:
                 from music_notebook import snapshot_for_prompt
@@ -452,8 +469,9 @@ class Providers:
             return parse_cursor(out), None
 
     def route_order(self, conversation):
-        if conversation.get("preferred_provider") == "claude":
-            return ("claude",)
+        selected = conversation.get("preferred_provider", "auto")
+        if selected in NAMES:
+            return (selected,)
         text = next((m["content"] for m in reversed(conversation["messages"]) if m["role"] == "user"), "")
         if (len(text) <= FAST_MAX_CHARS and text.count("\n") <= 2
                 and not re.search(r"```|(?:^|\s)(?:fix|implement|refactor|debug|write tests)\b", text, re.I)):

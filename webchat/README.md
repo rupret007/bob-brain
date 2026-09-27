@@ -120,6 +120,13 @@ out browsers and interrupts an active reply. Other workers are unrelated.
 
 ## Phone, MacBook and off-home access: Tailscale Serve
 
+Authenticated `POST /api/messages` accepts `provider: "auto"` (default), or an
+explicit `minimax`, `gemini`, `codex`, `claude`, or `cursor`. Explicit selection
+uses that provider only, including status questions; failures stay visible instead
+of falling back. The separate `worker` field routes durable background tasks.
+`live_integration_proof.py run --root <mini-root>` verifies all five providers
+through chat; `verify` rechecks their saved answers without new model calls.
+
 The app always binds **127.0.0.1:8787**. A LAN IP URL will not work. Use Tailscale
 Serve's private HTTPS proxy with your devices on the same tailnet. Do not open
 router ports or use Tailscale Funnel. See the official

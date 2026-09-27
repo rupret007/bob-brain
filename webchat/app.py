@@ -285,8 +285,8 @@ class Chat(TaskDispatch):
             return token
 
     def submit(self, identifier, text, request_id, provider="auto", worker=None):
-        if provider not in ("auto", "claude"):
-            raise RequestError(400, "Choose automatic routing or explicitly select Claude for a short critique.")
+        if provider not in ("auto", "minimax", "gemini", "codex", "claude", "cursor"):
+            raise RequestError(400, "Choose auto, minimax, gemini, codex, claude, or cursor.")
         if not isinstance(text, str) or not text.strip() or len(text) > 6000:
             raise RequestError(400, "Write a message between 1 and 6,000 characters.")
         if not isinstance(request_id, str) or not UUID.fullmatch(request_id):
@@ -515,7 +515,7 @@ class Chat(TaskDispatch):
                     )
                 except OSError:
                     pass
-            music_tip = try_music_coach_reply(text)
+            music_tip = try_music_coach_reply(text) if provider == "auto" else None
             if music_tip:
                 conversation["messages"][-1].update(status="done", content=music_tip, provider="state")
                 self.save(conversation)
@@ -524,7 +524,7 @@ class Chat(TaskDispatch):
                             commits=[], confirmations=[], refusals=[], open_items=[], request_id=request_id)
                 state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
                 return self.public(conversation)
-            bob_line = try_bob_state_running_line(ledger, text)
+            bob_line = try_bob_state_running_line(ledger, text) if provider == "auto" else None
             if bob_line:
                 conversation["messages"][-1].update(status="done", content=bob_line, provider="state")
                 self.save(conversation)
@@ -533,7 +533,7 @@ class Chat(TaskDispatch):
                             commits=[], confirmations=[], refusals=[], open_items=[], request_id=request_id)
                 state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
                 return self.public(conversation)
-            local_status = state_ledger.try_status_reply(ledger, text)
+            local_status = state_ledger.try_status_reply(ledger, text) if provider == "auto" else None
             if local_status:
                 conversation["messages"][-1].update(status="done", content=local_status, provider="state")
                 self.save(conversation)

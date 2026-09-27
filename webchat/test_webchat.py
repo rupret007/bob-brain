@@ -270,6 +270,23 @@ class HTTPTests(Fixture):
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(body)["messages"][-1]["content"], "A saved reply.")
 
+    def test_explicit_providers_reach_model_and_reject_unknown_provider(self):
+        self.login()
+        for provider in ("minimax", "gemini", "codex", "claude", "cursor"):
+            with self.subTest(provider=provider), patch("app.state_ledger.try_status_reply", return_value="local shortcut"):
+                code, _, _ = self.request("POST", "/api/messages", {
+                    "conversation_id": self.identifier, "message": "what are the workers doing right now",
+                    "request_id": str(uuid.uuid4()), "provider": provider})
+                self.assertEqual(code, 202)
+                self.wait()
+                self.assertEqual(self.fake.calls[-1]["preferred_provider"], provider)
+                self.assertEqual(self.chat.history(self.identifier)["messages"][-1]["content"], "A saved reply.")
+        for provider in ("grok", "unknown", None):
+            self.assertEqual(self.request("POST", "/api/messages", {
+                "conversation_id": self.identifier, "message": "hello",
+                "request_id": str(uuid.uuid4()), "provider": provider})[0], 400)
+        self.assertEqual(len(self.fake.calls), 5)
+
     def test_tailnet_origin_and_secure_cookie(self):
         connection = http.client.HTTPConnection("127.0.0.1", self.port)
         connection.request("POST", "/login", "password=" + self.chat.password,
@@ -441,6 +458,79 @@ class ProviderTests(Fixture):
         prompt = provider.prompt(value, fast=True)
         self.assertIn("handoff-digest", prompt)
         self.assertIn("council review", prompt.lower())
+
+    def test_live_status_snapshot_builder_reads_jobs_and_lanes(self):
+        from live_status_snapshot import build_live_status_snapshot
+
+        conductor = self.root / "conductor"
+        conductor.mkdir(parents=True, exist_ok=True)
+        (conductor / "jobs.jsonl").write_text(
+            json.dumps(
+                {
+                    "job_id": "webbob-context-fixture",
+                    "state": "running",
+                    "engine": "cursor",
+                    "timestamp": time.time(),
+                }
+            )
+            + "\n"
+        )
+        (conductor / "lanes.json").write_text(
+            json.dumps({"cursor": {"state": "busy", "detail": "lane lease held"}})
+        )
+        snap = build_live_status_snapshot(self.root)
+        self.assertIn("webbob-context-fixture", json.dumps(snap))
+        self.assertEqual(snap["lane_locks"]["cursor"]["state"], "busy")
+        self.assertIn("queue_jobs", snap)
+
+    def test_gemini_prompt_includes_live_status_snapshot(self):
+        conductor = self.root / "conductor"
+        conductor.mkdir(parents=True, exist_ok=True)
+        (conductor / "jobs.jsonl").write_text(
+            json.dumps(
+                {
+                    "job_id": "gemini-live-status-marker",
+                    "state": "queued",
+                    "engine": "gemini",
+                    "timestamp": time.time(),
+                }
+            )
+            + "\n"
+        )
+        provider = self.provider()
+        value = self.chat.conversations[self.identifier]
+        value["messages"] = [{"role": "user", "content": "what are workers doing?", "status": "done"}]
+        prompt = provider.prompt(value, fast=True)
+        self.assertIn("live_status_snapshot", prompt)
+        self.assertIn("gemini-live-status-marker", prompt)
+
+    def test_minimax_call_receives_live_status_snapshot_prompt(self):
+        conductor = self.root / "conductor"
+        conductor.mkdir(parents=True, exist_ok=True)
+        (conductor / "jobs.jsonl").write_text(
+            json.dumps(
+                {
+                    "job_id": "minimax-live-status-marker",
+                    "state": "running",
+                    "engine": "minimax",
+                    "timestamp": time.time(),
+                }
+            )
+            + "\n"
+        )
+        prompts = []
+
+        def runner(argv, **kwargs):
+            prompts.append(kwargs.get("prompt") or "")
+            return 0, "<bob-webchat-reply>ok</bob-webchat-reply>", ""
+
+        provider = self.provider(runner)
+        value = self.chat.conversations[self.identifier]
+        value["messages"] = [{"role": "user", "content": "status?", "status": "done"}]
+        provider.call("minimax", provider.prompt(value, fast=True), None, threading.Event())
+        self.assertTrue(prompts)
+        self.assertIn("live_status_snapshot", prompts[0])
+        self.assertIn("minimax-live-status-marker", prompts[0])
 
     def test_handoff_questions_use_full_snapshot_on_fast_path(self):
         from providers import needs_handoff_context

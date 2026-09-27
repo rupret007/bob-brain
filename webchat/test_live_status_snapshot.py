@@ -1,0 +1,72 @@
+"""Integration regressions for the dispatch journal in provider context."""
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from live_status_snapshot import build_live_status_snapshot, encode_snapshot
+from providers import Providers
+
+
+class SnapshotTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "conductor/state").mkdir(parents=True)
+        self.queue = self.root / "conductor/state/queue.jsonl"
+
+    def snapshot(self):
+        with patch("live_status_snapshot._screen_sessions", return_value={"svc-job-runner": "123.svc-job-runner"}), \
+                patch("ops_panel.load_live_ops", return_value={"live_ops": {"now_line": "Handback drill r10: running screen drill-r10"}}):
+            return build_live_status_snapshot(self.root)
+
+    def test_latest_dispatch_states_workers_and_torn_tail_are_read_only(self):
+        rows = [dict(id="task-a", status="queued", requested_worker="cursor", updated_at=1),
+                dict(id="task-a", status="running", worker="cursor", updated_at=3),
+                dict(id="task-b", status="succeeded", worker="gemini", updated_at=2),
+                dict(id="task-c", status="failed", worker="minimax", updated_at=4),
+                dict(id="task-d", status="queued", requested_worker="claude", updated_at=5)]
+        original = "\n".join(json.dumps(row) for row in rows) + '\n{"id":"torn'
+        self.queue.write_text(original)
+        snap = self.snapshot()
+        self.assertEqual(snap["queue_counts"], dict(queued=1, claimed=1, done=1, failed=1))
+        self.assertEqual(snap["queue_jobs"]["claimed"][0]["job_id"], "task-a")
+        self.assertEqual(snap["queue_jobs"]["queued"][0]["worker"], "claude")
+        self.assertEqual(snap["lane_locks"]["cursor"]["active_jobs"], ["task-a"])
+        self.assertEqual(self.queue.read_text(), original)
+        self.assertIsNone(snap["now_line"])
+
+    def test_successful_harvest_recovery_is_done_and_counts_include_omitted_rows(self):
+        rows = [dict(job_id=f"job-{i}", state="harvested", outcome="result",
+                     recovery="harvest_complete", timestamp=i) for i in range(30)]
+        (self.root / "conductor/jobs.jsonl").write_text("\n".join(json.dumps(row) for row in rows))
+        snap = self.snapshot()
+        self.assertEqual(snap["queue_counts"]["done"], 30)
+        self.assertEqual(len(snap["queue_jobs"]["done"]), 24)
+        self.assertEqual(snap["queue_jobs"]["done"][0]["job_id"], "job-29")
+        self.assertEqual(snap["queue_jobs"]["failed"], [])
+
+    def test_prompt_budget_keeps_valid_json_current_jobs_health_and_disk(self):
+        self.queue.write_text(json.dumps(dict(id="current-task", status="running", worker="codex")) + "\n")
+        snap = self.snapshot()
+        snap["queue_jobs"]["done"] = [dict(job_id="old-job-" + str(i), recovery="x" * 160) for i in range(100)]
+        payload, clipped = encode_snapshot(snap, 8000)
+        parsed = json.loads(payload)
+        self.assertTrue(clipped)
+        self.assertLessEqual(len(payload), 8000)
+        self.assertEqual(parsed["service_health"], snap["service_health"])
+        self.assertEqual(parsed["disk"], snap["disk"])
+        self.assertEqual(parsed["queue_jobs"]["claimed"][0]["job_id"], "current-task")
+        provider = Providers(self.root, lambda text: text)
+        self.addCleanup(provider.close)
+        for lite in (True, False):
+            with patch("live_status_snapshot.build_live_status_snapshot", return_value=snap):
+                parts = provider.snapshot(lite=lite)
+            part = next(p for p in parts if p["path"].startswith("live_status_snapshot"))
+            self.assertIn("disk", json.loads(part["text"]))
+
+
+if __name__ == "__main__":
+    unittest.main()
