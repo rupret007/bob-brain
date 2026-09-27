@@ -137,6 +137,45 @@ class JobsViewTests(unittest.TestCase):
         self.assertEqual(health["Codex"]["age_seconds"], 500)
         self.assertEqual(view["details"]["costs"], [dict(provider="MiniMax", spent_usd=1, reserved_usd=.5)])
 
+    def test_torn_queue_is_not_idle_and_read_does_not_repair_or_lock_it(self):
+        path = self.queue(dict(id="waiting", status="queued", title="Fix chat"))
+        path.write_text(path.read_text() + '{"id":')
+        before = path.read_bytes()
+        with patch("live_status_snapshot._screen_sessions", return_value={}), patch("live_status_snapshot.process_table", return_value={}):
+            view = build_jobs_view(self.root)
+        self.assertEqual(view["working"], [])
+        self.assertEqual(view["details"]["queued"], 1)
+        self.assertFalse(view["inspection"]["queue_available"])
+        self.assertEqual(path.read_bytes(), before)
+        self.assertFalse((path.parent / ".queue.lock").exists())
+
+    def test_unreadable_queue_is_not_an_empty_queue(self):
+        queue = self.root / "conductor/state/queue.jsonl"
+        queue.mkdir(parents=True)
+        view = build_jobs_view(self.root)
+        self.assertFalse(view["inspection"]["queue_available"])
+
+    def test_missing_queue_is_valid_empty_state(self):
+        with patch("live_status_snapshot._screen_sessions", return_value={}), patch("live_status_snapshot.process_table", return_value={}):
+            view = build_jobs_view(self.root)
+        self.assertTrue(view["inspection"]["queue_available"])
+        self.assertEqual(view["working"], [])
+
+    def test_service_reviewer_task_uses_plain_words(self):
+        from jobs_view import labels
+
+        row = labels({}, {"screen": "svc-webbob-reviewers", "title": "Task details unavailable"})
+        self.assertEqual(row, dict(project="Web Bob", task="Reviewing changes"))
+
+    def test_empty_corrupt_and_unknown_cost_ledgers_are_not_zero_dollars(self):
+        for value in ("", "not JSON", json.dumps(dict(call_id="a", cost_usd=None)),
+                      json.dumps(dict(call_id="a", cost_usd=-5)), json.dumps(dict(call_id="a", cost_usd="bad"))):
+            with self.subTest(value=value):
+                self.write("conductor/ledger/minimax.jsonl", value)
+                row = build_jobs_view(self.root)["details"]["costs"][0]
+                self.assertIsNone(row["spent_usd"])
+                self.assertIsNone(row["reserved_usd"])
+
 
 if __name__ == "__main__":
     unittest.main()

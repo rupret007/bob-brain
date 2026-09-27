@@ -155,6 +155,7 @@ if ($("login-form")) {
       view.classList.toggle("active", on);
     }
     if (name === "ops") refreshJobs();
+    if (["lanes", "settings"].includes(name)) refreshPanel();
     return true;
   }
   for (const btn of document.querySelectorAll(".bottom-tab")) {
@@ -958,7 +959,7 @@ if ($("login-form")) {
   }
   function renderJobs(data) {
     const rows = data.working || [];
-    const complete = data.inspection?.screens_available && data.inspection?.processes_available;
+    const complete = data.inspection?.screens_available && data.inspection?.processes_available && data.inspection?.queue_available;
     $("working-count").hidden = !rows.length;
     $("working-count").textContent = String(rows.length);
     $("jobs-notice").hidden = complete;
@@ -984,6 +985,7 @@ if ($("login-form")) {
     }));
     const finished = (data.recently_finished || []).slice(0, 5);
     $("finished-empty").hidden = finished.length > 0;
+    $("finished-empty").textContent = data.inspection?.queue_available ? "No finished jobs yet." : "Finished jobs could not be checked.";
     $("finished-jobs").replaceChildren(...finished.map((job) => {
       const card = jobElement("article", "finished-job");
       const heading = jobElement("div", "job-card-heading");
@@ -1027,7 +1029,7 @@ if ($("login-form")) {
     });
     if (!details.costs?.length) add("API cost", "Not reported");
     (details.costs || []).forEach((row) => add(`${row.provider} cost`,
-      `$${row.spent_usd.toFixed(2)} recorded${row.reserved_usd ? ` · $${row.reserved_usd.toFixed(2)} reserved` : ""}`));
+      row.spent_usd == null ? "Not reported" : `$${row.spent_usd.toFixed(2)} recorded${row.reserved_usd ? ` · $${row.reserved_usd.toFixed(2)} reserved` : ""}`));
     (details.sources || []).forEach((row) => add(`${row.label} updated`, jobAge(row.age_seconds)));
     $("jobs-detail-body").replaceChildren(list);
   }
@@ -1051,6 +1053,7 @@ if ($("login-form")) {
     }
   }
   async function refreshPanel() {
+    if (!["lanes", "settings"].includes(activeBottomTab)) return;
     try {
       const data = await api("/api/panel");
       const meta = data.live_ops_meta || {};

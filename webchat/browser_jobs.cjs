@@ -11,8 +11,14 @@ assert(!config.url.endsWith(":8787"), "Proof must use its private listener");
   try {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, colorScheme: "dark", isMobile: true, hasTouch: true });
     const page = await context.newPage();
-    const errors = [];
+    const errors = [], requests = [];
     page.on("pageerror", error => errors.push(error.message));
+    page.on("request", request => requests.push(new URL(request.url()).pathname));
+    page.on("response", response => {
+      if (response.status() >= 400 && !response.url().endsWith("/api/jobs/activity")) {
+        errors.push(`HTTP ${response.status()} ${new URL(response.url()).pathname}`);
+      }
+    });
     await page.goto(config.url + "/login");
     await page.locator("#password").fill(config.password);
     await page.locator("#login-form button").click();
@@ -66,6 +72,15 @@ assert(!config.url.endsWith(":8787"), "Proof must use its private listener");
     await page.waitForFunction(() => !document.getElementById("jobs-empty").hidden);
     assert.equal(await page.locator("#jobs-empty").innerText(), "Nothing running right now.");
     assert.equal(await page.locator(".job-card").count(), 0);
+    await page.route("**/api/jobs/activity", route => route.fulfill({json: {
+      ...fixture, working: [], recently_finished: [],
+      inspection: {screens_available: true, processes_available: true, queue_available: false},
+    }}));
+    await refresh();
+    await page.waitForFunction(() => !document.getElementById("jobs-notice").hidden);
+    assert.equal(await page.locator("#jobs-empty").isVisible(), false, "An unreadable queue cannot establish idle");
+    assert.equal(await page.locator("#finished-empty").innerText(), "Finished jobs could not be checked.");
+    await page.unroute("**/api/jobs/activity");
     await page.route("**/api/jobs/activity", route => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"offline"}' }));
     await refresh();
     await page.waitForFunction(() => document.getElementById("jobs-notice").textContent === "Live work is unavailable. Retrying…");
@@ -77,9 +92,20 @@ assert(!config.url.endsWith(":8787"), "Proof must use its private listener");
     const live = await refresh();
     await page.waitForFunction(count => document.querySelectorAll(".job-card").length === count, live.working.length);
     await page.locator(".jobs-scroll").evaluate(el => { el.scrollTop = 0; });
+    assert.equal(await page.locator("#offline-banner").isVisible(), false);
     await page.screenshot({ path: config.screenshot });
+    await page.evaluate(() => {
+      const scroll = document.querySelector(".jobs-scroll");
+      const heading = document.querySelector("#finished-jobs").previousElementSibling;
+      scroll.scrollTop += heading.getBoundingClientRect().top - scroll.getBoundingClientRect().top - 16;
+    });
+    const finishedScreenshot = config.screenshot.replace(/\.png$/, ".finished.png");
+    await page.screenshot({path: finishedScreenshot});
     assert.deepEqual(errors, []);
+    assert(!requests.includes("/api/panel"), "Jobs must not refresh or read the legacy dashboard");
     fs.writeFileSync(config.evidence, JSON.stringify({ layouts, screenshot: { width: 390, height: 844, deviceScaleFactor: 2, source: "live" },
-      live, fixture_card_count: fixture.working.length, finished_limit: 5, result_opened: true, empty_and_unavailable_passed: true, page_errors: errors }, null, 2));
+      finished_screenshot: finishedScreenshot, live, fixture_card_count: fixture.working.length, finished_limit: 5,
+      result_opened: true, empty_and_unavailable_passed: true, unreadable_queue_passed: true, legacy_dashboard_requests: 0,
+      page_errors: errors }, null, 2));
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

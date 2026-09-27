@@ -93,7 +93,7 @@ class SnapshotTests(unittest.TestCase):
         with patch("live_status_snapshot._screen_sessions", return_value=None), \
                 patch("live_status_snapshot.process_table", return_value=None):
             snap = build_live_status_snapshot(self.root)
-        self.assertEqual(snap["inspection"], dict(screens_available=False, processes_available=False))
+        self.assertEqual(snap["inspection"], dict(screens_available=False, processes_available=False, queue_available=True))
 
     def test_status_does_not_refresh_or_write_live_ledger_when_dashboard_is_stale(self):
         dashboard = self.root / "conductor/dashboard.json"

@@ -61,6 +61,8 @@ def main():
     rows += [dict(id=f"finished-{i}", status="succeeded", project="WebJam", title=f"Review build checks {i}", finished_at=now - 60 * (i + 1),
                   result="Saved browser fixture result <img src=x onerror=alert(1)>", pr_url="https://github.com/example/repo/pull/12" if i == 0 else None)
              for i in range(7)]
+    for row in rows:
+        row["conversation_id"] = "private-fixture-conversation"
     journal.write_text("".join(json.dumps(row) + "\n" for row in rows))
     empty_root = root / "empty"
     empty_root.mkdir()

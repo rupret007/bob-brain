@@ -69,14 +69,39 @@ def _screen_sessions(root: Path) -> dict[str, str] | None:
 
 
 def _latest_jobs(root: Path) -> dict[str, dict]:
+    return read_job_journals(root)[0]
+
+
+def read_job_journals(root: Path) -> tuple[dict[str, dict], dict]:
+    """Read journal transitions without locks, repairs, or dashboard writes."""
     merged: dict[str, dict] = {}
+    available, modified = True, None
     for relative in ("conductor/jobs.jsonl", "conductor/queue.jsonl", "conductor/state/queue.jsonl"):
-        for row in _read_jsonl(root / relative):
+        try:
+            path = root / relative
+            content = path.read_text()
+            modified = max(modified or 0, path.stat().st_mtime)
+        except FileNotFoundError:
+            continue
+        except (OSError, UnicodeError):
+            available = False
+            continue
+        for line in content.splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                available = False
+                continue
+            if not isinstance(row, dict):
+                available = False
+                continue
             job_id = row.get("job_id") or row.get("id")
             if not job_id:
                 continue
             merged[str(job_id)] = {**merged.get(str(job_id), {}), **row, "job_id": str(job_id), "_journal": relative}
-    return merged
+    return merged, {"available": available, "modified_at": modified}
 
 
 def provider_health(root: Path, now: float | None = None) -> dict:
@@ -331,12 +356,13 @@ def observe_work(root: Path, *, now: float | None = None) -> dict:
     screen_sample = _screen_sessions(root)
     sessions = screen_sample or {}
     processes = process_table(root)
-    jobs_map = _latest_jobs(root)
+    jobs_map, queue_meta = read_job_journals(root)
     queue = _queue_jobs(jobs_map, set(sessions), limit=len(jobs_map))
     return dict(records=jobs_map, sessions=sessions, queue=queue,
                 work=collect_work(sessions, queue["claimed"], processes, now),
                 inspection=dict(screens_available=screen_sample is not None,
-                                processes_available=processes is not None))
+                                processes_available=processes is not None,
+                                queue_available=queue_meta["available"]))
 
 
 def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:

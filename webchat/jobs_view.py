@@ -1,13 +1,14 @@
 """Small, read-only Jobs view. Dashboard, handback and round reports are not inputs."""
 from __future__ import annotations
 
+import json
 import math
 import re
 import time
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-from live_status_snapshot import _job_bucket, _latest_jobs, _read_jsonl, observe_work, provider_health
+from live_status_snapshot import _job_bucket, _latest_jobs, observe_work, provider_health
 from worker_activity import WORKER_NAMES
 
 PROJECTS = ((r"web\s*bob|bob-brain", "Web Bob"), (r"web\s*jam", "WebJam"),
@@ -56,6 +57,8 @@ def labels(record, work=None):
         title = re.sub(r"\bclean\d*\b", "chat cleanup", title, flags=re.I)
         title = re.sub(r"\bui\b", "interface updates", title, flags=re.I)
         title = re.sub(r"\bci\b", "build checks", title, flags=re.I)
+        title = re.sub(r"^svc\s+", "", title, flags=re.I)
+        title = {"reviewers": "Reviewing changes", "voice": "Voice updates"}.get(title.strip().lower(), title)
         title = plain(title)
         title = title[:1].upper() + title[1:] if title else ""
     if not title or title.lower() == project.lower():
@@ -120,10 +123,22 @@ def costs(root):
         path = root / "conductor/ledger" / (lane + ".jsonl")
         if not path.is_file():
             continue
-        calls = {row["call_id"]: row for row in _read_jsonl(path) if row.get("call_id")}
-        spent = sum(number(row.get("cost_usd")) or 0 for row in calls.values())
-        reserved = sum(number(row.get("reserved_usd")) or 0 for row in calls.values() if row.get("cost_usd") is None)
-        result.append(dict(provider=WORKER_NAMES[lane], spent_usd=round(spent, 4), reserved_usd=round(reserved, 4)))
+        try:
+            calls = {row["call_id"]: row for row in (json.loads(line) for line in path.read_text().splitlines() if line.strip())}
+            spent, reserved = 0, 0
+            for row in calls.values():
+                cost = row.get("cost_usd")
+                value = number(cost if cost is not None else row.get("reserved_usd"))
+                if value is None or value < 0:
+                    raise ValueError("Unknown cost")
+                if cost is None:
+                    reserved += value
+                else:
+                    spent += value
+            result.append(dict(provider=WORKER_NAMES[lane], spent_usd=round(spent, 4) if calls else None,
+                               reserved_usd=round(reserved, 4) if calls else None))
+        except (OSError, ValueError, KeyError, TypeError):
+            result.append(dict(provider=WORKER_NAMES[lane], spent_usd=None, reserved_usd=None))
     return result
 
 
