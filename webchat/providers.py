@@ -42,6 +42,9 @@ Logic Pro changes need explicit yes; read-only project info is fine when asked.
 NEVER promise background work you cannot finish in this same reply (no "one moment",
 "another minute", "I'm checking the directory" without the result). This chat cannot
 spawn tools mid-reply: answer from snapshots now, or say plainly what you cannot see.
+When Jeff asks what workers, lanes, jobs, or services are doing, use live_status_snapshot
+in Reference snapshots: cite real job_id, screen, worker, log tail, health, and disk fields—
+never claim you cannot see workers if that snapshot lists them.
 """
 
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
@@ -342,6 +345,20 @@ class Providers:
                     "truncated": len(digest) > 900,
                     "text": self.redact(digest),
                 })
+        except OSError:
+            pass
+        try:
+            from live_status_snapshot import build_live_status_snapshot
+
+            live = build_live_status_snapshot(ctx)
+            cap = 8000 if lite else 16000
+            payload = json.dumps(live, ensure_ascii=False)
+            parts.append({
+                "path": "live_status_snapshot (every turn; cite for worker/status questions)",
+                "modified": live.get("captured_at", "live"),
+                "truncated": len(payload) > cap,
+                "text": self.redact(payload[:cap]),
+            })
         except OSError:
             pass
         if not lite:
