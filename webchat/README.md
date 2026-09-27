@@ -31,11 +31,59 @@ saved sessions use recent conversation context. See the official
 
 Cursor uses `cursor-agent --trust --mode ask --print --output-format json`.
 Gemini and MiniMax use `webchat/api_call.py`, which calls the same metered
-`services/api.py`/`budget.py` transport as the ask scripts, bypassing background
-lane leases. MiniMax has this task's **$59 chat ceiling** (shared budget cap) even if background credit
+`services/api.py`/`budget.py` transport as the ask scripts, sharing three bounded
+API slots per provider. MiniMax has a **$59 chat ceiling** even if background credit
 is increased elsewhere; the child process applies the lower of the chat and shared caps.
 Reservations and uncertain calls count toward the cap. Lane health shows that
 committed amount, not just settled charges.
+Both API lanes default to a $48 shared ceiling, warn at 70%, reduce concurrency
+to one at 85%, and reject reservations that would cross 95%. Configure lower
+ceilings with `BOB_GEMINI_CAP_USD` and `BOB_MINIMAX_CAP_USD`. CLI plan percentages
+are unknown unless observed quota data is supplied in the private
+`conductor/plan-usage.json`, for example `{"codex":{"used_percent":86,"reset_at":1790535600}}`.
+Observed 95% usage stops that CLI until its reset; provider rate-limit responses
+also impose cooldowns. Token counts and estimated dollars do not stand in for
+subscription quota measurements.
+
+## Max-mode tasks
+
+Say `Max mode: review ...` or `Go to the max: implement ...`. Web Bob saves a
+restart-safe plan and queues independent packages for Codex (implementation),
+Cursor (integration/tests), Claude (design critique), Gemini (alternatives and
+capacity), MiniMax (failures/recovery), and mini (local tests). The default split
+uses these standing roles; provide task-specific packages when boundaries matter:
+
+```text
+Max mode: review this design and supplied evidence ...
+[codex] Inspect queue invariants and cite code.
+[cursor] Inspect the delivery path and test coverage.
+[claude] Critique assumptions using the supplied evidence.
+[gemini] Calculate throughput under the stated durations.
+[minimax] Analyze crash recovery using the supplied evidence.
+[mini] Run services/test_services.py.
+```
+
+API and Claude packages need evidence in the request; they cannot inspect files.
+Coding packages own separate production/test files on private draft branches.
+Local commits are reported for review; max mode does not integrate or publish
+them. Mini accepts existing `services/test_*.py` or `webchat/test_*.py` suites,
+uses an isolated data root, strips credential environment variables, and has a
+five-minute execution limit.
+
+The runner refills available slots every five seconds, routes analysis to Claude
+and API workers before tool workers, and shifts failed or capped work to a
+compatible provider with headroom. Busy pinned lanes retain their queued work.
+After every package finishes or exhausts retries, a local reducer posts one
+combined answer with attributed results and failures. It preserves disagreements
+and does not spend another provider call to deliver the results. Saved answers
+and deterministic group IDs prevent duplicate delivery across restarts.
+
+Explicit chat provider choices try that provider first, then the normal fallback
+chain. Claude remains explicit-only in ordinary chat and participates in max mode.
+`/api/jobs` exposes group membership, attempts, PIDs and execution timestamps.
+Run `python3 webchat/live_maxmode_proof.py run --root <live-data-root>` for the
+authenticated five-provider overlap proof; `resume` and `verify` reuse its private
+receipt without submitting another request.
 Fallbacks receive up to the last 20 messages (24,000 characters) plus bounded, redacted handoff, brain,
 status, review and queue snapshots. The provider and fallback reasons appear
 beside the reply. An exhausted provider chain produces an honest queued message.

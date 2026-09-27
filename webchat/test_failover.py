@@ -160,17 +160,30 @@ class FailoverTests(Fixture):
             self.assertEqual(call.call_count, 1)
             self.assertEqual(self.provider.circuit.entries["codex"]["failures"], 0)
 
-    def test_explicit_provider_never_silently_falls_back(self):
+    def test_explicit_provider_is_first_then_falls_back_with_visible_attempts(self):
         for selected in (*ORDER, "claude"):
             with self.subTest(provider=selected):
                 self.turn["preferred_provider"] = selected
                 with patch.object(self.provider, "call", return_value=("Selected provider answered", None)) as call:
                     self.assertEqual(self.reply()["provider"], selected)
                     self.assertEqual([c.args[0] for c in call.call_args_list], [selected])
-                with patch.object(self.provider, "call", side_effect=ProviderError(kind="network")) as call:
-                    with self.assertRaises(AllDown):
-                        self.reply()
-                    self.assertEqual([c.args[0] for c in call.call_args_list], [selected])
+                def answer(name, *_):
+                    if name == selected:
+                        raise ProviderError(kind="network")
+                    return "Recovered from the selected provider failure", None
+                with patch.object(self.provider, "call", side_effect=answer):
+                    result = self.reply()
+                    self.assertEqual(result["provider"], next(name for name in ORDER if name != selected))
+                    self.assertEqual(result["attempts"][0]["provider"], selected)
+                for row in self.provider.circuit.entries.values():
+                    row.update(failures=0, retry_at=0)
+
+    def test_explicit_claude_preference_falls_back_to_order_on_failure(self):
+        self.turn["preferred_provider"] = "claude"
+        with patch.dict(os.environ, {"BOB_WEBCHAT_FORCE_FAIL": "claude"}), patch.object(self.provider, "call", return_value=("Recovered answer", None)):
+            result = self.reply()
+        self.assertEqual(result["provider"], ORDER[0])
+        self.assertEqual(result["attempts"][0]["provider"], "claude")
 
     def test_minimax_uses_metered_helper_and_per_provider_timeouts(self):
         with patch.object(self.provider, "run", return_value=(0, "<bob-webchat-reply>Fine</bob-webchat-reply>", "")) as call:

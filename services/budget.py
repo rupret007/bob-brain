@@ -3,19 +3,53 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import uuid
 
-from state import CONDUCTOR, _append, _rows, lock
+from state import CONDUCTOR, _append, _rows, lock, read_json
 
-LANES = ("codex", "claude", "cursor", "gemini", "minimax")
+LANES = ("codex", "claude", "cursor", "gemini", "minimax", "mini")
 CAP_USD = 48.0
+GEMINI_CAP_USD = 48.0
 # USD / million tokens, verified against provider pricing on 2026-09-26.
 RATES = {"minimax": (0.30, 1.20, 0.06, 0.375), "gemini": (0.30, 2.50, 0.03, 0.30)}
 
 
 class BudgetExceeded(RuntimeError):
     pass
+
+
+def cap(lane):
+    default = {"minimax": CAP_USD, "gemini": GEMINI_CAP_USD}.get(lane)
+    if default is None:
+        return None
+    # Runtime configuration may tighten the standing ceiling, never raise it.
+    return max(0, min(default, float(os.environ.get("BOB_" + lane.upper() + "_CAP_USD", default))))
+
+
+def status(lane):
+    data = totals(lane)
+    limit = data["cap_usd"]
+    fraction = data["committed_usd"] / limit if limit else (1 if limit == 0 else None)
+    if limit is None and lane != "mini":
+        # Plan percentages must come from an observed provider quota, not from
+        # dollar estimates or token counts that cannot describe a subscription.
+        quota = read_json(CONDUCTOR / "plan-usage.json", {}).get(lane, {})
+        if quota.get("reset_at", float("inf")) > time.time() and "used_percent" in quota:
+            fraction = max(0, float(quota["used_percent"]) / 100)
+    tier = ("stop" if fraction is not None and fraction >= .95 else
+            "slow" if fraction is not None and fraction >= .85 else
+            "warn" if fraction is not None and fraction >= .70 else "normal")
+    return dict(data, tier=tier, used_percent=round(fraction * 100, 2) if fraction is not None else None,
+                quota_known=fraction is not None or lane == "mini")
+
+
+def check(lane):
+    usage = status(lane)
+    if usage["tier"] == "stop":
+        raise BudgetExceeded(lane + " stopped at 95% of its usage cap")
+    return usage
 
 
 def path(lane):
@@ -33,7 +67,7 @@ def totals(lane):
         reserved = sum(r.get("reserved_usd", 0) for r in calls.values() if r.get("cost_usd") is None)
         return {"spent_usd": round(settled, 8), "reserved_usd": round(reserved, 8),
                 "committed_usd": round(settled + reserved, 8), "calls": len(calls),
-                "cap_usd": CAP_USD if lane == "minimax" else None}
+                "cap_usd": cap(lane)}
 
 
 def reserve(lane, prompt, max_tokens, purpose="model"):
@@ -44,8 +78,8 @@ def reserve(lane, prompt, max_tokens, purpose="model"):
     with lock("ledger-" + lane):
         calls = {r["call_id"]: r for r in _rows(path(lane))}
         committed = sum(r["cost_usd"] if r.get("cost_usd") is not None else r.get("reserved_usd", 0) for r in calls.values())
-        if lane == "minimax" and committed + bound > CAP_USD:
-            raise BudgetExceeded("MiniMax $48 cap: next worst-case request does not fit")
+        if committed + bound > cap(lane) * .95:
+            raise BudgetExceeded(lane + " 95% cap: next worst-case request does not fit")
         row = {"call_id": uuid.uuid4().hex, "event": "reserved", "lane": lane,
                "reserved_usd": bound, "cost_usd": None, "purpose": purpose, "timestamp": time.time()}
         _append(path(lane), row)

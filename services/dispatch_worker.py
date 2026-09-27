@@ -12,7 +12,8 @@ import threading
 from pathlib import Path
 
 from state import CONDUCTOR, ROOT, atomic_write, lock, read_json
-from lanes import ask
+from lanes import ask, slot
+import mini_worker
 from workspaces import prepare, git
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
@@ -67,7 +68,7 @@ def execute(identifier, token):
         with contextlib.ExitStack() as stack:
             stack.enter_context(lock("dispatch-" + identifier, blocking=False))
             owns_task = True
-            stack.enter_context(lock("lane-" + row["worker"], blocking=False))
+            stack.enter_context(slot(row["worker"]))
             project, repo = task_repository(row["prompt"])
             if project.lower() == "webjam" and row["kind"] == "coding":
                 stack.enter_context(lock("webjam-coder", blocking=False))
@@ -98,7 +99,7 @@ def execute(identifier, token):
             branch = "draft/" + identifier
             record = dict(repo=str(repo), worktree=str(ROOT / "workspaces" / identifier),
                           branch=branch, job_dir=str(folder))
-            cwd = prepare_task(record, row["kind"] == "coding")
+            cwd = Path(__file__).resolve().parents[1] if row["worker"] == "mini" else prepare_task(record, row["kind"] == "coding")
             prompt = ("Web Bob assigned this task from Jeff. Complete it and return the actual result in your final answer. "
                       "Do not merely propose a plan or claim another worker will do it. If blocked, begin BLOCKER:. "
                       "Keep all work local: never push or create/modify a PR. "
@@ -106,7 +107,9 @@ def execute(identifier, token):
                       "For code changes, commit locally and report the SHA, changed paths and tests. "
                       "For analysis, use the evidence in the request; do not invent repository observations.\n\n"
                       "TASK:\n" + row["prompt"])
-            answer = redact(ask(row["worker"], prompt, cwd=cwd, coding=row["kind"] == "coding",
+            if not task_queue.transition(ROOT, identifier, token, "executing"):
+                return 0
+            answer = redact(mini_worker.execute(row) if row["worker"] == "mini" else ask(row["worker"], prompt, cwd=cwd, coding=row["kind"] == "coding",
                                 timeout=1800 if row["kind"] == "coding" else 240,
                                 purpose="small-review" if row["worker"] == "claude" else "webbob-" + identifier,
                                 locked=True)).strip()

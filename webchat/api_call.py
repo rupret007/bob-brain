@@ -42,8 +42,11 @@ def main():
     from billing import enforce_chat_cap
     enforce_chat_cap(budget)
     from api import model_call
+    from lanes import slot
 
-    answer = strip_reply_tags(model_call(lane, prompt, purpose="webchat"))
+    with slot(lane):
+        budget.check(lane)
+        answer = strip_reply_tags(model_call(lane, prompt, purpose="webchat"))
     print(answer)
     return 0
 

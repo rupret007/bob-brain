@@ -325,6 +325,8 @@ class Chat(TaskDispatch):
             if started or work or worker is not None:
                 conversation.pop("pending_job", None)
                 conversation.pop("pending_job_id", None)
+                if route == "max":
+                    return self.submit_max_task(conversation, started or work or text, request_id)
                 return self.submit_task(conversation, started or work or text, request_id, worker or route)
             pending = conversation.get("pending_job")
             pending_council = conversation.get("pending_council")
@@ -980,7 +982,8 @@ class Chat(TaskDispatch):
         maintenance = self.root / "conductor/MAINTENANCE"
         return {"screens": self.redact(screens), "queue": queue, "read_at": time.time(),
                 "dispatch": [{k: row.get(k) for k in ("id", "conversation_id", "status", "worker", "requested_worker",
-                             "created_at", "claimed_at", "started_at", "finished_at", "delivered_at", "attempts", "error")}
+                             "created_at", "claimed_at", "started_at", "finished_at", "delivered_at", "attempts", "error",
+                             "group_id", "group_size", "group_index", "title", "kind", "tried_workers", "pid", "execution_started_at")}
                              for row in task_queue.tasks(self.root).values()],
                 "maintenance": self.redact(maintenance.read_text()[:1000]) if maintenance.exists() else None}
 

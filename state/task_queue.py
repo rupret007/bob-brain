@@ -9,7 +9,9 @@ import time
 import uuid
 from pathlib import Path
 
-WORKERS = ("codex", "claude", "cursor", "gemini", "minimax")
+MODEL_WORKERS = ("codex", "claude", "cursor", "gemini", "minimax")
+WORKERS = (*MODEL_WORKERS, "mini")
+CONCURRENCY = {"gemini": 3, "minimax": 3}
 ACTIVE = ("claimed", "running")
 TERMINAL = ("succeeded", "failed")
 LEASE_SECONDS = 90
@@ -17,9 +19,9 @@ MAX_ATTEMPTS = 3
 
 
 def worker_name(value):
-    value = "cursor" if value == "cursor-agent" else value
+    value = {"cursor-agent": "cursor", "mini CPU": "mini"}.get(value, value)
     if value not in (*WORKERS, "auto"):
-        raise ValueError("Choose codex, claude, cursor-agent, gemini, or minimax; never Grok.")
+        raise ValueError("Choose codex, claude, cursor-agent, gemini, minimax, or mini; never Grok.")
     return value
 
 
@@ -78,11 +80,23 @@ def tasks(root):
         return _read(path)
 
 
-def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="analysis", source_file=None):
+def worker_order(kind):
+    return {"coding": ("codex", "cursor"), "local": ("mini",),
+            "analysis": ("claude", "gemini", "minimax", "codex", "cursor")}[kind]
+
+
+def capacity(worker):
+    return CONCURRENCY.get(worker, 1)
+
+
+def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="analysis", source_file=None,
+            group_id=None, group_size=None, group_index=None, group_goal=None, title=None, local_suite=None):
     worker = worker_name(worker)
-    if kind not in ("analysis", "coding") or not prompt.strip():
+    if worker == "mini":
+        kind = "local"
+    if kind not in ("analysis", "coding", "local") or not prompt.strip():
         raise ValueError("Task needs a description and a supported kind")
-    if kind == "coding" and worker in ("gemini", "minimax", "claude"):
+    if worker != "auto" and worker not in worker_order(kind):
         raise ValueError("Code changes require codex or cursor-agent. API workers can analyze supplied evidence.")
     key = "webbob:" + str(conversation_id) + ":" + str(request_id)
     identifier = "webchat-" + uuid.uuid5(uuid.NAMESPACE_URL, key).hex
@@ -90,34 +104,41 @@ def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="a
         rows = _read(path)
         if identifier in rows:
             row = rows[identifier]
-            if (row["prompt"], row["requested_worker"], row["kind"]) != (prompt, worker, kind):
+            if (row["prompt"], row["requested_worker"], row["kind"], row.get("group_id")) != (prompt, worker, kind, group_id):
                 raise ValueError("This request ID already belongs to a different task")
             return row
         return _append(path, dict(id=identifier, conversation_id=conversation_id, request_id=request_id,
                                  prompt=prompt, requested_worker=worker, kind=kind, source_file=source_file,
                                  status="queued", attempts=0, created_at=time.time(), delivered_at=None,
+                                 group_id=group_id, group_size=group_size, group_index=group_index,
+                                 group_goal=group_goal, title=title, local_suite=local_suite,
+                                 tried_workers=[], max_attempts=max(MAX_ATTEMPTS, len(worker_order(kind))),
                                  worker=None, claim_token=None, lease_until=0, retry_at=0), "enqueued")
 
 
-def claim(root, worker, now=None):
+def claim(root, worker, now=None, *, identifier=None, allow_fallback=False, limit=None):
     worker = worker_name(worker)
     if worker == "auto":
         raise ValueError("Claims require an actual worker")
     now = time.time() if now is None else now
     with locked(root) as path:
         rows = _read(path)
-        if any(r["status"] in ACTIVE and r["worker"] == worker for r in rows.values()):
+        if sum(r["status"] in ACTIVE and r["worker"] == worker for r in rows.values()) >= (capacity(worker) if limit is None else limit):
             return None
         for row in sorted(rows.values(), key=lambda r: r["created_at"]):
+            if identifier and row["id"] != identifier:
+                continue
             if row["status"] != "queued" or row.get("retry_at", 0) > now:
                 continue
-            if row["requested_worker"] not in ("auto", worker):
+            if row["requested_worker"] not in ("auto", worker) and not allow_fallback:
                 continue
-            if row["kind"] == "coding" and worker not in ("codex", "cursor"):
+            if worker not in worker_order(row["kind"]):
                 continue
+            if row.get("group_id") and sum(r.get("group_id") == row["group_id"] for r in rows.values()) != row["group_size"]:
+                continue  # Saved intent repairs an interrupted multi-row append before dispatch.
             row.update(status="claimed", worker=worker, claim_token=uuid.uuid4().hex,
                        claimed_at=now, lease_until=now + LEASE_SECONDS, attempts=row["attempts"] + 1,
-                       pid=None, started_at=None, error=None)
+                       pid=None, started_at=None, execution_started_at=None, error=None)
             return _append(path, row, "claimed", now)
     return None
 
@@ -130,6 +151,8 @@ def transition(root, identifier, token, event, *, now=None, **fields):
             return None
         if event == "running":
             row.update(status="running", started_at=now, pid=os.getpid())
+        elif event == "executing":
+            row.update(execution_started_at=now)
         elif event == "heartbeat":
             pass
         elif event == "succeeded":
@@ -139,7 +162,9 @@ def transition(root, identifier, token, event, *, now=None, **fields):
         elif event in ("retry", "busy"):
             if event == "busy":
                 row["attempts"] -= 1  # A lane race is not a failed execution.
-            row.update(status="failed" if row["attempts"] >= MAX_ATTEMPTS else "queued",
+            if event == "retry":
+                row["tried_workers"] = list(dict.fromkeys([*row.get("tried_workers", []), row["worker"]]))
+            row.update(status="failed" if row["attempts"] >= row.get("max_attempts", MAX_ATTEMPTS) else "queued",
                        retry_at=now + (5 if event == "busy" else min(60, 5 * 2 ** row["attempts"])),
                        claim_token=None)
             if row["status"] == "failed":
@@ -162,7 +187,8 @@ def recover(root, worker_alive, now=None):
             # A freshly launched worker has time to acquire its execution lock.
             if alive or (row["status"] == "claimed" and row["lease_until"] > now):
                 continue
-            row.update(status="failed" if row["attempts"] >= MAX_ATTEMPTS else "queued",
+            row["tried_workers"] = list(dict.fromkeys([*row.get("tried_workers", []), row["worker"]]))
+            row.update(status="failed" if row["attempts"] >= row.get("max_attempts", MAX_ATTEMPTS) else "queued",
                        claim_token=None, lease_until=0, retry_at=now,
                        error="Worker exited before returning a result; claim recovered")
             if row["status"] == "failed":

@@ -18,7 +18,8 @@ class APIRootTests(unittest.TestCase):
             (data / "conductor").mkdir(parents=True)
             for name in ("api_call.py", "billing.py"):
                 shutil.copyfile(Path(__file__).with_name(name), code / "webchat" / name)
-            (code / "services/budget.py").write_text("CAP_USD = 59.0\n")
+            (code / "services/budget.py").write_text("CAP_USD = 59.0\ndef check(lane): pass\n")
+            (code / "services/lanes.py").write_text("from contextlib import nullcontext\ndef slot(lane): return nullcontext()\n")
             (code / "services/api.py").write_text(
                 "import os\n"
                 "def model_call(lane, prompt, purpose):\n"

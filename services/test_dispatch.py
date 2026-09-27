@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -17,6 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dispatch_worker
 import web_dispatch
 import lanes
+import budget
+import mini_worker
 import runtime
 import state
 import command
@@ -31,7 +34,7 @@ class DispatchTests(unittest.TestCase):
         self.core = self.root / "conductor"
         self.core.mkdir()
         self.patches = []
-        for module in (dispatch_worker, web_dispatch, lanes, runtime, state):
+        for module in (dispatch_worker, web_dispatch, lanes, runtime, state, budget):
             for name, value in (("ROOT", self.root), ("CONDUCTOR", self.core)):
                 if hasattr(module, name):
                     self.patches.append(patch.object(module, name, value))
@@ -99,15 +102,15 @@ class DispatchTests(unittest.TestCase):
         self.assertIsNone(queue.claim(self.root, "gemini", now=301))
         self.assertIsNone(queue.transition(self.root, row["id"], row["claim_token"], "succeeded", now=301, result="late"))
 
-    def test_failure_backoff_terminal_after_three_attempts(self):
+    def test_failure_backoff_terminal_after_all_provider_attempts(self):
         self.enqueue()
-        for attempt in range(3):
+        for attempt in range(5):
             now = 100 + attempt * 100
             row = queue.claim(self.root, "gemini", now=now)
             result = queue.transition(self.root, row["id"], row["claim_token"], "retry", now=now+1, error="HTTP failure")
             self.assertIsNone(queue.claim(self.root, "gemini", now=now+2))
         self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["attempts"], 3)
+        self.assertEqual(result["attempts"], 5)
 
     def test_interrupted_append_repair_and_middle_corruption(self):
         row = self.enqueue()
@@ -326,3 +329,100 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertTrue((self.root / "credential-loaded").exists())
         self.assertNotIn("private-test-value", result.stdout + result.stderr)
+
+    def test_claim_allows_concurrent_gemini_tasks_but_serializes_codex(self):
+        for worker in ("gemini", "minimax", "codex", "cursor", "claude", "mini"):
+            for index in range(4):
+                self.enqueue(worker + str(index), worker=worker)
+            claims = [queue.claim(self.root, worker) for _ in range(4)]
+            self.assertEqual(sum(row is not None for row in claims), queue.capacity(worker))
+
+    def test_auto_analysis_task_prefers_claude_when_multiple_lanes_ready(self):
+        self.enqueue()
+        with patch.object(lanes, "refresh", return_value={lane: {"state": "ready"} for lane in queue.WORKERS}), patch.object(web_dispatch, "launch") as launch:
+            self.assertEqual(web_dispatch.tick(), 1)
+            self.assertEqual(launch.call_args.args[0]["worker"], "claude")
+
+    def test_every_provider_failure_routes_to_an_untried_compatible_worker(self):
+        health = {lane: {"state": "ready"} for lane in queue.WORKERS}
+        for worker in queue.MODEL_WORKERS:
+            with self.subTest(worker=worker):
+                row = self.enqueue(worker, worker=worker)
+                claim = queue.claim(self.root, worker, now=100)
+                queue.transition(self.root, row["id"], claim["claim_token"], "retry", now=101, error="Provider failed")
+                with patch.object(lanes, "refresh", return_value=health), patch.object(web_dispatch, "launch"):
+                    web_dispatch.tick()
+                result = queue.tasks(self.root)[row["id"]]
+                self.assertNotEqual(result["worker"], worker)
+                self.assertIn(worker, result["tried_workers"])
+                queue.transition(self.root, result["id"], result["claim_token"], "succeeded", result="Recovered")
+
+    def test_budget_warning_runs_and_exhausted_lane_shifts_to_headroom(self):
+        self.enqueue(worker="gemini")
+        health = {"gemini": {"state": "budget_warning"}, "minimax": {"state": "ready"}}
+        with patch.object(lanes, "refresh", return_value=health), patch.object(web_dispatch, "launch") as launch:
+            self.assertEqual(web_dispatch.tick(), 1)
+            self.assertEqual(launch.call_args.args[0]["worker"], "gemini")
+        row = next(iter(queue.tasks(self.root).values()))
+        queue.transition(self.root, row["id"], row["claim_token"], "succeeded", result="done")
+        self.enqueue("next", worker="gemini")
+        health["gemini"]["state"] = "budget_exhausted"
+        with patch.object(lanes, "refresh", return_value=health), patch.object(web_dispatch, "launch") as launch:
+            self.assertEqual(web_dispatch.tick(), 1)
+            self.assertEqual(launch.call_args.args[0]["worker"], "minimax")
+
+    def test_api_slots_allow_three_real_locks_and_refill_after_release(self):
+        import contextlib
+        with contextlib.ExitStack() as stack:
+            for _ in range(3):
+                stack.enter_context(lanes.slot("gemini"))
+            with self.assertRaises(BlockingIOError):
+                with lanes.slot("gemini"):
+                    pass
+        with lanes.slot("gemini"):
+            pass
+
+    def test_group_executes_all_five_providers_concurrently_and_refills(self):
+        for index, worker in enumerate(queue.MODEL_WORKERS):
+            queue.enqueue(self.root, "conversation", worker, "Independent supplied evidence for " + worker,
+                          worker=worker, group_id="group", group_size=5, group_index=index)
+        health = {lane: {"state": "ready"} for lane in queue.WORKERS}
+        with patch.object(lanes, "refresh", return_value=health), patch.object(web_dispatch, "launch"):
+            self.assertEqual(web_dispatch.tick(), 5)
+        claims = list(queue.tasks(self.root).values())
+        barrier = threading.Barrier(5)
+        def answer(worker, *_args, **_kwargs):
+            barrier.wait(timeout=5)
+            return worker + " supplied a completed independent result."
+        with patch.object(dispatch_worker, "prepare_task", return_value=self.root), patch.object(dispatch_worker, "ask", side_effect=answer):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+                result = list(pool.map(lambda row: dispatch_worker.execute(row["id"], row["claim_token"]), claims))
+        self.assertEqual(result, [0] * 5)
+        rows = list(queue.tasks(self.root).values())
+        self.assertLess(max(r["execution_started_at"] for r in rows), min(r["finished_at"] for r in rows))
+        self.enqueue("refill", worker="codex")
+        with patch.object(lanes, "refresh", return_value=health), patch.object(web_dispatch, "launch") as launch:
+            self.assertEqual(web_dispatch.tick(), 1)
+            self.assertEqual(launch.call_args.args[0]["request_id"], "refill")
+
+    def test_coding_failover_never_uses_an_analysis_or_local_worker(self):
+        row = self.enqueue(worker="codex", kind="coding")
+        health = {lane: {"state": "ready"} for lane in queue.WORKERS}
+        health["codex"]["state"] = "budget_exhausted"
+        with patch.object(lanes, "refresh", return_value=health), patch.object(web_dispatch, "launch"):
+            self.assertEqual(web_dispatch.tick(), 1)
+        self.assertEqual(queue.tasks(self.root)[row["id"]]["worker"], "cursor")
+
+    def test_mini_worker_runs_local_test_suite_and_reports_result(self):
+        suite = self.root / "services"
+        suite.mkdir()
+        (suite / "test_cpu.py").write_text("import unittest\nclass CPU(unittest.TestCase):\n def test_sum(self):\n  self.assertEqual(sum(range(100)),4950)\n")
+        row = queue.enqueue(self.root, "conversation", "mini", "Run services/test_cpu.py", worker="mini")
+        claim = queue.claim(self.root, "mini")
+        with patch.object(mini_worker, "CODE_ROOT", self.root), patch.object(dispatch_worker, "ask") as ask:
+            self.assertEqual(dispatch_worker.execute(row["id"], claim["claim_token"]), 0)
+            ask.assert_not_called()
+        result = queue.tasks(self.root)[row["id"]]
+        self.assertEqual(result["status"], "succeeded")
+        self.assertIn("Ran 1 test", result["result"])
+        self.assertIn("OK", result["result"])

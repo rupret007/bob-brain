@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import shutil
@@ -19,7 +20,7 @@ from workspaces import analysis_workspace, sandbox_command
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
 import task_queue
 
-LANES = budget.LANES
+LANES = task_queue.WORKERS
 CURSOR = Path.home() / ".local/bin/cursor-agent"
 RULES = ("HARD RULES: drafts only; never merge, undraft, force-push, send texts/emails, buy credits, "
          "change logins, use Cursor Cloud agents, or launch other workers. Only one WebJam coder. "
@@ -38,12 +39,35 @@ def clean_env():
     return env
 
 
+@contextlib.contextmanager
+def slot(lane):
+    """Bound API parallelism across processes; honor old exclusive lane locks."""
+    if lane not in ("gemini", "minimax"):
+        with lock("lane-" + lane, blocking=False):
+            yield
+        return
+    usage = budget.check(lane)
+    limit = 1 if usage["tier"] == "slow" else task_queue.capacity(lane)
+    with lock("lane-" + lane, blocking=False, shared=True):
+        for index in range(limit):
+            stack = contextlib.ExitStack()
+            try:
+                stack.enter_context(lock("lane-" + lane + "-" + str(index), blocking=False))
+            except BlockingIOError:
+                stack.close()
+                continue
+            with stack:
+                yield
+            return
+    raise BlockingIOError("All API slots are occupied")
+
+
 def refresh():
     previous = read_json(CONDUCTOR / "lanes.json", {})
     cooldowns = read_json(CONDUCTOR / "lane-cooldowns.json", {})
     data = {}
-    reserved = {r["worker"] for r in task_queue.tasks(CONDUCTOR.parent).values() if r["status"] in task_queue.ACTIVE}
-    reserved.update(r.get("engine") for r in jobs().values()
+    reserved = [r["worker"] for r in task_queue.tasks(CONDUCTOR.parent).values() if r["status"] in task_queue.ACTIVE]
+    reserved.extend(r.get("engine") for r in jobs().values()
                     if r.get("managed") and r["state"] in ("launched", "running"))
     for lane in LANES:
         state, detail = "ready", "available"
@@ -64,22 +88,29 @@ def refresh():
             state, detail = "unavailable", lane + " CLI missing"
         elif lane in ("gemini", "minimax") and not os.environ.get(lane.upper() + "_API_KEY"):
             state, detail = "needs_key", lane.upper() + "_API_KEY missing"
-        elif lane == "minimax" and budget.totals(lane)["committed_usd"] >= budget.CAP_USD:
-            state, detail = "budget_exhausted", "$48 cap reached"
+        usage = budget.status(lane)
+        limit = 1 if usage["tier"] == "slow" else task_queue.capacity(lane)
+        if state == "ready" and usage["tier"] == "stop":
+            state, detail = "budget_exhausted", "95% usage stop reached"
         cooldown = cooldowns.get(lane, {})
         if state == "ready" and cooldown.get("retry_at", 0) > time.time():
             state, detail = "cooldown", cooldown.get("detail", "previous model error")
         if state == "ready":
             try:
-                with lock("lane-" + lane, blocking=False):
+                with slot(lane):
                     pass
             except BlockingIOError:
                 state, detail = "busy", "lane lease held"
-        if state == "ready" and lane in reserved:
+            except budget.BudgetExceeded:
+                state, detail = "budget_exhausted", "95% usage stop reached"
+        if state == "ready" and reserved.count(lane) >= limit:
             state, detail = "busy", "Web Bob worker claim reserved"
+        if state == "ready" and usage["tier"] in ("warn", "slow"):
+            state, detail = "budget_warning", usage["tier"] + ": " + str(usage["used_percent"]) + "% used"
         data[lane] = {"state": state, "detail": detail, "checked_at": time.time(),
-                      "retry_at": cooldown.get("retry_at", 0)}
-        alert("lane-" + lane, lane + ": " + detail if state in ("needs_login", "needs_key", "unavailable", "budget_exhausted", "cooldown") else None)
+                      "retry_at": cooldown.get("retry_at", 0), "capacity": limit,
+                      "active": reserved.count(lane), "budget": usage}
+        alert("lane-" + lane, lane + ": " + detail if state in ("needs_login", "needs_key", "unavailable", "budget_warning", "budget_exhausted", "cooldown") else None)
     write_json(CONDUCTOR / "lanes.json", data)
     return data
 
@@ -94,6 +125,7 @@ def defer_lane(lane, reason):
 
 
 def cli(lane, prompt, cwd, coding, timeout):
+    budget.check(lane)
     if lane == "codex":
         # sandbox-exec cannot be nested on macOS. The outer boundary below
         # enforces read-only analysis and protects the live core for all tasks.
@@ -149,7 +181,7 @@ def cli(lane, prompt, cwd, coding, timeout):
 
 
 def ask(lane, prompt, *, cwd=None, coding=False, timeout=300, purpose="analysis", locked=False):
-    if lane not in LANES:
+    if lane not in task_queue.MODEL_WORKERS:
         raise ValueError("unknown lane")
     if lane == "claude":
         if coding or purpose not in ("review", "council-critique", "smoke", "small-review"):
@@ -159,9 +191,9 @@ def ask(lane, prompt, *, cwd=None, coding=False, timeout=300, purpose="analysis"
     if read_json(CONDUCTOR / "lane-cooldowns.json", {}).get(lane, {}).get("retry_at", 0) > time.time():
         raise RuntimeError(lane + " rate-limit cooldown active")
     if not locked:
-        with lock("lane-" + lane, blocking=False):
-            if any(r["worker"] == lane and r["status"] in task_queue.ACTIVE
-                   for r in task_queue.tasks(CONDUCTOR.parent).values()):
+        with slot(lane):
+            if sum(r["worker"] == lane and r["status"] in task_queue.ACTIVE
+                   for r in task_queue.tasks(CONDUCTOR.parent).values()) >= task_queue.capacity(lane):
                 raise BlockingIOError("lane reserved for a Web Bob worker")
             if any(r.get("engine") == lane and r["state"] in ("launched", "running")
                    and r.get("managed") for r in jobs().values()):

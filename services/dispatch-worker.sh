@@ -2,7 +2,7 @@
 set -eu
 umask 077
 export BOB_ROOT="${BOB_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
-export BOB_CODE_ROOT="${BOB_CODE_ROOT:-$BOB_ROOT/conductor}"
+export BOB_CODE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 set -a
 [ ! -f "$BOB_ROOT/conductor/keys.env" ] || . "$BOB_ROOT/conductor/keys.env"

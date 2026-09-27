@@ -10,6 +10,7 @@ from pathlib import Path
 from command import run
 from state import CONDUCTOR, ROOT, atomic_write, lock, log
 import lanes
+import budget
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
 import task_queue
@@ -76,6 +77,24 @@ def launch(row):
         raise RuntimeError("Worker launch failed")
 
 
+def candidates(row, health):
+    order = list(task_queue.worker_order(row["kind"]))
+    preferred = row["requested_worker"]
+    if preferred in order:
+        order.remove(preferred)
+        order.insert(0, preferred)
+    tried = row.get("tried_workers", [])
+    ready = [lane for lane in order if health.get(lane, {}).get("state") in ("ready", "budget_warning")]
+    # Do not steal a pinned first attempt just because its lane is occupied.
+    # Outages/caps permit immediate substitution; a failed attempt tries every
+    # compatible provider before returning to a provider that already failed.
+    if preferred in order and not tried and health.get(preferred, {}).get("state") == "busy":
+        return []
+    return sorted(ready, key=lambda lane: (lane in tried,
+                  {"normal": 0, "warn": 1, "slow": 2}.get(health[lane].get("budget", {}).get("tier"), 0),
+                  order.index(lane)))
+
+
 def tick():
     if (CONDUCTOR / "MAINTENANCE").exists():
         return 0
@@ -83,21 +102,30 @@ def tick():
         task_queue.recover(ROOT, worker_alive)
         health = lanes.refresh()
         launched = 0
-        # Tool workers can inspect a repository even when a request supplies no
-        # evidence. Explicit API/review routes remain pinned to their own lane.
-        for lane in ("cursor", "codex", "gemini", "minimax", "claude"):
-            if health.get(lane, {}).get("state") != "ready":
+        # Iterate tasks, not lanes: fit drives the first choice, then headroom.
+        # Claims are individually fenced and reserve capacity before launching.
+        for pending in sorted(task_queue.tasks(ROOT).values(), key=lambda row: row["created_at"]):
+            if pending["status"] != "queued" or pending.get("retry_at", 0) > time.time():
                 continue
-            row = task_queue.claim(ROOT, lane)
-            if not row:
-                continue
-            try:
-                launch(row)
-                launched += 1
-                log("Web Bob claimed " + row["id"] + " worker=" + lane)
-            except Exception as exc:
-                task_queue.transition(ROOT, row["id"], row["claim_token"], "retry",
-                                      error="Worker launch failed: " + type(exc).__name__)
+            for lane in candidates(pending, health):
+                if lane in budget.RATES:
+                    usage = budget.status(lane)
+                    rate = budget.RATES[lane]
+                    estimate = ((len(pending["prompt"].encode()) + 8192) * max(rate[0], rate[3]) + 8192 * rate[1]) / 1_000_000
+                    if usage["committed_usd"] + estimate > usage["cap_usd"] * .95:
+                        continue
+                row = task_queue.claim(ROOT, lane, identifier=pending["id"], allow_fallback=True,
+                                       limit=health[lane].get("capacity", task_queue.capacity(lane)))
+                if not row:
+                    continue
+                try:
+                    launch(row)
+                    launched += 1
+                    log("Web Bob claimed " + row["id"] + " worker=" + lane + " group=" + str(row.get("group_id")))
+                except Exception as exc:
+                    task_queue.transition(ROOT, row["id"], row["claim_token"], "retry",
+                                          error="Worker launch failed: " + type(exc).__name__)
+                break
         return launched
 
 

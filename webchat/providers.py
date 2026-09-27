@@ -279,6 +279,10 @@ class Providers:
     @contextmanager
     def lane(self, provider):
         # Interactive slots are separate from every background lane lock.
+        quota_path = self.root / "conductor/plan-usage.json"
+        quota = json.loads(quota_path.read_text()).get(provider, {}) if quota_path.exists() else {}
+        if quota.get("reset_at", float("inf")) > time.time() and quota.get("used_percent", 0) >= 95:
+            raise ProviderError(kind="budget")
         folder = self.root / "conductor/locks"
         folder.mkdir(parents=True, exist_ok=True)
         with (folder / ("chat-" + provider + ".lock")).open("a+") as handle:
@@ -477,7 +481,7 @@ class Providers:
     def route_order(self, conversation):
         selected = conversation.get("preferred_provider", "auto")
         if selected in NAMES:
-            return (selected,)
+            return (selected, *(name for name in ORDER if name != selected))
         text = next((m["content"] for m in reversed(conversation["messages"]) if m["role"] == "user"), "")
         if (len(text) <= FAST_MAX_CHARS and text.count("\n") <= 2
                 and not re.search(r"```|(?:^|\s)(?:fix|implement|refactor|debug|write tests)\b", text, re.I)):
@@ -575,6 +579,15 @@ class Providers:
         return {"providers": rows, "order": list(ORDER), "fast_order": list(FAST_ORDER), "probe_interval_seconds": self.probe_interval}
 
     def spend(self, name):
+        # The lane board reports the enforced ceiling/tier, including Gemini.
+        board = self.root / "conductor/lanes.json"
+        if board.exists():
+            try:
+                usage = json.loads(board.read_text()).get(name, {}).get("budget")
+                if usage:
+                    return usage
+            except (OSError, ValueError):
+                pass
         try:
             path = self.root / "conductor/ledger" / (name + ".jsonl")
             records = {r["call_id"]: r for r in map(json.loads, path.read_text().splitlines())}

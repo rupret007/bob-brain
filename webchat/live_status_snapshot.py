@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-LANE_NAMES = ("codex", "claude", "cursor", "gemini", "minimax")
+LANE_NAMES = ("codex", "claude", "cursor", "gemini", "minimax", "mini")
 SERVICE_INTERVALS = {"job-runner": 60, "reviewer": 300, "dashboard-updater": 300, "watchdog": 180}
 _SCREEN_RE = re.compile(r"(?m)^\s*(\d+)\.([\w.-]+)\s*\((?:Detached|Attached)\)")
 _HOME = re.compile(r"/Users/[^\s\"']+")

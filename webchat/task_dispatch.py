@@ -10,19 +10,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
 import task_queue
+import max_mode
 
 WORK = re.compile(
     r"^(?:(?:please|bob)[,:]?\s+)*(?:(?:can|could|would|will) you\s+|i (?:want|need) you to\s+)?"
     r"(?:review|analy[sz]e|audit|research|investigate|inspect|check|compare|summari[sz]e|calculate|"
     r"write|draft|create|build|implement|fix|repair|debug|test|trace|update|refactor|add|remove)\b.+", re.I | re.S)
 ROUTED = re.compile(r"^(?:(?:please|bob)[,:]?\s+)*(?:ask|use|assign(?:\s+to)?|delegate(?:\s+to)?)\s+"
-                    r"(codex|claude|cursor-agent|cursor|gemini|minimax|grok)\b\s*(?:to\b|[:,])?\s*(.+)$", re.I | re.S)
-PREFIX = re.compile(r"^(?:worker\s*[:=]\s*)?(codex|claude|cursor-agent|cursor|gemini|minimax|grok)\s*:\s*(.+)$", re.I | re.S)
+                    r"(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\b\s*(?:to\b|[:,])?\s*(.+)$", re.I | re.S)
+PREFIX = re.compile(r"^(?:worker\s*[:=]\s*)?(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\s*:\s*(.+)$", re.I | re.S)
 CODING = re.compile(r"\b(?:fix|repair|implement|refactor|debug|build|run|execute|install|edit|change|modify)\b|"
                     r"\b(?:write|add|create|update|remove)\b.{0,60}\b(?:code|file|test|function|service|script|app|feature)\b", re.I | re.S)
 
 
 def parse_work(text):
+    if max_mode.MAX_MODE.search(text):
+        return text.strip(), "max"
     lane = re.fullmatch(r"(?:start|run)\s+(?:a\s+)?lane\s+(codex|cursor-agent|cursor|claude|gemini|minimax|grok)\s*:\s*(.+)", text.strip(), re.I | re.S)
     if lane:
         return lane[2].strip(), lane[1].lower()
@@ -44,6 +47,9 @@ def task_kind(prompt):
 
 
 class TaskDispatch:
+    def submit_max_task(self, conversation, description, request_id):
+        return self.submit_task(conversation, description, request_id, worker="max")
+
     def submit_task(self, conversation, description, request_id, worker="auto"):
         from app import hard_rule_refusal
         identifier = conversation["id"]
@@ -57,8 +63,9 @@ class TaskDispatch:
         if routed_worker != "auto":
             description, worker = routed_prompt, routed_worker
         try:
-            worker = task_queue.worker_name(worker)
-            kind = task_kind(description)
+            maximum = worker == "max"
+            worker = "auto" if maximum else task_queue.worker_name(worker)
+            kind = task_kind(max_mode.MAX_MODE.sub("", description).strip(" :,-\n") if maximum else description)
             if kind == "coding" and worker in ("gemini", "minimax", "claude"):
                 raise ValueError("Code changes require codex or cursor-agent; choose an analysis task for this worker.")
             refusal = hard_rule_refusal(description)
@@ -68,6 +75,8 @@ class TaskDispatch:
                 raise ValueError("Worker dispatch is disabled in a drill overlay. Use a normal conversation.")
             if (self.root / "conductor/MAINTENANCE").exists():
                 raise ValueError("Scheduling is paused for maintenance; this task was not queued.")
+            if maximum:
+                goal, subtasks = max_mode.plan(self.root, description, kind)
         except ValueError as exc:
             message.update(status="done", content=str(exc), action_card={"state": "refused", "executable": False})
             self.save(conversation)
@@ -75,8 +84,10 @@ class TaskDispatch:
             return self.public(conversation)
         # Save the originating message AND intent before the queue side effect.
         # Startup/reconciliation retries this idempotently after either write fails.
-        message.update(status="done", content="Saving your task for a worker…",
-                       dispatch_intent=dict(prompt=description, worker=worker, kind=kind, request_id=request_id))
+        intent = dict(prompt=description, worker=worker, kind=kind, request_id=request_id)
+        if maximum:
+            intent.update(goal=goal, subtasks=subtasks)
+        message.update(status="done", content="Saving your task for a worker…", dispatch_intent=intent)
         self.save(conversation)
         self.conversations[identifier] = conversation
         self.reconcile_tasks()
@@ -89,7 +100,17 @@ class TaskDispatch:
                 changed = False
                 for message in value["messages"]:
                     intent = message.get("dispatch_intent")
-                    if not intent or message.get("task_id"):
+                    if not intent or message.get("task_id") or message.get("group_id"):
+                        continue
+                    if intent.get("subtasks"):
+                        rows = max_mode.enqueue(self.root, identifier, intent)
+                        group = rows[0]["group_id"]
+                        message.update(group_id=group, task_ids=[row["id"] for row in rows], status="done", provider="dispatcher",
+                                       content="Max mode queued " + str(len(rows)) + " independent subtasks across " +
+                                       ", ".join(dict.fromkeys(row["requested_worker"] for row in rows)) + ". I’ll combine the results here.",
+                                       action_card={"id": message["request_id"], "state": "queued", "executable": False,
+                                                    "group_id": group, "queue_id": group, "goal_text": intent["goal"][:160]})
+                        changed = True
                         continue
                     row = task_queue.enqueue(self.root, identifier, intent["request_id"], intent["prompt"],
                                              worker=intent["worker"], kind=intent["kind"])
@@ -102,7 +123,11 @@ class TaskDispatch:
                 if changed:
                     self.save(value)
                     self.conversations[identifier] = value
-            for row in task_queue.tasks(self.root).values():
+            all_rows = list(task_queue.tasks(self.root).values())
+            self.reconcile_groups(all_rows)
+            for row in all_rows:
+                if row.get("group_id"):
+                    continue
                 identifier = row["conversation_id"]
                 if row["status"] not in task_queue.TERMINAL or row.get("delivered_at") or identifier not in self.conversations:
                     continue
@@ -126,6 +151,36 @@ class TaskDispatch:
                             message["action_card"].update(state="done" if success else "blocked", worker=row["worker"])
                     self.save(value)  # Commit the answer BEFORE acknowledging outbox delivery.
                     self.conversations[identifier] = value
+                task_queue.delivered(self.root, row["id"], message_id)
+
+    def reconcile_groups(self, rows):
+        groups = {}
+        for row in rows:
+            if row.get("group_id"):
+                groups.setdefault(row["group_id"], []).append(row)
+        for group, members in groups.items():
+            first = members[0]
+            identifier = first["conversation_id"]
+            if (len(members) != first["group_size"] or any(r["status"] not in task_queue.TERMINAL for r in members)
+                    or all(r.get("delivered_at") for r in members) or identifier not in self.conversations):
+                continue
+            value = copy.deepcopy(self.conversations[identifier])
+            if identifier in self.workers or (value["messages"] and value["messages"][-1]["status"] == "waiting"):
+                continue
+            message_id = str(uuid.uuid5(uuid.NAMESPACE_URL, group + ":result"))
+            if not any(m["id"] == message_id for m in value["messages"]):
+                success = all(row["status"] == "succeeded" for row in members)
+                value["messages"].append(dict(id=message_id, request_id=first["request_id"].rsplit(":", 1)[0],
+                                              group_id=group, task_ids=[r["id"] for r in members], role="assistant",
+                                              status="done", provider="max-mode", content=self.redact(max_mode.merge_text(members)),
+                                              created_at=time.time(), task_status="succeeded" if success else "partial",
+                                              subtasks=[{k: r.get(k) for k in ("id", "title", "worker", "status", "claimed_at", "started_at", "execution_started_at", "finished_at", "result_sha256")} for r in members]))
+                for message in value["messages"]:
+                    if message.get("group_id") == group and message.get("action_card"):
+                        message["action_card"]["state"] = "done" if success else "blocked"
+                self.save(value)
+                self.conversations[identifier] = value
+            for row in members:
                 task_queue.delivered(self.root, row["id"], message_id)
 
     def migrate_legacy_tasks(self):

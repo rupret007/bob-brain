@@ -149,11 +149,79 @@ class ChatDispatchTests(Fixture):
 
     def test_exhausted_retries_report_failure_in_chat(self):
         self.submit(worker="gemini")
-        for attempt in range(3):
+        for attempt in range(5):
             now = time.time() + attempt * 100
             row = queue.claim(self.root, "gemini", now=now)
             queue.transition(self.root, row["id"], row["claim_token"], "retry", now=now+1, error="Provider unavailable")
         self.chat.reconcile_tasks()
         result = self.chat.history(self.identifier)["messages"][-1]
         self.assertEqual(result["task_status"], "failed")
-        self.assertIn("3 attempts", result["content"])
+        self.assertIn("5 attempts", result["content"])
+
+    def test_max_mode_enqueues_one_row_per_idle_lane_with_shared_group_id(self):
+        health = {lane: {"state": "ready"} for lane in ("codex", "cursor", "gemini", "minimax")}
+        (self.root / "conductor/lanes.json").write_text(json.dumps(health))
+        value = self.submit("Go to the max: review this queue protocol for correctness, testing, scaling and recovery.")
+        rows = list(queue.tasks(self.root).values())
+        self.assertEqual(len(rows), 4)
+        self.assertEqual({r["requested_worker"] for r in rows}, set(health))
+        self.assertEqual(len({r["group_id"] for r in rows}), 1)
+        self.assertEqual(len({r["prompt"] for r in rows}), 4)
+        group = value["messages"][-1]["group_id"]
+        for row in rows[:-1]:
+            self.complete_task(row, result="Evidence from " + row["requested_worker"])
+        self.chat.reconcile_tasks()
+        self.assertFalse(any(m.get("task_status") for m in self.chat.history(self.identifier)["messages"]))
+        self.complete_task(rows[-1], result="Recovery findings")
+        for _ in range(3):
+            self.chat.reconcile_tasks()
+        results = [m for m in self.chat.history(self.identifier)["messages"] if m.get("task_status")]
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["group_id"], group)
+        self.assertEqual(len(results[0]["subtasks"]), 4)
+        self.assertTrue(all(r["delivered_at"] for r in queue.tasks(self.root).values()))
+
+    def test_max_mode_explicit_packages_and_recovery_from_partial_enqueue(self):
+        prompt = "Max mode: review this supplied evidence.\n[codex] Check invariants.\n[claude] Critique assumptions.\n[mini] Run services/test_services.py."
+        real = queue.enqueue
+        count = []
+        def enqueue(*args, **kwargs):
+            count.append(1)
+            if len(count) == 2:
+                raise OSError("Interrupted group append")
+            return real(*args, **kwargs)
+        with patch.object(queue, "enqueue", side_effect=enqueue):
+            with self.assertRaises(OSError):
+                self.submit(prompt)
+        self.assertIsNone(queue.claim(self.root, "codex"))
+        self.chat.reconcile_tasks()
+        rows = list(queue.tasks(self.root).values())
+        self.assertEqual(len(rows), 3)
+        self.assertEqual({r["kind"] for r in rows}, {"analysis", "local"})
+        self.assertIsNotNone(queue.claim(self.root, "codex"))
+
+    def test_max_mode_delivery_ack_crash_posts_one_merged_answer(self):
+        self.submit("Max mode: review evidence.\n[gemini] Check scaling.\n[minimax] Check recovery.")
+        for row in queue.tasks(self.root).values():
+            self.complete_task(row)
+        with patch.object(queue, "delivered", side_effect=OSError("Acknowledgement failed")):
+            with self.assertRaises(OSError):
+                self.chat.reconcile_tasks()
+        replacement = Chat(self.folder, self.root, self.fake)
+        try:
+            results = [m for m in replacement.history(self.identifier)["messages"] if m.get("task_status")]
+            self.assertEqual(len(results), 1)
+        finally:
+            replacement.close()
+
+    def test_max_mode_rejects_grok_and_keeps_code_packages_independent(self):
+        value = self.submit("Max mode: review evidence.\n[grok] Critique.\n[codex] Check.")
+        self.assertEqual(value["messages"][-1]["action_card"]["state"], "refused")
+        self.assertFalse(queue.tasks(self.root))
+        self.submit("Max mode: implement a new task grouping feature and its regression tests.")
+        rows = {r["requested_worker"]: r for r in queue.tasks(self.root).values()}
+        self.assertEqual(set(rows), set(queue.WORKERS))
+        self.assertEqual({worker for worker, row in rows.items() if row["kind"] == "coding"}, {"codex", "cursor"})
+        self.assertIn("production files only", rows["codex"]["prompt"])
+        self.assertIn("test files only", rows["cursor"]["prompt"])
+        self.assertEqual(rows["mini"]["kind"], "local")
