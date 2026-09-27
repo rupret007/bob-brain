@@ -153,3 +153,53 @@ The live listener remained **PID 99149**, started **Sun Sep 27 12:40:03 2026**; 
 ```sh
 python3 webchat/isolated_status_proof.py --live-root .. --output reviews/WEBBOB-CLEAN-0927.status-evidence.json
 ```
+
+## Follow-up recheck: project jobs and current holds
+
+PASS. Re-read Jeff's session and verified the project dispatch and explicit permission changes already on this draft branch. The exact priority-then-push request still creates one real `conductor/state/queue.jsonl` job per project, with project, assigned worker and job ID in a four-line server receipt. Existing coverage checks compatible worker capacity, active claims, pending assignments, recovery and duplicate requests.
+
+This recheck fixed three remaining cases in chat intent, saved permissions and replies:
+
+- A named confirmation such as “Go ahead with Web Bob, WebJam, AdoptIQ and StoryBoard” now accepts the matching saved project plan. A project-specific resume accepts only a current task wholly within the named scope; it cannot dispatch unrelated held work or replay an already accepted plan.
+- A push with no resolved projects previously cleared saved holds while asking which projects to use. It now preserves both the hold and the last permission transition, including when exclusions remove every target.
+- Provider claims such as “Web Bob is paused until you say resume” and “I am holding Web Bob pending your approval” now pass through the saved-state check. Useful answer text remains intact. Actual active holds produce the server's scoped hold reply; cleared holds produce no hold reminder. Ordinary explanations and paused-video text remain unchanged.
+
+The new regressions failed before these fixes and passed afterward. No scheduler, worker executor or queue schema changed.
+
+### Full-suite validation
+
+Validation used a private snapshot of tracked base `c40e68a7dc0dc8e6f9347f6d3c22a70e2b546d54` plus this follow-up's intent, dispatch, reply, test and proof changes. Unrelated UI edits arriving in the shared checkout were excluded from this snapshot and this commit.
+
+| Command | Result |
+| --- | --- |
+| `python3 -m unittest discover -s webchat -p 'test_*.py'` | **210 passed**, 12.549 s |
+| `python3 -m unittest discover -s services -p 'test_*.py'` | **111 passed**, 2.590 s |
+| `node --test webchat/test_quiet_hours_js.mjs` | **1 passed** |
+| `python3 bootstrap.py check` | **syntax: PASS** |
+| `python3 -m py_compile` on changed Python files | **Passed** |
+| `git diff --check` on this follow-up's files | **Passed** |
+
+No tests were skipped. Service restart messages came from mocked watchdog tests. Four added regressions cover named confirmations, scoped resumes, missing/excluded project targets across reloads, and five paused/approval phrasings before and after `go`, including final reply delivery through Chat.
+
+### Isolated HTTP proof
+
+The expanded [proof runner](../webchat/isolated_intent_proof.py) used authenticated login, CSRF-protected `/api/messages`, `/api/jobs`, and a fresh private queue. The actual receipt for Jeff's priority-then-push exchange was:
+
+```text
+Web Bob: Queued for Codex — job webchat-d77da4f747ba56b296384c0000f26f8b.
+WebJam: Queued for Cursor — job webchat-f4e7a83cb68e5e8091835e949d02b04f.
+AdoptIQ: Queued for Codex — job webchat-2fee25dd62a551489f03e6b0e5a9339c.
+StoryBoard: Queued for Cursor — job webchat-113a301739275f5db04cb75f51f42fc5.
+```
+
+A second inline four-project request used a busy-Codex/ready-Cursor lane fixture and assigned every project to the compatible available Cursor lane. A third saved project plan accepted the named “Go ahead with …” confirmation under the same fixture. Coding capability limits remain unchanged. A held login fix was blocked, then `resume` created exactly one job. A separate bare `go` cleared its saved hold without inventing work. Missing and fully excluded project requests preserved their active hold across reloads. Three deliberately stale provider fixtures each became “Ready when you are.”
+
+10 private Chat reloads and 5 HTTP retransmissions preserved IDs without duplicate jobs. The final journal contained exactly **13 enqueue events**: four original projects, one resumed login fix, four inline projects, and four projects confirmed by the named go. Every row matched `/api/jobs`, remained `queued`, had zero attempts and no claimed worker. Lane availability and stale replies were fixtures; no external model or worker was launched, and this proof does not claim execution of the requested project work.
+
+The proof ran **2026-09-27T19:53:28.148328+00:00 → 2026-09-27T19:53:28.858024+00:00**. Its [raw evidence](WEBBOB-CLEAN-0927.intent-recheck-evidence.json) records the exchanges, saved permissions, real queue rows, retries, source hashes and queue SHA-256 `ac96e3f36d825614078dcbe2604e983b2760e1df4e1968bb9a0f7bce3719b336`. Source hashes match the final implementation and proof files.
+
+The live listener remained **PID 99149**, started **Sun Sep 27 12:40:03 2026**, and all seven service screen identities were unchanged. No live service restart, merge, force-push or Grok invocation occurred.
+
+```sh
+python3 webchat/isolated_intent_proof.py --output reviews/WEBBOB-CLEAN-0927.intent-recheck-evidence.json
+```

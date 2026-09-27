@@ -29,6 +29,8 @@ class AuthorityTests(unittest.TestCase):
         for text in ("Got it — I’ll keep it short.", "Hi Jeff!", "A lease expires; a lock needs to be released.",
                      "Jobs wait in the queue until a worker is free.", "I can review PR #161.",
                      "A job is queued when every worker is busy.",
+                     "The video is paused. Press play to continue.",
+                     "Jobs can be paused before they start.",
                      "Here are the details:\n\n- First fact.\n- Second fact."):
             with self.subTest(text=text):
                 self.assertEqual(enforce(Path('/unused'), "Tell me more", dict(content=text, provider="gemini")), text)

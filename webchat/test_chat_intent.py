@@ -68,6 +68,37 @@ class IntentTests(Fixture):
         self.assertNotIn("task_ids", self.submit("go")["messages"][-1])
         self.assertEqual(len(queue.tasks(self.root)), 8)
 
+    def test_named_go_dispatches_current_project_plan_once(self):
+        self.submit(HOLD)
+        self.submit(PRIORITY)
+        self.reload()
+        request = str(uuid.uuid4())
+        text = "Go ahead with Web Bob, WebJam, AdoptIQ and StoryBoard."
+        receipt = self.submit(text, request)["messages"][-1]
+        rows = list(queue.tasks(self.root).values())
+        self.assertEqual([row["title"] for row in rows], NAMES)
+        self.assertEqual(set(receipt["task_ids"]), {row["id"] for row in rows})
+        self.assertFalse(self.chat.history(self.identifier)["intent_state"]["holds"])
+        self.reload()
+        self.submit(text, request)
+        self.assertNotIn("task_ids", self.submit(text)["messages"][-1])
+        self.assertEqual(len(queue.tasks(self.root)), 4)
+
+    def test_named_resume_only_accepts_a_matching_saved_task(self):
+        self.submit("Hold WebJam")
+        self.submit("Fix WebJam login")
+        self.submit("Resume Web Bob")
+        self.assertFalse(queue.tasks(self.root))
+        self.assertIn("WebJam", self.chat.history(self.identifier)["intent_state"]["holds"])
+        receipt = self.submit("Please resume WebJam.")["messages"][-1]
+        row = queue.tasks(self.root)[receipt["task_id"]]
+        self.assertEqual(row["prompt"], "Fix WebJam login")
+        self.assertFalse(self.chat.history(self.identifier)["intent_state"]["holds"])
+        self.identifier = self.chat.new_conversation()["id"]
+        self.submit(PRIORITY)
+        self.submit("Go ahead with Web Bob")
+        self.assertEqual(len(queue.tasks(self.root)), 1)
+
     def test_analysis_spreads_across_free_compatible_workers_and_real_claims_update_receipt(self):
         self.ready("claude", "gemini", "minimax", "codex", "cursor")
         receipt = self.submit("Compare Web Bob, WebJam, AdoptIQ and StoryBoard using this evidence: each has one queued task.")["messages"][-1]
@@ -204,6 +235,24 @@ class IntentTests(Fixture):
         self.assertEqual(receipt["content"], "Which projects should I work on?")
         self.assertFalse(queue.tasks(self.root))
 
+    def test_push_without_targets_preserves_saved_permissions(self):
+        for hold in (HOLD, "Pause all work."):
+            with self.subTest(hold=hold):
+                self.identifier = self.chat.new_conversation()["id"]
+                self.submit(hold)
+                before = self.chat.history(self.identifier)["intent_state"]
+                receipt = self.submit(PUSH)["messages"][-1]
+                self.assertEqual(receipt["content"], "Which projects should I work on?")
+                self.reload()
+                self.assertEqual(self.chat.history(self.identifier)["intent_state"], before)
+                self.submit("Prioritize Web Bob")
+                before = self.chat.history(self.identifier)["intent_state"]
+                receipt = self.submit("Push everything to the max except Web Bob")["messages"][-1]
+                self.assertEqual(receipt["content"], "Which projects should I work on?")
+                self.reload()
+                self.assertEqual(self.chat.history(self.identifier)["intent_state"], before)
+                self.assertFalse(queue.tasks(self.root))
+
     def test_project_exclusions_and_single_saved_project_keep_scope(self):
         self.submit(PRIORITY)
         receipt = self.submit("Push everything to the max except Web Bob")["messages"][-1]
@@ -260,6 +309,27 @@ class IntentTests(Fixture):
         content = enforce(self.root, "Is Web Bob on hold?", answer, value)
         self.assertIn("On hold: Web Bob", content)
         self.assertNotIn("WebJam", content)
+
+    def test_pause_and_approval_claims_follow_current_permissions(self):
+        claims = ("Web Bob is paused until you say resume.",
+                  "Web Bob is paused.", "Coding has been paused.",
+                  "I am holding Web Bob pending your approval.",
+                  "Web Bob is awaiting your go-ahead.")
+        self.submit(HOLD)
+        for claim in claims:
+            with self.subTest(claim=claim, held=True):
+                content = enforce(self.root, "What about Web Bob?", dict(provider="gemini", content=claim),
+                                  self.chat.conversations[self.identifier])
+                self.assertEqual(content, "On hold: Web Bob. Say go or resume when you're ready.")
+        self.submit("go")
+        self.reload()
+        for claim in claims:
+            with self.subTest(claim=claim, held=False), patch.object(self.fake, "reply", return_value=
+                    dict(provider="gemini", attempts=[], content="The next issue is the login button. " + claim)):
+                content = self.submit("Any concerns?")["messages"][-1]["content"]
+                self.assertEqual(content, "The next issue is the login button.")
+                self.assertFalse(self.chat.history(self.identifier)["intent_state"]["holds"])
+        self.assertFalse(queue.tasks(self.root))
 
     def test_maintenance_and_worker_restrictions_still_apply_to_batches(self):
         for text, worker in (("Fix Web Bob and WebJam", "gemini"), ("Fix Web Bob and WebJam", "grok")):

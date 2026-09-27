@@ -33,6 +33,10 @@ def apply_turn(state, text, request_id):
     names = projects(directive)
     if PUSH.match(normalized):
         names = project_targets(text, state)
+        # A push only grants permission for its resolved projects. Asking for
+        # missing targets (including an empty exclusion) must preserve holds.
+        if not names:
+            return None
     if HOLD.match(normalized) and not LIFT.match(normalized):
         for scope in names or ["all"]:
             state["holds"][scope] = dict(request_id=request_id, reason=directive, released_projects=[])

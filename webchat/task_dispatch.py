@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
 import task_queue
 import max_mode
 from chat_intent import (POLITE, PREAMBLE, PUSH, blocked_scopes, command, hold_reply,
-                         project_targets, PROJECT, PROJECT_NAMES, state_for)
+                         project_targets, projects, PROJECT, PROJECT_NAMES, state_for)
 
 WORK = re.compile(
     r"^" + POLITE +
@@ -25,7 +25,9 @@ ROUTED = re.compile(r"^" + POLITE + r"(?:have|get|ask|use|assign(?:\s+to)?|deleg
 PREFIX = re.compile(r"^(?:worker\s*[:=]\s*)?(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\s*:\s*(.+)$", re.I | re.S)
 CODING = re.compile(r"\b(?:fix|repair|improve|implement|refactor|debug|build|run|execute|install|edit|change|modify)\b|"
                     r"\b(?:write|add|create|update|remove)\b.{0,60}\b(?:code|file|test|function|service|script|app|feature)\b", re.I | re.S)
-FOLLOW_UP = re.compile(r"^" + POLITE + r"(?:go(?: ahead)?|resume|do it|handle it|yes(?: please)?|let['’]s do it)[.!?]*$", re.I)
+PROJECT_LIST = PROJECT.pattern + r"(?:\s*(?:,|&|\band\b|\bthen\b)\s*(?:and\s+)?" + PROJECT.pattern + r")*"
+FOLLOW_UP = re.compile(r"^" + POLITE + r"(?:go(?: ahead)?|resume|do it|handle it|yes(?: please)?|let['’]s do it|"
+                       r"(?:go(?: ahead)?|resume)\s+(?:(?:with|on)\s+)?" + PROJECT_LIST + r")[.!?]*$", re.I)
 CHAT_STYLE = re.compile(r"^" + POLITE + r"(?:keep|make)\s+(?:your\s+)?(?:replies|answers|responses)\s+"
                         r"(?:short(?:er)?|brief(?:er)?|concise|friendly|friendlier|plain(?:er)?|natural)\b", re.I)
 PROPOSAL = re.compile(r"^(?:I can|I could|Happy to|Shall I|Want me to|Would you like me to)\s+(.+?)[.!?]*$", re.I)
@@ -41,13 +43,25 @@ def needs_task_detail(prompt):
 
 def followup_work(conversation):
     """Resolve only a current saved proposal, never an old or completed task."""
+    recent = conversation["messages"][-2:]
+    text = recent[0].get("content", "") if recent and recent[0].get("role") == "user" else ""
+    scopes = projects(text) if FOLLOW_UP.fullmatch(PREAMBLE.sub("", text)) else []
+
+    def matches_scope(prompt):
+        if not scopes:
+            return True
+        targets = project_targets(prompt, state_for(conversation))
+        return bool(targets) and all(name in scopes for name in targets)
+
     if conversation.get("held_job"):
         job = conversation["held_job"]
-        return job["prompt"], job["worker"]
+        if matches_scope(job["prompt"]):
+            return job["prompt"], job["worker"]
     if conversation.get("pending_job"):
         prompt = conversation["pending_job"]
         work, worker = parse_work(prompt)
-        return work or prompt, worker
+        if matches_scope(work or prompt):
+            return work or prompt, worker
     # submit() has already appended the new user turn and its reply placeholder.
     previous = conversation["messages"][:-2]
     if not previous:
@@ -64,7 +78,7 @@ def followup_work(conversation):
     prompt = re.sub(r"^(?:offer to|help(?: you)?(?: to)?)\s+", "", proposal[1], flags=re.I)
     prompt = re.sub(r"^take a look at\b", "review", prompt, flags=re.I)
     prompt = re.sub(r"\s+(?:whenever you want|when(?:ever)? you['’]re ready)$", "", prompt, flags=re.I)
-    return parse_work(prompt)
+    return parse_work(prompt) if matches_scope(prompt) else (None, "auto")
 
 
 def parse_work(text):

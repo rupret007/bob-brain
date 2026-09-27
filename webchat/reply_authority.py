@@ -2,7 +2,7 @@
 import re
 
 from live_status_snapshot import build_live_status_snapshot
-from chat_intent import blocked_scopes, hold_reply, projects, state_for
+from chat_intent import PROJECT, blocked_scopes, hold_reply, projects, state_for
 from worker_activity import WORKER_NAMES, task_label
 
 QUEUE_CLAIM = re.compile(
@@ -30,7 +30,9 @@ PROVIDER_CLAIM = re.compile(
 HOLD_CLAIM = re.compile(
     r"\b(?:your|the|earlier|previous)\s+(?:(?:earlier|previous|existing|current)\s+)?hold\b|"
     r"\b(?:on hold|still (?:paused|held)|remain(?:s)? (?:paused|held))\b|"
-    r"\b(?:until you (?:say go|give (?:the )?go[- ]ahead)|waiting for (?:your|permission)|"
+    r"\b(?:" + PROJECT.pattern + r"|work|coding|jobs?|tasks?)\s+(?:is|are|has been|have been)\s+(?:paused|held)\b|"
+    r"\b(?:awaiting|pending)\s+(?:your\s+)?(?:permission|approval|go[- ]ahead)\b|"
+    r"\b(?:until you (?:say (?:go|resume)|resume|give (?:the )?go[- ]ahead)|waiting for (?:your|permission)|"
     r"(?:need|require) (?:your |fresh |renewed |explicit )*(?:permission|approval|go[- ]ahead))\b", re.I)
 HOLD_QUESTION = re.compile(r"^(?:(?:are|is|am|do|does|why)\b[^.!]*\b(?:on hold|holds? (?:still )?active|paused|need.{0,20}permission)\b[^.!]*|what holds? are active)\??$", re.I)
 
