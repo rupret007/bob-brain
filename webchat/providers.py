@@ -46,6 +46,17 @@ KEY = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{25,}|gh[pousr]_[
 FAST_ORDER = ("gemini", "minimax", "cursor", "codex")
 FAST_BUDGET_SECONDS = 60
 FAST_MAX_CHARS = 400
+HANDOFF_CONTEXT_RE = re.compile(
+    r"\b(?:bob[- ]?state|handback|handoff|hand[\s-]?back|what(?:'s| is) running|"
+    r"from bob-state|handback drill|quote the running|open (?:asks|items)|"
+    r"waiting on jeff|takeover|pick up where)\b",
+    re.I,
+)
+
+
+def needs_handoff_context(text: str) -> bool:
+    """Short phone asks about Bob ledger still need full brain + handback snapshots."""
+    return bool(HANDOFF_CONTEXT_RE.search(text or ""))
 
 
 class Redactor:
@@ -317,6 +328,9 @@ class Providers:
         return parts
 
     def prompt(self, conversation, *, fast=False):
+        last_user = next((m["content"] for m in reversed(conversation["messages"]) if m["role"] == "user"), "")
+        if fast and needs_handoff_context(last_user):
+            fast = False
         history, remaining = [], 24000 if not fast else 12000
         messages = [m for m in conversation["messages"] if m["status"] == "done"][-(12 if fast else 20):]
         for message in reversed(messages):

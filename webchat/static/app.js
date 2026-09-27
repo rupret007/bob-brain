@@ -330,34 +330,74 @@ if ($("login-form")) {
     } catch (error) { $("song-notice").textContent = error.message; }
     event.target.value = "";
   });
+  function renderLiveJobs(jobs) {
+    const host = $("live-jobs");
+    if (!host) return;
+    host.replaceChildren(...(jobs || []).slice(0, 6).map((job) => {
+      const card = document.createElement("article");
+      card.className = "live-job";
+      const header = document.createElement("header");
+      const title = document.createElement("strong");
+      title.textContent = `${job.engine || "job"} · R${job.round || "?"}`;
+      const stall = document.createElement("span");
+      stall.className = `stall ${job.stall_state === "stalled" ? "stalled" : "running"}`;
+      stall.textContent = job.stall_state || "unknown";
+      const elapsed = document.createElement("span");
+      const mins = Math.round((job.elapsed_seconds || 0) / 60);
+      elapsed.textContent = `${mins}m elapsed${job.started_at ? " · " + job.started_at.replace("T", " ").slice(0, 16) : ""}`;
+      header.append(title, stall, elapsed);
+      const now = document.createElement("p");
+      now.textContent = job.plain_now || "Working…";
+      const tail = document.createElement("pre");
+      tail.className = "log-tail";
+      const lines = (job.log_tail || []).slice(-3);
+      tail.textContent = lines.length ? lines.join("\n") : "";
+      const commit = document.createElement("p");
+      if (job.last_commit?.sha) {
+        commit.textContent = `${job.last_commit.sha}${job.last_commit.message ? " — " + job.last_commit.message : ""}`;
+      }
+      card.append(header, now, tail, commit);
+      return card;
+    }));
+  }
   async function refreshPanel() {
     try {
       const data = await api("/api/panel");
       const state = data.handback?.bob_state?.text || "";
       $("handback-chip").textContent = state ? state.split("\n").find((line) => line.trim() && !line.startsWith("#"))?.slice(0, 140) || state.slice(0, 140) : "Handback: no BOB-STATE yet";
-      const dash = data.dashboard_modified_at ? new Date(data.dashboard_modified_at * 1000).toLocaleString() : "unknown";
+      const meta = data.live_ops_meta || {};
+      const generated = data.live_ops?.generated_at || meta.generated_at;
+      const freshLabel = meta.stale ? "stale — last known ops" : (meta.source || "dashboard");
+      const dash = generated ? `${generated} (${freshLabel})` : (data.dashboard_modified_at ? new Date(data.dashboard_modified_at * 1000).toLocaleString() : "unknown");
       const ops = data.live_ops || {};
       const spend = ops.minimax_spend || {};
       const roles = ops.roles || {};
-      const jobs = (ops.running_jobs || []).slice(0, 4);
-      $("status-summary").textContent = `round ${ops.webchat_round || "?"} · MiniMax $${(spend.committed_usd ?? 0).toFixed(2)}/${spend.cap_usd || 59}`;
-      const scoreLines = (ops.scores || []).slice(0, 6).map((row) => `${row.area}: ${row.score}`).join(" · ");
-      const jobLines = jobs.map((job) => {
-        const commit = job.last_commit?.sha ? ` · ${job.last_commit.sha}` : "";
-        const mins = Math.round((job.elapsed_seconds || 0) / 60);
-        const tail = (job.log_tail || []).slice(-2).join(" | ");
-        const detail = tail || job.plain_now || "working";
-        return `• ${job.engine || "job"} ${job.stall_state} · ${mins}m · ${detail}${commit}`;
-      });
+      const jobs = ops.running_jobs || [];
+      const committed = spend.committed_usd;
+      const cap = spend.cap_usd || 59;
+      const spendText = committed === undefined || committed === null ? "spend unknown" : `$${committed.toFixed(2)}/${cap}`;
+      $("status-summary").textContent = `round ${ops.webchat_round || "?"} · MiniMax ${spendText}`;
+      const scoreLines = (ops.scores || []).slice(0, 10).map((row) => `${row.area}: ${row.score}`).join(" · ");
       const lines = [
-        `Dashboard fresh: ${dash}`,
+        `Ops data: ${dash}`,
         `Builder: ${roles.building || "idle"} · Review: ${roles.reviewing || "idle"}`,
-        scoreLines ? `Scores: ${scoreLines}` : "",
-        jobLines.length ? "Live jobs:\n" + jobLines.join("\n") : "Live jobs: none on screen",
+        scoreLines ? `Scores: ${scoreLines}` : "Scores: (refresh dashboard-updater if empty)",
+        jobs.length ? `${jobs.length} job(s) on screen` : "Live jobs: none on screen",
         "",
-        (data.handback?.summary?.text || data.handback?.bob_state?.text || "").slice(0, 900),
+        (data.handback?.summary?.text || data.handback?.bob_state?.text || "").slice(0, 700),
       ].filter(Boolean);
       $("status-body").textContent = lines.join("\n");
+      renderLiveJobs(jobs);
+      const c = data.conductor || {};
+      $("conductor-summary").textContent = `${c.draft_branch || "?"} @ ${(c.head_sha || "").slice(0, 7)}`;
+      $("conductor-body").textContent = [
+        `Branch: ${c.draft_branch} · HEAD ${c.head_sha}`,
+        c.maintenance ? "MAINTENANCE on — jobs paused" : "MAINTENANCE off",
+        c.latest_result ? `Latest: ${c.latest_result.name}` : "",
+        c.pass_schedule?.state ? `Pass: ${c.pass_schedule.state} · next ${c.pass_schedule.next_due ? new Date(c.pass_schedule.next_due * 1000).toLocaleString() : "?"}` : "",
+        c.council_hint || "",
+        c.safety || "",
+      ].filter(Boolean).join("\n");
     } catch (_) {
       $("status-summary").textContent = "unavailable";
     }

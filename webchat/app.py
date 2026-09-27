@@ -30,6 +30,7 @@ from job_queue import parse_confirm, parse_start
 from actions import queue_once
 from music_notebook import get_project, list_projects, save_project
 from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
+from ops_panel import conductor_snapshot, load_live_ops
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -458,20 +459,16 @@ class Chat:
                 results.append({"name": path.name, "modified_at": path.stat().st_mtime})
             except OSError:
                 continue
-        dash_path = self.root / "conductor/dashboard.json"
-        live_ops = {}
-        dashboard_age = None
-        if dash_path.exists():
-            try:
-                live_ops = json.loads(dash_path.read_text(errors="replace")).get("live_ops") or {}
-                dashboard_age = dash_path.stat().st_mtime
-            except (OSError, json.JSONDecodeError, ValueError):
-                live_ops = {}
+        loaded = load_live_ops(self.root)
+        live_ops = loaded.get("live_ops") or {}
+        meta = loaded.get("meta") or {}
+        dashboard_age = meta.get("dashboard_modified_at")
         if dashboard_age is None:
             status_path = self.root / "conductor/STATUS.md"
             dashboard_age = status_path.stat().st_mtime if status_path.exists() else None
         return {"lanes": lanes, "jobs": jobs, "recent_results": results, "dashboard_modified_at": dashboard_age,
-                "live_ops": live_ops, "handback": self.handback(), "read_at": time.time()}
+                "live_ops": live_ops, "live_ops_meta": meta, "conductor": conductor_snapshot(self.root),
+                "handback": self.handback(), "read_at": time.time()}
 
     def jobs(self):
         try:
@@ -627,6 +624,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, chat.handback())
         if route == "/api/panel":
             return self.send(200, chat.panel())
+        if route == "/api/conductor":
+            return self.send(200, conductor_snapshot(chat.root))
         if route == "/api/music/eligibility":
             try:
                 status = music_budget_status(chat.root)

@@ -428,6 +428,18 @@ class ProviderTests(Fixture):
         self.assertLess(len(prompt), len(provider.prompt(value, fast=False)))
         self.assertNotIn("X" * 500, prompt)
 
+    def test_handoff_questions_use_full_snapshot_on_fast_path(self):
+        from providers import needs_handoff_context
+
+        self.assertTrue(needs_handoff_context("From BOB-STATE: what's running right now?"))
+        provider = self.provider()
+        (self.root / "bob-brain/memory").mkdir(parents=True)
+        (self.root / "bob-brain/memory/profile.md").write_text("Y" * 15000)
+        value = self.chat.conversations[self.identifier]
+        value["messages"] = [{"role": "user", "content": "From BOB-STATE only: what's running?", "status": "done"}]
+        prompt = provider.prompt(value, fast=True)
+        self.assertIn("Y" * 500, prompt)
+
     def test_gemini_uses_direct_api_helper(self):
         calls = []
         def runner(argv, **kwargs):
@@ -534,6 +546,8 @@ class HandbackJobTests(Fixture):
         self.assertIn("handback", data)
         self.assertIn("recent_results", data)
         self.assertIn("live_ops", data)
+        self.assertIn("conductor", data)
+        self.assertIn("live_ops_meta", data)
 
     def test_handback_drill_backup_restore(self):
         from live_handback_drill import backup_handback, restore_handback

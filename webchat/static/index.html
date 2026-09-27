@@ -20,8 +20,13 @@
     </header>
     <div class="handback-chip" id="handback-chip" role="status" aria-live="polite"></div>
     <details id="status-panel" open>
-      <summary>Status <span id="status-summary" class="muted"></span></summary>
+      <summary>Live ops <span id="status-summary" class="muted"></span></summary>
       <div id="status-body" class="status-body"></div>
+      <div id="live-jobs" class="live-jobs" aria-live="polite"></div>
+    </details>
+    <details id="conductor-panel">
+      <summary>Conductor <span id="conductor-summary" class="muted"></span></summary>
+      <div id="conductor-body" class="status-body"></div>
     </details>
     <details id="song-panel">
       <summary>Song project <span id="song-summary" class="muted"></span></summary>

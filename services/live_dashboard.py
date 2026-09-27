@@ -14,6 +14,22 @@ from state import CONDUCTOR, ROOT
 MINIMAX_DISPLAY_CAP_USD = 59.0
 _SCORE_ROW = re.compile(r"^\|\s*([^|]+?)\s*\|\s*[^|]*\|\s*\*\*([^*]+?)\*\*", re.M)
 _HOME = re.compile(r"/Users/[^\s\"']+")
+_SAFE_PUBLIC = re.compile(
+    r"^(?:\[[\w]+\]|\s)*(?:PASS|FAIL|OK|error|warn|round|job|screen|svc-|drill-|cursor|codex|gemini|minimax|"
+    r"claude|harvest|queued|running|stalled|tests?|commit|SHA|Web Bob|handback|drill|Round \d+)",
+    re.I,
+)
+
+
+def _allowlisted_line(line: str) -> str | None:
+    cleaned = _redact_line(line)
+    if not cleaned or len(cleaned) < 4:
+        return None
+    if _SAFE_PUBLIC.match(cleaned) or re.search(r"\b(?:PASS|FAIL|tests? \d+|p50|drill-|handback)\b", cleaned, re.I):
+        return cleaned
+    if re.fullmatch(r"[\w .:,\-–—/|]+", cleaned) and not re.search(r"(?i)(password|secret|token|api[_-]?key|sk-|ghp_)", cleaned):
+        return cleaned
+    return None
 
 
 def _redact_line(line: str) -> str:
@@ -30,7 +46,13 @@ def _tail_lines(path: Path, count: int = 3) -> list[str]:
         text = path.read_text(errors="replace")
     except OSError:
         return []
-    lines = [_redact_line(line) for line in text.splitlines() if line.strip()]
+    lines = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        allowed = _allowlisted_line(line)
+        if allowed:
+            lines.append(allowed)
     return lines[-count:]
 
 
@@ -179,17 +201,32 @@ def public_live_ops(live_ops: dict) -> dict:
     """Strip local paths and ids for GitHub Pages payload."""
     jobs = []
     for row in live_ops.get("running_jobs") or []:
+        tail = []
+        for line in row.get("log_tail") or []:
+            allowed = _allowlisted_line(line) if isinstance(line, str) else None
+            if allowed:
+                tail.append(allowed)
+        plain = row.get("plain_now")
+        if isinstance(plain, str):
+            plain = _allowlisted_line(plain) or _redact_line(plain)[:160]
+        commit = row.get("last_commit") or {}
+        message = commit.get("message")
+        if isinstance(message, str):
+            message = _allowlisted_line(message) or _redact_line(message)[:120]
+            commit = {"sha": commit.get("sha"), "message": message}
         jobs.append({
             "engine": row.get("engine") or "worker",
             "stall_state": row.get("stall_state"),
+            "started_at": row.get("started_at"),
             "elapsed_seconds": row.get("elapsed_seconds"),
-            "plain_now": row.get("plain_now"),
-            "log_tail": row.get("log_tail"),
-            "last_commit": row.get("last_commit"),
+            "plain_now": plain,
+            "log_tail": tail[-3:],
+            "last_commit": commit,
             "round": row.get("round"),
             "live_screen": row.get("live_screen"),
         })
     return {
+        "generated_at": live_ops.get("generated_at"),
         "webchat_round": live_ops.get("webchat_round"),
         "scores": live_ops.get("scores"),
         "minimax_spend": live_ops.get("minimax_spend"),

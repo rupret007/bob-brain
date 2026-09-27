@@ -105,16 +105,21 @@ def main():
     saved = backup_handback(ROOT)
     try:
         for index in (1, 2):
-            tag = f"r5-{index}"
+            tag = f"r6-{index}"
             round_evidence = {"ledger": ledger_round(ROOT, tag), "live": None}
             try:
                 round_evidence["live"] = live_round(url, tag)
             except (AssertionError, RuntimeError, OSError) as exc:
                 round_evidence["live"] = {"tag": tag, "live_ok": False, "error": str(exc)[:300]}
+            log_path = ROOT / "conductor/handback/HANDBACK-LOG.md"
+            log_text = log_path.read_text(errors="replace").lower() if log_path.exists() else ""
+            reverse_ok = f"handback drill {tag}" in log_text and "abc1234" in log_text
+            round_evidence["reverse_handback_ok"] = reverse_ok
             round_evidence["pass"] = (
                 round_evidence["ledger"]["ledger_ok"]
                 and round_evidence["ledger"]["bob_pickup_ok"]
                 and round_evidence["live"].get("live_ok")
+                and reverse_ok
             )
             evidence["rounds"].append(round_evidence)
     finally:

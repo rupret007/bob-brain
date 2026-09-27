@@ -245,4 +245,18 @@ class ServicesTest(unittest.TestCase):
         self.assertEqual(ops["minimax_spend"]["cap_usd"], 59.0)
         self.assertTrue(ops["running_jobs"][0]["plain_now"])
 
+    def test_public_live_ops_allowlists_log_tail(self):
+        import live_dashboard
+        payload = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())
+        payload["running_jobs"] = [{
+            "engine": "cursor", "stall_state": "running", "elapsed_seconds": 10,
+            "plain_now": "PASS tests 46", "log_tail": ["ghp_supersecrettoken12345678901234567890", "Round 6 handback drill OK"],
+            "last_commit": {"sha": "abc1234", "message": "fix webchat panel"},
+            "round": 6, "live_screen": True, "started_at": "2026-09-27T00:00:00+00:00",
+        }]
+        public = live_dashboard.public_live_ops(payload)
+        tail = public["running_jobs"][0]["log_tail"]
+        self.assertEqual(len(tail), 1)
+        self.assertIn("handback", tail[0].lower())
+
 if __name__=='__main__':unittest.main(verbosity=2)
