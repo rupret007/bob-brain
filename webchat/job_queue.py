@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import fcntl
 import secrets
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -12,6 +13,9 @@ from failover import atomic_text
 
 START = re.compile(r"^(?:start|queue|run) (?:a )?job[:\s]+(.+)$", re.I | re.S)
 CONFIRM = re.compile(r"^yes[,.]?\s*(?:start|queue|run)\s+(?:the\s+)?job\s*$", re.I)
+COUNCIL = re.compile(r"^(?:run|start)\s+council(?:\s+on)?[:\s]+(.+)$", re.I | re.S)
+COUNCIL_CONFIRM = re.compile(r"^yes[,.]?\s*run\s+council\s*$", re.I)
+COUNCIL_CANCEL = re.compile(r"^(?:never mind|cancel|dismiss)(?:\s+council)?\s*$", re.I)
 
 
 def parse_start(text: str) -> str | None:
@@ -21,6 +25,39 @@ def parse_start(text: str) -> str | None:
 
 def parse_confirm(text: str) -> bool:
     return bool(CONFIRM.match(text.strip()))
+
+
+def parse_council(text: str) -> str | None:
+    match = COUNCIL.match(text.strip())
+    return match.group(1).strip()[:2000] if match else None
+
+
+def parse_council_confirm(text: str) -> bool:
+    return bool(COUNCIL_CONFIRM.match(text.strip()))
+
+
+def parse_council_cancel(text: str) -> bool:
+    return bool(COUNCIL_CANCEL.match(text.strip()))
+
+
+def sanitize_council_question(question: str) -> str:
+    """Strip shell metacharacters; council question is data, not a script."""
+    cleaned = re.sub(r"[`$\\;|&<>(){}[\]!#*?~]", " ", question or "")
+    return " ".join(cleaned.split())[:1800]
+
+
+def council_job_description(question: str) -> str:
+    safe = sanitize_council_question(question)
+    quoted = shlex.quote(safe)
+    return (
+        "Run Web Bob council on the mini (Gemini + MiniMax + Claude; no Grok). "
+        "Draft branch only; never merge.\n\n"
+        f"Question: {safe}\n\n"
+        "Command (no Grok; question passed as a single quoted argument):\n"
+        "set -a; . conductor/keys.env; set +a; "
+        f"python3 conductor/services/council.py --context conductor/WEBCHAT-READY.md "
+        f"--out conductor/reviews/webchat-phone-council-$(date +%Y%m%d-%H%M%S) {quoted}"
+    )
 
 
 def running_screens(root: Path) -> str:

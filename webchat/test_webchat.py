@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 from app import Chat, RequestError, Server, password_at, private_write
 from handback import append_turn, refresh_summary
-from job_queue import parse_confirm, parse_start, queue_draft
+from job_queue import parse_confirm, parse_council, parse_council_cancel, parse_council_confirm, parse_start, queue_draft, sanitize_council_question
 from failover import AllDown
 from providers import Cancelled, ProviderError, Providers, Redactor, clean_env, parse_codex, parse_cursor, parse_gemini, run
 
@@ -517,6 +517,25 @@ class HandbackJobTests(Fixture):
         from music_demo import demo_receipt
         self.assertEqual(demo_receipt("a", "b"), demo_receipt("a", "b"))
         self.assertNotEqual(demo_receipt("a", "b"), demo_receipt("a", "c"))
+
+    def test_council_question_sanitized(self):
+        self.assertNotIn("$", sanitize_council_question("$(rm -rf /)"))
+        self.assertTrue(parse_council_cancel("cancel council"))
+
+    def test_council_confirm_queues_draft_row(self):
+        (self.root / "next-prompts").mkdir(parents=True)
+        (self.root / "next-prompts/INDEX.md").write_text("| Pri | File | Project | Kind | Status | Notes |\n| --- | --- | --- | --- | --- | --- |\n")
+        self.assertEqual(parse_council("run council on: score mobile UX"), "score mobile UX")
+        self.assertTrue(parse_council_confirm("yes, run council"))
+        self.chat.submit(self.identifier, "run council on: mobile sheet UX", str(uuid.uuid4()))
+        self.assertEqual(self.chat.conversations[self.identifier].get("pending_council"), "mobile sheet UX")
+        self.chat.submit(self.identifier, "yes, run council", str(uuid.uuid4()))
+        self.wait()
+        index = (self.root / "next-prompts/INDEX.md").read_text()
+        self.assertIn("webchat-", index)
+        bodies = " ".join(p.read_text().lower() for p in (self.root / "next-prompts").glob("webchat-*.md"))
+        self.assertIn("council", bodies)
+        self.assertNotIn("pending_council", self.chat.conversations[self.identifier])
 
     def test_job_confirm_queues_draft_row(self):
         (self.root / "next-prompts").mkdir(parents=True)

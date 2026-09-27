@@ -32,3 +32,4 @@ screenrc/
 webchat/.password
 webchat/.session-secret
 webchat/uploads/
+webchat/node_modules/

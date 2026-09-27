@@ -26,7 +26,7 @@ from urllib.parse import parse_qs, urlsplit
 from providers import Cancelled, ProviderError, Providers, Redactor, UUID, clean_env, run
 from failover import AllDown
 from handback import append_turn, public_digest
-from job_queue import parse_confirm, parse_start
+from job_queue import council_job_description, parse_confirm, parse_council, parse_council_cancel, parse_council_confirm, parse_start
 from actions import queue_once
 from music_notebook import get_project, list_projects, save_project
 from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
@@ -260,6 +260,38 @@ class Chat:
             if conversation["title"] == "New conversation":
                 conversation["title"] = text[:65]
             pending = conversation.get("pending_job")
+            pending_council = conversation.get("pending_council")
+            if parse_council_confirm(text) and pending_council:
+                conversation.pop("pending_council", None)
+                blocked = hard_rule_refusal(pending_council) or hard_rule_refusal(text)
+                if blocked:
+                    conversation["messages"][-1].update(status="done", content=blocked,
+                        action_card={"id": request_id, "state": "refused", "executable": False, "reason": "Council blocked by standing rules"})
+                    self.save(conversation)
+                    self.conversations[identifier] = conversation
+                    self.record_turn(ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
+                                refusals=[blocked], open_items=[])
+                    return self.public(conversation)
+                action_id = conversation.pop("pending_council_id", None) or str(uuid.uuid5(uuid.NAMESPACE_URL, identifier + pending_council))
+                description = council_job_description(pending_council)
+                result = queue_once(self.root, action_id, description)
+                if result["ok"]:
+                    reply = (
+                        f"Queued a **draft** council run on the mini (`{result['file']}`). "
+                        "Gemini, MiniMax, and Claude will critique; transcript lands under `conductor/reviews/`."
+                    )
+                    conversation["messages"][-1].update(status="done", content=reply,
+                        action_card={"id": request_id, "state": "queued", "executable": False, "reason": "Council queued (draft)"})
+                else:
+                    conversation["messages"][-1].update(status="done", content=result["error"],
+                        action_card={"id": request_id, "state": "blocked", "executable": False, "reason": "Duplicate or blocked"})
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                self.record_turn(ask=text, provider=None, jobs=[result.get("file", "")] if result.get("ok") else [],
+                            files=[result.get("path", "")] if result.get("ok") else [], commits=[],
+                            confirmations=[text[:200]] if result.get("ok") else [],
+                            refusals=[result.get("error", "blocked")] if not result.get("ok") else [], open_items=[])
+                return self.public(conversation)
             if parse_confirm(text) and pending:
                 conversation.pop("pending_job", None)
                 blocked = hard_rule_refusal(pending) or hard_rule_refusal(text)
@@ -289,6 +321,36 @@ class Chat:
                 return self.public(conversation)
             if pending and not parse_confirm(text):
                 conversation.pop("pending_job", None)
+            if parse_council_cancel(text) and pending_council:
+                conversation.pop("pending_council", None)
+                conversation.pop("pending_council_id", None)
+                conversation["messages"][-1].update(status="done", content="Council request cancelled.",
+                    action_card={"id": request_id, "state": "cancelled", "executable": False, "reason": "Council dismissed"})
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                return self.public(conversation)
+            if pending_council and not parse_council_confirm(text) and not parse_council_cancel(text):
+                conversation.pop("pending_council", None)
+            council_text = parse_council(text)
+            if council_text:
+                if hard_rule_refusal(council_text):
+                    refusal = hard_rule_refusal(council_text)
+                    conversation["messages"][-1].update(status="done", content=refusal,
+                        action_card={"id": request_id, "state": "refused", "executable": False, "reason": "Standing rule: drafts only"})
+                    self.save(conversation)
+                    self.conversations[identifier] = conversation
+                    self.record_turn(ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
+                                refusals=[refusal], open_items=[])
+                    return self.public(conversation)
+                conversation["pending_council"] = council_text
+                conversation["pending_council_id"] = request_id
+                conversation["messages"][-1].update(status="done",
+                    content="I can queue a **draft** council critique on the mini (Gemini + MiniMax + Claude; no Grok). Reply `yes, run council` to confirm.",
+                    action_card={"id": request_id, "state": "confirm", "executable": True,
+                                 "reason": "Council: " + council_text[:120]})
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                return self.public(conversation)
             job_text = parse_start(text)
             if job_text:
                 if hard_rule_refusal(job_text):

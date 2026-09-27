@@ -15,7 +15,7 @@ if ($("login-form")) {
     finally { button.disabled = false; }
   });
 } else {
-  let csrf = "", current = "", busy = false, sending = false, revision = "", polling = false, draftRequest = null;
+  let csrf = "", current = "", busy = false, sending = false, revision = "", polling = false, draftRequest = null, pollFailures = 0;
   const providers = { codex: "Codex", cursor: "Cursor", gemini: "Gemini", minimax: "MiniMax", claude: "Claude" };
   function escapeHtml(text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -52,7 +52,42 @@ if ($("login-form")) {
     $("send").disabled = busy || sending || !current;
     $("stop").hidden = !busy;
     $("message").disabled = !current;
+    const dot = $("status-dot");
+    if (dot) dot.classList.toggle("busy", busy || sending);
   }
+  function setSheetOpen(open) {
+    const sheet = $("tools-sheet");
+    const backdrop = $("sheet-backdrop");
+    if (!sheet || !backdrop) return;
+    sheet.classList.toggle("open", open);
+    sheet.setAttribute("aria-hidden", open ? "false" : "true");
+    backdrop.hidden = !open;
+    $("open-sheet")?.setAttribute("aria-expanded", open ? "true" : "false");
+    document.body.style.overflow = open ? "hidden" : "";
+  }
+  function showSheetTab(name) {
+    for (const tab of document.querySelectorAll(".sheet-tab")) {
+      tab.classList.toggle("active", tab.dataset.sheet === name);
+    }
+    for (const panel of document.querySelectorAll(".sheet-panel")) {
+      const on = panel.dataset.panel === name;
+      panel.hidden = !on;
+      panel.classList.toggle("active", on);
+    }
+  }
+  $("open-sheet")?.addEventListener("click", () => setSheetOpen(true));
+  $("close-sheet")?.addEventListener("click", () => setSheetOpen(false));
+  $("sheet-backdrop")?.addEventListener("click", () => setSheetOpen(false));
+  for (const tab of document.querySelectorAll(".sheet-tab")) {
+    tab.addEventListener("click", () => showSheetTab(tab.dataset.sheet));
+  }
+  $("handback-chip")?.addEventListener("click", () => {
+    const sheetOpen = $("tools-sheet")?.classList.contains("open");
+    if (!sheetOpen) { setSheetOpen(true); showSheetTab("ops"); }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && $("tools-sheet")?.classList.contains("open")) setSheetOpen(false);
+  });
   function render(conversation) {
     if (conversation.id !== current) return;
     const nextRevision = JSON.stringify(conversation);
@@ -121,9 +156,16 @@ if ($("login-form")) {
     polling = true;
     try {
       render(await api(`/api/conversations/${current}`));
-      $("connection").textContent = "Your chat on the mini";
+      pollFailures = 0;
+      $("connection").textContent = "On the mini";
+      $("status-dot")?.classList.remove("warn");
       if (!busy && $("notice").textContent === "Stopping this reply…") $("notice").textContent = "";
-    } catch (error) { $("connection").textContent = "Reconnecting…"; $("notice").textContent = error.message; }
+    } catch (error) {
+      pollFailures += 1;
+      $("connection").textContent = pollFailures >= 3 ? "Offline — check the mini" : "Reconnecting…";
+      if (pollFailures >= 2) $("status-dot")?.classList.add("warn");
+      if (pollFailures < 3) $("notice").textContent = error.message;
+    }
     finally { polling = false; }
   }
   $("composer").addEventListener("submit", async (event) => {
@@ -364,39 +406,45 @@ if ($("login-form")) {
     try {
       const data = await api("/api/panel");
       const state = data.handback?.bob_state?.text || "";
-      $("handback-chip").textContent = state ? state.split("\n").find((line) => line.trim() && !line.startsWith("#"))?.slice(0, 140) || state.slice(0, 140) : "Handback: no BOB-STATE yet";
+      const chip = $("handback-chip");
+      const chipLine = state ? state.split("\n").find((line) => line.trim() && !line.startsWith("#"))?.replace(/^[-*]\s*/, "").slice(0, 120) : "";
+      if (chip) {
+        if (chipLine) {
+          chip.hidden = false;
+          chip.textContent = chipLine;
+        } else {
+          chip.hidden = true;
+        }
+      }
       const meta = data.live_ops_meta || {};
-      const generated = data.live_ops?.generated_at || meta.generated_at;
-      const freshLabel = meta.stale ? "stale — last known ops" : (meta.source || "dashboard");
-      const dash = generated ? `${generated} (${freshLabel})` : (data.dashboard_modified_at ? new Date(data.dashboard_modified_at * 1000).toLocaleString() : "unknown");
       const ops = data.live_ops || {};
       const spend = ops.minimax_spend || {};
       const roles = ops.roles || {};
       const jobs = ops.running_jobs || [];
       const committed = spend.committed_usd;
       const cap = spend.cap_usd || 59;
-      const spendText = committed === undefined || committed === null ? "spend unknown" : `$${committed.toFixed(2)}/${cap}`;
-      $("status-summary").textContent = `round ${ops.webchat_round || "?"} · MiniMax ${spendText}`;
-      const scoreLines = (ops.scores || []).slice(0, 10).map((row) => `${row.area}: ${row.score}`).join(" · ");
+      const spendText = committed === undefined || committed === null ? "budget unknown" : `$${committed.toFixed(2)} of $${cap}`;
+      const freshness = meta.stale ? "Last known snapshot (refreshing)" : "Live";
+      $("status-summary").textContent = `${freshness} · round ${ops.webchat_round || "?"} · MiniMax ${spendText}`;
+      const scoreLines = (ops.scores || []).slice(0, 8).map((row) => `${row.area} ${row.score}`).join(" · ");
+      const summaryPlain = (data.handback?.summary?.text || "").split("\n").filter((l) => l.trim() && !l.startsWith("#")).slice(0, 6).join("\n");
       const lines = [
-        `Ops data: ${dash}`,
-        `Builder: ${roles.building || "idle"} · Review: ${roles.reviewing || "idle"}`,
-        scoreLines ? `Scores: ${scoreLines}` : "Scores: (refresh dashboard-updater if empty)",
-        jobs.length ? `${jobs.length} job(s) on screen` : "Live jobs: none on screen",
-        "",
-        (data.handback?.summary?.text || data.handback?.bob_state?.text || "").slice(0, 700),
+        `Building with ${roles.building || "nobody right now"} · reviews via ${roles.reviewing || "idle"}`,
+        jobs.length ? `${jobs.length} screen job${jobs.length === 1 ? "" : "s"} running` : "No screen jobs right now",
+        scoreLines ? `Latest scores: ${scoreLines}` : "Scores will appear after the next dashboard refresh",
+        summaryPlain ? `Handback:\n${summaryPlain}` : "",
       ].filter(Boolean);
-      $("status-body").textContent = lines.join("\n");
+      $("status-body").textContent = lines.join("\n\n");
       renderLiveJobs(jobs);
       const c = data.conductor || {};
       $("conductor-summary").textContent = `${c.draft_branch || "?"} @ ${(c.head_sha || "").slice(0, 7)}`;
+      const headShort = (c.head_sha || "").slice(0, 7);
       $("conductor-body").textContent = [
-        `Branch: ${c.draft_branch} · HEAD ${c.head_sha}`,
-        c.maintenance ? "MAINTENANCE on — jobs paused" : "MAINTENANCE off",
-        c.latest_result ? `Latest: ${c.latest_result.name}` : "",
-        c.pass_schedule?.state ? `Pass: ${c.pass_schedule.state} · next ${c.pass_schedule.next_due ? new Date(c.pass_schedule.next_due * 1000).toLocaleString() : "?"}` : "",
-        c.council_hint || "",
-        c.safety || "",
+        `Draft branch ${c.draft_branch || "?"} at ${headShort}`,
+        c.maintenance ? "Scheduling paused on the mini" : "Scheduler accepting draft jobs",
+        c.latest_result ? `Last ready round saved` : "",
+        c.pass_schedule?.state ? `Autopilot ${c.pass_schedule.state}${c.pass_schedule.next_due ? " · next " + new Date(c.pass_schedule.next_due * 1000).toLocaleString() : ""}` : "",
+        c.safety || "Drafts only · confirm before merge, send, or spend",
       ].filter(Boolean).join("\n");
     } catch (_) {
       $("status-summary").textContent = "unavailable";

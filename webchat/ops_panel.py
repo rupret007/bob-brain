@@ -102,8 +102,7 @@ def conductor_snapshot(root: Path) -> dict:
             "next_due": pass_schedule.get("next_due"),
             "pass_id": pass_schedule.get("pass_id"),
         },
-        "council_hint": "From chat: ask for a draft council critique on the latest Web Bob diff (Gemini+MiniMax+Claude; no Grok). "
-        "Or run on the mini: python3 conductor/services/council.py --context conductor/WEBCHAT-READY.md --out conductor/reviews/…",
+        "council_hint": "From chat: run council on: <question> then yes, run council (queues Gemini+MiniMax+Claude on the mini; no Grok).",
         "safety": "Drafts only · confirm before merge/send/spend · never Grok",
         "read_at": time.time(),
     }
