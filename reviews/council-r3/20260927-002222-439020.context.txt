@@ -1,0 +1,150 @@
+### FILE /tmp/r3-diff.patch
+diff --git a/services/jobs.py b/services/jobs.py
+index 22b82e0..76cd69c 100644
+--- a/services/jobs.py
++++ b/services/jobs.py
+@@ -246,6 +246,14 @@ def can_assign(spec, lane, active, health):
+     return len(active) < 5
+ 
+ 
++def candidate_rank(spec, external_coder):
++    project = spec.get("project", "shelf")
++    if external_coder and project == "WebJam" and spec.get("kind") == "coding":
++        return (len(PROJECTS), spec.get("priority", 99), spec.get("job_id") or spec.get("id"))
++    return (PROJECTS.index(project) if project in PROJECTS else len(PROJECTS),
++            spec.get("priority", 99), spec.get("job_id") or spec.get("id"))
++
++
+ def external_webjam_lease(sessions):
+     """Honor the separately requested local test build without taking its worktree."""
+     notice = CONDUCTOR / "reviews/WEBJAM-TEST-BUILD-SCHEDULER.md"
+@@ -277,10 +285,11 @@ def tick():
+         for spec in specs:
+             if spec["id"] not in known:
+                 candidates.append(spec)
+-        candidates.sort(key=lambda r: (PROJECTS.index(r["project"]), r.get("priority", 99)))
++        if external_coder:
++            candidates = [c for c in candidates
++                          if not (c.get("project") == "WebJam" and c.get("kind") == "coding")]
++        candidates.sort(key=lambda r: candidate_rank(r, external_coder))
+         for spec in candidates:
+-            if external_coder and spec["project"] == "WebJam" and spec["kind"] == "coding":
+-                continue
+             lane_order = ("cursor", "codex") if spec["kind"] == "coding" else ("gemini", "minimax", "cursor", "codex", "claude")
+             for lane in lane_order:
+                 if not can_assign(spec, lane, active, health):
+diff --git a/services/lanes.py b/services/lanes.py
+index a5a3ab8..fd277ad 100644
+--- a/services/lanes.py
++++ b/services/lanes.py
+@@ -138,6 +138,23 @@ def cli(lane, prompt, cwd, coding, timeout):
+     return answer
+ 
+ 
++def live_managed_worker(engine):
++    """True only when a managed job screen is actually running on this lane."""
++    try:
++        from runtime import screen_sessions
++        sessions = screen_sessions()
++    except Exception:
++        return False
++    for record in jobs().values():
++        if record.get("engine") != engine or not record.get("managed"):
++            continue
++        if record["state"] not in ("launched", "running"):
++            continue
++        if record["job_id"] in sessions:
++            return True
++    return False
++
++
+ def ask(lane, prompt, *, cwd=None, coding=False, timeout=300, purpose="analysis", locked=False):
+     if lane not in LANES:
+         raise ValueError("unknown lane")
+@@ -150,8 +167,7 @@ def ask(lane, prompt, *, cwd=None, coding=False, timeout=300, purpose="analysis"
+         raise RuntimeError(lane + " rate-limit cooldown active")
+     if not locked:
+         with lock("lane-" + lane, blocking=False):
+-            if any(r.get("engine") == lane and r["state"] in ("launched", "running")
+-                   and r.get("managed") for r in jobs().values()):
++            if live_managed_worker(lane):
+                 raise BlockingIOError("lane reserved for a scheduled worker")
+             return ask(lane, prompt, cwd=cwd, coding=coding, timeout=timeout, purpose=purpose, locked=True)
+     ok, reason = False, None
+diff --git a/services/runtime.py b/services/runtime.py
+index cd1b0ab..0d95075 100644
+--- a/services/runtime.py
++++ b/services/runtime.py
+@@ -160,16 +160,20 @@ def takeover():
+     if "mini-conductor" in sessions:
+         # Old run-conductor left this PID lock while its pass was active.
+         old_lock = Path("/tmp/mini-conductor.lock")
+-        if old_lock.exists():
+-            try:
+-                os.kill(int(old_lock.read_text().strip()), 0)
+-                log("old conductor pass still active; takeover will retry")
+-                return
+-            except (ProcessLookupError, ValueError):
+-                pass
+-            except PermissionError:
+-                log("cannot verify old pass PID; leaving it until the next check")
+-                return
++        try:
++            if old_lock.exists():
++                try:
++                    os.kill(int(old_lock.read_text().strip()), 0)
++                    log("old conductor pass still active; takeover will retry")
++                    return
++                except (ProcessLookupError, ValueError):
++                    pass
++                except PermissionError:
++                    log("cannot verify old pass PID; leaving it until the next check")
++                    return
++        except PermissionError:
++            log("cannot probe /tmp/mini-conductor.lock; takeover will retry")
++            return
+         stopped = run(["screen", "-S", sessions["mini-conductor"], "-X", "quit"], capture_output=True, timeout=15)
+         if stopped.returncode:
+             raise RuntimeError("old mini-conductor screen could not be stopped")
+@@ -407,6 +411,9 @@ def cycle(name):
+         try:
+             takeover()
+             alert("takeover")
++        except PermissionError:
++            log("takeover deferred: PermissionError probing legacy lock")
++            alert("takeover", "legacy takeover deferred: PermissionError")
+         except Exception as exc:
+             alert("takeover", "legacy takeover deferred: " + type(exc).__name__)
+         status_report()
+diff --git a/services/test_services.py b/services/test_services.py
+index dcd7857..8a7e811 100644
+--- a/services/test_services.py
++++ b/services/test_services.py
+@@ -258,4 +258,27 @@ class ServicesTest(unittest.TestCase):
+         self.assertGreater(after['spent_usd'],before)
+         self.assertEqual(after['reserved_usd'],0)
+ 
++    def test_stale_running_job_does_not_block_lane_for_council(self):
++        state.job_event('stale-cursor','running',engine='cursor',managed=True)
++        with patch.object(runtime,'screen_sessions',return_value={}),patch.object(lanes,'cli',return_value='Council answer with enough evidence to pass validation.'):
++            lanes.ask('cursor','critique prompt with enough context',purpose='council')
++
++    def test_external_lease_prioritizes_non_webjam_backlog(self):
++        webjam={'project':'WebJam','kind':'coding','priority':0,'id':'wj'}
++        story={'project':'StoryBoard','kind':'coding','priority':99,'id':'sb'}
++        self.assertLess(jobs.candidate_rank(story,True),jobs.candidate_rank(webjam,True))
++        held=[{'project':'WebJam','kind':'coding','job_id':'x'},{'project':'AdoptIQ','kind':'coding','job_id':'y'}]
++        filtered=[c for c in held if not (c.get('project')=='WebJam' and c.get('kind')=='coding')]
++        self.assertEqual([c['job_id'] for c in filtered],['y'])
++
++    def test_takeover_lock_permission_error_is_graceful(self):
++        sessions={name:'1.svc-'+name for name in runtime.INTERVALS}
++        sessions['mini-conductor']='9.mini-conductor'
++        old_lock=Path('/tmp/mini-conductor.lock')
++        real_exists=Path.exists
++        def exists(self):
++            return True if self==old_lock else real_exists(self)
++        with patch.object(runtime,'screen_sessions',return_value=sessions),patch.object(Path,'exists',exists),patch.object(Path,'read_text',side_effect=PermissionError()):
++            runtime.takeover()
++
+ if __name__=='__main__':unittest.main(verbosity=2)
