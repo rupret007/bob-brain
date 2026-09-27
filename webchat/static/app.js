@@ -251,7 +251,7 @@ if ($("login-form")) {
     const title = document.createElement("h3");
     title.textContent = "Text draft · " + ({ pending: "not sent", editing: "editing", expired: "confirmation expired",
       superseded: "replaced", cancelled: "cancelled", confirmed_not_sent: "confirmed here, not sent",
-      sent: "sent via Andrea" }[draft.state] || "not sent");
+      sent: "sent via Andrea", delivery_unconfirmed: "delivery unconfirmed" }[draft.state] || "not sent");
     const recipient = document.createElement("p");
     recipient.className = "text-recipient";
     recipient.textContent = `To: ${draft.recipient.name}\n${draft.recipient.addresses.join(", ")}\nThread: ${draft.recipient.guid}`;
@@ -298,8 +298,12 @@ if ($("login-form")) {
     }
     const status = document.createElement("p"); status.className = "text-delivery-status";
     status.textContent = draft.state === "sent"
-      ? "Delivered through Andrea’s mocked BlueBubbles bridge in this environment."
-      : "Nothing has been sent until you confirm with the exact yes + token in chat.";
+      ? "Sent through Andrea’s BlueBubbles bridge."
+      : draft.state === "delivery_unconfirmed"
+        ? "Delivery is unconfirmed. Check the recipient’s thread before preparing another draft."
+        : draft.state === "confirmed_not_sent"
+          ? "Not sent. Andrea could not accept this delivery; this confirmation cannot be reused."
+          : "Nothing has been sent until you confirm with the exact yes + token in chat.";
     card.append(status);
     return card;
   }
@@ -393,6 +397,12 @@ if ($("login-form")) {
       setTimeout(() => { btn.textContent = "Copy"; }, 1200);
     } catch (_) { $("notice").textContent = "Could not copy — select the code manually."; }
   });
+  function submitChatText(text) {
+    if (!current || busy || sending) return;
+    $("message").value = text;
+    $("message").dispatchEvent(new Event("input"));
+    $("composer").requestSubmit();
+  }
   $("composer").addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = $("message").value.trim();

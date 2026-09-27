@@ -301,13 +301,13 @@ class HTTPTests(Fixture):
         for provider in ("minimax", "gemini", "codex", "claude", "cursor"):
             with self.subTest(provider=provider), patch("app.state_ledger.try_status_reply", return_value="local shortcut"):
                 code, _, _ = self.request("POST", "/api/messages", {
-                    "conversation_id": self.identifier, "message": "what are the workers doing right now",
+                    "conversation_id": self.identifier, "message": "Hello Bob",
                     "request_id": str(uuid.uuid4()), "provider": provider})
                 self.assertEqual(code, 202)
                 self.wait()
                 self.assertEqual(self.fake.calls[-1]["preferred_provider"], provider)
                 answer = self.chat.history(self.identifier)["messages"][-1]
-                self.assertIn("No jobs are waiting in the queue.", answer["content"])
+                self.assertEqual("A saved reply.", answer["content"])
                 self.assertNotIn("Answering provider:", answer["content"])
         for provider in ("grok", "unknown", None):
             self.assertEqual(self.request("POST", "/api/messages", {

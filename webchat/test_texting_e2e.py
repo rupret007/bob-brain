@@ -85,11 +85,12 @@ class TextingE2ETest(unittest.TestCase):
     def test_browser_proof_when_playwright_available(self):
         if shutil.which("node") is None:
             self.skipTest("node is required for browser proof")
-        probe = subprocess.run(["node", "-e", "require('playwright')"], capture_output=True, text=True, timeout=15)
+        probe = subprocess.run(["node", "-e", "require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright')"],
+                               capture_output=True, text=True, timeout=15, cwd=CODE)
         if probe.returncode != 0:
             self.skipTest("playwright is required for browser proof")
         result = subprocess.run(
-            ["python3", str(CODE / "texting_proof.py")],
+            ["python3", str(CODE / "texting_proof.py"), "--output-dir", str(self.root / "browser-proof")],
             capture_output=True,
             text=True,
             timeout=120,
@@ -98,7 +99,8 @@ class TextingE2ETest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, (result.stderr or "") + (result.stdout or ""))
         payload = json.loads(result.stdout.strip().splitlines()[-1])
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["mock_sends"], 1)
+        self.assertEqual(payload["mock_sends"], 0)
+        self.assertEqual(payload["delivery"], "blocked_andrea_bridge_unavailable")
 
 
 if __name__ == "__main__":

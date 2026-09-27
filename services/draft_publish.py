@@ -1,5 +1,6 @@
 """Publish only a user-authorized project task's own draft ref, then verify it."""
 import os
+import json
 import re
 from urllib.parse import quote
 
@@ -44,5 +45,31 @@ def publish(row, cwd, folder, projects):
                  env=env, capture_output=True, text=True, timeout=30)
     if result.returncode or result.stdout.split() != [sha, "refs/heads/" + branch]:
         raise RuntimeError("Published draft SHA could not be verified")
-    return dict(project=project, repo=remote, branch=branch, sha=sha,
-                url="https://github.com/" + remote + "/tree/" + quote(branch, safe=""))
+    publication = dict(project=project, repo=remote, branch=branch, sha=sha,
+                       url="https://github.com/" + remote + "/tree/" + quote(branch, safe=""))
+    if row.get("draft_pr"):
+        publication["pr_url"] = ensure_draft_pr(row, cwd, folder, remote, branch, sha)
+    return publication
+
+
+def ensure_draft_pr(row, cwd, folder, remote, branch, sha):
+    """Create once and verify draft state; never change an existing PR's state."""
+    def gh(*args):
+        result = run(["gh", *args], cwd=str(cwd), capture_output=True, text=True, timeout=60)
+        if result.returncode:
+            raise RuntimeError("Draft PR command failed: " + result.stderr[-500:])
+        return result.stdout.strip()
+    def existing():
+        return json.loads(gh("pr", "list", "--repo", remote, "--head", branch, "--state", "open",
+                             "--json", "url,isDraft,headRefOid"))
+    prs = existing()
+    if not prs:
+        body = folder / "draft-pr-body.md"
+        atomic_write(body, "Develop " + row["publish_project"] + " with one scoped improvement and relevant validation.\n\n"
+                     "Web Bob job: `" + row["id"] + "`. Draft for review; see the commit for changes and tests.\n")
+        gh("pr", "create", "--repo", remote, "--head", branch, "--draft", "--title",
+           "Improve " + row["publish_project"] + " (Web Bob)", "--body-file", str(body))
+        prs = existing()
+    if len(prs) != 1 or not prs[0]["isDraft"] or prs[0]["headRefOid"] != sha:
+        raise RuntimeError("Project PR must remain a draft at the verified SHA")
+    return prs[0]["url"]

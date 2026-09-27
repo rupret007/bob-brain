@@ -28,6 +28,8 @@ class MockMessaging:
     def __init__(self, folder):
         self.calls, self.unexpected_writes, self.sends = [], [], []
         self.enable_web_bob_send = False
+        self.andrea_error_status = None
+        self.andrea_error_body = None
         self.chats, self.messages = copy.deepcopy(CHATS), copy.deepcopy(MESSAGES)
         self.mode = "ok"
         self.password, self.token = "fixture-bb-password", "fixture-andrea-token"
@@ -46,13 +48,14 @@ class MockMessaging:
                         return self.respond(404, {"error": "Web Bob send not available"})
                     if self.headers.get("Authorization") != "Bearer " + fixture.token:
                         return self.respond(401, {"error": "Unauthorized"})
+                    if fixture.andrea_error_status is not None:
+                        return self.respond(fixture.andrea_error_status, {"error": fixture.andrea_error_body})
                     payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                     guid = payload.get("chatGuid")
                     text = payload.get("text")
                     if not isinstance(guid, str) or not guid or not isinstance(text, str) or not text.strip():
                         return self.respond(400, {"error": "Invalid send payload"})
                     fixture.sends.append({"chatGuid": guid, "text": text})
-                    fixture.calls.append(("POST", "/web-bob/send"))
                     # Andrea hands off to BlueBubbles on the same loopback fixture.
                     fixture.calls.append(("POST", "/api/v1/message/text"))
                     return self.respond(200, {"ok": True, "messageGuid": "mock-" + secrets.token_hex(8)})

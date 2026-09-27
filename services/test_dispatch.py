@@ -62,6 +62,41 @@ class DispatchTests(unittest.TestCase):
             queue.enqueue(self.root, "conversation", "one", "Different request")
         self.assertEqual(len(queue.tasks(self.root)), 1)
 
+    def test_project_workers_persist_separate_repositories_and_draft_branches_before_execution(self):
+        catalog = {}
+        names = ("WebJam", "AdoptIQ", "StoryBoard", "Fantasy Football")
+        def git(repo, *args):
+            return subprocess.check_output(["git", "-C", str(repo), *args], text=True, stderr=subprocess.DEVNULL).strip()
+        for name in names:
+            repo = self.root / name
+            repo.mkdir()
+            git(repo, "init", "-b", "main")
+            (repo / "project.txt").write_text(name)
+            git(repo, "add", "project.txt")
+            git(repo, "-c", "user.name=Test", "-c", "user.email=test@localhost", "commit", "-m", "Initial")
+            catalog[name] = dict(repo=str(repo), remote="owner/project")
+        (self.core / "services").mkdir()
+        (self.core / "services/projects.json").write_text(json.dumps(catalog))
+        seen = []
+        def work(worker, prompt, **kwargs):
+            current = next(row for row in queue.tasks(self.root).values() if row["status"] == "running")
+            self.assertTrue(current["execution_started_at"])
+            self.assertEqual(current["worktree"], str(kwargs["cwd"]))
+            self.assertEqual(current["branch"], "draft/" + current["id"])
+            self.assertEqual(Path(current["repo"]), Path(catalog[current["project"]]["repo"]).resolve())
+            self.assertEqual((kwargs["cwd"] / "project.txt").read_text(), current["project"])
+            seen.append(current["worktree"])
+            return "Inspected the isolated fixture and verified the requested project."
+        with patch.object(dispatch_worker, "ask", side_effect=work), \
+                patch("jobs.external_webjam_lease", return_value=False):
+            for i, name in enumerate(names):
+                row = queue.enqueue(self.root, "conversation", name, "Improve " + name, kind="coding")
+                claim = queue.claim(self.root, ("codex", "cursor")[i % 2], identifier=row["id"])
+                self.assertEqual(dispatch_worker.execute(row["id"], claim["claim_token"]), 0,
+                                 queue.tasks(self.root)[row["id"]].get("error"))
+                self.assertEqual(queue.tasks(self.root)[row["id"]]["status"], "succeeded")
+        self.assertEqual(len(set(seen)), 4)
+
     def test_queue_replay_cannot_add_publication_authority(self):
         queue.enqueue(self.root, "conversation", "one", "Improve WebJam", kind="coding")
         with self.assertRaises(ValueError):
@@ -348,7 +383,7 @@ class DispatchTests(unittest.TestCase):
                 answer = "Tomatoes grow best with enough sunlight and regular watering."
                 with patch.object(dispatch_worker, "ask", side_effect=[answer, review]) as ask:
                     self.assertEqual(dispatch_worker.execute(row["id"], row["claim_token"]), 1)
-                self.assertEqual(ask.call_count, 2)
+                self.assertEqual(ask.call_count, 3 if review == "Not JSON" else 2)
                 self.assertEqual(ask.call_args.kwargs["purpose"], "result-acceptance")
                 result = queue.tasks(self.root)[row["id"]]
                 self.assertEqual(result["status"], "failed")

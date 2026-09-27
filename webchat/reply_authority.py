@@ -19,6 +19,7 @@ NO_JOB_NOTICE = re.compile(
     r"\bstart a job\s*:", re.I)
 STATUS_QUESTION = re.compile(
     r"\b(?:status|resources?|workers? doing|each (?:worker|model)|all (?:workers|models)|"
+    r"(?:what(?:['’]s| is) (?:working on what|going on)|each llm)|"
     r"everything (?:going|running)|how(?:['’]s| is| we)? (?:everything|it going|we doing)|"
     r"(?:is|are) (?:it|anything|everything|things|the (?:work|jobs?|workers?)) "
     r"(?:going(?: now)?|moving(?: along)?|running|making progress)|(?:any|making) progress|"
@@ -57,95 +58,101 @@ def _duration(seconds):
     return f"{hours} hr" + (f" {minutes} min" if minutes else "")
 
 
+def _cooldown(snap, name):
+    # Provider identity is the join key; reset text never floats between LLMs.
+    lane = snap["lane_locks"].get(name, {})
+    health = snap.get("provider_health", {}).get(name, {})
+    if lane.get("cached_state", lane.get("state")) != "cooldown" and health.get("state") != "cooldown":
+        return ""
+    detail = lane.get("detail") or health.get("reason") or ""
+    reset = re.search(r"resets?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)(?:\s*\(([^)]+)\))?", detail, re.I)
+    if reset:
+        zone = " CT" if reset[4] in ("America/Chicago", "CT", "CDT", "CST") else " " + reset[4] if reset[4] else ""
+        return "; resets " + reset[1] + ":" + (reset[2] or "00") + " " + reset[3].upper() + zone
+    return "; cooling down"
+
+
+def _work_line(row, detailed=False):
+    project = row.get("project")
+    repo = row.get("repo")
+    label = project + (" (" + repo + ")" if repo else "") + ": " if project else (repo + ": " if repo else "")
+    label += row.get("task") or row["title"]
+    if not row.get("task") and "task" in row:
+        label += " — " + (row.get("screen") or "process " + str(row.get("pid")))
+        label += "; " + row["log_path"] + "; last: " + row["last_log_line"]
+    if row.get("model"):
+        label += " (" + row["model"] + ")"
+    duration = _duration(row.get("elapsed_seconds"))
+    state = {"running": "running for ", "paused": "paused; process age ",
+             "claimed": "claimed; execution unconfirmed; age ",
+             "unverified": "session open; worker activity unconfirmed; age "}[row["state"]]
+    label += " — " + state + duration
+    if detailed:
+        ids = [str(row[key]) for key in ("screen", "pid", "job_id") if row.get(key)]
+        if ids:
+            label += " (" + ", ".join(ids) + ")"
+        if row.get("prompt_path"):
+            label += "; prompt " + row["prompt_path"]
+        if row.get("log_path") and row.get("task"):
+            label += "; " + row["log_path"] + "; last: " + row["last_log_line"]
+    return label
+
+
 def format_operational_reply(snap, provider="server", text=""):
-    """A conversational view of evidence; raw identifiers are opt-in."""
-    counts = snap["queue_counts"]
-    work = snap["work"]
+    """Every live worker, grouped into five LLM lines; diagnostics are opt-in."""
+    counts, work, inspection = snap["queue_counts"], snap["work"], snap["inspection"]
     running = snap["work_counts"]["running"]
-    inspection = snap["inspection"]
     detailed = bool(DETAILS.search(text) and not HIDE_DETAILS.search(text))
     if running:
-        lines = [f"Yes — {running} worker{'s are' if running != 1 else ' is'} running."]
-    elif snap["work_counts"]["paused"]:
-        lines = ["The worker processes are paused."]
+        first = f"Yes — {running} worker{'s are' if running != 1 else ' is'} running."
     elif work:
-        lines = ["There is work listed, but I can't confirm a live worker is running."]
-    elif snap["screen_lanes"]:
-        lines = ["There are live service sessions on the mini; no task worker is confirmed."]
+        first = "Work is listed; I can't confirm a running worker."
     elif not all(inspection.values()):
-        lines = ["I couldn't check all the live workers, so I can't confirm whether work is running."]
-    elif any(row["state"] == "busy" for row in snap["lane_locks"].values()):
-        lines = ["The saved lane status reports busy workers, but their current work isn't identified."]
+        first = "I can't confirm all workers; a live check failed."
+    elif snap["screen_lanes"]:
+        first = "There are live service sessions; no task worker is confirmed."
     else:
-        lines = ["I don't see active work on the mini right now."]
-    items = []
-    for row in work:
-        label = row["title"]
-        if row.get("worker") in WORKER_NAMES:
-            label += " — " + WORKER_NAMES[row["worker"]]
-        if row.get("model"):
-            label += " (" + row["model"] + ")"
-        duration = _duration(row.get("elapsed_seconds"))
-        if row["state"] == "running":
-            detail = "running for " + duration if row.get("elapsed_seconds") is not None else "running; " + duration
-        elif row["state"] == "paused":
-            detail = "paused; process age " + duration
-        elif row["state"] == "claimed":
-            detail = "tracked as running; live activity unconfirmed"
-            if row.get("elapsed_seconds") is not None:
-                detail += "; claimed " + duration + " ago"
-        else:
-            detail = "session open; worker activity unconfirmed"
-        if detailed:
-            identifiers = [str(row[key]) for key in ("screen", "pid", "job_id") if row.get(key)]
-            if identifiers:
-                detail += " (" + ", ".join(identifiers) + ")"
-        items.append("- " + label + " — " + detail + ".")
-    if items:
-        lines.append("\n".join(items))
-    lines.append(f"Job runner: {counts['claimed']} claimed, {counts['queued']} queued.")
-    if counts["queued"]:
-        lines.append(f"{counts['queued']} " + ("more " if work else "") +
-                     f"job{'s are' if counts['queued'] != 1 else ' is'} waiting in the queue.")
-    elif running:
-        lines.append("Nothing else is waiting in the queue.")
-    else:
-        lines.append("No jobs are waiting in the queue.")
+        first = "I don't see active work on the mini right now."
+    lines = [first]
+    for name in ("codex", "claude", "cursor", "gemini", "minimax"):
+        rows = [row for row in work if row.get("worker") == name]
+        current = " | ".join(_work_line(row, detailed) for row in rows)
+        if not current:
+            current = "idle" if all(inspection.values()) else "activity unconfirmed"
+        lines.append(WORKER_NAMES[name] + ": " + current + _cooldown(snap, name) + ".")
+    other = [row for row in work if row.get("worker") not in ("codex", "claude", "cursor", "gemini", "minimax")]
+    if other:
+        lines.append("Other sessions: " + " | ".join(_work_line(row, detailed) for row in other) + ".")
+    queue_line = f"Job runner: {counts['claimed']} claimed, {counts['queued']} queued."
     if running and not all(inspection.values()):
-        lines.append("Some live worker checks were unavailable; this list may be incomplete.")
+        queue_line += " Some live checks failed; this list may be incomplete."
+    lines.append(queue_line)
     if IDENTITY.search(text):
-        lines.append((WORKER_NAMES[provider] + " answered this message." if provider in WORKER_NAMES
-                      else "This status comes directly from the live checks."))
-    if detailed or HEALTH.search(text):
-        labels = {"ready": "last reply succeeded", "unchecked": "no recent reply verified",
-                  "cooldown": "temporarily unavailable", "recovery_due": "needs a retry"}
-        lines.append("Chat health: " + "; ".join(WORKER_NAMES[name] + " — " + labels[row["state"]]
-                     for name, row in snap["provider_health"].items()) + ".")
-    services = [row["screen"] if detailed else row["screen"].removeprefix("svc-").replace("-", " ")
-                for row in snap["screen_lanes"] if row["role"] == "service"]
-    if services:
-        lines.append("Service sessions: " + ", ".join(services) + ".")
-    logs = snap.get("recent_logs", [])
-    if logs:
-        lines.append("Recent logs: " + "; ".join(row["name"] + " updated " + _duration(row["age_seconds"]) + " ago"
-                     for row in logs[:4]) + ".")
+        lines.append(WORKER_NAMES[provider] + " answered this message." if provider in WORKER_NAMES else "This answer comes from live checks.")
+    if detailed or re.search(r"\b(?:health|healthy|services?|diagnostics?|logs?)\b", text, re.I):
+        services = [row["screen"] for row in snap["screen_lanes"] if row["role"] == "service"]
+        if services:
+            lines.append("Service sessions: " + ", ".join(services) + ".")
         if detailed:
-            lines.extend(row["path"] + ": " + " / ".join(row["lines"]) for row in logs[:3] if row["lines"])
-    else:
-        lines.append("Recent logs: no readable lane or service logs found.")
-    if re.search(r"\b(?:services?|resources?)\b", text, re.I):
-        healthy = sum(row["healthy"] for row in snap["service_health"].values())
-        lines.append(f"{healthy} of {len(snap['service_health'])} monitored services are healthy.")
-    if re.search(r"\b(?:disk|storage|resources?)\b", text, re.I) and snap["disk"].get("available"):
+            lines.extend(row["path"] + ": " + " / ".join(row["lines"]) for row in snap.get("recent_logs", []) if row["lines"])
+    if re.search(r"\b(?:disk|storage)\b", text, re.I) and snap["disk"].get("available"):
         lines.append(f"Disk space: {snap['disk']['avail_gb']} GB free.")
-    if detailed or re.search(r"\b(?:history|finished|completed|done)\b", text, re.I):
-        for state in ("queued", "done", "failed"):
-            rows = snap["queue_jobs"][state][:3]
-            if rows:
-                entries = [row["job_id"] if detailed else task_label(row) for row in rows]
-                lines.append({"queued": "Waiting", "done": "Recently finished", "failed": "Recently failed"}[state]
-                             + ": " + ", ".join(entries) + ".")
-    return "\n\n".join(lines)
+    return "\n".join(lines)
+
+
+CRITICISM = re.compile(r"^(?:this|that|it|your (?:answer|reply|response|update)) (?:needs? to be (?:way |much )?better|"
+                       r"(?:is|was|isn['’]t) (?:bad|wrong|not good|good enough|helpful))|"
+                       r"^(?:do better|be more specific|try again|fix your (?:answer|reply))\b", re.I)
+
+
+def correcting_status(text, conversation):
+    if not CRITICISM.search(text.strip()):
+        return False
+    previous = [m["content"] for m in (conversation or {}).get("messages", []) if m["role"] == "user"]
+    if previous and previous[-1] == text:
+        previous.pop()
+    previous = [ask for ask in previous if not CRITICISM.search(ask)]
+    return bool(previous and STATUS_QUESTION.search(previous[-1]))
 
 
 def operational_reply(root, provider, text=""):
@@ -163,7 +170,7 @@ def enforce(root, text, answer, conversation=None):
     # report from operational snapshots included in the model context.
     if CHAT_STYLE.match(PREAMBLE.sub("", text.strip())):
         return "Got it."
-    if STATUS_QUESTION.search(text):
+    if STATUS_QUESTION.search(text) or correcting_status(text, conversation):
         content = operational_reply(root, answer["provider"], text)
     else:
         # Keep the useful answer; remove unsupported effects and boilerplate

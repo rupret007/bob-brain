@@ -137,7 +137,9 @@ class IntentTests(Fixture):
         rows = [queue.tasks(self.root)[identifier] for identifier in receipt["task_ids"]]
         self.assertEqual(len({row["requested_worker"] for row in rows}), 4)
         for row in rows:
-            self.assertIsNotNone(queue.claim(self.root, row["requested_worker"], identifier=row["id"]))
+            claim = queue.claim(self.root, row["requested_worker"], identifier=row["id"])
+            self.assertIsNotNone(claim)
+            queue.transition(self.root, row["id"], claim["claim_token"], "running")
         self.chat.reconcile_tasks()
         content = self.chat.history(self.identifier)["messages"][-1]["content"]
         self.assertEqual(content.count("Started on"), 4)

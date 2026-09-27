@@ -2,7 +2,8 @@
 
 Andrea's installed control API has no send capability. Do not translate a Web
 Bob approval into a forged Telegram/self-thread message or a BlueBubbles send.
-All network methods below are an explicit read allowlist, including chat/query.
+BlueBubbles methods use an explicit read allowlist, including chat/query. Only
+Andrea's separate Web Bob bridge is probed after durable, exact owner consent.
 """
 from __future__ import annotations
 
@@ -34,6 +35,8 @@ BRIDGE_BLOCKED = ("Not sent. Your confirmation was recorded here, but Andrea’s
                   "Ask Andrea for a fresh recipient-bound draft in its registered owner "
                   "chat and approve that card there. This Web Bob confirmation cannot be reused.")
 SENT_VIA_ANDREA = "Sent via Andrea’s BlueBubbles bridge."
+DELIVERY_UNCONFIRMED = ("Confirmation recorded; delivery is unconfirmed. Check the recipient’s "
+                        "thread before preparing another draft. This confirmation cannot be reused.")
 
 
 class TextingError(Exception):
@@ -60,7 +63,7 @@ def local_url(value):
 
 
 def request_json(base, path, *, data=None, headers=None):
-    # No environment proxies, redirects, retries, URL supplied by a chat, or send methods.
+    # No environment proxies, redirects, retries, or URL supplied by a chat.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     request = urllib.request.Request(local_url(base) + path,
         data=json.dumps(data).encode() if data is not None else None,
@@ -123,7 +126,7 @@ class BlueBubbles:
 
 
 class Andrea:
-    """Read-only connection to the installed Andrea control surface, not a sender."""
+    """Authenticated control health and an optional owner-approved Web Bob bridge."""
     def __init__(self, base=None, token=None):
         self.base = base or os.environ.get("BOB_ANDREA_CONTROL_URL", "http://127.0.0.1:4315")
         self.token = token if token is not None else os.environ.get("BOB_ANDREA_CONTROL_TOKEN", "")
@@ -274,21 +277,22 @@ class Texting:
                 not hmac.compare_digest(fingerprint(draft), draft["fingerprint"])):
             return "Nothing sent. This yes does not match the exact draft and login that presented it. Review a fresh draft."
         # Save consumed consent before any handoff. Never replay on restart/error.
-        draft.update(token=None, approved_at=self.clock())
-        audit = {"event": "owner_confirmed_not_sent", "actor": actor,
+        draft.update(state="delivery_unconfirmed", token=None, approved_at=self.clock())
+        audit = {"event": "owner_confirmed_delivery_unconfirmed", "actor": actor,
                  "conversation_id": conversation["id"], "draft_id": draft["id"], "revision": draft["revision"],
                  "recipient": copy.deepcopy(draft["recipient"]), "body": draft["body"],
                  "fingerprint": draft["fingerprint"], "at": self.clock(), "request_id": request_id}
         state["audit"].append(audit)
+        conversation["messages"][-1].update(status="done", provider="texting", content=DELIVERY_UNCONFIRMED)
+        persist(conversation)
         if self.andrea.deliver(draft["recipient"]["guid"], draft["body"]):
             draft["state"] = "sent"
             audit["event"] = "owner_sent_via_andrea"
             content = SENT_VIA_ANDREA
         else:
             draft["state"] = "confirmed_not_sent"
+            audit["event"] = "owner_confirmed_not_sent"
             content = BRIDGE_BLOCKED
-        conversation["messages"][-1].update(status="done", provider="texting", content=content)
-        persist(conversation)
         return content
 
     def handle(self, conversation, text, actor, request_id, persist, redact):
@@ -377,6 +381,9 @@ class Texting:
         except TextingError as exc:
             content = str(exc)
         answer["content"] = redact(content)
+        # Every handled turn is saved once here. Confirmations also persist consumed
+        # consent before delivery so an interrupted receipt cannot authorize a replay.
+        persist(conversation)
         return True
 
     @staticmethod

@@ -53,6 +53,16 @@ def _identity(command):
     # CLI names are case sensitive. Desktop Claude/Codex helpers (including
     # paths with spaces such as "Codex Framework.framework") are not workers.
     executable = Path(parts[0]).name
+    if executable.lower().startswith("python") and len(parts) > 2:
+        script = Path(parts[1]).name
+        if script == "-c":
+            api = re.search(r"\b(?:ask|model_call)\([\"'](gemini|minimax)[\"']", command)
+            if api:
+                return api[1], None
+        if script in ("compat.py", "api_call.py", "llm_ask.py") and parts[2] in ("gemini", "minimax"):
+            return parts[2], None
+        if script in ("minimax-arch-review.py", "minimax_verdict.py", "gemini-arch-review.py", "gemini_tip_assess.py"):
+            return script.split("-", 1)[0].split("_", 1)[0], None
     if executable in ("node", "nodejs") and len(parts) > 1:
         script = parts[1].lower()
         if "/@openai/codex/" in script and script.endswith("/codex.js"):
@@ -112,7 +122,7 @@ def task_label(record=None, screen=None):
                             ("storyboard", "StoryBoard"), ("minimax", "MiniMax")):
             label = re.sub(r"\b" + raw + r"\b", pretty, label, flags=re.I)
         return label[:1].upper() + label[1:100]
-    return "Task details unavailable"
+    return "Worker process"
 
 
 def task_header(command):
@@ -125,7 +135,7 @@ def task_header(command):
     return " ".join(title.split()).strip(" .")[:140] or None
 
 
-def collect_work(sessions, claimed_jobs, processes, now):
+def collect_work(sessions, claimed_jobs, processes, now, root=None):
     """Join queue claims and live workers without counting a wrapper twice."""
     table = processes or {}
     screens = {int(value.split(".", 1)[0]): name for name, value in sessions.items()
@@ -157,7 +167,7 @@ def collect_work(sessions, claimed_jobs, processes, now):
         model = model or next((workers[child][1] for child in descendants if workers[child][1]), None)
         state = "paused" if any(table[child]["process_state"].startswith("T") for child in descendants) else "running"
         title = task_label(record, screen if screen and not screen.startswith("svc-") else None)
-        if title == "Task details unavailable":
+        if title == "Worker process":
             title = task_header(row["command"]) or title
         activity.append(dict(title=title,
                              worker=worker, model=model, state=state, elapsed_seconds=row["elapsed_seconds"],
@@ -191,6 +201,11 @@ def collect_work(sessions, claimed_jobs, processes, now):
     for name in sessions:
         if name.startswith("lane-") and name not in matched_screens:
             # A shell/sleep or a missing process sample cannot establish work.
+            screen_pid = int(sessions[name].split(".", 1)[0])
             activity.append(dict(title=task_label(screen=name), worker=None, model=None, state="unverified",
-                                 elapsed_seconds=None, screen=name, source="screen"))
+                                 elapsed_seconds=table.get(screen_pid, {}).get("elapsed_seconds"),
+                                 screen=name, pid=screen_pid, source="screen"))
+    if root is not None:
+        from worker_evidence import enrich_work
+        return enrich_work(root, activity, claimed_jobs, table)
     return activity

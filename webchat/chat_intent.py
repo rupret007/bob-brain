@@ -1,26 +1,44 @@
 """Durable user intent. Assistant prose and reference snapshots are not authority."""
 import re
+from difflib import get_close_matches
 
 POLITE = r"(?:(?:please|bob)[,:]?\s+|(?:can|could|would|will) you\s+|i (?:want|need) (?:you )?to\s+|let['’]s\s+)*"
 PREAMBLE = re.compile(r"^(?:(?:ok(?:ay)?|yes|yeah|sure|great|thanks|now)[,.!]?\s+)+", re.I)
-PROJECT = re.compile(r"\b(?:web\s*bob|web\s*jam|adopt\s*iq|story\s*board|shelf)\b", re.I)
-PROJECT_NAMES = {"webbob": "Web Bob", "webjam": "WebJam", "adoptiq": "AdoptIQ", "storyboard": "StoryBoard", "shelf": "Shelf"}
+PROJECT = re.compile(r"\b(?:web\s*bob|web\s*jam|adopt\s*iq|story\s*board|(?:storyland[ -])?fantasy[ -]football|shelf)\b", re.I)
+PROJECT_NAMES = {"webbob": "Web Bob", "webjam": "WebJam", "adoptiq": "AdoptIQ", "storyboard": "StoryBoard",
+                 "fantasyfootball": "Fantasy Football", "storylandfantasyfootball": "Fantasy Football", "shelf": "Shelf"}
 HOLD = re.compile(r"^(?:hold(?:\s+off)?|pause)(?:\b|$)", re.I)
-RELEASE = re.compile(r"^(?:go(?:\s+ahead)?|resume)(?=$|[.!,:]|\s+(?:now|please|and|with|on|all|everything|to|the|max|work|coding|fix|review|web\s*bob|web\s*jam|adopt\s*iq|story\s*board|shelf)\b)", re.I)
+RELEASE = re.compile(r"^(?:go(?:\s+ahead)?|resume)(?=$|[.!,:]|\s+(?:now|please|and|with|on|all|everything|to|the|max|work|coding|fix|review|web\s*bob|web\s*jam|adopt\s*iq|story\s*board|(?:storyland[ -])?fantasy[ -]football|shelf)\b)", re.I)
 LIFT = re.compile(r"^(?:(?:the\s+)?hold(?:\s+(?:on|for)\s+.+?)?\s+(?:is\s+)?(?:lifted|cleared)|(?:lift|clear|remove)\s+(?:the\s+)?hold)\b", re.I)
 PUSH = re.compile(r"^(?:push\b[^.!?]*\b(?:max|all out)|push\s+" + PROJECT.pattern +
                   r"(?:\s*(?:,|&|\band\b|\bthen\b)\s*(?:and\s+)?" + PROJECT.pattern +
                   r")*[.!]*$|send\s+(?:all\s+)?the\s+work\s+off\b)", re.I)
 PRIORITIES = re.compile(r"^(?:prioriti[sz]e|(?:set|use)\s+(?:the\s+)?priorit(?:y|ies)\b)", re.I)
 ALL_PROJECTS = re.compile(r"\b(?:everything|all(?:\s+of)?\s+(?:(?:these|those|the|my|our)\s+)?(?:projects|requests|work|them)|them)\b", re.I)
+START_PROJECTS = re.compile(r"^(?:(?:we|i) (?:want|need) (?:it |you )?to )?"
+                            r"(?:start(?: up)?|launch|kick off|develop)\b", re.I)
+
+
+def normalize_projects(text):
+    """Correct a single misspelling of a distinctive project name, not prose."""
+    def correct(match):
+        word = match[0].lower()
+        choices = get_close_matches(word, ("webjam", "adoptiq", "storyboard"), n=2, cutoff=.86)
+        return choices[0] if len(choices) == 1 else match[0]
+    return re.sub(r"\b[A-Za-z]{6,10}\b", correct, text)
+
+
+def project_start(text):
+    return bool(START_PROJECTS.match(command(text)) and (projects(text) or ALL_PROJECTS.search(text)))
 
 
 def command(text):
-    return re.sub(r"^" + POLITE, "", PREAMBLE.sub("", text.strip()), flags=re.I).strip()
+    return normalize_projects(re.sub(r"^" + POLITE, "", PREAMBLE.sub("", text.strip()), flags=re.I).strip())
 
 
 def projects(text):
-    return list(dict.fromkeys(PROJECT_NAMES[re.sub(r"\s+", "", match[0].lower())] for match in PROJECT.finditer(text)))
+    return list(dict.fromkeys(PROJECT_NAMES[re.sub(r"[\s-]+", "", match[0].lower())]
+                              for match in PROJECT.finditer(normalize_projects(text))))
 
 
 def new_state():

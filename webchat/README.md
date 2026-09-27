@@ -286,10 +286,13 @@ and server restart invalidate consent. An unrelated conversation’s work contro
 keep their normal behavior. Consent and its exact recipient/body audit are saved
 in the private conversation file (mode 600), with duplicate requests handled once.
 
-**Delivery is blocked in this draft implementation.** The installed Andrea
+**Production delivery remains blocked by the installed Andrea bridge.** The installed Andrea
 control API rejects both direct sends and message-action `send`/`send_again`.
 A valid Web Bob yes produces **“Not sent”**, consumes the token, and records only
-local consent. Nothing is sent, queued, or automatically retried. Andrea currently
+local consent when the bridge is unavailable. With credentials configured, a
+valid confirmation probes Andrea’s `/web-bob/send` once; the unavailable bridge
+returns an honest blocked receipt. No direct BlueBubbles send, delivery queue or
+automatic retry is used. Andrea currently
 requires a fresh approval on its own registered Telegram chat or Messages
 self-thread; Web Bob cannot impersonate that owner message. An independently
 approved Andrea bridge is still required to finish outbound texting parity.
@@ -305,16 +308,24 @@ proxies/redirects, have a five-second timeout, and bound response size.
 Optional `texting status` uses authenticated `GET /health` at
 `BOB_ANDREA_CONTROL_URL` (default `http://127.0.0.1:4315`) with
 `BOB_ANDREA_CONTROL_TOKEN` provisioned by the operator. The URL must be literal
-`127.0.0.1`; neither credentials nor URLs can be set from chat. No send endpoint
-is called even when credentials are configured. No environment or running service
+`127.0.0.1`; neither credentials nor URLs can be set from chat. Only a separate,
+exact confirmation permits the Andrea bridge probe. Consent is durably consumed
+before handoff; if recording the result fails, the saved draft says delivery is
+unconfirmed and the token cannot be reused, including after restart. No environment or running service
 configuration is changed by this feature or its verification scripts.
 
 Run `python3 webchat/texting_proof.py` from this checkout for an isolated browser
-proof with mock BlueBubbles and synthetic contacts only. Set `BOB_PLAYWRIGHT_MODULE`
+proof of the **blocked “Not sent” path**, with mock BlueBubbles and synthetic
+contacts only. Set `BOB_PLAYWRIGHT_MODULE`
 and `BOB_CHROMIUM_PATH` to an existing Playwright/Chromium installation as needed.
 It creates a private data root inside `reviews/`, binds two spare loopback ports,
 uses the actual login/chat UI, writes screenshots plus JSON evidence to `reviews/`,
 and closes only its own fixtures. It never uses the live services or models.
+The JSON evidence and five screenshots describe this same blocked path: one
+rejected mock Andrea probe, zero mock deliveries and zero real sends. Mock success
+(“Sent via Andrea”) is covered separately by the HTTP E2E and Python unit tests.
+Use `--output-dir <directory>` for scratch evidence; the optional browser unittest
+uses its temporary directory so routine tests do not rewrite committed artifacts.
 
 ### General checks
 
