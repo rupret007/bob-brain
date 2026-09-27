@@ -22,7 +22,7 @@ REASONS = {
     "invalid_output": "returned an empty, incomplete or invalid answer",
     "network": "had a network error",
     "busy": "is answering another chat; trying the next provider",
-    "budget": "cannot fit another request under its $96 cap",
+    "budget": "cannot fit another request under the $48 chat spend cap",
     "not_installed": "is not installed",
     "session_unavailable": "could not resume the saved session",
 }
@@ -72,7 +72,7 @@ def reset_time(text, now):
 
 def classify(code, text):
     text = text.lower()
-    if any(s in text for s in ("$96 cap", "$48 cap", "budgetexceeded", "budget exhausted")):
+    if any(s in text for s in ("$96 cap", "$48 cap", "minimax cap", "spend cap", "budgetexceeded", "budget exhausted")):
         return "budget"
     if any(s in text for s in ("blockingioerror", "lane reserved", "busy with another job")):
         return "busy"
@@ -112,14 +112,23 @@ class AllDown(ProviderError):
 
 
 def atomic_json(path, data):
+    atomic_text(path, json.dumps(data))
+
+
+def atomic_text(path, text):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, name = tempfile.mkstemp(prefix=".health-", dir=path.parent)
     try:
         with os.fdopen(fd, "w") as handle:
-            json.dump(data, handle)
+            handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(name, path)
+        descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
     finally:
         if os.path.exists(name):
             os.unlink(name)

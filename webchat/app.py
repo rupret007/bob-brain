@@ -24,7 +24,8 @@ from urllib.parse import parse_qs, urlsplit
 from providers import Cancelled, ProviderError, Providers, Redactor, UUID, clean_env, run
 from failover import AllDown
 from handback import append_turn, public_digest
-from job_queue import parse_confirm, parse_start, queue_draft
+from job_queue import parse_confirm, parse_start
+from actions import queue_once
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -123,6 +124,18 @@ class Chat:
         conversation["updated_at"] = time.time()
         private_write(self.state / (conversation["id"] + ".json"), json.dumps(conversation, ensure_ascii=False, indent=2) + "\n")
 
+    def record_turn(self, **data):
+        # The optional handback ledger cannot turn a completed provider reply or
+        # a persisted action receipt into a failed/replayed request.
+        try:
+            append_turn(self.root, **data)
+        except OSError:
+            if hasattr(self.providers, "circuit"):
+                try:
+                    self.providers.circuit.log("handback_error", reason="handback write unavailable")
+                except OSError:
+                    pass
+
     def new_conversation(self):
         with self.lock:
             value = {"id": str(uuid.uuid4()), "title": "New conversation", "created_at": time.time(),
@@ -132,7 +145,7 @@ class Chat:
             return self.public(value)
 
     def public(self, value):
-        return {k: copy.deepcopy(v) for k, v in value.items() if k not in ("codex_thread_id", "retry_prompt", "pending_job")}
+        return {k: copy.deepcopy(v) for k, v in value.items() if k not in ("codex_thread_id", "retry_prompt", "pending_job", "pending_job_id")}
 
     def get(self, identifier):
         if not isinstance(identifier, str) or not UUID.fullmatch(identifier) or identifier not in self.conversations:
@@ -249,10 +262,11 @@ class Chat:
                         action_card={"id": request_id, "state": "refused", "executable": False, "reason": "Job blocked by standing rules"})
                     self.save(conversation)
                     self.conversations[identifier] = conversation
-                    append_turn(self.root, ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
+                    self.record_turn(ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
                                 refusals=[blocked], open_items=[])
                     return self.public(conversation)
-                result = queue_draft(self.root, pending)
+                action_id = conversation.pop("pending_job_id", None) or str(uuid.uuid5(uuid.NAMESPACE_URL, identifier + pending))
+                result = queue_once(self.root, action_id, pending)
                 if result["ok"]:
                     reply = f"Queued draft job `{result['file']}` on the mini. The scheduler picks up READY rows; nothing merged or sent."
                     conversation["messages"][-1].update(status="done", content=reply,
@@ -262,7 +276,7 @@ class Chat:
                         action_card={"id": request_id, "state": "blocked", "executable": False, "reason": "Duplicate or blocked"})
                 self.save(conversation)
                 self.conversations[identifier] = conversation
-                append_turn(self.root, ask=text, provider=None, jobs=[result.get("file", "")] if result.get("ok") else [],
+                self.record_turn(ask=text, provider=None, jobs=[result.get("file", "")] if result.get("ok") else [],
                             files=[result.get("path", "")] if result.get("ok") else [], commits=[],
                             confirmations=[text[:200]] if result.get("ok") else [], refusals=[], open_items=[])
                 return self.public(conversation)
@@ -277,6 +291,7 @@ class Chat:
                     self.conversations[identifier] = conversation
                     return self.public(conversation)
                 conversation["pending_job"] = job_text
+                conversation["pending_job_id"] = request_id
                 conversation["messages"][-1].update(status="done",
                     content="I can queue a **draft** screen job for the conductor scheduler. Reply `yes, start job` to confirm, or edit your request.",
                     action_card={"id": request_id, "state": "confirm", "executable": True,
@@ -294,7 +309,7 @@ class Chat:
             if refusal:
                 if hasattr(self.providers, "circuit"):
                     self.providers.circuit.log("action_refused", request_id=request_id, reason="drafts_only")
-                append_turn(self.root, ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
+                self.record_turn(ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
                             refusals=[refusal], open_items=[])
                 return self.public(conversation)
             self.launch(identifier)
@@ -333,7 +348,7 @@ class Chat:
                 value["messages"][-1].pop("retry_at", None)
                 self.save(value)
                 user = next((m["content"] for m in reversed(value["messages"]) if m["role"] == "user"), "")
-                append_turn(self.root, ask=user, provider=answer.get("provider"),
+                self.record_turn(ask=user, provider=answer.get("provider"),
                             jobs=[], files=[], commits=[], confirmations=[], refusals=[],
                             open_items=[user[:200]] if user else [])
         except AllDown as exc:

@@ -2,6 +2,7 @@
 .session-secret
 .public-origin
 .drill.json
+.drill.tmp
 sessions/
 evidence/
 __pycache__/

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Failure/breaker tests plus real subprocess and durable-queue regressions."""
 import json
+import fcntl
 import os
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from unittest.mock import patch
 from app import Chat, RequestError
 from failover import AllDown, Circuit, ORDER, ProviderError, classify, reset_time
 from providers import Cancelled, Providers, clean_env, parse_codex, parse_cursor, run
+from actions import queue_once
 
 
 class Fixture(unittest.TestCase):
@@ -310,6 +312,80 @@ class QueueTests(Fixture):
         self.assertEqual(len(result["messages"]), 2)
         self.assertEqual(result["messages"][-1]["action_card"]["state"], "refused")
         self.assertFalse(result["messages"][-1]["action_card"]["executable"])
+
+    def test_confirmation_receipt_survives_failed_conversation_save(self):
+        self.submit("start a job: review the draft UI")
+        request_id = str(uuid.uuid4())
+        result = {"ok": True, "file": "one-job.md", "path": "next-prompts/one-job.md"}
+        with patch("actions.queue_draft", return_value=result) as queue:
+            with patch.object(self.chat, "save", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    self.chat.submit(self.identifier, "yes, start job", request_id)
+            self.chat.submit(self.identifier, "yes, start job", request_id)
+            self.chat.submit(self.identifier, "yes, start job", request_id)
+            self.assertEqual(queue.call_count, 1)
+        self.assertEqual(self.chat.history(self.identifier)["messages"][-1]["action_card"]["state"], "queued")
+
+    def test_ambiguous_action_and_crash_after_effect_never_execute_twice(self):
+        action_id = str(uuid.uuid4())
+        with patch("actions.queue_draft", side_effect=OSError("failed after external effect")) as queue:
+            self.assertFalse(queue_once(self.root, action_id, "review draft")["ok"])
+            self.assertFalse(queue_once(self.root, action_id, "review draft")["ok"])
+            self.assertEqual(queue.call_count, 1)
+        with patch("actions.queue_draft") as queue:
+            self.assertFalse(queue_once(self.root, action_id, "changed task")["ok"])
+            queue.assert_not_called()
+
+    def test_handback_failure_preserves_completed_answer(self):
+        with patch("app.append_turn", side_effect=OSError("unavailable")), patch.object(self.provider, "call", return_value=("Completed answer", None)):
+            self.submit()
+        self.assertEqual(self.chat.history(self.identifier)["messages"][-1]["status"], "done")
+        self.assertEqual(self.chat.history(self.identifier)["messages"][-1]["content"], "Completed answer")
+
+    def test_action_queue_uses_scheduler_lock_before_writing(self):
+        from job_queue import queue_draft
+        folder = self.root / "conductor/locks"
+        folder.mkdir(parents=True)
+        with (folder / "queue.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = queue_draft(self.root, "review a draft")
+            self.assertFalse(result["ok"])
+            self.assertFalse((self.root / "next-prompts/INDEX.md").exists())
+        result = queue_draft(self.root, "review a draft")
+        self.assertTrue(result["ok"])
+        self.assertIn(result["file"], (self.root / "next-prompts/INDEX.md").read_text())
+
+
+class BillingTests(Fixture):
+    def test_chat_cap_blocks_shared_transport_after_background_cap_increase(self):
+        ledger = self.root / "conductor/ledger"
+        ledger.mkdir(parents=True)
+        (ledger / "minimax.jsonl").write_text(json.dumps({"call_id": "existing", "cost_usd": 48}) + "\n")
+        services = Path(__file__).resolve().parents[1] / "services"
+        script = """
+import sys
+sys.path.insert(0, sys.argv[1])
+sys.path.insert(0, sys.argv[2])
+import api, budget
+from billing import enforce_chat_cap
+budget.CAP_USD = 96
+enforce_chat_cap(budget)
+assert budget.CAP_USD == 48
+def no_http(*a, **kw):
+    raise AssertionError('transport must never run')
+api.run = no_http
+try:
+    api.model_call('minimax', 'test', max_tokens=1)
+except budget.BudgetExceeded:
+    print('PASS: reservation rejected before transport')
+else:
+    raise AssertionError('cap bypassed')
+"""
+        result = subprocess.run([sys.executable, "-c", script, str(services), str(Path(__file__).parent)],
+            env=dict(os.environ, BOB_ROOT=str(self.root), MINIMAX_API_KEY="fixture-only"), capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("reservation rejected", result.stdout)
+        self.assertEqual(len((ledger / "minimax.jsonl").read_text().splitlines()), 1)
 
 
 if __name__ == "__main__":

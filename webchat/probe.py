@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from billing import MINIMAX_CAP_USD
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
 
@@ -18,8 +19,8 @@ def main():
     if lane == "minimax":
         import budget
         budget.import_ux_ledger()
-        if budget.totals(lane)["committed_usd"] >= budget.CAP_USD:
-            print("MiniMax $96 cap reached")
+        if budget.totals(lane)["committed_usd"] >= min(budget.CAP_USD, MINIMAX_CAP_USD):
+            print("MiniMax chat spend cap reached")
             return 1
     host = "https://api.minimax.io" if lane == "minimax" else "https://generativelanguage.googleapis.com"
     # Any HTTP response proves reachability; no key is sent, no inference occurs.

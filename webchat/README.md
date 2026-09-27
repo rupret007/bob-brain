@@ -19,8 +19,9 @@ does not request a new model review or change the queue.
 
 ## Conversation and provider behavior
 
-Short messages use a fast path (**Gemini → MiniMax → Cursor → Codex**, ~60s budget).
-Longer work tries **Codex → Cursor → Gemini → MiniMax**. Claude is never in the
+Short messages use a fast path (**Gemini → MiniMax → Cursor → Codex**, a 60s initial budget,
+then any untried providers), per the later `WEBCHAT-READY.md` phone brief.
+Longer/coding/debug work tries **Codex → Cursor → Gemini → MiniMax**. Claude is never in the
 automatic route. Codex uses the existing ChatGPT login with API-key environment variables
 removed and `forced_login_method="chatgpt"`. No credentials are changed. Native
 `codex exec resume <exact-thread-id>` preserves continuity; it never uses `--last`
@@ -29,14 +30,21 @@ saved sessions use recent conversation context. See the official
 [Codex non-interactive documentation](https://learn.chatgpt.com/docs/non-interactive-mode).
 
 Cursor uses `cursor-agent --trust --mode ask --print --output-format json`.
-Gemini uses the existing `bin/ask-gemini.sh` with its existing key and metering.
+Gemini and MiniMax use `webchat/api_call.py`, which calls the same metered
+`services/api.py`/`budget.py` transport as the ask scripts, bypassing background
+lane leases. MiniMax has this task's **$48 chat ceiling** even if background credit
+is increased; the child process applies the lower of the chat and shared caps.
+Reservations and uncertain calls count toward the cap. Lane health shows that
+committed amount, not just settled charges.
 Fallbacks receive up to the last 20 messages (24,000 characters) plus bounded, redacted handoff, brain,
 status, review and queue snapshots. The provider and fallback reasons appear
-beside the reply. An exhausted provider chain produces an explicit error.
+beside the reply. An exhausted provider chain produces an honest queued message.
+The saved turn automatically retries when a cooldown expires; Stop cancels it.
 
 Codex runs read-only with no approval prompts or inherited user-config MCP tools;
-Cursor runs in ask mode. Chat is for answers, investigation and drafts; it does
-not dispatch coding jobs or send messages. Every provider receives the current
+Cursor runs in ask mode. Providers answer, investigate and draft. The separate
+confirmed-job handler can queue a draft job; providers cannot invoke it.
+Every provider receives the current
 handoff and the hard rules: drafts only, no merges/undrafts/force-push, no outward
 messages without Jeff's yes to the exact text, no spending/login changes, no
 touching Andrea or other workers' edits, and one WebJam coder. Older brain memory
@@ -45,15 +53,34 @@ cannot override those rules.
 `sessions/<uuid>.json` stores each conversation and its Codex thread ID, mode 600
 inside a mode-700 directory. Conversation history survives server restarts.
 Login cookies expire after 12 hours and are invalidated by logout or a restart.
-An interrupted reply is marked as interrupted; it is never automatically replayed.
+An interrupted running reply is marked as interrupted; it is never automatically
+replayed. A waiting all-down request survives restart with its frozen context.
 Only one reply runs **per conversation** (other chats can reply in parallel). CLI
 calls use `chat-<provider>` locks separate from background `lane-*` locks; a busy
 CLI slot falls through to the next provider. Handback: `conductor/handback/`
 (BOB-STATE in, HANDBACK-LOG out). Say `start a job: …` then `yes, start job` to
 queue a draft READY row (scheduler launches; nothing merges automatically). Retransmitting the same request ID does not run
-the model twice. Stop and the 180-second per-provider deadline terminate only
-process groups started by this chat. Set `BOB_WEBCHAT_TIMEOUT` for a different
-deadline (15–600 seconds).
+the model twice. Confirmed jobs have durable once-only receipts before queue
+writes. Ambiguous submissions require checking Jobs; they are never replayed.
+Queue writes use the scheduler's queue lock and atomic files.
+
+Stop and per-provider deadlines terminate the process group and captured nested
+groups belonging to this chat. Stdin is an EOF-terminated prompt file or
+`/dev/null`. Defaults: Codex/Cursor 180s; Gemini/MiniMax/explicit Claude 120s.
+Override a lane with `BOB_WEBCHAT_TIMEOUT_CODEX` (or `_CURSOR`, `_GEMINI`,
+`_MINIMAX`, `_CLAUDE`), 15–600s. `BOB_WEBCHAT_TIMEOUT` supplies the CLI default.
+
+Failures are classified as sign-in, usage limit, timeout, nonzero exit, invalid
+output or network. Breakers cool for 5, 10, 20, then 30 minutes; a parseable usage
+reset overrides that duration. One half-open attempt tests recovery. Success
+closes the breaker; a login probe does not clear a quota failure. Checks at startup
+and every 10 minutes verify CLI login or API configuration/TLS reachability,
+without generation spend. The lanes panel distinguishes probe results from a
+completed answer. Breakers persist in private `sessions/provider-health.json`.
+
+Every routing attempt, skip, failure, switch, cancellation, probe and queued retry
+is logged as JSON lines in `logs/webchat-failover.log` (mode 600). It contains
+IDs, canned reasons and timestamps, not prompts, model output or credentials.
 
 ## Start and login after reboot
 
@@ -135,6 +162,7 @@ being stored or forwarded. Avoid pasting credentials into chat.
 
 ```bash
 python3 conductor/webchat/test_webchat.py
+python3 -m unittest discover -s conductor/webchat -p 'test_*.py' -v
 python3 -m py_compile conductor/webchat/app.py conductor/webchat/providers.py conductor/webchat/start.py
 bash -n conductor/webchat/start.sh conductor/webchat/run.sh conductor/launchd/install.sh
 plutil -lint conductor/launchd/com.jeff.bob-webchat.plist
@@ -147,3 +175,26 @@ The offline suite uses temporary directories and fake providers. The optional
 connection check; it expects `evidence/live-chat.json` from the initial two-turn
 check. Set `BOB_PLAYWRIGHT_MODULE` / `BOB_CHROMIUM_PATH` if using a cached runtime.
 The initial verification record is `conductor/reviews/WEBCHAT-RESULT.md`.
+
+## Repeat the live failover drills
+
+Deliberately restart only the webchat server with `BOB_WEBCHAT_DRILLS=1` in the
+launcher's environment, then run:
+
+```bash
+BOB_WEBCHAT_DRILLS=1 bash conductor/webchat/start.sh
+python3 conductor/webchat/live_failover.py --url https://jeffs-mac-mini.tail758ab4.ts.net
+```
+
+The launcher will not replace an already running server. The drill uses actual
+curl login/POST/poll/Stop requests and real providers on every successful path.
+Its private `.drill.json` limits injected failures to the new test conversations
+and a separate circuit, preserving ordinary chats. Evidence is written to
+`webchat/evidence/failover-live.json`; all-down recovery uses a five-second test
+cooldown. It also tests MiniMax, memory, duplicate refusal cards, and replies with
+all background lane locks held. The script removes its fault file on exit.
+Restart normally afterward so drills are disabled. The broader
+`BOB_WEBCHAT_FORCE_FAIL=codex,cursor` environment flag also exists for maintenance
+but affects the entire process; prefer the scoped script on a live phone server.
+
+Final failover evidence and architecture review: `reviews/WEBCHAT-FAILOVER-RESULT.md`.

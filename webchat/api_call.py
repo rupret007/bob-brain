@@ -37,6 +37,9 @@ def main():
         print("empty prompt", file=sys.stderr)
         return 1
     load_keys()
+    import budget
+    from billing import enforce_chat_cap
+    enforce_chat_cap(budget)
     from api import model_call
 
     answer = strip_reply_tags(model_call(lane, prompt, purpose="webchat"))

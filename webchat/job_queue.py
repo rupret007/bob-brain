@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import re
+import fcntl
 import secrets
-import shutil
 import subprocess
 import time
 from pathlib import Path
+from failover import atomic_text
 
 START = re.compile(r"^start (?:a )?job[:\s]+(.+)$", re.I | re.S)
 CONFIRM = re.compile(r"^yes[,.]?\s*(?:start|queue|run)\s+(?:the\s+)?job\s*$", re.I)
@@ -41,6 +42,17 @@ def queue_draft(root: Path, description: str) -> dict:
     screens = running_screens(root)
     if duplicate_task(screens, description):
         return {"ok": False, "error": "A screen session may already be running this task. Check Jobs before queueing again."}
+    locks = root / "conductor/locks"
+    locks.mkdir(parents=True, exist_ok=True)
+    with (locks / "queue.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {"ok": False, "error": "The scheduler is updating the queue. Your job was not queued; try a new request shortly."}
+        return _write_queue(root, description, screens)
+
+
+def _write_queue(root, description, screens):
     prompts = root / "next-prompts"
     prompts.mkdir(parents=True, exist_ok=True)
     inbox = prompts / "_inbox"
@@ -55,14 +67,14 @@ def queue_draft(root: Path, description: str) -> dict:
         f"## Rules\n\nDrafts only. No merge, undraft, or force-push. One WebJam coder at a time.\n"
     )
     path = prompts / filename
-    path.write_text(body)
+    atomic_text(path, body)
+    atomic_text(inbox / filename, body)
     index = prompts / "INDEX.md"
     row = f"| 99 | `{filename}` | WebBob | non-coding | READY | Web Bob queued {stamp} |\n"
     if index.exists():
         text = index.read_text()
         if filename not in text:
-            index.write_text(text.rstrip() + "\n" + row)
+            atomic_text(index, text.rstrip() + "\n" + row)
     else:
-        index.write_text("# next-prompts queue\n\n| Pri | File | Project | Kind | Status | Notes |\n| --- | --- | --- | --- | --- | --- |\n" + row)
-    shutil.copy(path, inbox / filename)
+        atomic_text(index, "# next-prompts queue\n\n| Pri | File | Project | Kind | Status | Notes |\n| --- | --- | --- | --- | --- | --- |\n" + row)
     return {"ok": True, "file": filename, "path": str(path.relative_to(root)), "screen_hint": screens.strip()[:500] or "none"}

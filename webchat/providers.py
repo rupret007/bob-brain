@@ -16,6 +16,7 @@ from pathlib import Path
 from contextlib import contextmanager
 
 from failover import AllDown, Cancelled, Circuit, NAMES, ORDER, ProviderError, REASONS, classify
+from billing import MINIMAX_CAP_USD
 
 RULES = """Read BOB-HANDOFF.md + bob-brain/ + conductor/handback/ (BOB-STATE.md, HANDBACK-SUMMARY.md) and act as Bob.
 You are Jeff's Bob web chat on his Mac mini. Answer Jeff's latest message naturally,
@@ -445,9 +446,9 @@ class Providers:
             records = {r["call_id"]: r for r in map(json.loads, path.read_text().splitlines())}
             spent = sum(r.get("cost_usd") or 0 for r in records.values())
             reserved = sum(r.get("reserved_usd", 0) for r in records.values() if r.get("cost_usd") is None)
-            return {"spent_usd": round(spent, 6), "reserved_usd": round(reserved, 6), "committed_usd": round(spent + reserved, 6), "cap_usd": 96 if name == "minimax" else None, "billing": "metered API" if name in ("gemini", "minimax") else "plan; webchat dollar usage unavailable"}
+            return {"spent_usd": round(spent, 6), "reserved_usd": round(reserved, 6), "committed_usd": round(spent + reserved, 6), "cap_usd": MINIMAX_CAP_USD if name == "minimax" else None, "billing": "metered API" if name in ("gemini", "minimax") else "plan; webchat dollar usage unavailable"}
         except (OSError, ValueError, KeyError, TypeError):
-            return {"billing": "unavailable", "cap_usd": 96 if name == "minimax" else None}
+            return {"billing": "unavailable", "cap_usd": MINIMAX_CAP_USD if name == "minimax" else None}
 
     def probe_once(self):
         for name in ORDER:
