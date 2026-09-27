@@ -59,10 +59,12 @@ real audio, interruption and dispatch with recorded microphone fixtures. See
 [`reviews/WEBBOB-VOICE-0927.md`](../reviews/WEBBOB-VOICE-0927.md) for the exact
 proof setup, screenshots and physical-device verification boundary.
 
-Status opens `conductor/STATUS.md`; Gemini review opens the saved
-`conductor/reviews/LATEST.md`; Jobs shows `screen -ls` and
-`next-prompts/INDEX.md`. Reports show their file timestamps. Opening a report
-does not request a new model review or change the queue.
+The five tabs are Chat, Jobs, Songs, Models and Settings. Jobs shows current
+workers and saved results; View jobs in Chat opens it without sending a message.
+Models shows current activity and reply availability, with measured usage in
+collapsed details. Songs puts lyrics and Save first, with chords, audio and saved
+versions below. Settings saves your preferred first-choice model on this device.
+Opening these tabs does not request a model answer or change the queue.
 
 ## Conversation and provider behavior
 
@@ -95,14 +97,42 @@ subscription quota measurements.
 ## Max-mode tasks
 
 Ordinary work requests such as `Ok figure out what is wrong with Gemini` and
-`start a job: ...` go directly to the durable dispatcher. A server receipt names
+`fix the login button` go directly to the durable dispatcher. A server receipt names
 the job only after the queue write succeeds; claim updates name the actual worker,
 and the completed result is posted in the originating conversation. Model prose
 cannot acknowledge queue or inbox effects. Explicit small text writes such as
-`start a job: write hello to /tmp/example.txt` use Codex, Cursor or Claude with file
+`write hello to /tmp/example.txt` use Codex, Cursor or Claude with file
 tools; success requires the server to verify the changed file and its contents.
 
-Operational replies use the current queue, lane locks and generation health from
+Named multi-project requests create one durable job per project. For example,
+`prioritize Web Bob, WebJam, AdoptIQ, StoryBoard` saves the order; `push everything
+to the max and fix anything you find` queues four project jobs. Each reply line
+names the project, requested worker and real job ID. Assignment prefers ready
+compatible lanes and accounts for existing claims and queued work. Coding jobs
+use Codex/Cursor; API-only workers keep their existing capability limits.
+
+Conversation files also save explicit holds and the latest permission transition.
+`hold off on Web Bob` blocks new submissions for that project; `go`, `resume`, or
+`the hold is lifted` clears the applicable hold. An explicit project push also
+authorizes those projects. A held request survives a reload and can be resumed.
+Holds govern new chat submissions; they do not stop already queued/running jobs
+or restart services. Old conversations migrate user directives in order without
+dispatching them, and assistant text cannot restore a cleared hold.
+
+Status questions, including `is it moving along now?`, get a short server summary
+of live work: task label, worker/model and elapsed process time. Read-only `screen
+-ls` and `ps` observations include `lane-*` work and standalone CLI workers outside
+the queue. Queue claims, screen descendants and CLI wrappers are joined to avoid
+duplicates; live workers override cached ready lanes. Desktop apps and helpers
+are excluded. Open screens without a confirmed worker and unavailable checks are
+reported as unverified. A running process proves activity, not forward progress;
+an exact model variant is shown only when present in the process arguments.
+Task labels come from queue titles/projects or readable screen names, never raw
+process prompts. Unknown task details stay unknown. Internal job IDs, screen
+names, PIDs and finished-job history are shown only when requested. Ordinary chat
+never recommends special job syntax.
+
+Operational replies also use lane locks and generation health from
 `webchat/sessions/provider-health.json` plus `logs/webchat-failover.log`. The server
 identifies the actual answering provider on each attempt. Old chat errors never
 override recovered health, and configuration probes alone do not prove generation.
@@ -298,6 +328,23 @@ The offline suite uses temporary directories and fake providers. The optional
 connection check; it expects `evidence/live-chat.json` from the initial two-turn
 check. Set `BOB_PLAYWRIGHT_MODULE` / `BOB_CHROMIUM_PATH` if using a cached runtime.
 The initial verification record is `conductor/reviews/WEBCHAT-RESULT.md`.
+
+For the five phone tabs, use the isolated proof from the repository checkout:
+
+```sh
+python3 webchat/isolated_tabs_proof.py --output-dir reviews
+```
+
+It starts an ephemeral loopback listener with private chats, songs, credentials
+and storage. Headless Chromium captures `webbob-tab-<name>-0927.png` for Chat,
+Jobs, Songs, Models and Settings, plus the song editor, and tests phone layouts,
+stale/unavailable status, duplicate rows, song persistence and logout. Screenshots
+use actual responses from that isolated instance, including read-only host
+activity; regression fixtures run afterward. It launches no model or worker and
+does not restart the live service. Set `BOB_PLAYWRIGHT_MODULE` and
+`BOB_CHROMIUM_PATH` when using an existing runtime outside the default paths.
+The review and raw evidence are in `reviews/WEBBOB-CLEAN-0927.md` and
+`reviews/WEBBOB-CLEAN-0927.tabs-evidence.json`.
 
 ## Repeat the live failover drills
 

@@ -2,111 +2,117 @@ TAP version 13
 # Subtest: reject insecure contexts without requesting a microphone
 ok 1 - reject insecure contexts without requesting a microphone
   ---
-  duration_ms: 1.68775
+  duration_ms: 1.776166
   type: 'test'
   ...
 # Subtest: permission denial releases audio and allows retry
 ok 2 - permission denial releases audio and allows retry
   ---
-  duration_ms: 3.36375
+  duration_ms: 3.248792
   type: 'test'
   ...
 # Subtest: hanging up during microphone permission stops a late stream
 ok 3 - hanging up during microphone permission stops a late stream
   ---
-  duration_ms: 0.446916
+  duration_ms: 0.44175
   type: 'test'
   ...
 # Subtest: hanging up while token request is pending ends that late session
 ok 4 - hanging up while token request is pending ends that late session
   ---
-  duration_ms: 1.324875
+  duration_ms: 1.301708
   type: 'test'
   ...
 # Subtest: setup gates microphone packets and PCM streams over WebSocket
 ok 5 - setup gates microphone packets and PCM streams over WebSocket
   ---
-  duration_ms: 1.316375
+  duration_ms: 1.496042
   type: 'test'
   ...
 # Subtest: barge-in stops every queued source immediately and marks interrupted transcript
 ok 6 - barge-in stops every queued source immediately and marks interrupted transcript
   ---
-  duration_ms: 1.3535
+  duration_ms: 1.404125
   type: 'test'
   ...
 # Subtest: hangup releases microphone socket nodes timers and output
 ok 7 - hangup releases microphone socket nodes timers and output
   ---
-  duration_ms: 0.756125
+  duration_ms: 1.389084
   type: 'test'
   ...
 # Subtest: slow network closes streaming instead of accumulating delayed speech
 ok 8 - slow network closes streaming instead of accumulating delayed speech
   ---
-  duration_ms: 1.624584
+  duration_ms: 0.905167
   type: 'test'
   ...
 # Subtest: transcript retry retains dirty data and uses one flusher
 ok 9 - transcript retry retains dirty data and uses one flusher
   ---
-  duration_ms: 1.207875
+  duration_ms: 0.993833
+  type: 'test'
+  ...
+# Subtest: long calls save every turn within server row and UTF-8 keepalive limits
+ok 10 - long calls save every turn within server row and UTF-8 keepalive limits
+  ---
+  duration_ms: 4.527375
   type: 'test'
   ...
 # Subtest: tool dispatch takes saved spoken turn, never model arguments
-ok 10 - tool dispatch takes saved spoken turn, never model arguments
+ok 11 - tool dispatch takes saved spoken turn, never model arguments
   ---
-  duration_ms: 2.223
+  duration_ms: 0.68325
   type: 'test'
   ...
 # Subtest: cancelled tools cannot dispatch or speak after a barge-in
-ok 11 - cancelled tools cannot dispatch or speak after a barge-in
+ok 12 - cancelled tools cannot dispatch or speak after a barge-in
   ---
-  duration_ms: 0.55225
+  duration_ms: 0.366917
   type: 'test'
   ...
 # Subtest: an interrupted turn cannot swallow the next spoken utterance
-ok 12 - an interrupted turn cannot swallow the next spoken utterance
+ok 13 - an interrupted turn cannot swallow the next spoken utterance
   ---
-  duration_ms: 0.45575
+  duration_ms: 0.38625
   type: 'test'
   ...
 # Subtest: suspended Safari output keeps Resume audio visible
-ok 13 - suspended Safari output keeps Resume audio visible
+ok 14 - suspended Safari output keeps Resume audio visible
   ---
-  duration_ms: 1.06275
+  duration_ms: 0.519584
   type: 'test'
   ...
 # Subtest: hangup releases the server lease even while transcript saving is blocked
-ok 14 - hangup releases the server lease even while transcript saving is blocked
+ok 15 - hangup releases the server lease even while transcript saving is blocked
   ---
-  duration_ms: 1.514625
+  duration_ms: 1.713709
   type: 'test'
   ...
 # Subtest: worklet resamples 16000 Hz to exactly 1600 PCM samples per 100 ms
-ok 15 - worklet resamples 16000 Hz to exactly 1600 PCM samples per 100 ms
+ok 16 - worklet resamples 16000 Hz to exactly 1600 PCM samples per 100 ms
   ---
-  duration_ms: 1.951083
+  duration_ms: 1.639792
   type: 'test'
   ...
 # Subtest: worklet resamples 44100 Hz to exactly 1600 PCM samples per 100 ms
-ok 16 - worklet resamples 44100 Hz to exactly 1600 PCM samples per 100 ms
+ok 17 - worklet resamples 44100 Hz to exactly 1600 PCM samples per 100 ms
   ---
-  duration_ms: 2.738958
+  duration_ms: 1.917792
   type: 'test'
   ...
 # Subtest: worklet resamples 48000 Hz to exactly 1600 PCM samples per 100 ms
-ok 17 - worklet resamples 48000 Hz to exactly 1600 PCM samples per 100 ms
+ok 18 - worklet resamples 48000 Hz to exactly 1600 PCM samples per 100 ms
   ---
-  duration_ms: 1.968958
+  duration_ms: 1.832708
   type: 'test'
   ...
-1..17
-# tests 17
+1..18
+# tests 18
 # suites 0
-# pass 17
+# pass 18
 # fail 0
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 110.794333
+# duration_ms 110.195084

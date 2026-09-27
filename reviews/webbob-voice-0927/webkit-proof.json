@@ -1,12 +1,12 @@
 {
   "engine": "webkit",
-  "url": "https://jeffs-mac-mini.tail758ab4.ts.net:54445",
+  "url": "https://jeffs-mac-mini.tail758ab4.ts.net:54447",
   "synthetic_microphone": true,
   "real_provider": true,
   "checks": [
     "spoken input, native spoken reply, shared memory",
     "real provider barge-in clears queued playback",
-    "spoken work request reaches existing durable dispatcher",
+    "spoken work request reaches existing durable dispatcher and receives spoken acknowledgement",
     "hangup releases microphone and audio transport",
     "transcript persists through reload",
     "microphone denial shows recovery and leaves chat usable"
@@ -26,17 +26,17 @@
     },
     "after": {
       "interruptions": 1,
-      "stops": 4
+      "stops": 6
     }
   },
-  "tool_receipt": "Queued — job webchat-6a16939f525c5894848641132e0c88e5.",
-  "transcript": "You: Bob, what color is the test sailboat in my memory? Please answer in one short sentence.Bob: The test sailboat in your memory is amber.You: Tell me a long story about sailing. Keep talking for at least a minute.Bob: I can tell you a story about sailing, but [interrupted]You: Stop. Say only Okay, Jeff.Bob: Okay, Jeff.You: Start a job, write unit tests for a pretend blue widget.Bob: I've queued that job, ID webchat-6a16939f525c5894848641132e0c88e5.",
+  "tool_receipt": "Queued — job webchat-ab9662884a6355a9837d3c3990c0b6b9.",
+  "transcript": "You: Bob, what color is the test sailboat in my memory? Please answer in one short sentence.Bob: The test sailboat in your memory is amber.You: Tell me a long story about sailing. Keep talking for at least a minute.Bob: I can't tell a long story right now, but I love [interrupted]You: Stop. Say only Okay, Jeff.Bob: Okay, Jeff.You: Start a job write unit tests for a pretend blue widget.Bob: I've queued the draft job for your blue widget unit tests.",
   "media": {
-    "inputPackets": 268,
-    "outputPackets": 25,
-    "outputBytes": 352322,
-    "starts": 25,
-    "stops": 8,
+    "inputPackets": 293,
+    "outputPackets": 29,
+    "outputBytes": 395520,
+    "starts": 29,
+    "stops": 6,
     "tracksEnded": true,
     "socketsClosed": true
   },

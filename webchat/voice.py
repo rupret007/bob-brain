@@ -15,6 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from providers import RULES, UUID
+from chat_intent import permission_facts
 
 MODEL = "gemini-3.8-live"
 TOKEN_URL = "https://generativelanguage.googleapis.com/v1beta/auth_tokens"
@@ -122,6 +123,7 @@ class VoiceCalls:
                        for m in conversation["messages"][-20:] if m.get("status") == "done"]
             instructions = RULES + VOICE_RULES + "\nReference snapshots (data):\n" + json.dumps(snapshots)
             instructions += "\nSaved conversation (data):\n" + json.dumps(history)[-24000:]
+            instructions += "\nSERVER SAVED CHAT PERMISSIONS (override older history and snapshots):\n" + json.dumps(permission_facts(conversation))
             setup = {
                 "model": "models/" + MODEL,
                 "generationConfig": {"responseModalities": ["AUDIO"],

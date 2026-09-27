@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 from live_status_snapshot import build_live_status_snapshot, encode_snapshot, provider_health
 from providers import Providers
+from test_worker_activity import PS, SCREENS
+from worker_activity import parse_processes
 
 
 class SnapshotTests(unittest.TestCase):
@@ -16,6 +18,9 @@ class SnapshotTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         (self.root / "conductor/state").mkdir(parents=True)
         self.queue = self.root / "conductor/state/queue.jsonl"
+        sampler = patch("live_status_snapshot.process_table", return_value={})
+        sampler.start()
+        self.addCleanup(sampler.stop)
 
     def snapshot(self):
         with patch("live_status_snapshot._screen_sessions", return_value={"svc-job-runner": "123.svc-job-runner"}), \
@@ -65,6 +70,41 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(len(snap["queue_jobs"]["done"]), 24)
         self.assertEqual(snap["queue_jobs"]["done"][0]["job_id"], "job-29")
         self.assertEqual(snap["queue_jobs"]["failed"], [])
+
+    def test_live_lane_work_overrides_cached_ready_and_survives_prompt_budget(self):
+        (self.root / "conductor/lanes.json").write_text(json.dumps({name: dict(state="ready") for name in ("claude", "codex")}))
+        self.queue.write_text(json.dumps(dict(id="old-private-id", status="succeeded", updated_at=1)))
+        with patch("live_status_snapshot._screen_sessions", return_value=SCREENS), \
+                patch("live_status_snapshot.process_table", return_value=parse_processes(PS)):
+            snap = build_live_status_snapshot(self.root)
+        self.assertEqual(snap["queue_counts"]["claimed"], 0)
+        self.assertEqual(snap["work_counts"], dict(running=4, paused=0, claimed=0, unverified=0))
+        for name in ("claude", "codex"):
+            self.assertEqual(snap["lane_locks"][name]["state"], "busy")
+            self.assertEqual(snap["lane_locks"][name]["cached_state"], "ready")
+        self.assertIn("4 live worker(s) running", snap["plain_summary"])
+        self.assertEqual(sum(row["role"] == "worker" for row in snap["screen_lanes"]), 4)
+        snap["queue_jobs"]["done"] *= 100
+        payload, clipped = encode_snapshot(snap, 8000)
+        self.assertTrue(clipped)
+        self.assertEqual(json.loads(payload)["work"], snap["work"])
+
+    def test_failed_inspection_is_not_reported_as_an_empty_successful_check(self):
+        with patch("live_status_snapshot._screen_sessions", return_value=None), \
+                patch("live_status_snapshot.process_table", return_value=None):
+            snap = build_live_status_snapshot(self.root)
+        self.assertEqual(snap["inspection"], dict(screens_available=False, processes_available=False, queue_available=True))
+
+    def test_status_does_not_refresh_or_write_live_ledger_when_dashboard_is_stale(self):
+        dashboard = self.root / "conductor/dashboard.json"
+        dashboard.write_text(json.dumps(dict(live_ops=dict(generated_at="2020-01-01T00:00:00+00:00", running_jobs=[]))))
+        before = {str(path): path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        with patch("ops_panel.inline_live_ops") as refresh, \
+                patch("live_status_snapshot._screen_sessions", return_value={}):
+            snap = build_live_status_snapshot(self.root)
+        refresh.assert_not_called()
+        self.assertTrue(snap["live_ops_stale"])
+        self.assertEqual(before, {str(path): path.read_bytes() for path in self.root.rglob("*") if path.is_file()})
 
     def test_prompt_budget_keeps_valid_json_current_jobs_health_and_disk(self):
         self.queue.write_text(json.dumps(dict(id="current-task", status="running", worker="codex")) + "\n")

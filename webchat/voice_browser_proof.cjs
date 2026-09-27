@@ -19,7 +19,7 @@ async function instrument(page) {
   await page.addInitScript(() => {
     const NativeAudio = window.AudioContext;
     const NativeSocket = window.WebSocket;
-    window.voiceProof = {inputPackets:0,outputPackets:0,outputBytes:0,starts:0,stops:0,interruptions:0,tools:0,turns:0,tracks:[],sockets:[],audio:[],contexts:[]};
+    window.voiceProof = {inputPackets:0,outputPackets:0,outputBytes:0,starts:0,stops:0,interruptions:0,tools:0,toolResponses:0,turns:0,tracks:[],sockets:[],audio:[],contexts:[]};
     window.AudioContext = class extends NativeAudio {
       constructor(...args) { super(...args); voiceProof.contexts.push(this); }
       createBufferSource() {
@@ -46,7 +46,16 @@ async function instrument(page) {
           } catch (_) {}
         });
       }
-      send(raw) { if (JSON.parse(raw).realtimeInput?.audio) voiceProof.inputPackets++; return super.send(raw); }
+      send(raw) {
+        const value=JSON.parse(raw);
+        if (value.realtimeInput?.audio) voiceProof.inputPackets++;
+        if (value.toolResponse) {
+          voiceProof.toolResponses++;
+          voiceProof.outputAtToolResponse=voiceProof.outputPackets;
+          voiceProof.turnsAtToolResponse=voiceProof.turns;
+        }
+        return super.send(raw);
+      }
     };
     // Synthetic spoken input is reproducible on Chromium and WebKit. All the
     // production capture/resampling/streaming/playback code still runs unchanged.
@@ -135,7 +144,16 @@ async function instrument(page) {
       await page.waitForFunction(()=>document.querySelector('#call-dialog').dataset.phase==='listening',null,{timeout:45000});
       await feed('tool');
       await page.waitForFunction(()=>voiceProof.tools>0,null,{timeout:45000});
-      await page.waitForFunction(()=>/queued/i.test(document.querySelector('#call-transcript').textContent),null,{timeout:45000});
+      // The spoken acknowledgement can vary. Only the durable server receipt
+      // proves that the actual request was dispatched.
+      await page.waitForFunction(async()=>{
+        const id=localStorage.getItem('bob.conversation');
+        const conversation=await (await fetch('/api/conversations/'+id)).json();
+        return conversation.messages.some(m=>m.role==='assistant'&&m.provider==='dispatcher'&&m.task_id&&/Queued/.test(m.content));
+      },null,{timeout:45000});
+      await page.waitForFunction(()=>voiceProof.toolResponses>0
+        && voiceProof.outputPackets>voiceProof.outputAtToolResponse
+        && voiceProof.turns>voiceProof.turnsAtToolResponse,null,{timeout:45000});
       const conversation = await page.evaluate(async()=>{
         const id=localStorage.getItem('bob.conversation');
         return (await fetch('/api/conversations/'+id)).json();
@@ -143,7 +161,7 @@ async function instrument(page) {
       const receipt=conversation.messages.find(m=>m.role==='assistant'&&m.provider==='dispatcher'&&/Queued/.test(m.content));
       assert.ok(receipt, 'a real server dispatcher receipt is required');
       results.tool_receipt=receipt.content;
-      results.checks.push('spoken work request reaches existing durable dispatcher');
+      results.checks.push('spoken work request reaches existing durable dispatcher and receives spoken acknowledgement');
     }
     await page.setViewportSize({width:1280,height:900});await screenshot('desktop-call');
     results.transcript=await page.locator('#call-transcript').textContent();

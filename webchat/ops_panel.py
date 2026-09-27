@@ -94,7 +94,7 @@ def inline_live_ops(root: Path) -> dict:
     return snapshot().get("live_ops") or {}
 
 
-def load_live_ops(root: Path, *, max_age: float = LIVE_OPS_MAX_AGE) -> dict:
+def load_live_ops(root: Path, *, max_age: float = LIVE_OPS_MAX_AGE, read_only: bool = False) -> dict:
     dash_path = root / "conductor/dashboard.json"
     meta = {"source": "none", "dashboard_modified_at": None, "generated_at": None, "stale": True}
     live_ops: dict = {}
@@ -113,19 +113,22 @@ def load_live_ops(root: Path, *, max_age: float = LIVE_OPS_MAX_AGE) -> dict:
         except (OSError, json.JSONDecodeError, ValueError):
             live_ops = {}
     cached_ops = live_ops
-    try:
-        inline = inline_live_ops(root)
-        generated = _parse_generated_at(inline)
-        inline_age = time.time() - generated if generated else None
-        if inline and inline_age is not None and inline_age <= max_age:
-            meta.update(
-                source="inline_snapshot",
-                stale=False,
-                generated_at=inline.get("generated_at"),
-            )
-            return {"live_ops": inline, "meta": meta}
-    except Exception:
-        pass
+    # runtime.snapshot also syncs the state ledger. Read-only chat status must
+    # not trigger that refresh as a side effect of inspecting worker activity.
+    if not read_only:
+        try:
+            inline = inline_live_ops(root)
+            generated = _parse_generated_at(inline)
+            inline_age = time.time() - generated if generated else None
+            if inline and inline_age is not None and inline_age <= max_age:
+                meta.update(
+                    source="inline_snapshot",
+                    stale=False,
+                    generated_at=inline.get("generated_at"),
+                )
+                return {"live_ops": inline, "meta": meta}
+        except Exception:
+            pass
     if cached_ops:
         meta.update(source="dashboard.json", stale=True, generated_at=cached_ops.get("generated_at"))
         return {"live_ops": cached_ops, "meta": meta}

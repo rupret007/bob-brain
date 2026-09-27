@@ -239,7 +239,7 @@ class BobVoice {
       let batch = [];
       const send = entries => this.api("/api/voice/transcript", { call_id: payload.call_id, entries });
       for (const entry of payload.entries) {
-        if (batch.length && new TextEncoder().encode(JSON.stringify([...batch, entry])).length > 48000) {
+        if (batch.length >= 40 || (batch.length && new TextEncoder().encode(JSON.stringify([...batch, entry])).length > 48000)) {
           await send(batch); batch = [];
         }
         batch.push(entry);

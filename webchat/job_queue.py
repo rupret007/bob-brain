@@ -11,8 +11,8 @@ import time
 from pathlib import Path
 from failover import atomic_text
 
-# Speech transcription can put a comma where typed commands use a colon.
-START = re.compile(r"^(?:start|queue|run) (?:a )?job[:,\s]+(.+)$", re.I | re.S)
+# Speech transcription can put a comma or period where typed commands use a colon.
+START = re.compile(r"^(?:start|queue|run) (?:a )?job[:,.\s]+(.+)$", re.I | re.S)
 CONFIRM = re.compile(r"^yes[,.]?\s*(?:start|queue|run)\s+(?:the\s+)?job\s*$", re.I)
 CONFIRM_WITH_PROPOSAL = re.compile(
     r"^yes[,.]?\s*(?:start|queue|run)\s+(?:the\s+)?job(?:\s+proposal\s+"

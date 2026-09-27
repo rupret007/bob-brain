@@ -49,6 +49,35 @@ class VoiceTests(fixtures.Fixture):
         with self.assertRaises(VoiceError) as cm: self.chat.voice.start(self.identifier, self.owner)
         self.assertEqual(cm.exception.status, 409)
 
+    def test_voice_inherits_current_saved_permissions_after_typed_resume(self):
+        self.chat.voice.end(self.call, self.owner)
+        for text in ("Hold off on Web Bob.", "Resume Web Bob."):
+            self.chat.submit(self.identifier, text, str(uuid.uuid4()))
+        self.chat.voice.start(self.identifier, self.owner)
+        prompt = self.configs[-1]["systemInstruction"]["parts"][0]["text"]
+        self.assertIn("Hold off on Web Bob.", prompt)
+        permissions = json.loads(prompt.split("SERVER SAVED CHAT PERMISSIONS (override older history and snapshots):\n")[1])
+        self.assertEqual(permissions["holds"], {})
+        self.assertEqual(permissions["last_permission"]["action"], "resume")
+
+    def test_spoken_hold_and_resume_use_chat_permissions(self):
+        def ask(text, order):
+            entry = self.entry(text, order=order)
+            self.save_entries(entry)
+            result = self.chat.voice.tool(self.call, self.owner, entry["turn_id"])
+            return result["conversation"]["messages"][-1]
+        held = ask("Hold off on Web Bob.", 0)
+        self.assertIn("On hold: Web Bob", held["content"])
+        blocked = ask("Start a job: improve the Web Bob mobile call tests.", 1)
+        self.assertIn("On hold: Web Bob", blocked["content"])
+        self.assertFalse(blocked.get("task_id"))
+        ask("Resume Web Bob.", 2)
+        queued = ask("Start a job: improve the Web Bob mobile call tests.", 3)
+        self.assertEqual(queued["provider"], "dispatcher")
+        self.assertIn("Queued", queued["content"])
+        self.assertTrue(queued["task_id"])
+        self.assertEqual(self.fake.calls, [])
+
     def test_transcript_idempotency_order_redaction_and_restart(self):
         user = self.entry("Remember the amber sailboat.")
         reply = self.entry("The amber sailboat.", role="assistant", turn=user["turn_id"], interrupted=True)
@@ -86,7 +115,7 @@ class VoiceTests(fixtures.Fixture):
         with self.assertRaises(VoiceError): self.save_entries(dict(user, content="start a job: changed request"))
 
     def test_spoken_job_punctuation_uses_same_dispatcher_without_rewriting(self):
-        for order, separator in enumerate((": ", ", ", " ")):
+        for order, separator in enumerate((": ", ", ", ". ", " ")):
             with self.subTest(separator=separator):
                 user = self.entry("Start a job" + separator + "write unit tests for a pretend blue widget.", order=order)
                 self.save_entries(user)
@@ -96,7 +125,8 @@ class VoiceTests(fixtures.Fixture):
                 self.assertTrue(receipt["task_id"])
                 saved = next(m for m in result["conversation"]["messages"] if m.get("request_id") == result["request_id"] and m["role"] == "user")
                 self.assertEqual(saved["content"], user["content"])
-        for text in ("Don't start a job, write tests.", "Should I start a job, write tests?", 'Say "start a job, write tests".'):
+        for text in ("Don't start a job, write tests.", "Should I start a job, write tests?",
+                     "Start a job? Write tests?", 'Say "start a job, write tests".'):
             self.assertIsNone(parse_start(text))
 
     def test_tool_refuses_merge_and_requires_saved_speech(self):

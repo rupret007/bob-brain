@@ -101,6 +101,18 @@ test('transcript retry retains dirty data and uses one flusher',async()=>{
   await f.controller.save(s);assert.equal(f.controller.pending.length,1);assert.equal(f.states.at(-1).phase,'unsaved');
   failing=false;await f.controller.retrySave();assert.equal(f.controller.pending.length,0);await f.controller.stop();
 });
+test('long calls save every turn within server row and UTF-8 keepalive limits',async()=>{
+  const f=fixture();
+  const entries=Array.from({length:120},(_,i)=>({turn_id:crypto.randomUUID(),role:i%2?'assistant':'user',order:i,
+    content:i<80?'A short spoken turn.':'船'.repeat(700),version:1}));
+  f.controller.pending.push({call_id:'fixture',entries});
+  await f.controller.flush();
+  const requests=f.requests.filter(r=>r.route.endsWith('/transcript'));
+  assert.ok(requests.length>3);
+  assert.ok(requests.every(r=>r.data.entries.length<=40 && Buffer.byteLength(JSON.stringify(r.data))<49000));
+  assert.deepEqual(requests.flatMap(r=>Array.from(r.data.entries)),entries);
+  assert.equal(f.controller.pending.length,0);
+});
 test('tool dispatch takes saved spoken turn, never model arguments',async()=>{
   const f=fixture({api:async(route)=>{
     if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};

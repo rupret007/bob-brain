@@ -1,6 +1,6 @@
 # Web Bob voice parity — 2026-09-27
 
-Branch: `draft/webbob-voice-0927`. PR target: **`draft/webbob-clean-0927`**, draft only.
+Branch: `draft/webbob-voice-0927`. [Draft PR #9](https://github.com/rupret007/bob-brain/pull/9) targets **`draft/webbob-clean-0927`**. Integrated that branch through `7ab7f13`, including its current phone tabs and saved chat permission rules.
 
 Read `/Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/WEBBOB-PARITY-0927.md` before implementation. All implementation, fixtures, private server data and screenshots live in this worktree. No production service was changed, stopped, restarted or deployed; no existing tailnet serving configuration was changed. The proof servers do not start workers, provider probes or service supervisors. The test jobs remain queued only in private fixture roots.
 
@@ -14,9 +14,9 @@ The implementation follows Google's [Live WebSocket protocol](https://ai.google.
 
 ## Chat parity and persistence
 
-Voice receives the same redacted profile, handback, status and recent conversation context as chat. Its `ask_bob` tool takes no model-authored command arguments: the server dispatches the **saved spoken transcript** through `Chat.submit`. Existing task routing, draft-only rules, memory behavior and action receipts apply. Request IDs are deterministic per spoken turn, so replaying a tool request does not queue another job. Recognition punctuation such as “Start a job, write tests” is now accepted by the shared parser without rewriting the saved request.
+Voice receives the same redacted profile, handback, status, recent conversation context and current saved hold/resume permissions as chat. Its `ask_bob` tool takes no model-authored command arguments: the server dispatches the **saved spoken transcript** through `Chat.submit`. Existing task routing, draft-only rules, memory behavior and action receipts apply. Request IDs are deterministic per spoken turn, so replaying a tool request does not queue another job. Recognition punctuation such as “Start a job, write tests” and “Start a job. Write tests” is now accepted by the shared parser without rewriting the saved request. Negated, quoted and question-prefixed requests remain excluded.
 
-Transcripts are saved during the call in the existing private conversation files. Versioned writes prevent an older network response from replacing newer words; message identity prevents duplicate transcript bubbles on retries. The original server tool receipt and the spoken paraphrase both remain available. A tool worker pins its input context and updates its own reply ID, so a later utterance cannot replace either its input or its result. Interrupted output is marked; generated transcripts can include words that were not played.
+Transcripts are saved during the call in the existing private conversation files. Versioned writes prevent an older network response from replacing newer words; message identity prevents duplicate transcript bubbles on retries. Long calls are batched within both the server's 40-row limit and browser keepalive byte limit. The original server tool receipt and the spoken paraphrase both remain available. A tool worker pins its input context and updates its own reply ID, so a later utterance cannot replace either its input or its result. Interrupted output is marked; generated transcripts can include words that were not played.
 
 Voice endpoints retain session authentication, origin/Host checks and CSRF protection, and calls belong to the login session that created them. There are at most two active calls, a 45-second renewable lease for abandoned tabs, a ten-minute token lifetime, and no automatic call restart. Hangup closes microphone tracks, playback nodes, the AudioContext and the provider socket before awaiting transcript writes. Hangup sends the server release immediately even if saving is delayed. Failed transcript writes offer Retry save; unsaved audio is not recorded for later transcription. Interrupting audio does not undo an already authorized, queued job.
 
@@ -24,18 +24,21 @@ Voice endpoints retain session authentication, origin/Host checks and CSRF prote
 
 | Check | Result | Evidence |
 | --- | --- | --- |
-| Entire Python webchat suite | **186 passed** | [test log](webbob-voice-0927/webchat-tests.txt) |
+| Entire Python webchat suite | **254 passed** | [test log](webbob-voice-0927/webchat-tests.txt) |
 | Entire services suite | **111 passed** | [test log](webbob-voice-0927/services-tests.txt) |
-| Voice JavaScript / AudioWorklet tests | **17 passed** | [test log](webbob-voice-0927/voice-js-tests.txt) |
+| Voice JavaScript / AudioWorklet tests | **18 passed** | [test log](webbob-voice-0927/voice-js-tests.txt) |
+| Updated base's full tab browser regression | Passed: 23 layout checks and 11 behavior checks, including 320/390/430 px widths | [receipt](webbob-voice-0927/tabs-regression.json) |
 | Syntax and whitespace | Passed: JS syntax checks and `git diff --check` | Commands below |
 | Chromium + real Live API | Passed: input/output audio, memory, barge-in, actual dispatcher receipt, hangup cleanup, reload, denied microphone | [receipt](webbob-voice-0927/chromium-proof.json) |
 | WebKit 26 + real Live API | Passed with an iPhone viewport; same call scenarios | [receipt](webbob-voice-0927/webkit-proof.json) |
 
-The tests cover authentication, call ownership, constrained credentials, transcript ordering/redaction/replay, immutable dispatched requests, stale transcript versions, abandoned-call leases, pinned tool context, late microphone/token promises, permission denial, transport backpressure, cancelled tools, output interruption, Safari suspension, delayed-save hangup, and resampling at 16/44.1/48 kHz. The services test fixture now points its sandbox at its own core, allowing its real commit/push boundary test to run with `TMPDIR` inside this worktree; production sandbox behavior is unchanged.
+The tests cover authentication, call ownership, constrained credentials, transcript ordering/redaction/replay, immutable dispatched requests, stale transcript versions, long-call batching, abandoned-call leases, pinned tool context, spoken hold/resume parity, late microphone/token promises, permission denial, transport backpressure, cancelled tools, output interruption, Safari suspension, delayed-save hangup, and resampling at 16/44.1/48 kHz. The services test fixture now points its sandbox at its own core, allowing its real commit/push boundary test to run with `TMPDIR` inside this worktree; production sandbox behavior is unchanged.
 
-The final proof instance is **`https://jeffs-mac-mini.tail758ab4.ts.net:54445`**, with a separate loopback HTTP listener and private data under `.voice-work/review-root`. Its certificate/key were written to ignored files in this worktree with `tailscale cert`; no `tailscale serve` command was run. This is a spare-port test instance, not the production URL. The private proof login is in `.voice-work/review-root/conductor/webchat/.password`; it is not committed or printed in evidence.
+The final proof instance is **`https://jeffs-mac-mini.tail758ab4.ts.net:54447`**, with a separate loopback HTTP listener and private data under `.voice-work/verified-root`. Its certificate/key were written to ignored files in this worktree with `tailscale cert`; no `tailscale serve` command was run. This is a spare-port test instance, not the production URL. The private proof login is in `.voice-work/verified-root/conductor/webchat/.password`; it is not committed or printed in evidence. Earlier instances created solely for this lane's tests were shut down after checking their process ID, command and worktree directory.
 
 Proof input is reproducible speech synthesized locally with macOS `say`, passed through a browser MediaStream and the production AudioWorklet. The provider connection, incoming audio, returned speech, playback scheduling, interruption event, tool dispatch and transcript persistence are real. An additional Chromium run exercised its native fake microphone capture API; see [native capture screenshot](webbob-voice-0927/live-mic-iphone-chromium.png). No physical microphone/speaker or physical iPhone was available to this runner. **Physical iPhone Safari permission prompts, speaker routing, echo cancellation and screen-lock behavior still need a device check before deployment.** Earlier WebKit harness failures came from its replaceable MediaDevices wrapper; the proof now injects synthetic input on the prototype and keeps the application's CSP enforced.
+
+The integration proof also exposed speech recognition's period separator, which is now covered by a parser regression. The proof checks a persisted dispatcher receipt and a completed spoken turn, allowing natural variations in the spoken acknowledgement instead of requiring Bob to say the literal word “queued.” [Source hashes](webbob-voice-0927/source-sha256.txt) identify the final implementation and proof scripts.
 
 ## Screenshots
 

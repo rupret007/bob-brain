@@ -52,6 +52,11 @@ class Fixture(unittest.TestCase):
         self.fake = FakeProviders()
         self.chat = Chat(self.folder, self.root, self.fake)
         self.identifier = self.chat.conversation_list()["conversations"][0]["id"]
+        # Unit/HTTP fixtures have a private queue and private host observations.
+        for name in ("_screen_sessions", "process_table"):
+            sampler = patch("live_status_snapshot." + name, return_value={})
+            sampler.start()
+            self.addCleanup(sampler.stop)
 
     def tearDown(self):
         self.fake.hold.set()
@@ -208,7 +213,8 @@ class HTTPTests(Fixture):
         self.assertIn("password", body)
         self.assertIn("no-store", headers["Cache-Control"])
         self.assertIn("frame-ancestors 'none'", headers["Content-Security-Policy"])
-        for path in ("/api", "/api/status", "/api/review", "/api/jobs", "/api/conversations", "/api/conversations/" + self.identifier):
+        for path in ("/api", "/api/status", "/api/review", "/api/jobs", "/api/jobs/activity", "/api/jobs/result?id=job",
+                     "/api/conversations", "/api/conversations/" + self.identifier):
             for method in ("GET", "POST"):
                 self.assertEqual(self.request(method, path)[0], 401, (method, path))
         self.assertEqual(self.request("GET", "/.password")[0], 404)
@@ -270,6 +276,26 @@ class HTTPTests(Fixture):
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(body)["messages"][-1]["content"], "A saved reply.")
 
+    def test_jobs_activity_and_result_are_read_only_and_redacted(self):
+        self.login()
+        journal = self.root / "conductor/state/queue.jsonl"
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        journal.write_text(json.dumps(dict(id="job", status="succeeded", title="Web Bob result", finished_at=time.time(),
+                                            result="Saved result " + self.chat.password)) + "\n")
+        before = journal.read_bytes()
+        code, _, body = self.request("GET", "/api/jobs/activity")
+        self.assertEqual(code, 200)
+        view = json.loads(body)
+        self.assertEqual(view["working"], [])
+        self.assertEqual(view["recently_finished"][0]["result_url"], "/api/jobs/result?id=job")
+        code, _, body = self.request("GET", "/api/jobs/result?id=job")
+        self.assertEqual(code, 200)
+        self.assertIn("Saved result", body)
+        self.assertNotIn(self.chat.password, body)
+        self.assertEqual(self.request("GET", "/api/jobs/result?id=missing")[0], 404)
+        self.assertEqual(before, journal.read_bytes())
+        self.assertEqual(self.fake.calls, [])
+
     def test_explicit_providers_reach_model_and_reject_unknown_provider(self):
         self.login()
         for provider in ("minimax", "gemini", "codex", "claude", "cursor"):
@@ -281,13 +307,36 @@ class HTTPTests(Fixture):
                 self.wait()
                 self.assertEqual(self.fake.calls[-1]["preferred_provider"], provider)
                 answer = self.chat.history(self.identifier)["messages"][-1]
-                self.assertIn("Answering provider: " + answer["provider"], answer["content"])
-                self.assertIn("Queue:", answer["content"])
+                self.assertIn("No jobs are waiting in the queue.", answer["content"])
+                self.assertNotIn("Answering provider:", answer["content"])
         for provider in ("grok", "unknown", None):
             self.assertEqual(self.request("POST", "/api/messages", {
                 "conversation_id": self.identifier, "message": "hello",
                 "request_id": str(uuid.uuid4()), "provider": provider})[0], 400)
         self.assertEqual(len(self.fake.calls), 5)
+
+    def test_progress_status_is_local_plain_and_does_not_start_duplicate_work(self):
+        from test_worker_activity import PS, SCREENS
+        from worker_activity import parse_processes
+        self.login()
+        with patch("live_status_snapshot._screen_sessions", return_value=SCREENS), \
+                patch("live_status_snapshot.process_table", return_value=parse_processes(PS)):
+            for text in ("The hold is lifted. Bob already started WebJam #161, AdoptIQ #26, StoryBoard #47, and Shelf #10 on Claude, "
+                         "so don't start duplicates. For anything new, use start a job: plus the task. When I ask for status, give it in plain words from the real queue.",
+                         "Ok great is it moving along now?"):
+                code, _, body = self.request("POST", "/api/messages", dict(conversation_id=self.identifier,
+                    message=text, request_id=str(uuid.uuid4())))
+                self.assertEqual(code, 202)
+                answer = json.loads(body)["messages"][-1]
+                self.assertEqual(answer["status"], "done")
+                if text.startswith("The hold"):
+                    self.assertEqual(answer["content"], "Ready when you are.")
+                else:
+                    self.assertIn("4 workers are running", answer["content"])
+                self.assertNotIn("start a job:", answer["content"])
+                self.assertNotIn("None", answer["content"])
+        self.assertEqual(self.fake.calls, [])
+        self.assertFalse((self.root / "conductor/state/queue.jsonl").exists())
 
     def test_tailnet_origin_and_secure_cookie(self):
         connection = http.client.HTTPConnection("127.0.0.1", self.port)
@@ -811,7 +860,7 @@ class HandbackJobTests(Fixture):
         self.assertEqual(assistant["status"], "done")
         self.assertEqual(assistant.get("provider"), "state")
         self.assertIn("mini", assistant["content"].lower())
-        self.assertIn("provider-health.json", assistant["content"])
+        self.assertNotIn("provider-health.json", assistant["content"])
         self.assertNotIn("tests running", assistant["content"])
 
     def test_panel_and_handback_api_shape(self):

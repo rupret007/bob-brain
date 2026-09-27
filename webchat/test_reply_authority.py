@@ -3,10 +3,18 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from reply_authority import enforce
+from reply_authority import enforce, operational_reply
+from test_worker_activity import PS, SCREENS
+from worker_activity import parse_processes
 
 
 class AuthorityTests(unittest.TestCase):
+    def setUp(self):
+        for name in ("_screen_sessions", "process_table"):
+            sampler = patch("live_status_snapshot." + name, return_value={})
+            sampler.start()
+            self.addCleanup(sampler.stop)
+
     def test_model_cannot_confirm_a_queue_write(self):
         for text in ("I've added this job to the builder inbox.", "The job I queued is still running.",
                      "I queued a council pass.", "Started on Claude — job abc123.",
@@ -21,6 +29,8 @@ class AuthorityTests(unittest.TestCase):
         for text in ("Got it — I’ll keep it short.", "Hi Jeff!", "A lease expires; a lock needs to be released.",
                      "Jobs wait in the queue until a worker is free.", "I can review PR #161.",
                      "A job is queued when every worker is busy.",
+                     "The video is paused. Press play to continue.",
+                     "Jobs can be paused before they start.",
                      "Here are the details:\n\n- First fact.\n- Second fact."):
             with self.subTest(text=text):
                 self.assertEqual(enforce(Path('/unused'), "Tell me more", dict(content=text, provider="gemini")), text)
@@ -48,10 +58,57 @@ class AuthorityTests(unittest.TestCase):
             with patch("live_status_snapshot._screen_sessions", return_value={}):
                 answer = enforce(root, "How everything going. We using all resources now?",
                                  dict(provider="gemini", content="Cursor is handling our chat; Gemini and MiniMax are still failing."))
-        self.assertIn("Answering provider: gemini", answer)
-        self.assertIn("gemini=unchecked", answer)
+        self.assertIn("Gemini — no recent reply verified", answer)
+        self.assertNotIn("Answering provider:", answer)
         self.assertNotIn("still failing", answer)
         self.assertNotIn("Cursor is handling", answer)
+
+    def test_exact_progress_followup_uses_workers_instead_of_provider_empty_queue_claim(self):
+        with tempfile.TemporaryDirectory() as folder, \
+                patch("live_status_snapshot._screen_sessions", return_value=SCREENS), \
+                patch("live_status_snapshot.process_table", return_value=parse_processes(PS)):
+            root = Path(folder)
+            (root / "conductor").mkdir()
+            (root / "conductor/jobs.jsonl").write_text('{"job_id":"shelf-load-1659","state":"harvested"}\n')
+            for text in ("Ok great is it moving along now?", "Is anything running?", "Are things making progress?", "What's running?",
+                         "Status without internal IDs or raw diagnostics, please"):
+                with self.subTest(text=text):
+                    answer = enforce(root, text, dict(provider="gemini", content=
+                        "Nothing is running. All lanes are ready. Use `start a job: task`."))
+                    self.assertIn("4 workers are running", answer)
+                    self.assertIn("Projects push — Claude (opus) — running for 24 min", answer)
+                    self.assertIn("Web Bob clean — Codex (gpt-fixture) — running for 18 min", answer)
+                    self.assertIn("Web Bob clean 2 — Codex — running for 12 min", answer)
+                    self.assertIn("Web Bob MiniMax — Codex — running for 8 min", answer)
+                    for hidden in ("None", "shelf-load-1659", "lane-", "History:", "provider:", "start a job:", "All lanes"):
+                        self.assertNotIn(hidden, answer)
+
+    def test_internal_details_and_answering_model_are_available_when_requested(self):
+        with tempfile.TemporaryDirectory() as folder, \
+                patch("live_status_snapshot._screen_sessions", return_value=SCREENS), \
+                patch("live_status_snapshot.process_table", return_value=parse_processes(PS)):
+            answer = operational_reply(Path(folder), "gemini", "Status with screen names and PIDs; who is answering?")
+        self.assertIn("lane-projects-push, 103", answer)
+        self.assertIn("Gemini answered this message.", answer)
+        self.assertNotIn("None", answer)
+
+    def test_unverified_screens_and_unavailable_checks_never_claim_idle(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for screens, processes in ((SCREENS, {}), ({}, None), (None, {})):
+                with self.subTest(screens=screens, processes=processes), \
+                        patch("live_status_snapshot._screen_sessions", return_value=screens), \
+                        patch("live_status_snapshot.process_table", return_value=processes):
+                    answer = operational_reply(Path(folder), "server")
+                    self.assertNotIn("I don't see active work", answer)
+                    self.assertNotIn("Yes", answer)
+                    self.assertNotIn("None", answer)
+                    self.assertIn("confirm", answer)
+
+    def test_special_job_syntax_is_removed_regardless_of_how_model_phrases_it(self):
+        for notice in ("Type `start a job: fix login`.", "Please submit using the start a job: prefix.",
+                       "To get things moving, please use `start a job: <task description>`."):
+            answer = enforce(Path('/unused'), "Hi Bob", dict(content="Hi Jeff! " + notice, provider="gemini"))
+            self.assertEqual(answer, "Hi Jeff!")
 
     def test_removing_a_footer_preserves_answer_formatting(self):
         useful = "A lease expires. A lock needs to be released.\n\n- First fact.\n- Second fact."
