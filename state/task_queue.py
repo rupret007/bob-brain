@@ -158,7 +158,8 @@ def group_complete(members):
 
 
 def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="analysis", source_file=None,
-            group_id=None, group_size=None, group_index=None, group_goal=None, title=None, local_suite=None):
+            group_id=None, group_size=None, group_index=None, group_goal=None, title=None, local_suite=None,
+            publish_project=None):
     worker = worker_name(worker)
     if worker == "mini":
         kind = "local"
@@ -168,6 +169,8 @@ def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="a
     if kind == "artifact" and not file_request(prompt):
         raise ValueError("Small file tasks require an explicit text and /tmp file destination")
     validate_worker(worker, kind)
+    if publish_project is not None and (kind != "coding" or publish_project not in ("WebJam", "AdoptIQ", "StoryBoard", "Shelf", "Web Bob")):
+        raise ValueError("Draft publication requires an explicit coding project")
     if group_id and (type(group_size) is not int or not 2 <= group_size <= 24 or
                      type(group_index) is not int or not 0 <= group_index < group_size):
         raise ValueError("A task group requires a valid size and unique subtask index")
@@ -178,8 +181,8 @@ def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="a
         if identifier in rows:
             row = rows[identifier]
             if (row["prompt"], row["requested_worker"], row["kind"], row.get("group_id"), row.get("group_size"),
-                row.get("group_index"), row.get("group_goal"), row.get("title"), row.get("local_suite")) != (
-                    prompt, worker, kind, group_id, group_size, group_index, group_goal, title, local_suite):
+                row.get("group_index"), row.get("group_goal"), row.get("title"), row.get("local_suite"), row.get("publish_project")) != (
+                    prompt, worker, kind, group_id, group_size, group_index, group_goal, title, local_suite, publish_project):
                 raise ValueError("This request ID already belongs to a different task")
             return row
         for member in (r for r in rows.values() if group_id and r.get("group_id") == group_id):
@@ -191,7 +194,7 @@ def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="a
                                  prompt=prompt, requested_worker=worker, kind=kind, source_file=source_file,
                                  status="queued", attempts=0, created_at=time.time(), delivered_at=None,
                                  group_id=group_id, group_size=group_size, group_index=group_index,
-                                 group_goal=group_goal, title=title, local_suite=local_suite,
+                                 group_goal=group_goal, title=title, local_suite=local_suite, publish_project=publish_project,
                                  tried_workers=[], max_attempts=max(MAX_ATTEMPTS, len(worker_order(kind))),
                                  worker=None, claim_token=None, lease_until=0, retry_at=0), "enqueued")
 

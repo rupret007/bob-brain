@@ -62,6 +62,12 @@ class DispatchTests(unittest.TestCase):
             queue.enqueue(self.root, "conversation", "one", "Different request")
         self.assertEqual(len(queue.tasks(self.root)), 1)
 
+    def test_queue_replay_cannot_add_publication_authority(self):
+        queue.enqueue(self.root, "conversation", "one", "Improve WebJam", kind="coding")
+        with self.assertRaises(ValueError):
+            queue.enqueue(self.root, "conversation", "one", "Improve WebJam", kind="coding", publish_project="WebJam")
+        self.assertIsNone(next(iter(queue.tasks(self.root).values()))["publish_project"])
+
     def test_only_allowed_workers_and_tool_routing(self):
         for worker in ("grok", "unknown", "Grok"):
             with self.assertRaises(ValueError):

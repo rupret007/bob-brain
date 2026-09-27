@@ -135,7 +135,7 @@ def main():
         checks = follow_through(client, root, checks_path, checks, sha)
         evidence["live_checks"] = checks
         require(checks["all_pass"], checks.get("failure", "Live checks failed"))
-        print("Review finished; both project jobs executed. Checking public Jobs UI.", flush=True)
+        print("Review finished; both project drafts pushed and verified. Checking public Jobs UI.", flush=True)
         screenshot = reviews / "WEBBOB-PARITY-JOBS-0927.png"
         origin = (root / "conductor/webchat/.public-origin").read_text().strip()
         env = dict(os.environ, BOB_PLAYWRIGHT_MODULE=str(root / "conductor/webchat/node_modules/playwright"))
@@ -153,7 +153,7 @@ def main():
               "PASS\nSHA: " + sha + "\nDraft PR: " + args.draft_pr + "\nJobs screenshot: " + str(screenshot) +
               "\nRollback: " + str(rollback) + "\nPR #161 actual reviewer: " + checks["checks"]["claude161"]["actual_worker"] +
               "\nTests: full webchat/services discovery + JavaScript; see reviews/WEBBOB-PARITY-TESTS-0927.txt\n" +
-              "Live checks: status, PR review completion, two executing project jobs, hold off/go, own build SHA, public assets and Jobs.\n")
+              "Live checks: status, PR review completion, two verified project draft pushes, hold off/go, own build SHA, public assets and Jobs.\n")
         print("PASS " + sha[:7] + " " + args.draft_pr + " " + str(screenshot), flush=True)
         return 0
     except Exception as exc:

@@ -19,6 +19,15 @@ NAMES = ["Web Bob", "WebJam", "AdoptIQ", "StoryBoard"]
 
 
 class IntentTests(Fixture):
+    def test_literal_project_push_saves_scoped_publication_authority(self):
+        receipt = self.submit("push WebJam and AdoptIQ")["messages"][-1]
+        rows = [queue.tasks(self.root)[identifier] for identifier in receipt["task_ids"]]
+        self.assertEqual({row["publish_project"] for row in rows}, {"WebJam", "AdoptIQ"})
+        single = self.submit("push WebJam")["messages"][-1]
+        self.assertEqual(queue.tasks(self.root)[single["task_id"]]["publish_project"], "WebJam")
+        local = self.submit("Improve WebJam")["messages"][-1]
+        self.assertIsNone(queue.tasks(self.root)[local["task_id"]]["publish_project"])
+
     def submit(self, text, request_id=None, **kwargs):
         value = self.chat.submit(self.identifier, text, request_id or str(uuid.uuid4()), **kwargs)
         self.wait()

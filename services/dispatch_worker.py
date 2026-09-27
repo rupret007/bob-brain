@@ -16,6 +16,7 @@ from lanes import ask, slot
 import mini_worker
 import result_acceptance
 import pr_evidence
+import draft_publish
 from result_acceptance import ResultRejected, blocked_answer
 from workspaces import prepare, git, analysis_workspace
 
@@ -126,6 +127,14 @@ def execute(identifier, token):
                            "Use only the assigned worktree " + str(cwd) + " on " + branch + ". "
                            "For code changes, commit locally and report the SHA, changed paths and tests.\n\n")
             prompt += "TASK:\n" + row["prompt"]
+            if row.get("publish_project"):
+                prompt += ("\nThe server has Jeff's explicit authorization to push this project's assigned draft branch. "
+                           "Your part is one useful, bounded improvement: inspect, fix, test and commit locally. "
+                           "The server will perform and verify the draft push after accepting your local result. "
+                           "Do not push yourself or mark the task blocked because you did not push. Return changes, tests and SHA in under 150 words.")
+            if review:
+                prompt += ("\nReturn a concise code review, at most 250 words. Lead with concrete bugs/risks and changed paths/lines, "
+                           "or explicitly state no concrete defects found. Do not recap every changed file. End with testing limits.")
             if row["kind"] == "artifact":
                 contents, destination = task_queue.file_request(row["prompt"])
                 target = Path(destination)
@@ -146,8 +155,8 @@ def execute(identifier, token):
                 metadata = review["metadata"]
                 if not any(file["path"] in answer for file in metadata["files"]):
                     raise ResultRejected("PR review did not cite any changed file")
-                answer += ("\n\nReview source: [PR #" + str(metadata["number"]) + "](" + metadata["url"] +
-                           ") @ `" + metadata["headRefOid"][:7] + "`. Static diff review by " + row["worker"] + ".")
+                answer = ("[PR #" + str(metadata["number"]) + "](" + metadata["url"] +
+                          ") @ `" + metadata["headRefOid"][:7] + "` — static diff review by " + row["worker"] + ".\n\n" + answer)
             if row["kind"] == "artifact":
                 if target.is_symlink() or not target.is_file() or target.read_text().rstrip("\n") != contents:
                     raise ResultRejected("Worker did not write the requested file contents")
@@ -162,11 +171,22 @@ def execute(identifier, token):
             if row["worker"] == "mini" or row["kind"] == "artifact":
                 acceptance = dict(accepted=True, method="verified-execution")
             else:
+                acceptance_task = row["prompt"]
+                if row.get("publish_project"):
+                    acceptance_task += ("\nDelegated worker scope: inspect, fix, test and commit locally. "
+                                        "Evaluate that local work. The server, not this worker, performs and verifies the authorized draft push after acceptance.")
                 acceptance = result_acceptance.accept(
-                    row["prompt"], answer,
+                    acceptance_task, answer,
                     lambda instructions: ask(row["worker"], instructions, cwd=cwd, coding=False,
                                              timeout=120, purpose="result-acceptance", locked=True))
                 acceptance = json.loads(redact(json.dumps(acceptance)))
+            publication = None
+            if row.get("publish_project"):
+                if not task_queue.transition(ROOT, identifier, token, "heartbeat"):
+                    return 0
+                publication = draft_publish.publish(row, cwd, folder, read_json(CONDUCTOR / "services/projects.json", {}))
+                answer = ("Pushed [" + publication["project"] + " draft](" + publication["url"] + ") @ `" +
+                          publication["sha"][:7] + "`; remote SHA verified.\n\n" + answer)
             # The queue is the result outbox. A result file alone is never proof
             # of completion, and a superseded claim cannot publish a result.
             digest = hashlib.sha256(answer.encode()).hexdigest()
@@ -174,7 +194,7 @@ def execute(identifier, token):
             result = task_queue.transition(ROOT, identifier, token, "succeeded", result=answer,
                                            result_sha256=digest, worktree=str(cwd) if cwd else None,
                                            branch=branch, acceptance=acceptance,
-                                           review_source=review["metadata"] if review else None)
+                                           review_source=review["metadata"] if review else None, publication=publication)
             stopped.set()
             if result:
                 atomic_write(folder / "RESULT.md", answer + "\n")

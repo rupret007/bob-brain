@@ -68,7 +68,7 @@ def enqueue(root, conversation_id, intent):
     return [task_queue.enqueue(root, conversation_id, intent["request_id"] + ":" + str(index),
                                package["prompt"], worker=package["worker"], kind=package["kind"],
                                group_id=identifier, group_size=len(intent["subtasks"]), group_index=index,
-                               group_goal=intent["goal"], title=package["title"])
+                               group_goal=intent["goal"], title=package["title"], publish_project=package.get("publish_project"))
             for index, package in enumerate(intent["subtasks"])]
 
 
@@ -79,6 +79,10 @@ def merge_text(rows):
     outage. A group is committed as one assistant message by the chat outbox.
     """
     ordered = sorted(rows, key=lambda row: row["group_index"])
+    if all(row["status"] == "succeeded" and row.get("publication") for row in ordered):
+        return "Pushed " + str(len(ordered)) + " draft branches:\n\n" + "\n".join(
+            row["title"] + ": [" + row["publication"]["sha"][:7] + "](" + row["publication"]["url"] + ")."
+            for row in ordered)
     succeeded = sum(row["status"] == "succeeded" for row in ordered)
     parts = ["Max mode completed: " + str(succeeded) + "/" + str(len(rows)) + " subtasks succeeded."]
     for row in ordered:

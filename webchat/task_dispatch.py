@@ -139,6 +139,7 @@ def project_plan(root, description, names, worker):
     """One independently routable job per project, using existing capabilities."""
     goal = max_mode.MAX_MODE.sub("", description).strip(" :,-\n")
     improve = bool(PUSH.match(command(description)) or (max_mode.MAX_MODE.match(command(description)) and not WORK.match(goal)))
+    publish = bool(re.fullmatch(r"push\s+" + PROJECT_LIST + r"[.!]*", command(description), re.I))
     kind = "coding" if improve else task_kind(goal)
     eligible = task_queue.worker_order(kind)
     if worker != "auto":
@@ -168,7 +169,8 @@ def project_plan(root, description, names, worker):
                       if improve else "Carry out this request for " + project + " only.")
         prompt = ("Project: " + project + "\n" + assignment + "\nJeff's request: " + scoped +
                   "\nWork only on this project. Keep changes in drafts and report actual results. Do not start other workers.")
-        packages.append(dict(worker=lane, kind=kind, title=project, prompt=prompt))
+        packages.append(dict(worker=lane, kind=kind, title=project, prompt=prompt,
+                             publish_project=project if publish else None))
     return packages
 
 
@@ -209,6 +211,7 @@ class TaskDispatch:
             self.conversations[identifier] = conversation
             return self.public(conversation)
         try:
+            publish_project = None
             maximum = worker == "max"
             project_batch = len(names) >= 2
             worker = "auto" if maximum else task_queue.worker_name(worker)
@@ -228,6 +231,7 @@ class TaskDispatch:
             elif names and PUSH.match(command(description)):
                 package = project_plan(self.root, description, names, worker)[0]
                 description, worker, kind = package["prompt"], package["worker"], package["kind"]
+                publish_project = package.get("publish_project")
             elif maximum:
                 goal, subtasks = max_mode.plan(self.root, description, kind)
         except ValueError as exc:
@@ -237,7 +241,7 @@ class TaskDispatch:
             return self.public(conversation)
         # Save the originating message AND intent before the queue side effect.
         # Startup/reconciliation retries this idempotently after either write fails.
-        intent = dict(prompt=description, worker=worker, kind=kind, request_id=request_id)
+        intent = dict(prompt=description, worker=worker, kind=kind, request_id=request_id, publish_project=publish_project)
         if maximum or project_batch:
             intent.update(goal=goal, subtasks=subtasks)
         if project_batch:
@@ -278,7 +282,7 @@ class TaskDispatch:
                         changed = True
                         continue
                     row = task_queue.enqueue(self.root, identifier, intent["request_id"], intent["prompt"],
-                                             worker=intent["worker"], kind=intent["kind"])
+                                             worker=intent["worker"], kind=intent["kind"], publish_project=intent.get("publish_project"))
                     message.update(task_id=row["id"], status="done", provider="dispatcher",
                                    content=task_receipt(row),
                                    action_card={"id": message["request_id"], "state": "queued", "executable": False,

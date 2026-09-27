@@ -193,7 +193,7 @@ def verify_four(client, root, output):
     return evidence
 
 
-def follow_through(client, root, output, evidence, expected_sha, timeout=360):
+def follow_through(client, root, output, evidence, expected_sha, timeout=1200):
     """Queue acceptance alone is not a release pass; observe execution and delivery."""
     redact = Redactor(root, client.password_file.read_text().strip())
     evidence["initial_acceptance_all_pass"] = evidence["all_pass"]
@@ -218,7 +218,7 @@ def follow_through(client, root, output, evidence, expected_sha, timeout=360):
                 case = evidence["checks"][name]
                 jobs = [rows[row["id"]] for row in case["jobs"]]
                 case["execution"] = [{key: job.get(key) for key in
-                    ("id", "requested_worker", "worker", "status", "attempts", "execution_started_at", "error", "acceptance", "review_source")}
+                    ("id", "requested_worker", "worker", "status", "attempts", "execution_started_at", "error", "acceptance", "review_source", "publication")}
                     for job in jobs]
                 for job in jobs:
                     require(job["status"] not in ("failed", "cancelled"), name + ": " + job["id"] + " " + str(job.get("error")))
@@ -234,12 +234,17 @@ def follow_through(client, root, output, evidence, expected_sha, timeout=360):
                         require(bool(delivered) and job["result"] in delivered[-1]["content"], "claude161: final review not delivered")
                         case["result"] = job["result"]
                         case["actual_worker"] = job["worker"]
-                elif any(not job.get("execution_started_at") for job in jobs):
-                    ready = False
+                else:
+                    for job in jobs:
+                        if job["status"] != "succeeded":
+                            ready = False
+                        else:
+                            require(job.get("publication", {}).get("sha"), "push2: no verified draft push for " + job["id"])
+                            require(job["publication"]["branch"] == "draft/" + job["id"], "push2: wrong draft branch")
             save()
             if ready:
                 break
-            require(time.monotonic() < deadline, "execution: timed out waiting for PR review completion and both project jobs to execute")
+            require(time.monotonic() < deadline, "execution: timed out waiting for PR review and both verified draft pushes")
             time.sleep(2)
         evidence["all_pass"] = True
     except Exception as exc:
