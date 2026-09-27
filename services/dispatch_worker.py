@@ -14,6 +14,8 @@ from pathlib import Path
 from state import CONDUCTOR, ROOT, atomic_write, lock, read_json
 from lanes import ask, slot
 import mini_worker
+import result_acceptance
+from result_acceptance import ResultRejected, blocked_answer
 from workspaces import prepare, git
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
@@ -57,12 +59,6 @@ def redact(text):
                   "[secret removed]", text)
 
 
-def blocked_answer(answer):
-    markers = re.findall(r"(?im)^\s*(?:```\s*)?(?:#{1,6}\s*)?(?:\*\*)?BLOCKER\s*:\s*([^\n]*)", answer)
-    return any(not re.match(r"(?i)(?:none\b|no blockers?\b|not blocked\b)", text.strip(" *\t"))
-               for text in markers)
-
-
 def execute(identifier, token):
     row = task_queue.tasks(ROOT).get(identifier)
     if not row or row.get("claim_token") != token or row["status"] not in task_queue.ACTIVE:
@@ -70,13 +66,19 @@ def execute(identifier, token):
     stopped = threading.Event()
     heartbeat = None
     owns_task = False
+    answer = ""
     try:
         with contextlib.ExitStack() as stack:
             stack.enter_context(lock("dispatch-" + identifier, blocking=False))
             owns_task = True
             stack.enter_context(slot(row["worker"]))
-            project, repo = task_repository(row["prompt"])
-            if project.lower() == "webjam" and row["kind"] == "coding":
+            api_only = row["worker"] in task_queue.API_WORKERS
+            kind = task_queue.task_kind(row["kind"], row["prompt"])
+            if api_only and kind != "analysis":
+                raise ResultRejected(row["worker"] + " is API-only; this task needs files or command execution. "
+                                     "Choose codex or cursor-agent, or supply the evidence in the request.")
+            project, repo = task_repository(row["prompt"]) if not api_only else (None, None)
+            if project and project.lower() == "webjam" and row["kind"] == "coding":
                 stack.enter_context(lock("webjam-coder", blocking=False))
                 from jobs import external_webjam_lease
                 from runtime import screen_sessions
@@ -102,18 +104,20 @@ def execute(identifier, token):
             heartbeat.start()
             folder = CONDUCTOR / "state/task-runs" / identifier
             folder.mkdir(parents=True, exist_ok=True)
-            branch = "draft/" + identifier
-            record = dict(repo=str(repo), worktree=str(ROOT / "workspaces" / identifier),
-                          branch=branch, job_dir=str(folder))
+            branch, cwd = None, None
             coding = row["kind"] in ("coding", "artifact")
-            cwd = Path(__file__).resolve().parents[1] if row["worker"] == "mini" else prepare_task(record, coding)
             prompt = ("Web Bob assigned this task from Jeff. Complete it and return the actual result in your final answer. "
                       "Do not merely propose a plan or claim another worker will do it. If blocked, begin BLOCKER:. "
-                      "Keep all work local: never push or create/modify a PR. "
-                      "Use only the assigned worktree " + str(cwd) + " on " + branch + ". "
-                      "For code changes, commit locally and report the SHA, changed paths and tests. "
-                      "For analysis, use the evidence in the request; do not invent repository observations.\n\n"
-                      "TASK:\n" + row["prompt"])
+                      "Use the supplied evidence; do not invent observations.\n\n")
+            if not api_only and row["worker"] != "mini":
+                branch = "draft/" + identifier
+                record = dict(repo=str(repo), worktree=str(ROOT / "workspaces" / identifier),
+                              branch=branch, job_dir=str(folder))
+                cwd = prepare_task(record, coding)
+                prompt += ("Keep all work local: never push or create/modify a PR. "
+                           "Use only the assigned worktree " + str(cwd) + " on " + branch + ". "
+                           "For code changes, commit locally and report the SHA, changed paths and tests.\n\n")
+            prompt += "TASK:\n" + row["prompt"]
             if row["kind"] == "artifact":
                 contents, destination = task_queue.file_request(row["prompt"])
                 target = Path(destination)
@@ -129,24 +133,33 @@ def execute(identifier, token):
                                 timeout=90 if row["kind"] == "artifact" else 1800 if coding else 240,
                                 purpose="small-file" if row["kind"] == "artifact" else "small-review" if row["worker"] == "claude" else "webbob-" + identifier,
                                 locked=True)).strip()
-            if not answer or blocked_answer(answer):
-                raise RuntimeError(answer[:1500] or "Worker returned an empty answer")
+            result_acceptance.check_answer(row["prompt"], answer)
             if row["kind"] == "artifact":
-                if target.is_symlink() or target.read_text().rstrip("\n") != contents:
-                    raise RuntimeError("Worker did not write the requested file contents")
+                if target.is_symlink() or not target.is_file() or target.read_text().rstrip("\n") != contents:
+                    raise ResultRejected("Worker did not write the requested file contents")
                 if target.stat().st_mtime_ns == previous_mtime:
-                    raise RuntimeError("Worker left the preexisting file unchanged; no write verified")
+                    raise ResultRejected("Worker left the preexisting file unchanged; no write verified")
                 answer += "\n\nServer verified file: " + destination + "; SHA-256: " + hashlib.sha256(target.read_bytes()).hexdigest()
             if coding:
                 if git(cwd, "branch", "--show-current") != branch:
-                    raise RuntimeError("Worker changed its assigned draft branch")
+                    raise ResultRejected("Worker changed its assigned draft branch")
                 if git(cwd, "status", "--porcelain", "--untracked-files=normal"):
-                    raise RuntimeError("Worker left uncommitted changes; task is not complete")
+                    raise ResultRejected("Worker left uncommitted changes; task is not complete")
+            if row["worker"] == "mini" or row["kind"] == "artifact":
+                acceptance = dict(accepted=True, method="verified-execution")
+            else:
+                acceptance = result_acceptance.accept(
+                    row["prompt"], answer,
+                    lambda instructions: ask(row["worker"], instructions, cwd=cwd, coding=False,
+                                             timeout=120, purpose="result-acceptance", locked=True))
+                acceptance = json.loads(redact(json.dumps(acceptance)))
             # The queue is the result outbox. A result file alone is never proof
             # of completion, and a superseded claim cannot publish a result.
             digest = hashlib.sha256(answer.encode()).hexdigest()
+            acceptance["result_sha256"] = digest
             result = task_queue.transition(ROOT, identifier, token, "succeeded", result=answer,
-                                           result_sha256=digest, worktree=str(cwd), branch=branch)
+                                           result_sha256=digest, worktree=str(cwd) if cwd else None,
+                                           branch=branch, acceptance=acceptance)
             stopped.set()
             if result:
                 atomic_write(folder / "RESULT.md", answer + "\n")
@@ -155,6 +168,11 @@ def execute(identifier, token):
         if owns_task:
             task_queue.transition(ROOT, identifier, token, "busy", error="Waiting for the shared worker lane")
         return 0
+    except ResultRejected as exc:
+        message = redact(str(exc))[:1500]
+        task_queue.transition(ROOT, identifier, token, "rejected", error=message, rejected_result=answer,
+                              acceptance=dict(accepted=False, reason=message))
+        return 1
     except Exception as exc:
         message = redact(str(exc)) if isinstance(exc, RuntimeError) else type(exc).__name__
         task_queue.transition(ROOT, identifier, token, "retry", error=message[:1500])

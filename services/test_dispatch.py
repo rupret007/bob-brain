@@ -24,6 +24,7 @@ import runtime
 import state
 import command
 import workspaces
+import result_acceptance
 from web_dispatch import task_queue as queue
 
 
@@ -40,6 +41,11 @@ class DispatchTests(unittest.TestCase):
                     self.patches.append(patch.object(module, name, value))
         for item in self.patches:
             item.start()
+        # Most tests exercise queue/lease behavior. Acceptance has its own
+        # task/answer cases below, without paid model calls in the unit suite.
+        self.acceptance = patch.object(result_acceptance, "accept", return_value={"accepted": True, "method": "test-review"})
+        self.acceptance.start()
+        self.addCleanup(self.acceptance.stop)
 
     def tearDown(self):
         for item in reversed(self.patches):
@@ -225,7 +231,7 @@ class DispatchTests(unittest.TestCase):
         claim = queue.claim(self.root, 'claude')
         with patch.object(dispatch_worker, 'prepare_task', return_value=self.root), patch.object(dispatch_worker, 'ask', return_value='Wrote the file.'):
             self.assertEqual(dispatch_worker.execute(claim['id'], claim['claim_token']), 1)
-        self.assertEqual(queue.tasks(self.root)[row['id']]['status'], 'queued')
+        self.assertEqual(queue.tasks(self.root)[row['id']]['status'], 'failed')
 
     def test_busy_lane_does_not_spend_attempt_or_run_model(self):
         self.enqueue(worker="gemini")
@@ -267,7 +273,7 @@ class DispatchTests(unittest.TestCase):
         with patch.object(dispatch_worker, "prepare_task", return_value=self.root), patch.dict(os.environ, {"GEMINI_API_KEY": "private-test-credential"}), patch.object(dispatch_worker, "ask", return_value="BLOCKER: private-test-credential"):
             self.assertEqual(dispatch_worker.execute(row["id"], row["claim_token"]), 1)
         result = queue.tasks(self.root)[row["id"]]
-        self.assertEqual(result["status"], "queued")
+        self.assertEqual(result["status"], "failed")
         self.assertNotIn("private-test-credential", (self.core / "state/queue.jsonl").read_text())
 
     def test_coding_without_commit_is_not_success(self):
@@ -275,7 +281,98 @@ class DispatchTests(unittest.TestCase):
         row = queue.claim(self.root, "codex")
         with patch.object(dispatch_worker, "prepare_task", return_value=self.root), patch.object(dispatch_worker, "ask", return_value="I made changes"), patch.object(dispatch_worker, "git", side_effect=["draft/" + row["id"], " M file.py"]):
             dispatch_worker.execute(row["id"], row["claim_token"])
-        self.assertEqual(queue.tasks(self.root)[row["id"]]["status"], "queued")
+        self.assertEqual(queue.tasks(self.root)[row["id"]]["status"], "failed")
+
+    def test_api_only_prompt_has_no_workspace_framing_in_either_call(self):
+        import api
+        self.acceptance.stop()
+        for worker in queue.API_WORKERS:
+            with self.subTest(worker=worker):
+                prompt = "Write one sentence confirming you ran. Include the exact phrase 'proof " + worker + "'."
+                answer = "I ran and confirm proof " + worker + "."
+                task = queue.enqueue(self.root, "conversation", worker, prompt, worker=worker)
+                row = queue.claim(self.root, worker)
+                with patch.object(dispatch_worker, "prepare_task") as prepare, \
+                        patch.object(dispatch_worker, "task_repository") as repository, \
+                        patch.object(api, "model_call", side_effect=[answer, '{"accepted": true, "reason": "Confirms execution with the requested phrase."}']) as call:
+                    self.assertEqual(dispatch_worker.execute(row["id"], row["claim_token"]), 0)
+                prepare.assert_not_called()
+                repository.assert_not_called()
+                self.assertEqual(call.call_count, 2)
+                for invocation in call.call_args_list:
+                    instructions = invocation.args[1]
+                    self.assertNotIn("worktree", instructions.lower())
+                    self.assertNotIn("filesystem", instructions.lower())
+                    self.assertNotIn(str(self.root), instructions)
+                    self.assertNotIn("draft/", instructions)
+                result = queue.tasks(self.root)[task["id"]]
+                self.assertEqual(result["status"], "succeeded")
+                self.assertIsNone(result["worktree"])
+                self.assertIsNone(result["branch"])
+                self.assertEqual(result["acceptance"]["result_sha256"], result["result_sha256"])
+
+    def test_refusal_with_verification_phrase_is_terminal_without_review(self):
+        prompt = "Write one sentence confirming you ran. Include the exact phrase 'WEBBOB-VERIFY5-0927-d8f5a3e9 minimax'."
+        row = queue.enqueue(self.root, "conversation", "refusal", prompt, worker="minimax")
+        claim = queue.claim(self.root, "minimax")
+        answer = ("I cannot access or work with the Git worktree at `/private/workspaces/job` "
+                  "or perform the described actions, as I don't have access to external file systems.\n\n"
+                  "However, I can help you with answering questions.\n\n"
+                  "**Verification phrase (as requested):** `WEBBOB-VERIFY5-0927-d8f5a3e9 minimax`")
+        with patch.object(dispatch_worker, "ask", return_value=answer) as call:
+            self.assertEqual(dispatch_worker.execute(row["id"], claim["claim_token"]), 1)
+        self.assertEqual(call.call_count, 1)
+        result = queue.tasks(self.root)[row["id"]]
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["attempts"], 1)
+        self.assertEqual(result["rejected_result"], answer)
+        self.assertFalse(result["acceptance"]["accepted"])
+        self.assertFalse((self.core / "state/task-runs" / row["id"] / "RESULT.md").exists())
+        self.assertIsNone(queue.claim(self.root, "minimax", now=time.time() + 1000))
+        self.assertIsNone(queue.transition(self.root, row["id"], claim["claim_token"], "succeeded", result=answer))
+
+    def test_off_topic_answer_or_unverifiable_review_cannot_succeed(self):
+        self.acceptance.stop()
+        for index, review in enumerate((
+                '{"accepted": false, "reason": "Answer describes gardening instead of reviewing queue evidence."}',
+                "Not JSON", '{"accepted": "true", "reason": "wrong type"}', RuntimeError("review unavailable"))):
+            with self.subTest(review=review):
+                self.enqueue("rejected-" + str(index), worker="minimax")
+                row = queue.claim(self.root, "minimax")
+                answer = "Tomatoes grow best with enough sunlight and regular watering."
+                with patch.object(dispatch_worker, "ask", side_effect=[answer, review]) as ask:
+                    self.assertEqual(dispatch_worker.execute(row["id"], row["claim_token"]), 1)
+                self.assertEqual(ask.call_count, 2)
+                self.assertEqual(ask.call_args.kwargs["purpose"], "result-acceptance")
+                result = queue.tasks(self.root)[row["id"]]
+                self.assertEqual(result["status"], "failed")
+                self.assertNotIn("result", result)
+                self.assertEqual(result["rejected_result"], answer)
+                self.assertFalse((self.core / "state/task-runs" / row["id"] / "RESULT.md").exists())
+
+    def test_file_inspection_routes_to_tools_and_api_selection_explains_limit(self):
+        prompt = "Read services/dispatch_worker.py and summarize the failure path."
+        row = queue.enqueue(self.root, "conversation", "inspection", prompt)
+        self.assertEqual(row["kind"], "inspection")
+        for worker in ("gemini", "minimax", "claude"):
+            self.assertIsNone(queue.claim(self.root, worker))
+        self.assertIsNotNone(queue.claim(self.root, "codex"))
+        for worker in queue.API_WORKERS:
+            with self.assertRaisesRegex(ValueError, "API-only"):
+                queue.enqueue(self.root, "conversation", worker, prompt, worker=worker)
+
+    def test_old_misclassified_file_task_fails_before_an_api_call(self):
+        task = self.enqueue(worker="minimax")
+        claim = queue.claim(self.root, "minimax")
+        queue.transition(self.root, task["id"], claim["claim_token"], "running",
+                         prompt="Read /tmp/evidence.txt and summarize it.")
+        with patch.object(dispatch_worker, "ask") as ask, patch.object(dispatch_worker, "prepare_task") as prepare:
+            self.assertEqual(dispatch_worker.execute(task["id"], claim["claim_token"]), 1)
+        ask.assert_not_called()
+        prepare.assert_not_called()
+        result = queue.tasks(self.root)[task["id"]]
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("API-only", result["error"])
 
     def test_runner_dispatches_on_every_cycle_despite_legacy_cadence(self):
         state.write_json(self.core / "dispatch-schedule.json", {"next_legacy_tick": time.time() + 60})

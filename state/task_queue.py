@@ -11,6 +11,7 @@ import uuid
 from pathlib import Path
 
 MODEL_WORKERS = ("codex", "claude", "cursor", "gemini", "minimax")
+API_WORKERS = ("gemini", "minimax")
 WORKERS = (*MODEL_WORKERS, "mini")
 CONCURRENCY = {"gemini": 3, "minimax": 3}
 ACTIVE = ("claimed", "running")
@@ -23,6 +24,54 @@ def file_request(prompt):
     """A small explicit temporary-file task may use any tool-capable CLI."""
     match = re.fullmatch(r"(?:please\s+)?write\s+([^\n]{1,1000}?)\s+to\s+(/tmp/[A-Za-z0-9_-]+\.(?:txt|md|json))\s*", prompt, re.I)
     return (match[1].strip("\"'"), match[2]) if match else None
+
+
+def file_task_kind(prompt):
+    """Recognize requested local file access, not file names in supplied code.
+
+    Max-mode packages carry the overall goal before their own assignment. Only
+    the assignment determines whether that particular worker needs tools.
+    Ambiguous requests still have to pass task-aware result acceptance.
+    """
+    task = prompt.rsplit("Your independent subtask:", 1)[-1]
+    task = re.sub(r"```.*?```", "", task, flags=re.S)
+    task = re.split(r"\n\s*(?:SUPPLIED EVIDENCE|EVIDENCE|SOURCE|CODE)\s*:", task, maxsplit=1, flags=re.I)[0]
+    read = r"(?:read|open|inspect|review|audit|summari[sz]e|analy[sz]e|check|list|search)"
+    write = r"(?:write|save|create|edit|modify|update|delete|remove|append)"
+    # A path is an instruction target only after a task verb. 'Explain how to
+    # read a file' and pasted source mentioning paths remain answer-only work.
+    start = r"(?:^|[\n.;]\s*|\band\s+|\bthen\s+)\s*(?:please\s+)?"
+    qualifiers = r"(?:(?:the|this|that|local|actual|current|our|my|all|contents of|files in|source in|read-only)\s+){0,5}"
+    # Slash-separated concepts such as input/output are not local paths.
+    target = (r"[`\"']?(?:(?:/|\./|\.\./|~/)[\w./-]+|(?:[\w.-]+/)+[\w.-]+\.[\w]+\b|"
+              r"(?:services|webchat|conductor|state|src|lib|tests|docs|config|reviews)/[\w./-]*|"
+              r"[\w-]+\.(?:py|md|txt|json|js|ts|tsx|jsx|sh|yaml|yml|toml|csv|log)\b|"
+              r"(?:git\s+)?(?:worktree|checkout|repository|repo|directory|folder|files?)\b)")
+    if (re.search(start + write + r"\s+" + qualifiers + target, task, re.I) or
+            re.search(start + r"(?:write|save|create|append)\b[^\n]{0,120}\b(?:to|in|under|at)\s+" +
+                      qualifiers + target, task, re.I)):
+        return "coding"
+    if re.search(start + read + r"\s+" + qualifiers + target, task, re.I):
+        return "inspection"
+    return None
+
+
+def needs_files(prompt):
+    return file_task_kind(prompt) is not None
+
+
+def task_kind(kind, prompt):
+    if kind == "analysis":
+        return file_task_kind(prompt) or kind
+    return kind
+
+
+def validate_worker(worker, kind):
+    if worker != "auto" and worker not in worker_order(kind):
+        if worker in API_WORKERS:
+            raise ValueError(worker + " is API-only and cannot read or write local files or run commands. "
+                             "Choose codex or cursor-agent, or supply the evidence for an answer-only task.")
+        raise ValueError("This task needs a compatible tool worker: " + ", ".join(worker_order(kind)) + ".")
 
 
 def worker_name(value):
@@ -89,6 +138,7 @@ def tasks(root):
 
 def worker_order(kind):
     return {"coding": ("codex", "cursor"), "artifact": ("codex", "cursor", "claude"), "local": ("mini",),
+            "inspection": ("codex", "cursor"),
             "analysis": ("claude", "gemini", "minimax", "codex", "cursor")}[kind]
 
 
@@ -112,12 +162,12 @@ def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="a
     worker = worker_name(worker)
     if worker == "mini":
         kind = "local"
-    if kind not in ("analysis", "coding", "artifact", "local") or not prompt.strip():
+    kind = task_kind(kind, prompt)
+    if kind not in ("analysis", "inspection", "coding", "artifact", "local") or not prompt.strip():
         raise ValueError("Task needs a description and a supported kind")
     if kind == "artifact" and not file_request(prompt):
         raise ValueError("Small file tasks require an explicit text and /tmp file destination")
-    if worker != "auto" and worker not in worker_order(kind):
-        raise ValueError("Code changes require codex or cursor-agent. API workers can analyze supplied evidence.")
+    validate_worker(worker, kind)
     if group_id and (type(group_size) is not int or not 2 <= group_size <= 24 or
                      type(group_index) is not int or not 0 <= group_index < group_size):
         raise ValueError("A task group requires a valid size and unique subtask index")
@@ -190,6 +240,10 @@ def transition(root, identifier, token, event, *, now=None, **fields):
             if not fields.get("result", "").strip():
                 raise ValueError("An empty result cannot finish a task")
             row.update(status="succeeded", finished_at=now)
+        elif event == "rejected":
+            # An unusable answer is terminal, not a provider outage to retry
+            # across every lane. Keep the rejection in the durable outbox.
+            row.update(status="failed", finished_at=now, claim_token=None)
         elif event in ("retry", "busy"):
             if event == "busy":
                 row["attempts"] -= 1  # A lane race is not a failed execution.

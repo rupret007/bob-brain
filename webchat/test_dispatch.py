@@ -48,6 +48,63 @@ class ChatDispatchTests(Fixture):
         self.assertEqual(row["kind"], "artifact")
         self.assertIsNotNone(queue.claim(self.root, "claude"))
 
+    def test_api_file_requests_are_refused_before_saving_dispatch_intent(self):
+        for worker in ("minimax", "gemini"):
+            for prompt in ("write hello to /tmp/wb-proof.txt", "Review services/dispatch_worker.py"):
+                with self.subTest(worker=worker, prompt=prompt):
+                    value = self.submit("start a job: " + prompt, worker=worker)
+                    message = value["messages"][-1]
+                    self.assertEqual(message["action_card"]["state"], "refused")
+                    self.assertIn("API-only", message["content"])
+                    self.assertNotIn("dispatch_intent", message)
+        self.assertFalse(queue.tasks(self.root))
+
+    def test_exact_answer_literal_does_not_turn_a_confirmation_into_coding(self):
+        for worker in ("minimax", "gemini"):
+            value = self.submit("start a job: write one sentence confirming you ran, into your answer. "
+                                "Include the exact phrase 'WEBBOB-MINIMAX-FIX-0927 " + worker + "'.", worker=worker)
+            row = queue.tasks(self.root)[value["messages"][-1]["task_id"]]
+            self.assertEqual(row["kind"], "analysis")
+            self.assertEqual(row["requested_worker"], worker)
+
+    def test_file_inspection_auto_routes_to_a_worker_with_read_tools(self):
+        value = self.submit("start a job: Review services/dispatch_worker.py")
+        row = queue.tasks(self.root)[value["messages"][-1]["task_id"]]
+        self.assertEqual(row["kind"], "inspection")
+        for worker in ("minimax", "gemini", "claude"):
+            self.assertIsNone(queue.claim(self.root, worker))
+        self.assertIsNotNone(queue.claim(self.root, "cursor"))
+
+    def test_answer_rejection_delivers_one_failed_result_after_restart(self):
+        self.submit(worker="minimax")
+        row = queue.claim(self.root, "minimax")
+        queue.transition(self.root, row["id"], row["claim_token"], "running")
+        queue.transition(self.root, row["id"], row["claim_token"], "rejected",
+                         error="Answer did not complete the task: unrelated answer",
+                         rejected_result="Here are some gardening tips.", acceptance={"accepted": False})
+        replacement = Chat(self.folder, self.root, self.fake)
+        try:
+            for _ in range(3):
+                replacement.reconcile_tasks()
+            messages = replacement.history(self.identifier)["messages"]
+            results = [message for message in messages if message.get("task_status")]
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["task_status"], "failed")
+            self.assertIn("failed after 1 attempts on minimax", results[0]["content"])
+            self.assertIn("unrelated answer", results[0]["content"])
+            self.assertNotIn("finished on", results[0]["content"])
+            card = next(message["action_card"] for message in messages if message.get("action_card"))
+            self.assertEqual(card["state"], "blocked")
+            self.assertIsNotNone(queue.tasks(self.root)[row["id"]]["delivered_at"])
+        finally:
+            replacement.close()
+
+    def test_max_mode_api_file_package_is_rejected_before_any_enqueue(self):
+        value = self.submit("Max mode: review.\n[minimax] Read services/worker.py.\n[gemini] Analyze supplied evidence.")
+        self.assertEqual(value["messages"][-1]["action_card"]["state"], "refused")
+        self.assertIn("API-only", value["messages"][-1]["content"])
+        self.assertFalse(queue.tasks(self.root))
+
     def test_worker_routing_and_grok_rejected(self):
         self.submit(worker="cursor-agent")
         self.assertEqual(next(iter(queue.tasks(self.root).values()))["requested_worker"], "cursor")

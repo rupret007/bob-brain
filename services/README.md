@@ -81,6 +81,24 @@ message before acknowledging delivery, so restarts and failed writes do not lose
 or duplicate answers. `webchat/live_dispatch_proof.py` exercises the authenticated
 chat API with real workers; `reviews/WEBBOB-DISPATCH-0927.md` records live evidence.
 
+Gemini and MiniMax receive answer-only task instructions and supplied evidence;
+they do not get a worktree, branch, or filesystem instructions. Explicit file
+inspection uses Codex/Cursor with read tools, and file changes require a writing
+CLI. Selecting an API worker for such a task returns a capability explanation
+before queueing. Explicit max-mode packages use the same capability check.
+
+A worker answer must pass result acceptance before `succeeded` is recorded.
+Empty answers, blockers, refusals and missing required exact text fail directly.
+Other model answers receive a separate task/answer review on the same lane,
+under its existing lease and budget. A rejection or unavailable/malformed review
+is terminal (`rejected` event, `failed` status); it does not consume the provider
+outage retry loop. The redacted answer and rejection reason stay in the queue,
+and chat delivers one failed result. Successful rows retain an acceptance
+receipt bound to the result SHA-256. File tasks and Mini's local test runs use
+server-verified execution instead of an additional semantic review. Semantic
+acceptance checks whether an answer completes the task; it is not independent
+proof of every factual claim.
+
 The local, ignored `state/dispatch-code-root` file pins job-runner and svc-webchat
 to the tested draft checkout. `BOB_ROOT` and `BOB_WEBCHAT_DIR` keep queue data,
 credentials, logs, static assets and conversation history in their existing

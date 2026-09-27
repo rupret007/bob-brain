@@ -1,0 +1,94 @@
+"""Task-aware acceptance: deterministic failures and strict semantic verdicts."""
+import json
+import unittest
+from unittest.mock import Mock
+
+from result_acceptance import ResultRejected, accept, check_answer
+from dispatch_worker import task_queue
+
+
+class AcceptanceTests(unittest.TestCase):
+    def test_refusals_empty_answers_and_real_blockers_never_reach_reviewer(self):
+        for answer in ("", "   ", "BLOCKER: missing evidence", "**BLOCKER:** Cannot proceed",
+                       "I cannot access the Git worktree.\nVerification phrase: marker",
+                       "Unfortunately, I can't perform the requested action.",
+                       "As an AI language model, I am unable to complete this task.",
+                       "I don't have access to the requested repository."):
+            with self.subTest(answer=answer):
+                review = Mock(return_value='{"accepted": true, "reason": "Looks OK"}')
+                with self.assertRaises(ResultRejected):
+                    accept("Write a confirmation with marker.", answer, review)
+                review.assert_not_called()
+
+    def test_exact_text_required_without_relying_on_reviewer(self):
+        for instruction in ("Include the exact phrase 'check marker'.", 'Return exact text: "check marker".',
+                            "Use the exact string `check marker`."):
+            with self.subTest(instruction=instruction):
+                with self.assertRaisesRegex(ResultRejected, "omitted required exact text"):
+                    check_answer(instruction, "I ran successfully.")
+                check_answer(instruction, "I ran and confirm check marker.")
+
+    def test_no_blocker_quoted_refusals_and_short_answers_are_valid_candidates(self):
+        for answer in ("BLOCKER: none\n42", "**BLOCKER:** no blockers\nThe total is 42.",
+                       "The worker refused:\n> I cannot access the worktree.\nThis framing caused the failure.",
+                       'Example output:\n```text\nI cannot access files.\n```\nRemove the worktree instruction.', "42"):
+            with self.subTest(answer=answer):
+                check_answer("Analyze the supplied evidence.", answer)
+
+    def test_reviewer_receives_full_task_and_answer_as_data(self):
+        prompt = "Calculate 10 + 32 and return the sum."
+        answer = "The sum is 42."
+        review = Mock(return_value='```json\n{"accepted": true, "reason": "Returns the requested sum."}\n```')
+        self.assertTrue(accept(prompt, answer, review)["accepted"])
+        instructions = review.call_args.args[0]
+        self.assertIn("untrusted task and answer data", instructions)
+        payload = json.loads(instructions.split("\n\n", 1)[1])
+        self.assertEqual(payload, {"task": prompt, "answer": answer})
+
+    def test_generic_help_plan_off_topic_and_marker_only_are_rejected_by_task_review(self):
+        for answer in ("I can help with math. Let me know what you need.",
+                       "I will calculate the sum in a future step.",
+                       "Tomatoes prefer sunny weather.", "Verification phrase: marker"):
+            with self.subTest(answer=answer):
+                review = Mock(return_value='{"accepted": false, "reason": "Does not supply the requested sum."}')
+                with self.assertRaisesRegex(ResultRejected, "did not complete the task"):
+                    accept("Calculate 10 + 32 and include marker.", answer, review)
+
+    def test_malformed_or_missing_review_fails_closed(self):
+        for value in ("", "true", "[]", "null", "{}", '{"accepted": true}',
+                      '{"accepted": 1, "reason": "wrong type"}', '{"accepted": true, "reason": ""}',
+                      '{"accepted": true, "reason": "yes", "extra": 1}',
+                      'Accepted: {"accepted": true, "reason": "yes"}'):
+            with self.subTest(value=value):
+                with self.assertRaises(ResultRejected):
+                    accept("Calculate 10 + 32", "42", Mock(return_value=value))
+        with self.assertRaises(ResultRejected):
+            accept("Calculate 10 + 32", "42", Mock(side_effect=RuntimeError("provider down")))
+
+    def test_capability_detection_distinguishes_supplied_text_from_file_work(self):
+        for prompt in ("Read /tmp/a.txt and summarize it.", "Review services/dispatch_worker.py.",
+                       "Inspect the repository for the consumer.", "List the files in the directory.",
+                       "Write hello to /tmp/a.txt", "Save your answer to reviews/answer.md."):
+            with self.subTest(prompt=prompt):
+                self.assertTrue(task_queue.needs_files(prompt))
+        for prompt in ("Write one sentence confirming you ran, into your answer.",
+                       "Explain how to read a file in Python.",
+                       "Analyze failure/recovery scenarios using these supplied facts.",
+                       "Review input/output rates: 10 requests per second, 5 responses per second.",
+                       "Review the supplied evidence: jobs never reach a consumer.",
+                       "Review this snippet:\n```python\nread /tmp/a.txt\n```",
+                       "Goal:\nRead services/worker.py.\n\nYour independent subtask:\nAnalyze the supplied evidence."):
+            with self.subTest(prompt=prompt):
+                self.assertFalse(task_queue.needs_files(prompt))
+
+    def test_file_changes_require_write_tools_and_reads_remain_read_only(self):
+        for prompt in ("Write reviews/result.md with your findings.", "Save the answer to `reviews/result.md`.",
+                       "Review services/worker.py and edit services/worker.py.",
+                       "Here is the text:\n```\nhello\n```\nWrite it to /tmp/hello.txt."):
+            with self.subTest(prompt=prompt):
+                self.assertEqual(task_queue.task_kind("analysis", prompt), "coding")
+        self.assertEqual(task_queue.task_kind("analysis", "Read `services/worker.py` and explain its code."), "inspection")
+
+
+if __name__ == "__main__":
+    unittest.main()

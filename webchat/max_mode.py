@@ -53,6 +53,8 @@ def plan(root, prompt, kind):
     for package in packages:
         worker = package["worker"]
         package["kind"] = "local" if worker == "mini" else "coding" if kind == "coding" and worker in ("codex", "cursor") else "analysis"
+        package["kind"] = task_queue.task_kind(package["kind"], package["prompt"])
+        task_queue.validate_worker(worker, package["kind"])
         package["prompt"] += "\n\nComplete only your assigned subtask. Do not start other workers. Distinguish observed evidence from assumptions."
     return goal, packages
 

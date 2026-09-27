@@ -15,7 +15,7 @@ import max_mode
 WORK = re.compile(
     r"^(?:(?:please|bob)[,:]?\s+)*(?:(?:can|could|would|will) you\s+|i (?:want|need) (?:you )?to\s+|let['’]s\s+)?"
     r"(?:review|analy[sz]e|audit|research|investigate|inspect|check|compare|summari[sz]e|calculate|"
-    r"write|draft|create|build|implement|fix|repair|debug|test|trace|update|refactor|add|remove|"
+    r"read|open|save|append|write|draft|create|build|implement|fix|repair|debug|test|trace|update|refactor|add|remove|"
     r"diagnose|figure out|find out|look into|work on|improve|make)\b.+", re.I | re.S)
 PREAMBLE = re.compile(r"^(?:(?:ok(?:ay)?|yes|yeah|sure|great|thanks)[,.!]?\s+)+", re.I)
 ROUTED = re.compile(r"^(?:(?:please|bob)[,:]?\s+)*(?:ask|use|assign(?:\s+to)?|delegate(?:\s+to)?)\s+"
@@ -43,6 +43,13 @@ def parse_work(text):
 def task_kind(prompt):
     if task_queue.file_request(prompt):
         return "artifact"
+    # Required output literals (for example a verification marker containing
+    # 'FIX') describe the answer, not an instruction to change code.
+    prompt = re.sub(r"\b(?:include|contain|use|return|say)\s+(?:the\s+)?exact\s+(?:phrase|text|string|words)\s*:?\s*"
+                    r"(['\"`])(.+?)\1", "", prompt, flags=re.I)
+    file_kind = task_queue.file_task_kind(prompt)
+    if file_kind:
+        return file_kind
     # An analysis of code is still analysis; actual edits/execution need a CLI.
     if re.search(r"\bread[- ]only\b", prompt, re.I) and re.search(r"\b(?:review|audit|analysis|inspection)\b", prompt, re.I):
         return "analysis"
@@ -71,8 +78,8 @@ class TaskDispatch:
             maximum = worker == "max"
             worker = "auto" if maximum else task_queue.worker_name(worker)
             kind = task_kind(max_mode.MAX_MODE.sub("", description).strip(" :,-\n") if maximum else description)
-            if kind == "coding" and worker in ("gemini", "minimax", "claude"):
-                raise ValueError("Code changes require codex or cursor-agent; choose an analysis task for this worker.")
+            if not maximum:
+                task_queue.validate_worker(worker, "local" if worker == "mini" else kind)
             refusal = hard_rule_refusal(description)
             if refusal:
                 raise ValueError(refusal)
