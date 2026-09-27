@@ -119,7 +119,7 @@ lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
 | Round 7 base | `6b31d10c80b2d6cc9a52195ef9fa104461c0c14d` |
 | R8 primary commit | `13af11b5add0f6d3fa04cd0f76f5b74ced821ce3` |
 | R8 docs SHA record | `bee4e3cec17f83e937e169b6437f77f7299a9324` |
-| **Final SHA (this round)** | _filled by commit below_ |
+| **Final SHA (this round)** | 093ba626cf83e32e155c5115d68810bd4fc36d15 |
 
 ## Remaining risks
 
