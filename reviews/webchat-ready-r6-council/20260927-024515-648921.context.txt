@@ -1,0 +1,447 @@
+### FILE /tmp/r6-council.diff
+diff --git a/webchat/app.py b/webchat/app.py
+index 63e66c5..9c7bec8 100644
+--- a/webchat/app.py
++++ b/webchat/app.py
+@@ -14,6 +14,8 @@ import re
+ import secrets
+ import signal
+ import stat
++import subprocess
++import sys
+ import threading
+ import time
+ import uuid
+@@ -516,11 +518,27 @@ class Chat:
+     def handback(self):
+         return public_digest(self.root, self.redact)
+ 
++    @staticmethod
++    def _launchd_job_loaded(label: str) -> bool | None:
++        if sys.platform != "darwin":
++            return None
++        try:
++            proc = subprocess.run(
++                ["/bin/launchctl", "print", f"gui/{os.getuid()}/{label}"],
++                capture_output=True,
++                timeout=3,
++                check=False,
++            )
++            return proc.returncode == 0
++        except (OSError, subprocess.TimeoutExpired):
++            return None
++
+     def self_improve_status(self):
+         root = self.root
+-        plist = root / "conductor/launchd/com.jeff.bob-webchat.plist"
++        plist = root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist"
+         tick = root / "conductor/webchat/self_improve_tick.sh"
+-        log_path = root / "logs/webchat-launchd.log"
++        log_path = root / "logs/webchat-self-improve.log"
++        label = "com.jeff.bob-webchat-self-improve"
+         last_tick = None
+         handback = root / "conductor/handback/HANDBACK-LOG.md"
+         if handback.exists():
+@@ -529,24 +547,43 @@ class Chat:
+             except OSError:
+                 text = ""
+             for block in reversed(text.split("\n## ")):
+-                if "self-improve tick" in block.lower():
++                lower = block.lower()
++                if "self-improve tick" in lower or "webchat self-improve tick" in lower:
+                     last_tick = block.split("\n", 1)[0].strip() or None
+                     break
+-        launchd_ok = plist.exists() and tick.exists()
++        files_ok = plist.exists() and tick.exists()
++        launchd_loaded = self._launchd_job_loaded(label) if files_ok else False
+         recent_ok = False
++        recent_age_seconds = None
+         if log_path.exists():
+             try:
+-                tail = log_path.read_text(errors="replace")[-4000:]
+-                recent_ok = "self-improve" in tail.lower() and "failed" not in tail.lower().split("self-improve")[-1][:200]
++                tail = log_path.read_text(errors="replace")[-4000:].lower()
++                recent_ok = "self-improve" in tail and "failed" not in tail.split("self-improve")[-1][:240]
++                recent_age_seconds = max(0, time.time() - log_path.stat().st_mtime)
++                if recent_age_seconds > 48 * 3600:
++                    recent_ok = False
+             except OSError:
+                 recent_ok = False
+         summary = "Self-improve runs on the mini (launchd, draft branch only)."
+         if last_tick:
+             summary = f"Last tick logged {last_tick}. {summary}"
+-        if not launchd_ok:
+-            summary = "Install launchd job for scheduled ticks. " + summary
+-        return {"launchd_plist": launchd_ok, "tick_script": tick.exists(), "last_logged": last_tick,
+-                "recent_log_ok": recent_ok, "summary": summary}
++        if launchd_loaded is True:
++            summary = "Launchd job loaded. " + summary
++        elif launchd_loaded is False and files_ok:
++            summary = "Launchd job not loaded — bootstrap com.jeff.bob-webchat-self-improve when ready. " + summary
++        elif launchd_loaded is None and files_ok:
++            summary = "Launchd probe unavailable on this host. " + summary
++        elif not files_ok:
++            summary = "Install self-improve launchd plist + tick script. " + summary
++        return {
++            "launchd_plist": files_ok,
++            "launchd_loaded": launchd_loaded,
++            "tick_script": tick.exists(),
++            "last_logged": last_tick,
++            "recent_log_ok": recent_ok,
++            "log_age_seconds": recent_age_seconds,
++            "summary": summary,
++        }
+ 
+     def panel(self):
+         lanes = self.providers.health()
+diff --git a/webchat/static/app.js b/webchat/static/app.js
+index cbb093c..5d62002 100644
+--- a/webchat/static/app.js
++++ b/webchat/static/app.js
+@@ -73,7 +73,20 @@ if ($("login-form")) {
+     field.dispatchEvent(new Event("input"));
+   });
+   let activeBottomTab = "chat";
++  let songSnapshot = "";
++  function songFieldsText() {
++    return ["song-title", "song-lyrics", "song-chords", "song-notes"]
++      .map((id) => $(id)?.value || "").join("\x1e");
++  }
++  function markSongClean() { songSnapshot = songFieldsText(); }
++  async function confirmLeaveSongEdits() {
++    if (songFieldsText() === songSnapshot) return true;
++    return window.confirm("You have unsaved song edits. Continue without saving?");
++  }
+   function setBottomTab(name) {
++    if (activeBottomTab === "song" && name !== "song" && songFieldsText() !== songSnapshot) {
++      if (!window.confirm("You have unsaved song edits. Leave this tab anyway?")) return;
++    }
+     activeBottomTab = name;
+     for (const btn of document.querySelectorAll(".bottom-tab")) {
+       const on = btn.dataset.bottom === name;
+@@ -254,6 +267,7 @@ if ($("login-form")) {
+     catch (error) { $("notice").textContent = error.message; }
+   });
+   let micRecognition = null;
++  let micErrorActive = false;
+   let speakingUtterance = null;
+   $("mic").addEventListener("click", () => {
+     const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+@@ -263,9 +277,11 @@ if ($("login-form")) {
+       micRecognition = null;
+       $("mic").classList.remove("mic-active");
+       $("mic").setAttribute("aria-pressed", "false");
++      micErrorActive = false;
+       $("notice").textContent = "";
+       return;
+     }
++    micErrorActive = false;
+     const rec = new Speech();
+     micRecognition = rec;
+     rec.lang = "en-US";
+@@ -286,10 +302,22 @@ if ($("login-form")) {
+       micRecognition = null;
+       $("mic").classList.remove("mic-active");
+       $("mic").setAttribute("aria-pressed", "false");
+-      if (!$("notice").textContent.startsWith("Could not")) $("notice").textContent = "";
++      if (!micErrorActive) $("notice").textContent = "";
+     };
+-    rec.onerror = () => { $("notice").textContent = "Could not capture voice. Try typing or keyboard dictation."; };
+-    rec.start();
++    rec.onerror = (event) => {
++      micErrorActive = true;
++      const reason = event?.error || "unknown";
++      const hint = reason === "not-allowed"
++        ? "Microphone blocked — allow mic in Safari settings or use keyboard dictation."
++        : "Could not capture voice. Try typing or keyboard dictation.";
++      $("notice").textContent = hint;
++    };
++    try {
++      rec.start();
++    } catch (_) {
++      micErrorActive = true;
++      $("notice").textContent = "Could not start voice input. Try keyboard dictation.";
++    }
+   });
+   $("speak").addEventListener("click", async () => {
+     if (!("speechSynthesis" in window)) { $("notice").textContent = "Read-aloud is not supported here."; return; }
+@@ -367,10 +395,18 @@ if ($("login-form")) {
+       $("song-lyrics").value = project.lyrics || "";
+       $("song-chords").value = project.chords || "";
+       $("song-notes").value = project.notes || "";
++      markSongClean();
+     } catch (_) { $("song-notice").textContent = "Offline — edits stay on device until you save."; }
+   }
+-  $("song-picker")?.addEventListener("change", () => loadSong($("song-picker").value));
+-  $("song-new")?.addEventListener("click", () => {
++  $("song-picker")?.addEventListener("change", async () => {
++    if (!(await confirmLeaveSongEdits())) {
++      $("song-picker").value = songProjectId || "";
++      return;
++    }
++    await loadSong($("song-picker").value);
++  });
++  $("song-new")?.addEventListener("click", async () => {
++    if (!(await confirmLeaveSongEdits())) return;
+     songProjectId = "";
+     $("song-picker").value = "";
+     $("song-title").value = "";
+@@ -378,6 +414,7 @@ if ($("login-form")) {
+     $("song-chords").value = "";
+     $("song-notes").value = "";
+     $("song-title").focus();
++    markSongClean();
+   });
+   $("song-save").addEventListener("click", async () => {
+     $("song-notice").textContent = "Saving…";
+@@ -392,6 +429,7 @@ if ($("login-form")) {
+       });
+       songProjectId = project.id; remember("bob.songProject", songProjectId);
+       $("song-notice").textContent = "Saved " + new Date().toLocaleTimeString();
++      markSongClean();
+       await loadSongList("song-picker");
+       $("song-picker").value = project.id;
+     } catch (error) { $("song-notice").textContent = error.message; }
+@@ -438,6 +476,24 @@ if ($("login-form")) {
+     } catch (error) { $("song-notice").textContent = error.message; }
+     event.target.value = "";
+   });
++  function renderScoresTable(scores) {
++    const host = $("scores-table");
++    if (!host) return;
++    if (!scores?.length) {
++      host.replaceChildren();
++      return;
++    }
++    host.replaceChildren(...scores.slice(0, 8).map((row) => {
++      const card = document.createElement("article");
++      card.className = "score-card";
++      const label = document.createElement("span");
++      label.textContent = row.area || "Score";
++      const val = document.createElement("strong");
++      val.textContent = row.score != null && String(row.score).length ? String(row.score) : "—";
++      card.append(label, val);
++      return card;
++    }));
++  }
+   function renderLiveJobs(jobs) {
+     const host = $("live-jobs");
+     if (!host) return;
+@@ -487,11 +543,13 @@ if ($("login-form")) {
+       const cap = spend.cap_usd || 59;
+       const spendText = committed === undefined || committed === null ? "budget unknown" : `$${committed.toFixed(2)} of $${cap}`;
+       const freshness = meta.stale ? "Refreshing dashboard…" : "Live";
++      const scoreStamp = ops.generated_at ? ` · scores ${ops.generated_at.replace("T", " ").slice(0, 16)} UTC` : "";
+       const liveCards = jobs.filter((j) => j.live_screen && j.stall_state === "running");
+       const jobLead = liveCards.length
+         ? `${liveCards.length} job${liveCards.length === 1 ? "" : "s"} running on screen`
+         : (jobs.length ? `${jobs.length} tracked — none on screen right now` : "Nothing running on screen");
+-      $("status-summary").textContent = `${freshness} · ${jobLead} · MiniMax ${spendText} · round ${ops.webchat_round || "?"}`;
++      $("status-summary").textContent = `${freshness}${scoreStamp} · ${jobLead} · MiniMax ${spendText} · round ${ops.webchat_round || "?"}`;
++      renderScoresTable(ops.scores);
+       renderLiveJobs(jobs);
+       const c = data.conductor || {};
+       $("conductor-summary").textContent = `Draft work on ${c.draft_branch || "unknown branch"}`;
+@@ -514,7 +572,8 @@ if ($("login-form")) {
+         .join(" ");
+       $("handback-plain").textContent = plainHandback || "Handback will appear after your next chat turn.";
+       const si = data.self_improve || {};
+-      $("self-improve-status").textContent = si.summary || "Self-improve tick runs on the mini (launchd).";
++      const loaded = si.launchd_loaded === true ? "Scheduled tick loaded" : (si.launchd_loaded === false ? "Tick not loaded in launchd" : "");
++      $("self-improve-status").textContent = [loaded, si.summary || "Self-improve tick runs on the mini (launchd)."].filter(Boolean).join(" · ");
+     } catch (_) {
+       $("status-summary").textContent = "Jobs panel unavailable";
+     }
+@@ -550,6 +609,10 @@ if ($("login-form")) {
+   }
+   async function init() {
+     try {
++      if (window.speechSynthesis) {
++        speechSynthesis.getVoices();
++        speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
++      }
+       csrf = (await api("/api/session")).csrf; current = stored("bob.conversation");
+       await refreshList(); await poll(); $("messages").scrollTop = $("messages").scrollHeight;
+       await refreshPanel(); await refreshLanes(); await loadSong();
+diff --git a/webchat/static/index.html b/webchat/static/index.html
+index 90ddc71..20c5a89 100644
+--- a/webchat/static/index.html
++++ b/webchat/static/index.html
+@@ -52,6 +52,7 @@
+       <div class="view-scroll">
+         <h2 class="view-title">Jobs</h2>
+         <p id="status-summary" class="view-lead muted"></p>
++        <div id="scores-table" class="scores-grid" aria-label="Latest Web Bob scores"></div>
+         <div id="live-jobs" class="live-jobs" aria-live="polite"></div>
+         <div class="conductor-block">
+           <h3 class="view-subtitle">Conductor</h3>
+@@ -121,6 +122,10 @@
+           <select id="conversations" aria-label="Conversation"></select>
+           <button type="button" id="new-chat" class="quiet">Start new chat</button>
+         </div>
++        <div class="settings-group">
++          <h3 class="settings-group-title">Voice</h3>
++          <p class="muted view-hint">On iPhone, tap 🎤 and allow the mic, or hold the keyboard mic for dictation. Read-aloud uses your device voices.</p>
++        </div>
+         <div class="settings-group">
+           <h3 class="settings-group-title">Self-improve</h3>
+           <p id="self-improve-status" class="muted">Checking…</p>
+diff --git a/webchat/static/style.css b/webchat/static/style.css
+index c284970..1bdf7d4 100644
+--- a/webchat/static/style.css
++++ b/webchat/static/style.css
+@@ -159,7 +159,7 @@ select option { background: var(--surface-2); color: var(--text); }
+ .message .meta { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+ .message.user .meta { text-align: right; }
+ .message.error .body { color: #ffceb2; }
+-.message.pending .body { color: var(--muted); }
++.message.pending .body { color: color-mix(in srgb, var(--text) 72%, var(--muted)); }
+ .attempt { color: #d2bb94; font-size: 12px; margin-top: 7px; }
+ .action-card { border: 1px solid var(--line); border-radius: 10px; margin-top: 8px; padding: 10px; font-size: 12px; }
+ 
+@@ -265,6 +265,10 @@ textarea::placeholder { color: var(--muted); }
+   border: 1px solid var(--line);
+ }
+ .live-jobs { display: grid; gap: 8px; margin-top: 10px; }
++.scores-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin: 0 0 12px; }
++.scores-grid .score-card { background: var(--surface-2); border-radius: 12px; padding: 10px 12px; }
++.scores-grid .score-card strong { display: block; font-size: 18px; margin-top: 4px; }
++.scores-grid .score-card span { font-size: 12px; color: var(--muted); }
+ .live-job { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 12px; line-height: 1.4; background: var(--bg); }
+ .live-job header { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin-bottom: 4px; color: var(--text); padding: 0; }
+ .live-job .stall { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+diff --git a/webchat/test_webchat.py b/webchat/test_webchat.py
+index 6f794a0..a822ef0 100644
+--- a/webchat/test_webchat.py
++++ b/webchat/test_webchat.py
+@@ -590,6 +590,7 @@ class HandbackJobTests(Fixture):
+         self.assertIn("live_ops_meta", data)
+         self.assertIn("self_improve", data)
+         self.assertIn("summary", data["self_improve"])
++        self.assertIn("launchd_loaded", data["self_improve"])
+ 
+     def test_self_improve_status_from_handback(self):
+         log = self.root / "conductor/handback/HANDBACK-LOG.md"
+@@ -599,6 +600,16 @@ class HandbackJobTests(Fixture):
+         self.assertIn("2026-09-27 02:00:00 CT", status["last_logged"] or "")
+         self.assertIn("self-improve", status["summary"].lower())
+ 
++    def test_self_improve_launchctl_probe(self):
++        launchd = self.root / "conductor/launchd"
++        launchd.mkdir(parents=True, exist_ok=True)
++        (launchd / "com.jeff.bob-webchat-self-improve.plist").write_text("<plist/>")
++        (self.root / "conductor/webchat/self_improve_tick.sh").write_text("#!/bin/bash\n")
++        with patch.object(type(self.chat), "_launchd_job_loaded", return_value=True):
++            status = self.chat.self_improve_status()
++        self.assertTrue(status["launchd_loaded"])
++        self.assertIn("Launchd job loaded", status["summary"])
++
+     def test_handback_drill_backup_restore(self):
+         from live_handback_drill import backup_handback, restore_handback
+         folder = self.root / "conductor/handback"
+
+
+### FILE reviews/WEBCHAT-READY-R6-RESULT.md
+# Web Bob READY-FOR-PHONE — Round 6 result (Cursor lane, iPhone-first)
+
+**Branch:** `draft/webchat-failover-20260927`  
+**Round 7 base (prior):** `6b31d10c` · **Round 6 commit:** `c331ea49c26c4871b11dc3c76d15b638a0916ee7`  
+**Design note:** `conductor/reviews/WEBCHAT-READY-R6-DESIGN.md` (research-first; sources in table)  
+**Council (no Grok):** `conductor/reviews/webchat-ready-r6-council/20260927-023952-816626.md` (Gemini, MiniMax, Claude, Codex synthesize; Cursor lane busy on propose). **Votes:** inline tabs over sheet; handback tag `r6-*` via `WEBCHAT_HANDBACK_TAG`; tighten layout gate to ≥0.70; fix `self_improve` log parsing + test.  
+**Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
+
+## Scorecard (0–10)
+
+| Area | R7 (prior) | R6 (measured) |
+|------|------------|----------------|
+| Reliability | 9.7 | **9.7** · 52 + 23 + 36 tests OK; 10/10 drill PASS |
+| Speed | 9.6 | **9.6** · p50 **1.026s** (`webchat/evidence/ready-drill.json`) |
+| Mobile UX | 9.6 | **9.7** · chat ~73–75% viewport; no sheet over tabs |
+| **iPhone design** | 9.4 | **9.5** · inline tab views + icons; screenshots `evidence/iphone-r6/` |
+| Failover | 9.5 | **9.6** · handback drill `r6-1` / `r6-2` ×2 PASS |
+| Safety | 9.6 | **9.6** · confirm-in-chat unchanged; no Grok |
+| Bob parity | 9.5 | **9.5** · handback/BOB-STATE on fast asks (unchanged) |
+| Handoff both ways | 9.8 | **9.8** · `live_handback_drill.py` ×2 + reverse log |
+| Architecture | 9.5 | **9.5** · chat/ops UI decoupled from sheet overlay |
+| Self-improve loop | 9.0 | **9.2** · panel `self_improve` + tick test; launchd unchanged |
+| Music (core use case) | 9.3 | **9.4** · labeled song tab, picker, taller lyrics; local sketch only |
+| Conductor parity | 9.3 | **9.4** · Jobs tab buttons (round/council/status/stop) |
+| Enhancement 1 — mobile formatting | 9.3 | **9.4** |
+| Enhancement 2 — run jobs from chat | 9.3 | **9.4** · chips + Jobs actions |
+| Enhancement 3 — status panel | 9.8 | **9.8** · live job cards in Jobs tab |
+| Enhancement 4 — voice | 9.1 | **9.2** · mic/read-aloud on chat tab |
+| Enhancement 5 — Bob parity | 9.4 | **9.4** |
+
+Lowest R6 scores: **voice (9.2)** — Web Speech API limits on iOS; **self-improve (9.2)** — launchd truth still file-based until runtime probe lands.
+
+## Architecture review (R6 delta)
+
+- **UI:** Removed bottom sheet for primary nav; five **inline** `main-view` panels with persistent iOS tab bar (Chat default). Conversation picker moved to Settings + header dialog.
+- **Jobs:** Live cards + plain-English conductor strip; handback paragraph (no filenames in chat chrome).
+- **Panel:** `self_improve_status()` on `/api/panel` for Settings visibility.
+- **Drills:** Handback tags default `r6-*`; layout gate **≥0.70** chat height ratio on 390×844 / 430×932.
+
+**Top 5 structural fixes (ranked)**
+
+1. **Launchd runtime probe for self-improve** (not just plist exists) — effort S  
+2. **WebKit Playwright + keyboard-open tab test** — effort S  
+3. **Atomic handback index** beyond Markdown scan — effort M  
+4. **Unsaved song draft guard on tab switch** — effort S  
+5. **Web push for job-complete** (Jeff yes) — effort M  
+
+## Research-first (sources)
+
+| Source | Borrow | Reject |
+|--------|--------|--------|
+| [Apple HIG tab bars](https://developer.apple.com/design/human-interface-guidelines/tab-bars) | Persistent bottom tabs, 44pt targets | Sheet-as-primary-nav |
+| ChatGPT / Claude iOS | Chat-first, extras in other tabs | Raw STATUS in message scroll |
+| [LangGraph persistence](https://langchain-ai.github.io/langgraph/concepts/persistence/) | `conductor/handback/` checkpoint | Hosted graph |
+| [OpenAI Agents handoffs](https://platform.openai.com/docs/guides/agents) | Read handback before act | Agent mesh / new spend |
+| Suno/Udio/etc. | Notebook + local sketch | MiniMax music API (410) |
+
+## PASS/FAIL
+
+| Check | Result | Evidence |
+|--------|--------|----------|
+| Unit tests | **PASS** | `python3 conductor/webchat/test_webchat.py` — 52 OK (incl. self_improve) |
+| Failover tests | **PASS** | `python3 conductor/webchat/test_failover.py` — 23 OK |
+| Services tests | **PASS** | `python3 conductor/services/test_services.py` — 36 OK |
+| 10-message drill | **PASS** | `live_ready_drill.py` — p50 1.026s |
+| Handback drill ×2 | **PASS** | `live_handback_drill.py` — `r6-1`/`r6-2` |
+| Council (Gemini+MiniMax+Claude) | **PASS** | `20260927-023952-816626.md` |
+| iPhone screenshots | **PASS** | `webchat/evidence/iphone-r6/` (all 5 tabs) |
+| Dashboard live_ops | **PASS** | `dashboard_cycle()` |
+| Server restart | **PASS** | `127.0.0.1:8787` after `start.sh` |
+| Self-improve tick | **PASS** | `bash conductor/webchat/self_improve_tick.sh` |
+
+## Commands run
+
+```bash
+python3 conductor/webchat/test_webchat.py
+python3 conductor/webchat/test_failover.py
+python3 conductor/services/test_services.py
+python3 conductor/webchat/live_ready_drill.py
+python3 conductor/webchat/live_handback_drill.py
+BOB_ROOT=… python3 -c "from runtime import dashboard_cycle; dashboard_cycle()"
+bash conductor/webchat/self_improve_tick.sh
+set -a; . conductor/keys.env; set +a; python3 conductor/services/council.py --context … --out conductor/reviews/webchat-ready-r6-council "Round 6…"
+BOB_PLAYWRIGHT_MODULE=./node_modules/playwright node conductor/webchat/capture_iphone.cjs
+lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
+```
+
+## Model help ledger (R6)
+
+| Model | Role |
+|-------|------|
+| Cursor | Lead builder (inline tabs, panel self_improve, song UX) |
+| Gemini | Council propose + critique (layout threshold) |
+| MiniMax | Council propose + critique (self_improve parser) |
+| Claude | Short council critique |
+| Codex | Council synthesize (vote: inline tabs, honest self_improve) |
+
+## Remaining risks
+
+- Self-improve health is inferred from files/logs, not launchd `launchctl print`.  
+- Voice input quality varies on iOS Safari / home-screen PWA.  
+- Handback idempotency remains scan-based under extreme concurrency.  
+- Grok not used per instruction.

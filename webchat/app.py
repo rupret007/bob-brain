@@ -14,6 +14,8 @@ import re
 import secrets
 import signal
 import stat
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -516,11 +518,38 @@ class Chat:
     def handback(self):
         return public_digest(self.root, self.redact)
 
+    @staticmethod
+    def _launchd_job_loaded(label: str) -> bool | None:
+        if sys.platform != "darwin":
+            return None
+        try:
+            proc = subprocess.run(
+                ["/bin/launchctl", "print", f"gui/{os.getuid()}/{label}"],
+                capture_output=True,
+                timeout=3,
+                check=False,
+            )
+            return proc.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+    def _cached_launchd_loaded(self, label: str) -> bool | None:
+        cache = getattr(self, "_launchd_probe_cache", {})
+        now = time.time()
+        hit = cache.get(label)
+        if hit and now - hit[1] < 60:
+            return hit[0]
+        value = self._launchd_job_loaded(label)
+        cache[label] = (value, now)
+        self._launchd_probe_cache = cache
+        return value
+
     def self_improve_status(self):
         root = self.root
-        plist = root / "conductor/launchd/com.jeff.bob-webchat.plist"
+        plist = root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist"
         tick = root / "conductor/webchat/self_improve_tick.sh"
-        log_path = root / "logs/webchat-launchd.log"
+        log_path = root / "logs/webchat-self-improve.log"
+        label = "com.jeff.bob-webchat-self-improve"
         last_tick = None
         handback = root / "conductor/handback/HANDBACK-LOG.md"
         if handback.exists():
@@ -529,24 +558,44 @@ class Chat:
             except OSError:
                 text = ""
             for block in reversed(text.split("\n## ")):
-                if "self-improve tick" in block.lower():
+                lower = block.lower()
+                if "self-improve tick" in lower or "webchat self-improve tick" in lower:
                     last_tick = block.split("\n", 1)[0].strip() or None
                     break
-        launchd_ok = plist.exists() and tick.exists()
+        files_ok = plist.exists() and tick.exists()
+        launchd_loaded = self._cached_launchd_loaded(label) if files_ok else False
         recent_ok = False
+        recent_age_seconds = None
         if log_path.exists():
             try:
-                tail = log_path.read_text(errors="replace")[-4000:]
-                recent_ok = "self-improve" in tail.lower() and "failed" not in tail.lower().split("self-improve")[-1][:200]
+                tail = log_path.read_text(errors="replace")[-4000:].lower()
+                recent_ok = "self-improve" in tail and "failed" not in tail.split("self-improve")[-1][:240]
+                recent_age_seconds = max(0, time.time() - log_path.stat().st_mtime)
+                if recent_age_seconds > 48 * 3600:
+                    recent_ok = False
             except OSError:
                 recent_ok = False
         summary = "Self-improve runs on the mini (launchd, draft branch only)."
         if last_tick:
             summary = f"Last tick logged {last_tick}. {summary}"
-        if not launchd_ok:
-            summary = "Install launchd job for scheduled ticks. " + summary
-        return {"launchd_plist": launchd_ok, "tick_script": tick.exists(), "last_logged": last_tick,
-                "recent_log_ok": recent_ok, "summary": summary}
+        if launchd_loaded is True:
+            summary = "Launchd job loaded. " + summary
+        elif launchd_loaded is False and files_ok:
+            summary = "Launchd job not loaded — bootstrap com.jeff.bob-webchat-self-improve when ready. " + summary
+        elif launchd_loaded is None and files_ok:
+            summary = "Launchd probe unavailable on this host. " + summary
+        elif not files_ok:
+            summary = "Install self-improve launchd plist + tick script. " + summary
+        return {
+            "launchd_plist": plist.exists(),
+            "tick_script": tick.exists(),
+            "launchd_files_ok": files_ok,
+            "launchd_loaded": launchd_loaded,
+            "last_logged": last_tick,
+            "recent_log_ok": recent_ok,
+            "log_age_seconds": recent_age_seconds,
+            "summary": summary,
+        }
 
     def panel(self):
         lanes = self.providers.health()

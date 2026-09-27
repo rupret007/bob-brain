@@ -73,7 +73,20 @@ if ($("login-form")) {
     field.dispatchEvent(new Event("input"));
   });
   let activeBottomTab = "chat";
+  let songSnapshot = "";
+  function songFieldsText() {
+    return ["song-title", "song-lyrics", "song-chords", "song-notes"]
+      .map((id) => $(id)?.value || "").join("\x1e");
+  }
+  function markSongClean() { songSnapshot = songFieldsText(); }
+  async function confirmLeaveSongEdits() {
+    if (songFieldsText() === songSnapshot) return true;
+    return window.confirm("You have unsaved song edits. Continue without saving?");
+  }
   function setBottomTab(name) {
+    if (activeBottomTab === "song" && name !== "song" && songFieldsText() !== songSnapshot) {
+      if (!window.confirm("You have unsaved song edits. Leave this tab anyway?")) return;
+    }
     activeBottomTab = name;
     for (const btn of document.querySelectorAll(".bottom-tab")) {
       const on = btn.dataset.bottom === name;
@@ -254,6 +267,7 @@ if ($("login-form")) {
     catch (error) { $("notice").textContent = error.message; }
   });
   let micRecognition = null;
+  let micErrorActive = false;
   let speakingUtterance = null;
   $("mic").addEventListener("click", () => {
     const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -263,9 +277,11 @@ if ($("login-form")) {
       micRecognition = null;
       $("mic").classList.remove("mic-active");
       $("mic").setAttribute("aria-pressed", "false");
+      micErrorActive = false;
       $("notice").textContent = "";
       return;
     }
+    micErrorActive = false;
     const rec = new Speech();
     micRecognition = rec;
     rec.lang = "en-US";
@@ -278,18 +294,36 @@ if ($("login-form")) {
       ? "Listening… tap mic again to stop (iPhone: allow mic when prompted)."
       : "Listening… tap mic again to stop.";
     rec.onresult = (event) => {
+      if (micRecognition !== rec) return;
       const transcript = Array.from(event.results).map((row) => row[0].transcript).join(" ").trim();
       $("message").value = ($("message").value + " " + transcript).trim();
       $("message").dispatchEvent(new Event("input"));
     };
     rec.onend = () => {
+      if (micRecognition !== rec) return;
       micRecognition = null;
       $("mic").classList.remove("mic-active");
       $("mic").setAttribute("aria-pressed", "false");
-      if (!$("notice").textContent.startsWith("Could not")) $("notice").textContent = "";
+      if (!micErrorActive) $("notice").textContent = "";
     };
-    rec.onerror = () => { $("notice").textContent = "Could not capture voice. Try typing or keyboard dictation."; };
-    rec.start();
+    rec.onerror = (event) => {
+      if (micRecognition !== rec) return;
+      micErrorActive = true;
+      const reason = event?.error || "unknown";
+      const hint = reason === "not-allowed"
+        ? "Microphone blocked — allow mic in Safari settings or use keyboard dictation."
+        : "Could not capture voice. Try typing or keyboard dictation.";
+      $("notice").textContent = hint;
+    };
+    try {
+      rec.start();
+    } catch (_) {
+      micErrorActive = true;
+      micRecognition = null;
+      $("mic").classList.remove("mic-active");
+      $("mic").setAttribute("aria-pressed", "false");
+      $("notice").textContent = "Could not start voice input. Try keyboard dictation.";
+    }
   });
   $("speak").addEventListener("click", async () => {
     if (!("speechSynthesis" in window)) { $("notice").textContent = "Read-aloud is not supported here."; return; }
@@ -367,10 +401,18 @@ if ($("login-form")) {
       $("song-lyrics").value = project.lyrics || "";
       $("song-chords").value = project.chords || "";
       $("song-notes").value = project.notes || "";
+      markSongClean();
     } catch (_) { $("song-notice").textContent = "Offline — edits stay on device until you save."; }
   }
-  $("song-picker")?.addEventListener("change", () => loadSong($("song-picker").value));
-  $("song-new")?.addEventListener("click", () => {
+  $("song-picker")?.addEventListener("change", async () => {
+    if (!(await confirmLeaveSongEdits())) {
+      $("song-picker").value = songProjectId || "";
+      return;
+    }
+    await loadSong($("song-picker").value);
+  });
+  $("song-new")?.addEventListener("click", async () => {
+    if (!(await confirmLeaveSongEdits())) return;
     songProjectId = "";
     $("song-picker").value = "";
     $("song-title").value = "";
@@ -378,6 +420,7 @@ if ($("login-form")) {
     $("song-chords").value = "";
     $("song-notes").value = "";
     $("song-title").focus();
+    markSongClean();
   });
   $("song-save").addEventListener("click", async () => {
     $("song-notice").textContent = "Saving…";
@@ -392,6 +435,7 @@ if ($("login-form")) {
       });
       songProjectId = project.id; remember("bob.songProject", songProjectId);
       $("song-notice").textContent = "Saved " + new Date().toLocaleTimeString();
+      markSongClean();
       await loadSongList("song-picker");
       $("song-picker").value = project.id;
     } catch (error) { $("song-notice").textContent = error.message; }
@@ -438,6 +482,24 @@ if ($("login-form")) {
     } catch (error) { $("song-notice").textContent = error.message; }
     event.target.value = "";
   });
+  function renderScoresTable(scores) {
+    const host = $("scores-table");
+    if (!host) return;
+    if (!scores?.length) {
+      host.replaceChildren();
+      return;
+    }
+    host.replaceChildren(...scores.slice(0, 8).map((row) => {
+      const card = document.createElement("article");
+      card.className = "score-card";
+      const label = document.createElement("span");
+      label.textContent = row.area || "Score";
+      const val = document.createElement("strong");
+      val.textContent = row.score != null && String(row.score).length ? String(row.score) : "—";
+      card.append(label, val);
+      return card;
+    }));
+  }
   function renderLiveJobs(jobs) {
     const host = $("live-jobs");
     if (!host) return;
@@ -487,11 +549,13 @@ if ($("login-form")) {
       const cap = spend.cap_usd || 59;
       const spendText = committed === undefined || committed === null ? "budget unknown" : `$${committed.toFixed(2)} of $${cap}`;
       const freshness = meta.stale ? "Refreshing dashboard…" : "Live";
+      const scoreStamp = ops.generated_at ? ` · scores ${ops.generated_at.replace("T", " ").slice(0, 16)} UTC` : "";
       const liveCards = jobs.filter((j) => j.live_screen && j.stall_state === "running");
       const jobLead = liveCards.length
         ? `${liveCards.length} job${liveCards.length === 1 ? "" : "s"} running on screen`
         : (jobs.length ? `${jobs.length} tracked — none on screen right now` : "Nothing running on screen");
-      $("status-summary").textContent = `${freshness} · ${jobLead} · MiniMax ${spendText} · round ${ops.webchat_round || "?"}`;
+      $("status-summary").textContent = `${freshness}${scoreStamp} · ${jobLead} · MiniMax ${spendText} · round ${ops.webchat_round || "?"}`;
+      renderScoresTable(ops.scores);
       renderLiveJobs(jobs);
       const c = data.conductor || {};
       $("conductor-summary").textContent = `Draft work on ${c.draft_branch || "unknown branch"}`;
@@ -514,7 +578,12 @@ if ($("login-form")) {
         .join(" ");
       $("handback-plain").textContent = plainHandback || "Handback will appear after your next chat turn.";
       const si = data.self_improve || {};
-      $("self-improve-status").textContent = si.summary || "Self-improve tick runs on the mini (launchd).";
+      const age = si.log_age_seconds;
+      const logFresh = age != null && age < 48 * 3600
+        ? `Log updated ${age < 3600 ? Math.round(age / 60) + "m" : Math.round(age / 3600) + "h"} ago`
+        : (age != null ? "Self-improve log stale (>48h)" : "");
+      const loaded = si.launchd_loaded === true ? "Scheduled tick loaded" : (si.launchd_loaded === false ? "Tick not loaded in launchd" : (si.launchd_loaded === null ? "Launchd probe unavailable" : ""));
+      $("self-improve-status").textContent = [loaded, logFresh, si.summary || "Self-improve tick runs on the mini (launchd)."].filter(Boolean).join(" · ");
     } catch (_) {
       $("status-summary").textContent = "Jobs panel unavailable";
     }
@@ -550,6 +619,10 @@ if ($("login-form")) {
   }
   async function init() {
     try {
+      if (window.speechSynthesis) {
+        speechSynthesis.getVoices();
+        speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
+      }
       csrf = (await api("/api/session")).csrf; current = stored("bob.conversation");
       await refreshList(); await poll(); $("messages").scrollTop = $("messages").scrollHeight;
       await refreshPanel(); await refreshLanes(); await loadSong();

@@ -159,7 +159,7 @@ select option { background: var(--surface-2); color: var(--text); }
 .message .meta { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
 .message.user .meta { text-align: right; }
 .message.error .body { color: #ffceb2; }
-.message.pending .body { color: var(--muted); }
+.message.pending .body { color: color-mix(in srgb, var(--text) 72%, var(--muted)); }
 .attempt { color: #d2bb94; font-size: 12px; margin-top: 7px; }
 .action-card { border: 1px solid var(--line); border-radius: 10px; margin-top: 8px; padding: 10px; font-size: 12px; }
 
@@ -265,6 +265,10 @@ textarea::placeholder { color: var(--muted); }
   border: 1px solid var(--line);
 }
 .live-jobs { display: grid; gap: 8px; margin-top: 10px; }
+.scores-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin: 0 0 12px; }
+.scores-grid .score-card { background: var(--surface-2); border-radius: 12px; padding: 10px 12px; }
+.scores-grid .score-card strong { display: block; font-size: 18px; margin-top: 4px; }
+.scores-grid .score-card span { font-size: 12px; color: var(--muted); }
 .live-job { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 12px; line-height: 1.4; background: var(--bg); }
 .live-job header { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin-bottom: 4px; color: var(--text); padding: 0; }
 .live-job .stall { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }

@@ -590,6 +590,7 @@ class HandbackJobTests(Fixture):
         self.assertIn("live_ops_meta", data)
         self.assertIn("self_improve", data)
         self.assertIn("summary", data["self_improve"])
+        self.assertIn("launchd_loaded", data["self_improve"])
 
     def test_self_improve_status_from_handback(self):
         log = self.root / "conductor/handback/HANDBACK-LOG.md"
@@ -598,6 +599,16 @@ class HandbackJobTests(Fixture):
         status = self.chat.self_improve_status()
         self.assertIn("2026-09-27 02:00:00 CT", status["last_logged"] or "")
         self.assertIn("self-improve", status["summary"].lower())
+
+    def test_self_improve_launchctl_probe(self):
+        launchd = self.root / "conductor/launchd"
+        launchd.mkdir(parents=True, exist_ok=True)
+        (launchd / "com.jeff.bob-webchat-self-improve.plist").write_text("<plist/>")
+        (self.root / "conductor/webchat/self_improve_tick.sh").write_text("#!/bin/bash\n")
+        with patch.object(type(self.chat), "_launchd_job_loaded", return_value=True):
+            status = self.chat.self_improve_status()
+        self.assertTrue(status["launchd_loaded"])
+        self.assertIn("Launchd job loaded", status["summary"])
 
     def test_handback_drill_backup_restore(self):
         from live_handback_drill import backup_handback, restore_handback
