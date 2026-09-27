@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Metered Gemini/MiniMax calls for web chat without conductor lane locks."""
+import inspect
+import json
 import os
 import re
 import sys
@@ -29,11 +31,23 @@ def strip_reply_tags(text):
     return text.strip()
 
 
+def split_transport(raw):
+    marker = "\n---BOB_VISION_JSON---\n"
+    if marker not in raw:
+        return raw, []
+    head, prompt = raw.split(marker, 1)
+    try:
+        vision = json.loads(head).get("vision") or []
+    except (json.JSONDecodeError, AttributeError):
+        vision = []
+    return prompt, vision
+
+
 def main():
     lane = sys.argv[1]
     if lane not in ("gemini", "minimax"):
         return 2
-    prompt = sys.stdin.read()
+    prompt, vision = split_transport(sys.stdin.read())
     if not prompt.strip():
         print("empty prompt", file=sys.stderr)
         return 1
@@ -46,7 +60,10 @@ def main():
 
     with slot(lane):
         budget.check(lane)
-        answer = strip_reply_tags(model_call(lane, prompt, purpose="webchat"))
+        kwargs = {"purpose": "webchat"}
+        if "vision" in inspect.signature(model_call).parameters:
+            kwargs["vision"] = vision or None
+        answer = strip_reply_tags(model_call(lane, prompt, **kwargs))
     print(answer)
     return 0
 

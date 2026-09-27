@@ -77,19 +77,34 @@ def extract(model, data):
 
 
 
-def model_call(model, prompt, max_tokens=8192, purpose="api"):
+def model_call(model, prompt, max_tokens=8192, purpose="api", vision=None):
     key_name = "MINIMAX_API_KEY" if model == "minimax" else "GEMINI_API_KEY"
     key = os.environ.get(key_name)
     if not key:
         raise RuntimeError(key_name + " missing")
+    vision = vision or []
     if model == "minimax":
         url = "https://api.minimax.io/v1/text/chatcompletion_v2"
-        payload = {"model": MODELS[model], "messages": [{"role": "user", "content": prompt}],
+        if vision:
+            content = [{"type": "text", "text": prompt}]
+            for part in vision:
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": "data:" + part["mime"] + ";base64," + part["data_base64"]},
+                })
+            message_content = content
+        else:
+            message_content = prompt
+        payload = {"model": MODELS[model], "messages": [{"role": "user", "content": message_content}],
                    "max_tokens": max_tokens, "temperature": 0.2, "reasoning_split": True}
         headers = {"Authorization": "Bearer " + key}
     else:
         url = "https://generativelanguage.googleapis.com/v1beta/models/" + MODELS[model] + ":generateContent?key=" + quote(key, safe="")
-        payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        parts = []
+        for part in vision:
+            parts.append({"inline_data": {"mime_type": part["mime"], "data": part["data_base64"]}})
+        parts.append({"text": prompt})
+        payload = {"contents": [{"role": "user", "parts": parts}],
                    "generationConfig": {"maxOutputTokens": min(max_tokens, 4096), "temperature": 0.2,
                                         "thinkingConfig": {"thinkingBudget": 0}}}
         headers = {}

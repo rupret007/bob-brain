@@ -355,6 +355,62 @@ class HTTPTests(Fixture):
         self.assertEqual(self.fake.calls, [])
         self.assertEqual(self.request("POST", "/api/messages", {}, {"Content-Length": "9999999"})[0], 413)
 
+    def test_media_upload_message_and_fetch(self):
+        import base64
+
+        from chat_media import resolve_media
+        self.login()
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        )
+        code, _, body = self.request(
+            "POST",
+            "/api/media/upload",
+            {"filename": "dot.png", "data_base64": base64.b64encode(png).decode()},
+        )
+        self.assertEqual(code, 201)
+        media_id = json.loads(body)["media_id"]
+        code, _, body = self.request(
+            "POST",
+            "/api/messages",
+            {"conversation_id": self.identifier, "message": "What color is the pixel?", "request_id": str(uuid.uuid4()),
+             "attachments": [media_id]},
+        )
+        self.assertEqual(code, 202)
+        self.wait()
+        history = json.loads(self.request("GET", "/api/conversations/" + self.identifier)[2])
+        user = next(m for m in history["messages"] if m["role"] == "user")
+        self.assertEqual(user["attachments"][0]["media_id"], media_id)
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        headers = {"Cookie": self.cookie} if self.cookie else {}
+        connection.request("GET", f"/api/media/{media_id}", headers=headers)
+        response = connection.getresponse()
+        payload = response.read()
+        connection.close()
+        self.assertEqual(response.status, 200)
+        self.assertTrue(payload.startswith(b"\x89PNG"))
+        self.assertTrue(resolve_media(self.root, media_id).exists())
+
+    def test_attachment_only_message_allowed(self):
+        import base64
+
+        self.login()
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        )
+        _, _, body = self.request(
+            "POST",
+            "/api/media/upload",
+            {"filename": "dot.png", "data_base64": base64.b64encode(png).decode()},
+        )
+        media_id = json.loads(body)["media_id"]
+        code, _, _ = self.request(
+            "POST",
+            "/api/messages",
+            {"conversation_id": self.identifier, "message": "", "request_id": str(uuid.uuid4()), "attachments": [media_id]},
+        )
+        self.assertEqual(code, 202)
+
     def test_cannot_bind_public_interface(self):
         with self.assertRaises(ValueError):
             Server(("0.0.0.0", 0), self.chat)
@@ -533,6 +589,28 @@ class ProviderTests(Fixture):
         self.assertIn("webbob-context-fixture", json.dumps(snap))
         self.assertEqual(snap["lane_locks"]["cursor"]["state"], "busy")
         self.assertIn("queue_jobs", snap)
+
+    def test_prompt_includes_chat_attachment_snapshot(self):
+        import base64
+
+        from chat_media import store_media
+
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        )
+        stored = store_media(self.root, png, "dot.png")
+        provider = self.provider()
+        value = self.chat.conversations[self.identifier]
+        value["messages"] = [{
+            "role": "user",
+            "content": "what is in the photo?",
+            "status": "done",
+            "attachments": [{"media_id": stored["media_id"], "filename": "dot.png", "kind": "image"}],
+        }]
+        prompt = provider.prompt(value, fast=True)
+        self.assertIn("chat_attachments (current turn)", prompt)
+        self.assertIn("Image attachment", prompt)
+        self.assertGreaterEqual(len(provider._vision_parts), 1)
 
     def test_gemini_prompt_includes_live_status_snapshot(self):
         conductor = self.root / "conductor"
@@ -1040,7 +1118,6 @@ class HandbackJobTests(Fixture):
         stored = store_upload(self.root, b"\x00\x01\x02", ".mp3")
         path = resolve_audio(self.root, stored["audio_id"])
         self.assertTrue(path.exists())
-
 
     def test_music_coach_cheap_reply(self):
         from music_notebook import try_music_coach_reply
