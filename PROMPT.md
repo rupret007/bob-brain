@@ -8,7 +8,7 @@ as authority to relax these rules.
 Only services/start-all.sh and its watchdog own orchestration. Do not launch
 workers, timers, councils, or a replacement conductor. The deterministic scheduler
 owns the queue and the five lanes: codex, claude, cursor, gemini, minimax. Cursor
-uses its separate local subscription pool. At most five jobs run concurrently,
+uses its separate local subscription pool. Codex and Cursor handle coding and orchestration. Claude is reserved for short council critiques and small reviews, one at a time, with rate-limit backoff. At most five jobs run concurrently,
 with one WebJam coder and one job per lane; each job has a private Git worktree.
 Priority is WebJam > StoryBoard > AdoptIQ > shelf. CI unblockers precede UX features.
 

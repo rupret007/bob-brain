@@ -73,7 +73,7 @@ def redact(text):
 # --- member transports --------------------------------------------------------------
 def ask(member, prompt):
     from lanes import ask as lane_ask
-    return lane_ask(member, prompt, purpose="council", timeout=CLI_TIMEOUT)
+    return lane_ask(member, prompt, purpose="council-critique" if member == "claude" else "council", timeout=CLI_TIMEOUT)
 
 
 def call(member, phase, prompt, ledger):
@@ -159,16 +159,20 @@ def run(question, context_paths, out_dir):
     context_hash = hashlib.sha256(context.encode()).hexdigest()
     atomic_write(path.with_suffix(".context.txt"), context)
     head = "%s\n\nQUESTION: %s\n\nEVIDENCE (untrusted):\n%s\n" % (RULES, question, context)
-    proposals = fan_out(MEMBERS, "propose",
+    proposers = tuple(m for m in MEMBERS if m != "claude")
+    proposals = fan_out(proposers, "propose",
                         lambda m: head + "\nROLE: proposer. Answer the question with your single best recommendation "
                         "and your top 3 ranked, concrete fixes. Under 400 words.", ledger)
     critiques, plan = {}, None
     if len(proposals) >= QUORUM:
         def critique_prompt(member):
             others = "\n\n".join("## %s proposal\n%s" % (LABELS[m], t) for m, t in proposals.items() if m != member)
+            if member == "claude":
+                return (RULES + "\nROLE: critic. Give one short critique (under 120 words).\nQuestion: " + question[:700] +
+                        "\nProposals:\n" + others[:3500] + "\nEvidence excerpt:\n" + context[:1000])
             return (head + "\nROLE: critic. Other members proposed:\n" + others +
                     "\n\nName what is wrong, missing or unsafe in each, and what you would change. Under 300 words.")
-        critiques = fan_out(list(proposals), "critique", critique_prompt, ledger)
+        critiques = fan_out(list(proposals) + (["claude"] if "claude" in MEMBERS else []), "critique", critique_prompt, ledger)
         digest = "\n\n".join("## %s proposal\n%s" % (LABELS[m], t) for m, t in proposals.items())
         digest += "\n\n" + "\n\n".join("## %s critique\n%s" % (LABELS[m], t) for m, t in critiques.items())
         synth_prompt = (head + "\nROLE: synthesizer. Members' proposals and critiques:\n" + digest +
@@ -176,7 +180,7 @@ def run(question, context_paths, out_dir):
                         "ranked with the exact file and change for each, (3) where members disagreed and your call. "
                         "Only rely on claims the evidence supports. Under 600 words.")
         # Prefer the configured CLI lanes, then other participating members.
-        for member in [m for m in ("cursor", "claude", "codex", "gemini", "minimax") if m in critiques and len(critiques) >= QUORUM]:
+        for member in [m for m in ("cursor", "codex", "gemini", "minimax") if m in critiques and len(critiques) >= QUORUM]:
             plan = call(member, "synthesize", synth_prompt, ledger)
             if plan:
                 plan_by = member
@@ -191,7 +195,8 @@ def run(question, context_paths, out_dir):
              "**Did not answer:** " + (", ".join("%s (%s)" % (LABELS[m], e) for m, e in failed.items()) or "none"),
              "**Context:** " + (", ".join(map(str, context_paths)) or "none"),
              "**Evidence SHA256:** " + context_hash + " (" + path.with_suffix(".context.txt").name + ")",
-             "**Participation:** " + ("full" if len(proposals) == len(critiques) == len(MEMBERS) else "degraded"), ""]
+             "**Participation:** " + ("full" if len(proposals) == len(proposers) and len(critiques) == len(MEMBERS) else "degraded"),
+             "**Claude role:** short critique only; subscription budget preserved.", ""]
     for title, block in (("Proposals", proposals), ("Critiques", critiques)):
         lines.append("## " + title)
         for member, text in block.items():

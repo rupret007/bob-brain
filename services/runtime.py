@@ -230,7 +230,7 @@ def reviewer_cycle():
             continue
         prompt = "Harvested result: " + result.name + "\n" + result.read_text(errors="replace")[:18000]
         outcomes = {}
-        for model in ("cursor", "minimax", "gemini"):
+        for model in ("claude", "cursor", "minimax", "gemini"):
             outcomes[model] = critique(model, prompt, result.with_name(result.name + "." + model + ".md"))
         job_event(record["job_id"], review_models=outcomes,
                   reviewed_sha256=digest if all(outcomes.values()) else None, review_attempt_at=time.time())

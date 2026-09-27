@@ -36,6 +36,7 @@ def clean_env():
 
 def refresh():
     previous = read_json(CONDUCTOR / "lanes.json", {})
+    cooldowns = read_json(CONDUCTOR / "lane-cooldowns.json", {})
     data = {}
     for lane in LANES:
         state, detail = "ready", "available"
@@ -58,8 +59,9 @@ def refresh():
             state, detail = "needs_key", lane.upper() + "_API_KEY missing"
         elif lane == "minimax" and budget.totals(lane)["committed_usd"] >= budget.CAP_USD:
             state, detail = "budget_exhausted", "$48 cap reached"
-        if state == "ready" and previous.get(lane, {}).get("retry_at", 0) > time.time():
-            state, detail = "cooldown", previous[lane].get("detail", "previous model error")
+        cooldown = cooldowns.get(lane, {})
+        if state == "ready" and cooldown.get("retry_at", 0) > time.time():
+            state, detail = "cooldown", cooldown.get("detail", "previous model error")
         if state == "ready":
             try:
                 with lock("lane-" + lane, blocking=False):
@@ -67,10 +69,19 @@ def refresh():
             except BlockingIOError:
                 state, detail = "busy", "lane lease held"
         data[lane] = {"state": state, "detail": detail, "checked_at": time.time(),
-                      "retry_at": previous.get(lane, {}).get("retry_at", 0)}
+                      "retry_at": cooldown.get("retry_at", 0)}
         alert("lane-" + lane, lane + ": " + detail if state in ("needs_login", "needs_key", "unavailable", "budget_exhausted", "cooldown") else None)
     write_json(CONDUCTOR / "lanes.json", data)
     return data
+
+
+def defer_lane(lane, reason):
+    with lock("lane-cooldowns"):
+        path = CONDUCTOR / "lane-cooldowns.json"
+        entries = read_json(path, {})
+        entries[lane] = {"retry_at": time.time() + 3600, "detail": reason}
+        write_json(path, entries)
+    alert("lane-" + lane, reason + "; retry in one hour")
 
 
 def cli(lane, prompt, cwd, coding, timeout):
@@ -106,8 +117,12 @@ def cli(lane, prompt, cwd, coding, timeout):
         if row.get("result") and isinstance(row["result"], str):
             answers.append(row["result"])
     budget.record_cli(lane, events, result.returncode == 0, "coding" if coding else "analysis")
+    output = (result.stdout + result.stderr).lower()
+    limited = any(marker in output for marker in ("rate_limit_error", "rate limit", "usage limit", "hit your limit", "usage exceeded"))
+    if (result.returncode or any(e.get("is_error") for e in events)) and limited:
+        defer_lane(lane, lane + " usage/rate limit")
+        raise RuntimeError(lane + " rate limit; cooldown recorded")
     if result.returncode:
-        output = (result.stdout + result.stderr).lower()
         if "not logged in" in output or "authentication required" in output:
             raise RuntimeError(lane + " needs_login")
         if "usage limit" in output or "rate limit" in output or "out of" in output:
@@ -126,6 +141,13 @@ def cli(lane, prompt, cwd, coding, timeout):
 def ask(lane, prompt, *, cwd=None, coding=False, timeout=300, purpose="analysis", locked=False):
     if lane not in LANES:
         raise ValueError("unknown lane")
+    if lane == "claude":
+        if coding or purpose not in ("review", "council-critique", "smoke", "small-review"):
+            raise RuntimeError("Claude is reserved for short critiques and small reviews")
+        prompt = prompt[:6000] + ("\n[Evidence shortened; flag missing proof.]" if len(prompt) > 6000 else "")
+        timeout = min(timeout, 120)
+    if read_json(CONDUCTOR / "lane-cooldowns.json", {}).get(lane, {}).get("retry_at", 0) > time.time():
+        raise RuntimeError(lane + " rate-limit cooldown active")
     if not locked:
         with lock("lane-" + lane, blocking=False):
             if any(r.get("engine") == lane and r["state"] in ("launched", "running")

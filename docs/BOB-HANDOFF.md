@@ -41,7 +41,7 @@ plain words; one clear next step. Reuse existing code before writing new. WebJam
 | Need | Use | How |
 |---|---|---|
 | Code changes in a repo | Codex (Jeff's plan), ONE WebJam coder at a time | queue a row in `next-prompts/INDEX.md`; the tick launches it in a worktree. Ad hoc: `codex exec -s workspace-write -c sandbox_workspace_write.network_access=true --skip-git-repo-check "<task>"` |
-| Reading, review, research, long docs, writing | Claude (Jeff's plan) | `claude -p "<task>"` (you may already be it) |
+| Short critiques and small reviews only | Claude ($20 plan), max one concurrent call | Council critique/reviewer only; bounded prompts and one-hour rate-limit backoff. Codex + Cursor handle coding/orchestration. |
 | Second opinion / long context / plan critique | Gemini | `bin/ask-gemini.sh "q"` (or `-f file`, or `-` for stdin); the metered model is Gemini 2.5 Flash |
 | Bulk passes, UX review, cheap volume | MiniMax (Jeff's credit; hard cap $48 tracked by `conductor/services/budget.py`, never exceed it by hand) | `bin/ask-minimax.sh "q"` (same options) |
 | Any plan decision | Council: all models propose, critique, synthesize | `conductor/services/council.sh [--context FILE] "question"`; transcript in `conductor/council/` |

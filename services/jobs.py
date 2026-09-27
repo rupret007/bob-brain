@@ -238,6 +238,8 @@ def can_assign(spec, lane, active, health):
         return False
     if spec["kind"] == "coding" and lane in ("gemini", "minimax"):
         return False
+    if lane == "claude" and (spec["kind"] == "coding" or not spec.get("small_review")):
+        return False
     if spec["kind"] == "coding" and spec["project"] == "WebJam":
         if any(r.get("project", "").startswith("WebJam") and r.get("kind") == "coding" for r in active):
             return False
@@ -279,7 +281,7 @@ def tick():
         for spec in candidates:
             if external_coder and spec["project"] == "WebJam" and spec["kind"] == "coding":
                 continue
-            lane_order = ("cursor", "codex", "claude", "gemini", "minimax") if spec["kind"] == "coding" else ("gemini", "minimax", "cursor", "claude", "codex")
+            lane_order = ("cursor", "codex") if spec["kind"] == "coding" else ("gemini", "minimax", "cursor", "codex", "claude")
             for lane in lane_order:
                 if not can_assign(spec, lane, active, health):
                     continue

@@ -43,12 +43,12 @@ class CouncilTest(unittest.TestCase):
             if "ROLE: critic." in prompt:
                 for other in council.MEMBERS:
                     marker = "## " + council.LABELS[other] + " proposal"
-                    self.assertEqual(marker in prompt, other != member)
+                    self.assertEqual(marker in prompt, other != member and other != "claude")
             return "Recommendation from " + member + ": preserve independent services and validate drafts."
         status, transcript, answered = self.run_council(answer)
         self.assertEqual(status, "synthesized")
         self.assertEqual(set(answered), set(council.MEMBERS))
-        self.assertEqual(len(calls), 2 * len(council.MEMBERS) + 1)
+        self.assertEqual(len(calls), 2 * len(council.MEMBERS))
         self.assertEqual(len(self.events), len(calls))
         self.assertIn("**Participation:** full", transcript.read_text())
         self.assertTrue(transcript.with_suffix(".context.txt").exists())
@@ -82,7 +82,7 @@ class CouncilTest(unittest.TestCase):
         status, transcript, _ = self.run_council(answer)
         self.assertEqual(status, "synthesized")
         self.assertIn("by Codex", transcript.read_text())
-        self.assertIn("synthesize claude ok=False", transcript.read_text())
+        self.assertIn("synthesize cursor ok=False", transcript.read_text())
 
     def test_completed_answers_survive_interrupted_later_phase(self):
         original = council.fan_out
@@ -93,7 +93,7 @@ class CouncilTest(unittest.TestCase):
         with patch.object(council, "fan_out", side_effect=fan_out), self.assertRaises(KeyboardInterrupt):
             self.run_council(lambda *args: "Persist this completed answer before the next call.")
         transcript, = self.root.glob("*.md")
-        self.assertEqual(transcript.read_text().count("Persist this completed answer"), len(council.MEMBERS))
+        self.assertEqual(transcript.read_text().count("Persist this completed answer"), len(council.MEMBERS) - 1)
         self.assertIn("RUNNING", transcript.read_text())  # never invent a completion
 
     def test_api_members_use_shared_metered_lanes(self):

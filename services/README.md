@@ -8,7 +8,7 @@ changed. `loop.sh` and old queue entrypoints only defer to these services.
 | Service | Interval | Responsibility |
 | --- | --- | --- |
 | job-runner | 60s | Cursor login check, recover, harvest, fill idle lanes |
-| reviewer | 300s | Cursor/MiniMax/Gemini critique with cached receipts |
+| reviewer | 300s | Short Claude + Cursor/MiniMax/Gemini critiques with cached receipts |
 | dashboard-updater | 300s | Local dashboard.json; optional draft branch publication |
 | watchdog | 180s | Heartbeats, verified restarts, three attempts/hour cap |
 
@@ -27,7 +27,7 @@ A completed result arriving later can still be harvested idempotently.
 The scheduler reads `services/backlog.json`, `services/projects.json`, and READY
 rows in `../next-prompts/INDEX.md` (optional adjacent JSON specs). It prioritizes
 WebJam > StoryBoard > AdoptIQ > shelf, with explicit #159/#160 CI fixes before UX.
-Cursor is preferred for coding and is also a council/reviewer member. The five
+Cursor is preferred for coding and is also a council/reviewer member. Codex and Cursor own coding and orchestration. Claude only provides short council critiques and small reviews: one call at a time, bounded context, 120s maximum, and a durable one-hour rate-limit cooldown. The five
 shared lane leases permit one call per lane across every entrypoint. The scheduler
 allows five jobs, one WebJam coder and separate Git worktrees under ../workspaces/.
 

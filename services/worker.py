@@ -46,7 +46,7 @@ def execute(job):
             if evidence.exists():
                 prompt += "\nSUPPLIED EVIDENCE:\n" + evidence.read_text()
             answer = ask(record["engine"], prompt, cwd=cwd, coding=coding, timeout=5400 if coding else 300,
-                         purpose="job-" + job, locked=True)
+                         purpose="small-review" if record["engine"] == "claude" else "job-" + job, locked=True)
             atomic_write(folder / (record["engine"] + ".log"), answer + "\n")
             if re.search(r"(?im)^\s*(?:\*\*)?BLOCKER\s*:", answer):
                 raise RuntimeError(answer[:1000])

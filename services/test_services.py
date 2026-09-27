@@ -216,4 +216,22 @@ class ServicesTest(unittest.TestCase):
         self.assertEqual(state.jobs()['a']['publish_branch'],'draft/replacement')
         self.assertEqual(record['fetch_ref'],'published-26')
 
+    def test_claude_is_never_selected_for_coding_or_general_jobs(self):
+        health={n:{'state':'ready'} for n in lanes.LANES}
+        self.assertFalse(jobs.can_assign({'kind':'coding','project':'WebJam'},'claude',[],health))
+        self.assertFalse(jobs.can_assign({'kind':'non-coding','project':'WebJam'},'claude',[],health))
+        self.assertTrue(jobs.can_assign({'kind':'non-coding','project':'WebJam','small_review':True},'claude',[],health))
+        with self.assertRaises(RuntimeError):lanes.ask('claude','Implement feature',coding=True)
+
+    def test_claude_short_prompt_and_durable_rate_limit_backoff(self):
+        with patch.object(lanes,'analysis_workspace',return_value=self.root),patch.object(lanes,'cli',return_value='A short review with evidence') as cli:
+            lanes.ask('claude','x'*20000,purpose='review',timeout=500)
+        self.assertLess(len(cli.call_args.args[1]),7000);self.assertEqual(cli.call_args.args[4],120)
+        result=NS(returncode=1,stdout='{"is_error":true,"result":"rate_limit_error"}',stderr='')
+        with patch.object(lanes,'run',return_value=result),patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd:cmd):
+            with self.assertRaises(RuntimeError):lanes.cli('claude','review',self.root,False,120)
+        with patch.object(lanes,'cli') as cli:
+            with self.assertRaisesRegex(RuntimeError,'cooldown'):lanes.ask('claude','review',purpose='review')
+        cli.assert_not_called()
+
 if __name__=='__main__':unittest.main(verbosity=2)
