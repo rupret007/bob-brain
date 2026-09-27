@@ -1,5 +1,10 @@
 # Texting lane ready — 2026-09-27
 
+> Historical checkpoint, superseded by `TEXTING-FIXED-1841.md` and the 1841 gate
+> marker. The regenerated browser proof now deliberately exercises the blocked
+> “Not sent” path. Mock delivery success is covered by HTTP and Python tests only;
+> the counts below describe the earlier checkpoint, not the current tip.
+
 **Worktree:** `workspaces/wt-webbob-texting-0927`  
 **Branch:** `draft/webbob-texting-0927` (draft [PR #8](https://github.com/rupret007/bob-brain/pull/8), base `draft/webbob-clean-0927`)  
 **Rebased onto:** `dcc2c8e` (Web Bob parity / jobs UI baseline on `brain`)  
@@ -14,7 +19,7 @@ No merge, undraft, force-push, deploy, service restart, or real SMS/iMessage was
 | Reads | `texts`, thread read/summarize via loopback BlueBubbles read allowlist |
 | Drafts | Recipient + body card, five-minute `yes wbtxt-…` token, edits reset consent |
 | Separate yes | Bare yes / send-it never sends; only exact `yes wbtxt-…` in a later chat turn |
-| Mock delivery | Fixture `POST /web-bob/send` (Andrea handoff) when `enable_web_bob_send` is on — used in tests and `texting_proof.py` only |
+| Mock delivery | Fixture `POST /web-bob/send` (Andrea handoff) when `enable_web_bob_send` is on — used in HTTP/Python tests only; browser proof keeps it off |
 | Production | Real Andrea control service: consent is recorded; `deliver()` probes `/web-bob/send`, gets 404, returns honest **Not sent.** receipt (unchanged safety) |
 | UI | Draft card on chat messages, Texts quick chip, merged with `dcc2c8e` jobs/settings shell |
 
@@ -25,7 +30,7 @@ No merge, undraft, force-push, deploy, service restart, or real SMS/iMessage was
 | `webchat/test_texting_e2e.py::test_http_draft_shown_nothing_sent_until_separate_yes_then_mock_andrea` | Real `Server` + `/api/messages`: draft in JSON, no mock send until separate yes, then `owner_sent_via_andrea` and one mock send |
 | `webchat/test_texting_e2e.py::test_browser_proof_when_playwright_available` | Optional Playwright run of `texting_proof.py` (skipped when `playwright` npm module missing) |
 | `webchat/test_texting.py` | Unit/regression matrix including mock send and blocked production path |
-| `webchat/texting_proof.py` + `browser_texting.cjs` | Isolated port, listener guard, screenshots under `reviews/` when Playwright is installed |
+| `webchat/texting_proof.py` + `browser_texting.cjs` | Blocked “Not sent” path, isolated port, listener guard, matching screenshots under `reviews/` |
 
 ## Verification (this worktree)
 

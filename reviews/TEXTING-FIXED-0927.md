@@ -1,5 +1,10 @@
 # Texting lane fixes — 2026-09-27
 
+> Historical checkpoint. Current fixes and validation are in
+> `TEXTING-FIXED-1841.md`. The current adapter probes Andrea’s bridge after durable
+> consent; the browser proof records its rejection and zero deliveries. The
+> no-send-endpoint statement below describes this earlier implementation only.
+
 **Branch:** `draft/webbob-texting-0927` (draft PR #8, base `draft/webbob-clean-0927`)  
 **Worktree:** `workspaces/wt-webbob-texting-0927`  
 **Scope:** Address valid review findings without changing delivery policy (Andrea/BlueBubbles send remains blocked; separate `yes wbtxt-…` only).
