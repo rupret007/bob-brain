@@ -9,7 +9,7 @@ from worker_activity import parse_processes
 
 
 class AuthorityTests(unittest.TestCase):
-    def test_services_and_fresh_log_observations_are_always_reported(self):
+    def test_services_and_fresh_log_observations_are_available_on_request(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / "logs").mkdir()
@@ -18,8 +18,11 @@ class AuthorityTests(unittest.TestCase):
                 answer = operational_reply(root, "server", "is it going now?")
             self.assertIn("live service sessions", answer)
             self.assertIn("Job runner: 0 claimed, 0 queued", answer)
-            self.assertIn("Recent logs: job runner updated", answer)
+            self.assertNotIn("Recent logs:", answer)
             self.assertNotIn("I don't see active work", answer)
+            with patch("live_status_snapshot._screen_sessions", return_value={"svc-job-runner": "12.svc-job-runner"}):
+                answer = operational_reply(root, "server", "status with diagnostics")
+            self.assertIn("logs/job-runner.log: Claimed review job", answer)
 
     def setUp(self):
         for name in ("_screen_sessions", "process_table"):
@@ -70,7 +73,7 @@ class AuthorityTests(unittest.TestCase):
             with patch("live_status_snapshot._screen_sessions", return_value={}):
                 answer = enforce(root, "How everything going. We using all resources now?",
                                  dict(provider="gemini", content="Cursor is handling our chat; Gemini and MiniMax are still failing."))
-        self.assertIn("Gemini — no recent reply verified", answer)
+        self.assertIn("Gemini: idle", answer)
         self.assertNotIn("Answering provider:", answer)
         self.assertNotIn("still failing", answer)
         self.assertNotIn("Cursor is handling", answer)
@@ -88,11 +91,16 @@ class AuthorityTests(unittest.TestCase):
                     answer = enforce(root, text, dict(provider="gemini", content=
                         "Nothing is running. All lanes are ready. Use `start a job: task`."))
                     self.assertIn("4 workers are running", answer)
-                    self.assertIn("Projects push — Claude (opus) — running for 24 min", answer)
-                    self.assertIn("Web Bob clean — Codex (gpt-fixture) — running for 18 min", answer)
-                    self.assertIn("Web Bob clean 2 — Codex — running for 12 min", answer)
-                    self.assertIn("Web Bob MiniMax — Codex — running for 8 min", answer)
-                    for hidden in ("None", "shelf-load-1659", "lane-", "History:", "provider:", "start a job:", "All lanes"):
+                    self.assertIn("Claude: Projects push", answer)
+                    self.assertIn("(opus) — running for 24 min", answer)
+                    self.assertIn("Codex: Web Bob (conductor): Web Bob clean", answer)
+                    self.assertIn("(gpt-fixture) — running for 18 min", answer)
+                    self.assertIn("running for 12 min", answer)
+                    self.assertIn("running for 8 min", answer)
+                    # A missing task must give concrete screen/log evidence even
+                    # in a short reply, rather than an unidentified task label.
+                    self.assertIn("logs/lane-webbob-clean.log", answer)
+                    for hidden in ("None", "shelf-load-1659", "History:", "provider:", "start a job:", "All lanes"):
                         self.assertNotIn(hidden, answer)
 
     def test_internal_details_and_answering_model_are_available_when_requested(self):

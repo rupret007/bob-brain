@@ -68,7 +68,8 @@ def enqueue(root, conversation_id, intent):
     return [task_queue.enqueue(root, conversation_id, intent["request_id"] + ":" + str(index),
                                package["prompt"], worker=package["worker"], kind=package["kind"],
                                group_id=identifier, group_size=len(intent["subtasks"]), group_index=index,
-                               group_goal=intent["goal"], title=package["title"], publish_project=package.get("publish_project"))
+                               group_goal=intent["goal"], title=package["title"], publish_project=package.get("publish_project"),
+                               draft_pr=package.get("draft_pr", False))
             for index, package in enumerate(intent["subtasks"])]
 
 

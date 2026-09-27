@@ -1,5 +1,6 @@
 """Exercise the server's exact-ref push against an isolated bare Git remote."""
 import subprocess
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,31 @@ import draft_publish
 
 
 class DraftPublication(unittest.TestCase):
+    def test_project_pr_is_created_once_as_draft_and_never_undrafted(self):
+        sha, branch = "a" * 40, "draft/webchat-" + "a" * 32
+        record = dict(url="https://github.com/owner/repo/pull/1", isDraft=True, headRefOid=sha)
+        row = dict(id=branch.removeprefix("draft/"), publish_project="Fantasy Football")
+        calls, prs = [], []
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            def fake(argv, **kwargs):
+                calls.append(argv)
+                if argv[1:3] == ["pr", "create"]:
+                    self.assertIn("--draft", argv)
+                    body = Path(argv[argv.index("--body-file") + 1]).read_text()
+                    self.assertIn("\n\n", body)
+                    self.assertIn(row["id"], body)
+                    prs.append(record)
+                return subprocess.CompletedProcess(argv, 0, json.dumps(prs), "")
+            with patch.object(draft_publish, "run", side_effect=fake):
+                for _ in range(2):
+                    self.assertEqual(draft_publish.ensure_draft_pr(row, folder, folder, "owner/repo", branch, sha), record["url"])
+                record["isDraft"] = False
+                with self.assertRaisesRegex(RuntimeError, "remain a draft"):
+                    draft_publish.ensure_draft_pr(row, folder, folder, "owner/repo", branch, sha)
+            self.assertEqual(sum(call[1:3] == ["pr", "create"] for call in calls), 1)
+            self.assertTrue(all(call[2] in ("list", "create") for call in calls))
+
     def test_real_push_verifies_remote_sha_and_rejects_wrong_branch(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

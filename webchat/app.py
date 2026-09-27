@@ -218,8 +218,8 @@ class Chat(TaskDispatch):
     def public(self, value):
         return {k: copy.deepcopy(v) for k, v in value.items() if k not in ("codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job")}
 
-    def intent_reply(self, conversation, content):
-        conversation["messages"][-1].update(status="done", provider="dispatcher", content=content)
+    def intent_reply(self, conversation, content, provider="dispatcher"):
+        conversation["messages"][-1].update(status="done", provider=provider, content=content)
         self.save(conversation)
         self.conversations[conversation["id"]] = conversation
         return self.public(conversation)
@@ -336,6 +336,9 @@ class Chat(TaskDispatch):
                 conversation["title"] = text[:65]
             if VERSION_QUESTION.search(text):
                 return self.intent_reply(conversation, BUILD["short_sha"])
+            from reply_authority import correcting_status, operational_reply
+            if correcting_status(text, conversation):
+                return self.intent_reply(conversation, self.redact(operational_reply(self.root, "server", text)), provider="state")
             transition = chat_intent.apply_turn(intent_state, text, request_id)
             if transition == "hold":
                 held_work, held_worker = followup_work(conversation)
@@ -363,7 +366,7 @@ class Chat(TaskDispatch):
             names = chat_intent.project_targets(task or text, intent_state)
             if task and len(names) >= 2:
                 intent_state["project_order"] = names
-            if chat_intent.PUSH.match(chat_intent.command(text)) and not names:
+            if (chat_intent.PUSH.match(chat_intent.command(text)) or chat_intent.project_start(text)) and not names:
                 return self.intent_reply(conversation, "Which projects should I work on?")
             if route != "max":
                 try:
@@ -541,7 +544,7 @@ class Chat(TaskDispatch):
             if HOLD_QUESTION.match(text):
                 scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
                 return self.intent_reply(conversation, chat_intent.hold_reply(scopes) if scopes else "Ready when you are.")
-            if ledger == self.root and provider == "auto" and STATUS_QUESTION.search(text):
+            if ledger == self.root and STATUS_QUESTION.search(text):
                 conversation["messages"][-1].update(status="done", provider="state",
                     content=self.redact(operational_reply(self.root, "server", text)))
                 self.save(conversation)

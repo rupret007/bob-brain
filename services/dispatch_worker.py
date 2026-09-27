@@ -25,10 +25,16 @@ import task_queue
 
 
 def task_repository(prompt):
-    for project, spec in read_json(CONDUCTOR / "services/projects.json", {}).items():
+    for project, spec in project_catalog().items():
         if re.search(r"\b" + re.escape(project) + r"\b", prompt, re.I):
             return project, Path(spec["repo"]).expanduser().resolve()
     return "WebBob", Path(__file__).resolve().parents[1]
+
+
+def project_catalog():
+    # Ship new project mappings with the pinned release; retain local overrides.
+    return {**read_json(Path(__file__).with_name("projects.json"), {}),
+            **read_json(CONDUCTOR / "services/projects.json", {})}
 
 
 def prepare_task(record, coding):
@@ -104,7 +110,7 @@ def execute(identifier, token):
 
             heartbeat = threading.Thread(target=renew, daemon=True)
             heartbeat.start()
-            review = (pr_evidence.load(row["prompt"], read_json(CONDUCTOR / "services/projects.json", {}))
+            review = (pr_evidence.load(row["prompt"], project_catalog())
                       if row["kind"] == "analysis" else None)
             folder = CONDUCTOR / "state/task-runs" / identifier
             folder.mkdir(parents=True, exist_ok=True)
@@ -144,7 +150,10 @@ def execute(identifier, token):
                 prompt += ("\nThis small file task explicitly authorizes writing only " + destination +
                            " outside the worktree. Write the requested text even if the file already exists, verify it, and return its path. "
                            "No repository changes or commit are needed. Keep the answer under 80 words.")
-            if not task_queue.transition(ROOT, identifier, token, "executing"):
+            atomic_write(folder / "prompt.txt", redact(prompt))
+            if not task_queue.transition(ROOT, identifier, token, "executing", worktree=str(cwd) if cwd else None,
+                                         branch=branch, project=project, repo=str(repo) if repo else None,
+                                         prompt_file=str(folder / "prompt.txt")):
                 return 0
             answer = redact(mini_worker.execute(row) if row["worker"] == "mini" else ask(row["worker"], prompt, cwd=cwd, coding=coding,
                                 timeout=90 if row["kind"] == "artifact" else 1800 if coding else 240,
@@ -184,9 +193,11 @@ def execute(identifier, token):
             if row.get("publish_project"):
                 if not task_queue.transition(ROOT, identifier, token, "heartbeat"):
                     return 0
-                publication = draft_publish.publish(row, cwd, folder, read_json(CONDUCTOR / "services/projects.json", {}))
+                publication = draft_publish.publish(row, cwd, folder, project_catalog())
                 answer = ("Pushed [" + publication["project"] + " draft](" + publication["url"] + ") @ `" +
                           publication["sha"][:7] + "`; remote SHA verified.\n\n" + answer)
+                if publication.get("pr_url"):
+                    answer = "Draft PR: " + publication["pr_url"] + "\n" + answer
             # The queue is the result outbox. A result file alone is never proof
             # of completion, and a superseded claim cannot publish a result.
             digest = hashlib.sha256(answer.encode()).hexdigest()

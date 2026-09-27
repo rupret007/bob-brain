@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
 import task_queue
 import max_mode
 from chat_intent import (POLITE, PREAMBLE, PUSH, blocked_scopes, command, hold_reply,
-                         project_targets, projects, PROJECT, PROJECT_NAMES, state_for)
+                         project_targets, projects, PROJECT, PROJECT_NAMES, state_for, normalize_projects, project_start)
 
 WORK = re.compile(
     r"^" + POLITE +
@@ -85,6 +85,8 @@ def parse_work(text):
     text = PREAMBLE.sub("", text.strip())
     if CHAT_STYLE.match(text):
         return None, "auto"
+    if project_start(text):
+        return text.strip(), "auto"
     if PUSH.match(command(text)):
         return text.strip(), "auto"
     if max_mode.MAX_MODE.search(text) and (WORK.match(text) or max_mode.MAX_MODE.match(command(text))):
@@ -104,11 +106,13 @@ def parse_work(text):
 
 def task_receipt(row):
     names = {"codex": "Codex", "claude": "Claude", "cursor": "Cursor", "gemini": "Gemini", "minimax": "MiniMax", "mini": "mini"}
-    if row["status"] in task_queue.ACTIVE:
+    if row["status"] == "running":
         label = "Started on " + names[row["worker"]]
         requested = row["requested_worker"]
         if requested != "auto" and requested != row["worker"]:
             label += " (" + names[requested] + " unavailable; fallback)"
+    elif row["status"] == "claimed":
+        label = "Starting on " + names[row["worker"]]
     else:
         worker = row["requested_worker"]
         label = "Queued" + (" for " + names[worker] if worker != "auto" else "")
@@ -138,7 +142,8 @@ def task_kind(prompt):
 def project_plan(root, description, names, worker):
     """One independently routable job per project, using existing capabilities."""
     goal = max_mode.MAX_MODE.sub("", description).strip(" :,-\n")
-    improve = bool(PUSH.match(command(description)) or (max_mode.MAX_MODE.match(command(description)) and not WORK.match(goal)))
+    starting = project_start(description)
+    improve = bool(starting or PUSH.match(command(description)) or (max_mode.MAX_MODE.match(command(description)) and not WORK.match(goal)))
     publish = bool(re.fullmatch(r"push\s+" + PROJECT_LIST + r"[.!]*", command(description), re.I))
     kind = "coding" if improve else task_kind(goal)
     eligible = task_queue.worker_order(kind)
@@ -163,14 +168,17 @@ def project_plan(root, description, names, worker):
         load[lane] += 1
         # The existing worker chooses its repository from the prompt. Never
         # include the other projects' names in this project's assignment.
-        scoped = PROJECT.sub(lambda match: project if PROJECT_NAMES[re.sub(r"\s+", "", match[0].lower())] == project
-                             else "another project", description)
-        assignment = ("Improve " + project + ": inspect the project, fix issues you find, and run relevant tests."
+        scoped = PROJECT.sub(lambda match: project if projects(match[0]) == [project]
+                             else "another project", normalize_projects(description))
+        assignment = ("Improve " + project + ": inspect the project, choose one useful bounded fix, implement it, and run relevant tests."
                       if improve else "Carry out this request for " + project + " only.")
         prompt = ("Project: " + project + "\n" + assignment + "\nJeff's request: " + scoped +
-                  "\nWork only on this project. Keep changes in drafts and report actual results. Do not start other workers.")
+                  "\nWork only on this project in your assigned worktree and draft branch. Report actual results. "
+                  "Never merge, undraft, force-push, use Grok/xAI, send texts, or start other workers.")
+        if project == "Fantasy Football":
+            prompt += "\nESPN access is read-only. Jeff makes all lineup and roster moves himself."
         packages.append(dict(worker=lane, kind=kind, title=project, prompt=prompt,
-                             publish_project=project if publish else None))
+                             publish_project=project if publish or starting else None, draft_pr=starting))
     return packages
 
 
@@ -212,6 +220,7 @@ class TaskDispatch:
             return self.public(conversation)
         try:
             publish_project = None
+            draft_pr = False
             maximum = worker == "max"
             project_batch = len(names) >= 2
             worker = "auto" if maximum else task_queue.worker_name(worker)
@@ -228,10 +237,11 @@ class TaskDispatch:
             if project_batch:
                 goal, subtasks = description, project_plan(self.root, description, names, worker)
                 kind = subtasks[0]["kind"]
-            elif names and PUSH.match(command(description)):
+            elif names and (PUSH.match(command(description)) or project_start(description)):
                 package = project_plan(self.root, description, names, worker)[0]
                 description, worker, kind = package["prompt"], package["worker"], package["kind"]
                 publish_project = package.get("publish_project")
+                draft_pr = package.get("draft_pr", False)
             elif maximum:
                 goal, subtasks = max_mode.plan(self.root, description, kind)
         except ValueError as exc:
@@ -241,7 +251,7 @@ class TaskDispatch:
             return self.public(conversation)
         # Save the originating message AND intent before the queue side effect.
         # Startup/reconciliation retries this idempotently after either write fails.
-        intent = dict(prompt=description, worker=worker, kind=kind, request_id=request_id, publish_project=publish_project)
+        intent = dict(prompt=description, worker=worker, kind=kind, request_id=request_id, publish_project=publish_project, draft_pr=draft_pr)
         if maximum or project_batch:
             intent.update(goal=goal, subtasks=subtasks)
         if project_batch:
@@ -282,7 +292,8 @@ class TaskDispatch:
                         changed = True
                         continue
                     row = task_queue.enqueue(self.root, identifier, intent["request_id"], intent["prompt"],
-                                             worker=intent["worker"], kind=intent["kind"], publish_project=intent.get("publish_project"))
+                                             worker=intent["worker"], kind=intent["kind"], publish_project=intent.get("publish_project"),
+                                             draft_pr=intent.get("draft_pr", False))
                     message.update(task_id=row["id"], status="done", provider="dispatcher",
                                    content=task_receipt(row),
                                    action_card={"id": message["request_id"], "state": "queued", "executable": False,

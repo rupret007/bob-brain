@@ -197,6 +197,9 @@ def _queue_jobs(jobs_map: dict[str, dict], sessions: set[str], *, limit: int = 2
             "started_at": record.get("started_at"),
             "claimed_at": record.get("claimed_at"),
             "launched_at": record.get("launched_at"),
+            "prompt": record.get("prompt"),
+            "project": record.get("project"),
+            "repo": record.get("repo"),
         }
         buckets[bucket].append(entry)
     for key in buckets:
@@ -391,7 +394,7 @@ def observe_work(root: Path, *, now: float | None = None) -> dict:
     jobs_map, queue_meta = read_job_journals(root)
     queue = _queue_jobs(jobs_map, set(sessions), limit=len(jobs_map))
     return dict(records=jobs_map, sessions=sessions, queue=queue,
-                work=collect_work(sessions, queue["claimed"], processes, now),
+                work=collect_work(sessions, queue["claimed"], processes, now, root=root),
                 inspection=dict(screens_available=screen_sample is not None,
                                 processes_available=processes is not None,
                                 queue_available=queue_meta["available"]))
@@ -480,7 +483,7 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
             "Queue counts include all jobs; lists show recent examples. Done/failed jobs are history, not active work. "
             "Lane lock reports are cached at checked_at; current queue claims and screen presence take precedence. "
             "active_jobs only covers journaled queue claims. Background work may hold a busy lane without a claim; "
-            "an empty active_jobs list does not prove an idle or stale lock. Report unidentified work as unknown, "
+            "an empty active_jobs list does not prove an idle or stale lock. For unidentified work name its screen, log path and last log line, "
             "and do not infer that all workers are idle from an empty queue. "
             "Do not tell Jeff to use special job syntax. Do not say you cannot see workers if this block lists them."
             " Chat provider health comes only from provider_health, not old messages or lane locks. "
