@@ -157,11 +157,17 @@ class ChatDispatchTests(Fixture):
 
     def test_go_understands_a_natural_offer_with_a_confirmation_question(self):
         for text in ("Happy to take a look at PR #162 — want me to prep a review job for it?",
+                     "I can offer to take a look at PR #162 whenever you want — just say go and I'll queue it.",
                      "I can review PR #161. Want me to?", "I could review PR #161 — shall I go ahead?"):
             with self.subTest(text=text):
                 self.offer(text)
                 receipt = self.submit("go")["messages"][-1]
                 self.assertTrue(queue.tasks(self.root)[receipt["task_id"]]["prompt"].startswith("review PR #16"))
+
+    def test_polite_go_accepts_a_single_saved_proposal(self):
+        self.offer("I can review PR #161.")
+        receipt = self.submit("Okay, please go ahead.")["messages"][-1]
+        self.assertEqual(queue.tasks(self.root)[receipt["task_id"]]["prompt"], "review PR #161")
 
     def test_go_accepts_an_existing_pending_job(self):
         conversation = self.chat.conversations[self.identifier]

@@ -24,7 +24,7 @@ ROUTED = re.compile(r"^" + POLITE + r"(?:have|get|ask|use|assign(?:\s+to)?|deleg
 PREFIX = re.compile(r"^(?:worker\s*[:=]\s*)?(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\s*:\s*(.+)$", re.I | re.S)
 CODING = re.compile(r"\b(?:fix|repair|implement|refactor|debug|build|run|execute|install|edit|change|modify)\b|"
                     r"\b(?:write|add|create|update|remove)\b.{0,60}\b(?:code|file|test|function|service|script|app|feature)\b", re.I | re.S)
-FOLLOW_UP = re.compile(r"^(?:go(?: ahead)?|do it|handle it|yes(?: please)?|let['’]s do it)[.!?]*$", re.I)
+FOLLOW_UP = re.compile(r"^" + POLITE + r"(?:go(?: ahead)?|do it|handle it|yes(?: please)?|let['’]s do it)[.!?]*$", re.I)
 CHAT_STYLE = re.compile(r"^" + POLITE + r"(?:keep|make)\s+(?:your\s+)?(?:replies|answers|responses)\s+"
                         r"(?:short(?:er)?|brief(?:er)?|concise|friendly|friendlier|plain(?:er)?|natural)\b", re.I)
 PROPOSAL = re.compile(r"^(?:I can|I could|Happy to|Shall I|Want me to|Would you like me to)\s+(.+?)[.!?]*$", re.I)
@@ -53,10 +53,13 @@ def followup_work(conversation):
         return None, "auto"
     text = last.get("content", "").strip()
     text = re.sub(r"\s*(?:[.!]|[—–])\s*(?:want me to|shall I|should I)(?:\s+(?:go ahead|start|do (?:it|that)|prep a review job for it))?\?\s*$", "", text, flags=re.I)
+    text = re.sub(r"\s*(?:[.!]|[—–])\s*(?:just\s+)?(?:say go|say the word)\b[^\n]*$", "", text, flags=re.I)
     proposal = PROPOSAL.fullmatch(text)
     if not proposal or re.search(r"\bor\b|\n|[.!?]\s", proposal[1], re.I):
         return None, "auto"
-    prompt = re.sub(r"^take a look at\b", "review", proposal[1], flags=re.I)
+    prompt = re.sub(r"^(?:offer to|help(?: you)?(?: to)?)\s+", "", proposal[1], flags=re.I)
+    prompt = re.sub(r"^take a look at\b", "review", prompt, flags=re.I)
+    prompt = re.sub(r"\s+(?:whenever you want|when(?:ever)? you['’]re ready)$", "", prompt, flags=re.I)
     return parse_work(prompt)
 
 

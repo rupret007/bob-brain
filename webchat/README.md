@@ -120,9 +120,15 @@ and refreshed operational context.
 Only one reply runs **per conversation** — not globally across all chats (other conversations can reply in parallel). CLI
 calls use `chat-<provider>` locks separate from background `lane-*` locks; a busy
 CLI slot falls through to the next provider. Handback: `conductor/handback/`
-(BOB-STATE in, HANDBACK-LOG out). Say `start a job: …` to queue a durable task
-without a second confirmation. The job runner launches it as capacity becomes
-available; nothing merges automatically. Retransmitting the same request ID does
+(BOB-STATE in, HANDBACK-LOG out). Natural requests such as `fix the login button`,
+`review PR #161`, and `have Claude review this design` queue durable tasks without
+a second confirmation. `go` accepts the most recent clear work proposal; an
+ambiguous request gets one short question. Ordinary answers have no job footer.
+Receipts say `Queued — job <id>.` after the durable write, or
+`Queued for Claude — job <id>.` for a named worker. They update to
+`Started on Claude — job <id>.` only after the queue records that worker's claim.
+The job runner launches work as capacity becomes available; nothing merges
+automatically. Retransmitting the same request ID does
 not duplicate work. The server saves intent before queue writes and acknowledges
 the job only after the fsynced journal append. Interrupted writes are reconciled
 idempotently. Queue updates share a lock and fence stale claim tokens.
