@@ -102,6 +102,16 @@ class TextingTests(unittest.TestCase):
             self.say(prefix + draft["confirm_message"])
             self.assertEqual(self.private()["audit"], [])
 
+    def test_texting_does_not_clear_holds_or_capture_later_resume(self):
+        self.say("hold all work")
+        draft = self.draft()
+        self.say(draft["confirm_message"])
+        self.assertTrue(self.chat.conversations[self.identifier]["intent_state"]["holds"])
+        self.say("hold all work")
+        self.say("go")
+        self.assertFalse(self.chat.conversations[self.identifier]["intent_state"]["holds"])
+        self.assertEqual(len(self.private()["audit"]), 1)
+
     def test_exact_confirmation_consumed_once_and_truthfully_blocked(self):
         draft = self.draft()
         request_id = str(uuid.uuid4())

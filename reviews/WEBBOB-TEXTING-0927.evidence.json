@@ -1,0 +1,99 @@
+{
+  "ok": true,
+  "scope": "mock messaging, real isolated HTTP server and browser",
+  "delivery": "BLOCKED: Andrea does not support Web Bob owner approvals; no send attempted",
+  "started_at": "2026-09-27T19:29:36.301586+00:00",
+  "finished_at": "2026-09-27T19:29:40.730734+00:00",
+  "webchat_url": "http://127.0.0.1:65108",
+  "mock_messaging_url": "http://127.0.0.1:65107",
+  "browser": {
+    "ok": true,
+    "synthetic_only": true,
+    "screenshots": [
+      "WEBBOB-TEXTING-0927-phone-summary.png",
+      "WEBBOB-TEXTING-0927-phone-draft.png",
+      "WEBBOB-TEXTING-0927-phone-revised.png",
+      "WEBBOB-TEXTING-0927-phone-not-sent.png",
+      "WEBBOB-TEXTING-0927-desktop-confirmed-not-sent.png"
+    ],
+    "browser_errors": [],
+    "checks": [
+      "login",
+      "thread summary",
+      "exact recipient and body",
+      "edit clears consent",
+      "new token after edit",
+      "stale token rejected",
+      "separate chat submission",
+      "honest blocked receipt",
+      "reload preserves consumed consent",
+      "no horizontal phone overflow"
+    ]
+  },
+  "mock_requests": [
+    [
+      "POST",
+      "/api/v1/chat/query"
+    ],
+    [
+      "POST",
+      "/api/v1/chat/query"
+    ],
+    [
+      "GET",
+      "/api/v1/chat/iMessage%3B-%3B%2B15550101010/message"
+    ],
+    [
+      "POST",
+      "/api/v1/chat/query"
+    ],
+    [
+      "POST",
+      "/api/v1/chat/query"
+    ]
+  ],
+  "unexpected_writes": [],
+  "model_calls": 0,
+  "queued_jobs": 0,
+  "confirmation_audit": [
+    {
+      "event": "owner_confirmed_not_sent",
+      "conversation_id": "17e8283d-b4af-4c09-9081-4e66d40b1e37",
+      "draft_id": "70afaa661e68077e",
+      "revision": 2,
+      "recipient": {
+        "guid": "iMessage;-;+15550101010",
+        "name": "Alex Morgan",
+        "addresses": [
+          "+15550101010"
+        ]
+      },
+      "body": "I’ll bring the charts at 7.",
+      "fingerprint": "20d3672039e9d26a6a22346ab94ea44794e6177c12a53f3e05c7d723b8ad6727",
+      "at": 1790537380.197747,
+      "request_id": "80cb1db6-163b-4d60-855b-c404f93d4e68"
+    }
+  ],
+  "live_listeners_before": [
+    "BlueBubbl   926 jeffstory   61u  IPv6 0x122b8f6db67e2589      0t0  TCP *:1234 (LISTEN)",
+    "Python    99149 jeffstory    4u  IPv4 0xb9f14236facc1838      0t0  TCP 127.0.0.1:8787 (LISTEN)",
+    "node      66987 jeffstory   32u  IPv4 0x2ab1d2e72c7e6c1b      0t0  TCP 127.0.0.1:4315 (LISTEN)"
+  ],
+  "live_listeners_after": [
+    "BlueBubbl   926 jeffstory   61u  IPv6 0x122b8f6db67e2589      0t0  TCP *:1234 (LISTEN)",
+    "Python    99149 jeffstory    4u  IPv4 0xb9f14236facc1838      0t0  TCP 127.0.0.1:8787 (LISTEN)",
+    "node      66987 jeffstory   32u  IPv4 0x2ab1d2e72c7e6c1b      0t0  TCP 127.0.0.1:4315 (LISTEN)"
+  ],
+  "source_sha256": {
+    "webchat/texting.py": "b8beb023aa8f5a0fce202332ab70133925b00cf54b730d3c7770c39aa6b7de80",
+    "webchat/app.py": "0c200d3180118414dfa594339956db8bad6abf546bd46fca06a84c76dfc318c2",
+    "webchat/providers.py": "1074481c800a2797ed1d6c8990a1749d773ea23321d49c63bd19777b62832931",
+    "webchat/static/app.js": "6092acef01816fba95455a481200c4e16842893ebb48895c8b9d05cb1bf7df74",
+    "webchat/static/index.html": "83c34bb7b169d306a53141a6b7d69f01e6ed2ce451ef8fc973729d18f3cef428",
+    "webchat/static/style.css": "bd92620cacdfad4416cc1fec3c10bc33b25a187c62b5e928102d9917832509d3",
+    "webchat/texting_fixture.py": "b2fdbc3b2b36170a971aea01379b9e2cef64d6d2e212a0d9280d93c2c37977a0",
+    "webchat/texting_proof.py": "8a9153984a9bdf33341d2b389240f230d01605617f579958b2a97dd9157bfb65",
+    "webchat/browser_texting.cjs": "93d31c44eed2c3e0c8579c82ec1fdc3c609bdb5faa120722fa1ad37e504a967f",
+    "webchat/test_texting.py": "6768313548bccb50828018ee2726819f435068e65672e9e1fce3c69ee6572fa5"
+  }
+}
