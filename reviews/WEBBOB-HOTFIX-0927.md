@@ -105,3 +105,7 @@ Chat provider health: codex=ready; claude=ready; cursor=ready; gemini=ready; min
 ```
 
 Runtime evidence stays outside Git in `conductor/state/webbob-hotfix-proof-0927.json` and `conductor/state/webbob-hotfix-deployment-0927.json`. No password, cookies, tokens or keys are included here.
+
+## Final follow-up
+
+The max-mode follow-up passed 246 tests (98 services, 148 webchat) and was deployed as `570bc5af223f87c1b149caa7bf9d8d3cb3b75359` from the same integrate service checkout. Original three-worker hotfix answers were verified unchanged and present exactly once after the subsequent restart. The final code also distinguishes `BLOCKER: none` from a genuine failure. See [WEBBOB-MAXMODE-0927.md](WEBBOB-MAXMODE-0927.md) for the final deployment and fan-out evidence.

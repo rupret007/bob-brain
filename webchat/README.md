@@ -47,6 +47,19 @@ subscription quota measurements.
 
 ## Max-mode tasks
 
+Ordinary work requests such as `Ok figure out what is wrong with Gemini` and
+`start a job: ...` go directly to the durable dispatcher. A server receipt names
+the job only after the queue write succeeds; claim updates name the actual worker,
+and the completed result is posted in the originating conversation. Model prose
+cannot acknowledge queue or inbox effects. Explicit small text writes such as
+`start a job: write hello to /tmp/example.txt` use Codex, Cursor or Claude with file
+tools; success requires the server to verify the changed file and its contents.
+
+Operational replies use the current queue, lane locks and generation health from
+`webchat/sessions/provider-health.json` plus `logs/webchat-failover.log`. The server
+identifies the actual answering provider on each attempt. Old chat errors never
+override recovered health, and configuration probes alone do not prove generation.
+
 Say `Max mode: review ...` or `Go to the max: implement ...`. Web Bob saves a
 restart-safe plan and queues independent packages for Codex (implementation),
 Cursor (integration/tests), Claude (design critique), Gemini (alternatives and
@@ -63,7 +76,7 @@ Max mode: review this design and supplied evidence ...
 [mini] Run services/test_services.py.
 ```
 
-API and Claude packages need evidence in the request; they cannot inspect files.
+API and Claude analysis packages need evidence in the request; they cannot inspect files.
 Coding packages own separate production/test files on private draft branches.
 Local commits are reported for review; max mode does not integrate or publish
 them. Mini accepts existing `services/test_*.py` or `webchat/test_*.py` suites,
@@ -90,8 +103,8 @@ beside the reply. An exhausted provider chain produces an honest queued message.
 The saved turn automatically retries when a cooldown expires; Stop cancels it.
 
 Codex runs read-only with no approval prompts or inherited user-config MCP tools;
-Cursor runs in ask mode. Providers answer, investigate and draft. The separate
-confirmed-job handler can queue a draft job; providers cannot invoke it.
+Cursor runs in ask mode for chat. Providers answer from supplied context. The
+separate server dispatch handler queues work; model replies cannot invoke it.
 Every provider receives the current
 handoff and the hard rules: drafts only, no merges/undrafts/force-push, no outward
 messages without Jeff's yes to the exact text, no spending/login changes, no
@@ -102,15 +115,17 @@ cannot override those rules.
 inside a mode-700 directory. Conversation history survives server restarts.
 Login cookies expire after 12 hours and are invalidated by logout or a restart.
 An interrupted running reply is marked as interrupted; it is never automatically
-replayed. A waiting all-down request survives restart with its frozen context.
+replayed. A waiting all-down request survives restart with its original user turn
+and refreshed operational context.
 Only one reply runs **per conversation** — not globally across all chats (other conversations can reply in parallel). CLI
 calls use `chat-<provider>` locks separate from background `lane-*` locks; a busy
 CLI slot falls through to the next provider. Handback: `conductor/handback/`
-(BOB-STATE in, HANDBACK-LOG out). Say `start a job: …` then `yes, start job` to
-queue a draft READY row (scheduler launches; nothing merges automatically). Retransmitting the same request ID does not run
-the model twice. Confirmed jobs have durable once-only receipts before queue
-writes. Ambiguous submissions require checking Jobs; they are never replayed.
-Queue writes use the scheduler's queue lock and atomic files.
+(BOB-STATE in, HANDBACK-LOG out). Say `start a job: …` to queue a durable task
+without a second confirmation. The job runner launches it as capacity becomes
+available; nothing merges automatically. Retransmitting the same request ID does
+not duplicate work. The server saves intent before queue writes and acknowledges
+the job only after the fsynced journal append. Interrupted writes are reconciled
+idempotently. Queue updates share a lock and fence stale claim tokens.
 
 Stop and per-provider deadlines terminate the process group and captured nested
 groups belonging to this chat. Stdin is an EOF-terminated prompt file or
@@ -170,8 +185,8 @@ out browsers and interrupts an active reply. Other workers are unrelated.
 
 Authenticated `POST /api/messages` accepts `provider: "auto"` (default), or an
 explicit `minimax`, `gemini`, `codex`, `claude`, or `cursor`. Explicit selection
-uses that provider only, including status questions; failures stay visible instead
-of falling back. The separate `worker` field routes durable background tasks.
+tries that provider first, including status questions, then falls back with visible
+attempts if it fails. The separate `worker` field routes durable background tasks.
 `live_integration_proof.py run --root <mini-root>` verifies all five providers
 through chat; `verify` rechecks their saved answers without new model calls.
 
