@@ -55,43 +55,13 @@ if ($("login-form")) {
     const dot = $("status-dot");
     if (dot) dot.classList.toggle("busy", busy || sending);
   }
-  function setSheetOpen(open) {
-    const sheet = $("tools-sheet");
-    const backdrop = $("sheet-backdrop");
-    if (!sheet || !backdrop) return;
-    sheet.classList.toggle("open", open);
-    sheet.setAttribute("aria-hidden", open ? "false" : "true");
-    backdrop.hidden = !open;
-    $("open-sheet")?.setAttribute("aria-expanded", open ? "true" : "false");
-    document.body.style.overflow = open ? "hidden" : "";
-  }
-  function showSheetTab(name) {
-    for (const tab of document.querySelectorAll(".sheet-tab")) {
-      tab.classList.toggle("active", tab.dataset.sheet === name);
-    }
-    for (const panel of document.querySelectorAll(".sheet-panel")) {
-      const on = panel.dataset.panel === name;
-      panel.hidden = !on;
-      panel.classList.toggle("active", on);
-    }
-  }
-  $("open-sheet")?.addEventListener("click", () => setSheetOpen(true));
-  $("close-sheet")?.addEventListener("click", () => setSheetOpen(false));
-  $("sheet-backdrop")?.addEventListener("click", () => setSheetOpen(false));
-  for (const tab of document.querySelectorAll(".sheet-tab")) {
-    tab.addEventListener("click", () => {
-      const sheet = tab.dataset.sheet;
-      showSheetTab(sheet);
-      const bottomMap = { ops: "ops", conductor: "ops", song: "song", settings: "settings", lanes: "lanes" };
-      if (bottomMap[sheet]) setBottomTab(bottomMap[sheet]);
-    });
-  }
   const conductorPrompts = {
     round: "start a job: Web Bob ready round (draft only, no merge)",
-    council: "run council on: score Web Bob failover and mobile UX after R7 fixes",
+    council: "run council on: score Web Bob iPhone tab UI and handback failover",
     status: "From BOB-STATE and handback: what's running and what needs my yes?",
+    stop: "stop the current screen job if it's safe (draft only)",
   };
-  $("tools-sheet")?.addEventListener("click", (event) => {
+  document.querySelector(".app")?.addEventListener("click", (event) => {
     const btn = event.target.closest("[data-conductor]");
     if (!btn) return;
     const text = conductorPrompts[btn.dataset.conductor];
@@ -110,18 +80,38 @@ if ($("login-form")) {
       btn.classList.toggle("active", on);
       btn.setAttribute("aria-current", on ? "page" : "false");
     }
-    if (name === "chat") {
-      setSheetOpen(false);
-      return;
+    for (const view of document.querySelectorAll(".main-view")) {
+      const on = view.dataset.view === name;
+      view.hidden = !on;
+      view.classList.toggle("active", on);
     }
-    const sheetMap = { ops: "ops", conductor: "conductor", song: "song", settings: "settings", lanes: "lanes", models: "lanes" };
-    const panel = sheetMap[name] || name;
-    setSheetOpen(true);
-    showSheetTab(panel === "settings" ? "settings" : panel);
   }
   for (const btn of document.querySelectorAll(".bottom-tab")) {
     btn.addEventListener("click", () => setBottomTab(btn.dataset.bottom));
   }
+  $("open-chats")?.addEventListener("click", () => {
+    syncConversationDialog();
+    $("chats-dialog")?.showModal();
+  });
+  $("close-chats")?.addEventListener("click", () => $("chats-dialog")?.close());
+  function syncConversationDialog() {
+    const main = $("conversations");
+    const dialog = $("conversations-dialog");
+    if (!main || !dialog) return;
+    dialog.replaceChildren(...Array.from(main.options).map((opt) => {
+      const clone = document.createElement("option");
+      clone.value = opt.value;
+      clone.textContent = opt.textContent;
+      return clone;
+    }));
+    dialog.value = main.value;
+  }
+  $("conversations-dialog")?.addEventListener("change", async () => {
+    $("conversations").value = $("conversations-dialog").value;
+    $("conversations").dispatchEvent(new Event("change"));
+    $("chats-dialog")?.close();
+  });
+  $("new-chat-dialog")?.addEventListener("click", () => { $("new-chat")?.click(); $("chats-dialog")?.close(); });
   const chipActions = {
     status: "From BOB-STATE and handback: what's running and what needs my yes?",
     round: "start a job: Web Bob ready round (draft only, no merge)",
@@ -144,13 +134,6 @@ if ($("login-form")) {
     field.value = text;
     field.focus();
     field.dispatchEvent(new Event("input"));
-  });
-  $("handback-chip")?.addEventListener("click", () => {
-    const sheetOpen = $("tools-sheet")?.classList.contains("open");
-    if (!sheetOpen) { setSheetOpen(true); showSheetTab("ops"); }
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && $("tools-sheet")?.classList.contains("open")) setSheetOpen(false);
   });
   function render(conversation) {
     if (conversation.id !== current) return;
@@ -351,33 +334,51 @@ if ($("login-form")) {
     try { await api("/api/logout", {}); location.assign("/login"); }
     catch (error) { $("notice").textContent = error.message; }
   });
-  for (const button of document.querySelectorAll("[data-report]")) button.addEventListener("click", async () => {
-    $("report-title").textContent = button.textContent;
-    $("report-body").textContent = "Loading…"; $("report-date").textContent = ""; $("report").showModal();
-    try {
-      const data = await api(`/api/${button.dataset.report}`);
-      $("report-date").textContent = data.modified_at ? `File updated ${new Date(data.modified_at * 1000).toLocaleString()} · saved report, not a new check` : `Read ${new Date(data.read_at * 1000).toLocaleString()}`;
-      $("report-body").textContent = button.dataset.report === "jobs" ?
-        `${data.maintenance ? "Scheduling paused: " + data.maintenance + "\n\n" : ""}SCREENS\n${data.screens}\n\nQUEUE${data.queue.modified_at ? " · updated " + new Date(data.queue.modified_at * 1000).toLocaleString() : ""}\n${data.queue.text}` :
-        data.text + (data.truncated ? "\n\n[Display truncated]" : "");
-    } catch (error) { $("report-body").textContent = error.message; }
-  });
-  $("close-report").addEventListener("click", () => $("report").close());
+  $("close-report")?.addEventListener("click", () => $("report")?.close());
   let songProjectId = stored("bob.songProject") || "";
-  async function loadSong() {
+  async function loadSongList(selectId) {
+    const list = await api("/api/song-projects");
+    const picker = $(selectId || "song-picker");
+    if (!picker) return list;
+    picker.replaceChildren(...list.projects.map((p) => {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.title || "Untitled";
+      return opt;
+    }));
+    if (!list.projects.length) {
+      const empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = "No songs yet — tap New song";
+      picker.append(empty);
+    }
+    return list;
+  }
+  async function loadSong(id) {
     try {
-      const list = await api("/api/song-projects");
-      const row = list.projects.find((p) => p.id === songProjectId) || list.projects[0];
-      if (!row) { $("song-summary").textContent = "new"; return; }
-      songProjectId = row.id; remember("bob.songProject", songProjectId);
+      const list = await loadSongList("song-picker");
+      const row = list.projects.find((p) => p.id === (id || songProjectId)) || list.projects[0];
+      if (!row) return;
+      songProjectId = row.id;
+      remember("bob.songProject", songProjectId);
+      $("song-picker").value = songProjectId;
       const project = await api(`/api/song-projects/${songProjectId}`);
       $("song-title").value = project.title || "";
       $("song-lyrics").value = project.lyrics || "";
       $("song-chords").value = project.chords || "";
       $("song-notes").value = project.notes || "";
-      $("song-summary").textContent = project.title || "saved";
-    } catch (_) { $("song-summary").textContent = "offline"; }
+    } catch (_) { $("song-notice").textContent = "Offline — edits stay on device until you save."; }
   }
+  $("song-picker")?.addEventListener("change", () => loadSong($("song-picker").value));
+  $("song-new")?.addEventListener("click", () => {
+    songProjectId = "";
+    $("song-picker").value = "";
+    $("song-title").value = "";
+    $("song-lyrics").value = "";
+    $("song-chords").value = "";
+    $("song-notes").value = "";
+    $("song-title").focus();
+  });
   $("song-save").addEventListener("click", async () => {
     $("song-notice").textContent = "Saving…";
     try {
@@ -391,7 +392,8 @@ if ($("login-form")) {
       });
       songProjectId = project.id; remember("bob.songProject", songProjectId);
       $("song-notice").textContent = "Saved " + new Date().toLocaleTimeString();
-      $("song-summary").textContent = project.title;
+      await loadSongList("song-picker");
+      $("song-picker").value = project.id;
     } catch (error) { $("song-notice").textContent = error.message; }
   });
   $("song-demo").addEventListener("click", async () => {
@@ -476,17 +478,6 @@ if ($("login-form")) {
   async function refreshPanel() {
     try {
       const data = await api("/api/panel");
-      const state = data.handback?.bob_state?.text || "";
-      const chip = $("handback-chip");
-      const chipLine = state ? state.split("\n").find((line) => line.trim() && !line.startsWith("#"))?.replace(/^[-*]\s*/, "").slice(0, 120) : "";
-      if (chip) {
-        if (chipLine) {
-          chip.hidden = false;
-          chip.textContent = chipLine;
-        } else {
-          chip.hidden = true;
-        }
-      }
       const meta = data.live_ops_meta || {};
       const ops = data.live_ops || {};
       const spend = ops.minimax_spend || {};
@@ -495,53 +486,65 @@ if ($("login-form")) {
       const committed = spend.committed_usd;
       const cap = spend.cap_usd || 59;
       const spendText = committed === undefined || committed === null ? "budget unknown" : `$${committed.toFixed(2)} of $${cap}`;
-      const freshness = meta.stale ? "Last known snapshot (refreshing)" : "Live";
-      $("status-summary").textContent = `${freshness} · round ${ops.webchat_round || "?"} · MiniMax ${spendText}`;
-      const scoreLines = (ops.scores || []).slice(0, 8).map((row) => `${row.area} ${row.score}`).join(" · ");
+      const freshness = meta.stale ? "Refreshing dashboard…" : "Live";
       const liveCards = jobs.filter((j) => j.live_screen && j.stall_state === "running");
-      const summaryPlain = (data.handback?.summary?.text || "").split("\n").filter((l) => l.trim() && !l.startsWith("#")).slice(0, 4).join("\n");
-      const lines = [
-        `Building with ${roles.building || "nobody right now"} · reviews via ${roles.reviewing || "idle"}`,
-        liveCards.length ? `${liveCards.length} live screen job${liveCards.length === 1 ? "" : "s"}` : (jobs.length ? `${jobs.length} tracked job(s) (no live screen)` : "No screen jobs right now"),
-        scoreLines ? `Scores: ${scoreLines}` : "Scores refresh with the dashboard",
-        summaryPlain ? `Handback snapshot:\n${summaryPlain}` : "",
-      ].filter(Boolean);
-      $("status-body").textContent = lines.join("\n\n");
+      const jobLead = liveCards.length
+        ? `${liveCards.length} job${liveCards.length === 1 ? "" : "s"} running on screen`
+        : (jobs.length ? `${jobs.length} tracked — none on screen right now` : "Nothing running on screen");
+      $("status-summary").textContent = `${freshness} · ${jobLead} · MiniMax ${spendText} · round ${ops.webchat_round || "?"}`;
       renderLiveJobs(jobs);
       const c = data.conductor || {};
-      $("conductor-summary").textContent = `${c.draft_branch || "?"} @ ${(c.head_sha || "").slice(0, 7)}`;
-      const headShort = (c.head_sha || "").slice(0, 7);
+      $("conductor-summary").textContent = `Draft work on ${c.draft_branch || "unknown branch"}`;
       const autopilot = liveCards.length
-        ? `Autopilot busy — ${liveCards.length} job(s) on screen`
-        : (c.pass_schedule?.state
-          ? `Autopilot ${c.pass_schedule.state}${c.pass_schedule.next_due ? " · next " + new Date(c.pass_schedule.next_due * 1000).toLocaleString() : ""}`
-          : "Autopilot idle");
-      $("conductor-body").textContent = [
-        `Draft branch ${c.draft_branch || "?"} at ${headShort}`,
-        c.maintenance ? "Scheduling paused on the mini" : "Scheduler accepting draft jobs",
-        c.latest_result ? `Last ready round saved` : "",
+        ? `Busy — ${liveCards.length} live job${liveCards.length === 1 ? "" : "s"}`
+        : (c.pass_schedule?.state === "finished" && liveCards.length === 0
+          ? `Idle${c.pass_schedule.next_due ? " · next pass " + new Date(c.pass_schedule.next_due * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""}`
+          : (c.pass_schedule?.state ? `Autopilot ${c.pass_schedule.state}` : "Autopilot idle"));
+      $("conductor-status").textContent = [
         autopilot,
-        c.safety || "Drafts only · confirm before merge, send, or spend",
-      ].filter(Boolean).join("\n");
+        c.maintenance ? "Scheduling paused" : "Scheduler on",
+        `Builder: ${roles.building || "none"} · Reviews: ${roles.reviewing || "idle"}`,
+        (c.head_sha || "").slice(0, 7) ? `Latest commit ${(c.head_sha || "").slice(0, 7)}` : "",
+      ].filter(Boolean).join(" · ");
+      const summary = data.handback?.summary?.text || "";
+      const plainHandback = summary.split("\n")
+        .map((l) => l.replace(/^#+\s*/, "").replace(/\*\*/g, "").trim())
+        .filter((l) => l && !l.startsWith("---"))
+        .slice(0, 5)
+        .join(" ");
+      $("handback-plain").textContent = plainHandback || "Handback will appear after your next chat turn.";
+      const si = data.self_improve || {};
+      $("self-improve-status").textContent = si.summary || "Self-improve tick runs on the mini (launchd).";
     } catch (_) {
-      $("status-summary").textContent = "unavailable";
+      $("status-summary").textContent = "Jobs panel unavailable";
     }
   }
   async function refreshLanes() {
     try {
       const data = await api("/api/lanes" + (current ? "?conversation_id=" + encodeURIComponent(current) : ""));
       const entries = Object.entries(data.providers);
-      $("lanes-summary").textContent = entries.filter(([, lane]) => lane.state === "cooldown").length + " cooling down";
+      const cooling = entries.filter(([, lane]) => lane.state === "cooldown").length;
+      $("lanes-summary").textContent = cooling ? `${cooling} model${cooling === 1 ? "" : "s"} cooling down` : "All models ready to help";
       $("lanes").replaceChildren(...entries.map(([name, lane]) => {
-        const row = document.createElement("div"); row.className = "lane";
-        const title = document.createElement("strong");
-        title.textContent = `${providers[name]} · ${lane.state.replace("_", " ")}${lane.automatic ? "" : " · explicit choice only"}`;
-        const detail = document.createElement("span");
+        const card = document.createElement("article");
+        card.className = "lane-card";
+        const dot = document.createElement("span");
+        dot.className = `lane-dot ${lane.state === "ready" ? "ok" : lane.state === "cooldown" ? "warn" : "busy"}`;
+        dot.setAttribute("aria-hidden", "true");
+        const title = document.createElement("h3");
+        title.textContent = providers[name];
+        const state = document.createElement("p");
+        state.className = "lane-state";
+        state.textContent = lane.state.replace(/_/g, " ");
+        const detail = document.createElement("p");
+        detail.className = "lane-detail muted";
         const spend = lane.spend;
-        detail.textContent = lane.detail + (lane.retry_at > Date.now() / 1000 ? ` · retry ${new Date(lane.retry_at * 1000).toLocaleTimeString()}` : "") +
-          (spend.committed_usd !== undefined && ["gemini", "minimax"].includes(name) ? ` · $${spend.committed_usd.toFixed(4)} committed${spend.cap_usd ? " / $" + spend.cap_usd : ""} (includes reservations)` : ` · ${spend.billing}`) +
-          (lane.probed_at ? ` · probe ${lane.probe}, ${new Date(lane.probed_at * 1000).toLocaleTimeString()} (login/configuration/network only)` : "");
-        row.append(title, detail); return row;
+        const cost = spend.committed_usd !== undefined && ["gemini", "minimax"].includes(name)
+          ? `$${spend.committed_usd.toFixed(2)}${spend.cap_usd ? ` / $${spend.cap_usd} cap` : ""}`
+          : spend.billing;
+        detail.textContent = [lane.detail, cost, lane.retry_at > Date.now() / 1000 ? `Retry ${new Date(lane.retry_at * 1000).toLocaleTimeString()}` : ""].filter(Boolean).join(" · ");
+        card.append(dot, title, state, detail);
+        return card;
       }));
     } catch (_) { $("lanes-summary").textContent = "Health unavailable"; }
   }

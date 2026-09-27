@@ -588,6 +588,16 @@ class HandbackJobTests(Fixture):
         self.assertIn("live_ops", data)
         self.assertIn("conductor", data)
         self.assertIn("live_ops_meta", data)
+        self.assertIn("self_improve", data)
+        self.assertIn("summary", data["self_improve"])
+
+    def test_self_improve_status_from_handback(self):
+        log = self.root / "conductor/handback/HANDBACK-LOG.md"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text("## 2026-09-27 02:00:00 CT\n- **Ask:** webchat self-improve tick\n- **Outcome:** chat\n")
+        status = self.chat.self_improve_status()
+        self.assertIn("2026-09-27 02:00:00 CT", status["last_logged"] or "")
+        self.assertIn("self-improve", status["summary"].lower())
 
     def test_handback_drill_backup_restore(self):
         from live_handback_drill import backup_handback, restore_handback

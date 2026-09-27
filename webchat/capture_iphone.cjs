@@ -2,9 +2,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { chromium } = require(process.env.BOB_PLAYWRIGHT_MODULE || "playwright");
-const evidence = path.join(__dirname, "evidence", "iphone-deep-assess");
+const evidence = path.join(__dirname, "evidence", "iphone-r6");
 fs.mkdirSync(evidence, { recursive: true, mode: 0o700 });
 const layout = [];
+const tabs = ["chat", "ops", "song", "lanes", "settings"];
 
 async function box(page, selector) {
   const loc = page.locator(selector).first();
@@ -25,7 +26,7 @@ async function box(page, selector) {
     await page.locator("#password").fill(password);
     await page.locator("#login-form button").click();
     await page.waitForURL("http://127.0.0.1:8787/");
-    await page.locator("#messages").waitFor();
+    await page.locator("#view-chat.active").waitFor();
     const vh = height;
     const msg = await box(page, "#messages");
     const metrics = {
@@ -35,18 +36,17 @@ async function box(page, selector) {
     };
     layout.push({ tag, ...metrics });
     await page.screenshot({ path: path.join(evidence, `${tag}-chat.png`) });
-    await page.locator("#message").fill("Reply with exactly: playwright ping");
-    await page.locator("#send").click();
-    await page.locator(".message.assistant .body").last().waitFor({ state: "visible", timeout: 120000 });
-    await page.locator('.bottom-tab[data-bottom="ops"]').click();
-    await page.locator("#tools-sheet.open").waitFor();
-    await page.screenshot({ path: path.join(evidence, `${tag}-jobs-tab.png`) });
-    await page.locator("#close-sheet").click();
-    await page.locator("#tools-sheet:not(.open)").waitFor();
+    for (const tab of tabs.slice(1)) {
+      await page.locator(`.bottom-tab[data-bottom="${tab}"]`).click();
+      await page.locator(`#view-${tab}:not([hidden])`).waitFor();
+      await page.screenshot({ path: path.join(evidence, `${tag}-${tab}-tab.png`) });
+    }
+    await page.locator('.bottom-tab[data-bottom="chat"]').click();
+    await page.locator("#view-chat.active").waitFor();
     await context.close();
   }
   await browser.close();
-  const ok = layout.every((row) => row.messages_ratio >= 0.38);
+  const ok = layout.every((row) => row.messages_ratio >= 0.7);
   fs.writeFileSync(path.join(evidence, "layout-metrics.json"), JSON.stringify({ ok, layout }, null, 2) + "\n");
   console.log(JSON.stringify({ ok, folder: evidence, layout }));
   if (!ok) process.exitCode = 1;

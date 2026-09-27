@@ -24,112 +24,136 @@
         </div>
       </div>
       <div class="top-actions">
-        <button type="button" id="open-sheet" class="icon-btn" aria-expanded="false" aria-controls="tools-sheet" aria-label="Ops and settings">⋯</button>
+        <button type="button" id="open-chats" class="icon-btn" aria-label="Conversations" title="Conversations">💬</button>
         <button type="button" id="logout" class="quiet">Log out</button>
       </div>
     </header>
-    <button type="button" id="handback-chip" class="handback-chip" hidden aria-label="Handback summary"></button>
-    <div class="conversation-bar">
-      <label class="sr-only" for="conversations">Conversation</label>
-      <select id="conversations" aria-label="Conversation"></select>
-      <button type="button" id="new-chat" class="quiet">New</button>
-    </div>
-    <main id="messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions text"></main>
-    <div id="notice" class="notice" role="status"></div>
-    <div class="quick-chips" id="quick-chips" role="toolbar" aria-label="Quick actions">
-      <button type="button" class="chip" data-chip="status">Status</button>
-      <button type="button" class="chip" data-chip="round">Start round</button>
-      <button type="button" class="chip" data-chip="council">Ask council</button>
-      <button type="button" class="chip" data-chip="song">New song</button>
-    </div>
-    <form id="composer" class="composer">
-      <label class="sr-only" for="message">Message Bob</label>
-      <button type="button" id="mic" class="quiet icon-btn" aria-label="Voice input" title="Voice input">🎤</button>
-      <textarea id="message" name="message" placeholder="Message Bob…" rows="1" maxlength="6000" required enterkeyhint="send"></textarea>
-      <button type="button" id="speak" class="quiet icon-btn" aria-label="Read last reply aloud" title="Read aloud">🔊</button>
-      <button type="button" id="stop" hidden>Stop</button>
-      <button type="submit" id="send" class="primary">Send <span aria-hidden="true">↑</span></button>
-    </form>
+
+    <section id="view-chat" class="main-view active" data-view="chat">
+      <main id="messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions text"></main>
+      <div id="notice" class="notice" role="status"></div>
+      <div class="quick-chips" id="quick-chips" role="toolbar" aria-label="Quick actions">
+        <button type="button" class="chip" data-chip="status">Status</button>
+        <button type="button" class="chip" data-chip="round">Start round</button>
+        <button type="button" class="chip" data-chip="council">Ask council</button>
+        <button type="button" class="chip" data-chip="song">New song</button>
+      </div>
+      <form id="composer" class="composer">
+        <label class="sr-only" for="message">Message Bob</label>
+        <button type="button" id="mic" class="quiet icon-btn" aria-label="Voice input" title="Voice input">🎤</button>
+        <textarea id="message" name="message" placeholder="Message Bob…" rows="1" maxlength="6000" required enterkeyhint="send"></textarea>
+        <button type="button" id="speak" class="quiet icon-btn" aria-label="Read last reply aloud" title="Read aloud">🔊</button>
+        <button type="button" id="stop" hidden>Stop</button>
+        <button type="submit" id="send" class="primary">Send <span aria-hidden="true">↑</span></button>
+      </form>
+    </section>
+
+    <section id="view-ops" class="main-view" data-view="ops" hidden>
+      <div class="view-scroll">
+        <h2 class="view-title">Jobs</h2>
+        <p id="status-summary" class="view-lead muted"></p>
+        <div id="live-jobs" class="live-jobs" aria-live="polite"></div>
+        <div class="conductor-block">
+          <h3 class="view-subtitle">Conductor</h3>
+          <p id="conductor-summary" class="view-lead muted"></p>
+          <p id="conductor-status" class="conductor-status"></p>
+          <div class="conductor-actions" role="toolbar" aria-label="Conductor actions">
+            <button type="button" class="chip" data-conductor="round">Start round</button>
+            <button type="button" class="chip" data-conductor="council">Ask council</button>
+            <button type="button" class="chip" data-conductor="status">Status</button>
+            <button type="button" class="chip" data-conductor="stop">Stop job</button>
+          </div>
+          <p class="view-hint muted">Draft-only. Merge, send, and spend still need your yes in chat.</p>
+        </div>
+        <div class="handback-block">
+          <h3 class="view-subtitle">Handback</h3>
+          <p id="handback-plain" class="handback-plain muted"></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-lanes" class="main-view" data-view="lanes" hidden>
+      <div class="view-scroll">
+        <h2 class="view-title">Models</h2>
+        <p id="lanes-summary" class="view-lead muted"></p>
+        <div id="lanes" class="lane-cards" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section id="view-song" class="main-view" data-view="song" hidden>
+      <div class="view-scroll">
+        <h2 class="view-title">Songs</h2>
+        <label class="field-label" for="song-picker">Your songs</label>
+        <select id="song-picker" aria-label="Song project"></select>
+        <button type="button" id="song-new" class="quiet song-new">New song</button>
+        <label class="field-label" for="song-title">Title</label>
+        <input id="song-title" type="text" placeholder="Working title" maxlength="120">
+        <label class="field-label" for="song-lyrics">Lyrics</label>
+        <textarea id="song-lyrics" placeholder="Verse, chorus, hooks…" rows="10" maxlength="120000"></textarea>
+        <label class="field-label" for="song-chords">Chords</label>
+        <textarea id="song-chords" placeholder="e.g. Am · F · C · G" rows="3" maxlength="120000"></textarea>
+        <label class="field-label" for="song-notes">Style &amp; notes</label>
+        <textarea id="song-notes" placeholder="Tempo, vibe, arrangement ideas" rows="3" maxlength="120000"></textarea>
+        <div class="song-actions">
+          <button type="button" id="song-save" class="primary">Save</button>
+          <button type="button" id="song-demo">Local sketch ($0)</button>
+          <label class="upload-label"><input id="song-upload" type="file" accept="audio/*"> Upload audio</label>
+        </div>
+        <audio id="song-player" controls hidden></audio>
+        <p id="song-notice" class="muted"></p>
+      </div>
+    </section>
+
+    <section id="view-settings" class="main-view" data-view="settings" hidden>
+      <div class="view-scroll settings-list">
+        <h2 class="view-title">Settings</h2>
+        <div class="settings-group">
+          <h3 class="settings-group-title">Replies</h3>
+          <label class="field-label" for="provider-choice">Who answers</label>
+          <select id="provider-choice">
+            <option value="auto">Auto · fast for quick asks, Codex/Cursor for heavy work</option>
+            <option value="claude">Claude only · short critique</option>
+          </select>
+        </div>
+        <div class="settings-group">
+          <h3 class="settings-group-title">Chats</h3>
+          <label class="field-label" for="conversations">Active conversation</label>
+          <select id="conversations" aria-label="Conversation"></select>
+          <button type="button" id="new-chat" class="quiet">Start new chat</button>
+        </div>
+        <div class="settings-group">
+          <h3 class="settings-group-title">Self-improve</h3>
+          <p id="self-improve-status" class="muted">Checking…</p>
+        </div>
+        <p class="view-hint muted">Drafts stay drafts. Confirm before merge, send, or spend.</p>
+      </div>
+    </section>
+
     <nav class="bottom-tabs" aria-label="Main">
-      <button type="button" class="bottom-tab active" data-bottom="chat" aria-current="page">Chat</button>
-      <button type="button" class="bottom-tab" data-bottom="ops">Jobs</button>
-      <button type="button" class="bottom-tab" data-bottom="lanes">Models</button>
-      <button type="button" class="bottom-tab" data-bottom="song">Songs</button>
-      <button type="button" class="bottom-tab" data-bottom="settings">Settings</button>
+      <button type="button" class="bottom-tab active" data-bottom="chat" aria-current="page">
+        <span class="tab-icon" aria-hidden="true">💬</span><span class="tab-label">Chat</span>
+      </button>
+      <button type="button" class="bottom-tab" data-bottom="ops">
+        <span class="tab-icon" aria-hidden="true">⚡</span><span class="tab-label">Jobs</span>
+      </button>
+      <button type="button" class="bottom-tab" data-bottom="song">
+        <span class="tab-icon" aria-hidden="true">🎵</span><span class="tab-label">Songs</span>
+      </button>
+      <button type="button" class="bottom-tab" data-bottom="lanes">
+        <span class="tab-icon" aria-hidden="true">🧠</span><span class="tab-label">Models</span>
+      </button>
+      <button type="button" class="bottom-tab" data-bottom="settings">
+        <span class="tab-icon" aria-hidden="true">⚙️</span><span class="tab-label">Settings</span>
+      </button>
     </nav>
   </div>
 
-  <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
-  <aside id="tools-sheet" class="tools-sheet" aria-hidden="true" aria-label="Ops and settings">
-    <div class="sheet-grab" aria-hidden="true"></div>
-    <nav class="sheet-tabs" aria-label="Sections">
-      <button type="button" class="sheet-tab active" data-sheet="ops">Jobs</button>
-      <button type="button" class="sheet-tab" data-sheet="conductor">Conductor</button>
-      <button type="button" class="sheet-tab" data-sheet="song">Songs</button>
-      <button type="button" class="sheet-tab" data-sheet="lanes">Models</button>
-      <button type="button" class="sheet-tab" data-sheet="settings">Settings</button>
-    </nav>
-    <div class="sheet-panels">
-      <section id="sheet-ops" class="sheet-panel active" data-panel="ops">
-        <h2 class="sheet-title">What’s running</h2>
-        <p id="status-summary" class="sheet-lead muted"></p>
-        <div id="status-body" class="status-body"></div>
-        <div id="live-jobs" class="live-jobs" aria-live="polite"></div>
-      </section>
-      <section id="sheet-conductor" class="sheet-panel" data-panel="conductor" hidden>
-        <h2 class="sheet-title">Conductor</h2>
-        <p id="conductor-summary" class="sheet-lead muted"></p>
-        <div id="conductor-body" class="status-body"></div>
-        <div class="conductor-actions" role="toolbar" aria-label="Conductor actions">
-          <button type="button" class="chip" data-conductor="round">Start round</button>
-          <button type="button" class="chip" data-conductor="council">Ask council</button>
-          <button type="button" class="chip" data-conductor="status">Status</button>
-        </div>
-        <p class="sheet-hint muted">Draft-only. Risky actions still need your yes in chat.</p>
-      </section>
-      <section id="sheet-song" class="sheet-panel" data-panel="song" hidden>
-        <h2 class="sheet-title">Song notebook</h2>
-        <p id="song-summary" class="sheet-lead muted"></p>
-        <div class="song-body">
-          <label class="sr-only" for="song-title">Title</label>
-          <input id="song-title" type="text" placeholder="Song title" maxlength="120">
-          <label class="sr-only" for="song-lyrics">Lyrics</label>
-          <textarea id="song-lyrics" placeholder="Lyrics / hooks" rows="4" maxlength="120000"></textarea>
-          <textarea id="song-chords" placeholder="Chords / progression" rows="2" maxlength="120000"></textarea>
-          <textarea id="song-notes" placeholder="Arrangement notes" rows="2" maxlength="120000"></textarea>
-          <div class="song-actions">
-            <button type="button" id="song-save">Save</button>
-            <button type="button" id="song-demo">Local sketch ($0)</button>
-            <label class="upload-label"><input id="song-upload" type="file" accept="audio/*"> Upload audio</label>
-          </div>
-          <audio id="song-player" controls hidden></audio>
-          <p id="song-notice" class="muted"></p>
-        </div>
-      </section>
-      <section id="sheet-lanes" class="sheet-panel" data-panel="lanes" hidden>
-        <h2 class="sheet-title">Model health</h2>
-        <p id="lanes-summary" class="sheet-lead muted"></p>
-        <div id="lanes" aria-live="polite"></div>
-      </section>
-      <section id="sheet-settings" class="sheet-panel" data-panel="settings" hidden>
-        <h2 class="sheet-title">Settings &amp; reports</h2>
-        <div class="routing">
-          <label for="provider-choice">Reply with</label>
-          <select id="provider-choice">
-            <option value="auto">Automatic · short: Gemini → MiniMax · long: Codex → Cursor</option>
-            <option value="claude">Claude · short critique (explicit)</option>
-          </select>
-        </div>
-        <div class="report-actions">
-          <button type="button" data-report="status">Ops status</button>
-          <button type="button" data-report="review">Latest review</button>
-          <button type="button" data-report="jobs">Running jobs</button>
-        </div>
-        <p class="sheet-hint muted">Drafts stay drafts. Confirm before merge, send, or spend.</p>
-      </section>
-    </div>
-    <button type="button" id="close-sheet" class="sheet-close quiet">Done</button>
-  </aside>
+  <dialog id="chats-dialog">
+    <div class="report-heading"><h2>Conversations</h2><button type="button" id="close-chats" aria-label="Close">Close</button></div>
+    <p class="muted sheet-hint">Switch chats here; your draft message is kept on this device.</p>
+    <select id="conversations-dialog" size="8" aria-label="Pick conversation"></select>
+    <button type="button" id="new-chat-dialog" class="primary">New chat</button>
+  </dialog>
 
   <dialog id="report">
     <div class="report-heading"><h2 id="report-title"></h2><button type="button" id="close-report" aria-label="Close report">Close</button></div>

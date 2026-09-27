@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import uuid
@@ -104,8 +105,9 @@ def main():
     url = origin_url()
     saved = backup_handback(ROOT)
     try:
+        prefix = os.environ.get("WEBCHAT_HANDBACK_TAG", "r6")
         for index in (1, 2):
-            tag = f"r7-{index}"
+            tag = f"{prefix}-{index}"
             round_evidence = {"ledger": ledger_round(ROOT, tag), "live": None}
             try:
                 round_evidence["live"] = live_round(url, tag)

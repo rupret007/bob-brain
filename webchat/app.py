@@ -516,6 +516,38 @@ class Chat:
     def handback(self):
         return public_digest(self.root, self.redact)
 
+    def self_improve_status(self):
+        root = self.root
+        plist = root / "conductor/launchd/com.jeff.bob-webchat.plist"
+        tick = root / "conductor/webchat/self_improve_tick.sh"
+        log_path = root / "logs/webchat-launchd.log"
+        last_tick = None
+        handback = root / "conductor/handback/HANDBACK-LOG.md"
+        if handback.exists():
+            try:
+                text = handback.read_text(errors="replace")
+            except OSError:
+                text = ""
+            for block in reversed(text.split("\n## ")):
+                if "self-improve tick" in block.lower():
+                    last_tick = block.split("\n", 1)[0].strip() or None
+                    break
+        launchd_ok = plist.exists() and tick.exists()
+        recent_ok = False
+        if log_path.exists():
+            try:
+                tail = log_path.read_text(errors="replace")[-4000:]
+                recent_ok = "self-improve" in tail.lower() and "failed" not in tail.lower().split("self-improve")[-1][:200]
+            except OSError:
+                recent_ok = False
+        summary = "Self-improve runs on the mini (launchd, draft branch only)."
+        if last_tick:
+            summary = f"Last tick logged {last_tick}. {summary}"
+        if not launchd_ok:
+            summary = "Install launchd job for scheduled ticks. " + summary
+        return {"launchd_plist": launchd_ok, "tick_script": tick.exists(), "last_logged": last_tick,
+                "recent_log_ok": recent_ok, "summary": summary}
+
     def panel(self):
         lanes = self.providers.health()
         jobs = self.jobs()
@@ -534,7 +566,7 @@ class Chat:
             dashboard_age = status_path.stat().st_mtime if status_path.exists() else None
         return {"lanes": lanes, "jobs": jobs, "recent_results": results, "dashboard_modified_at": dashboard_age,
                 "live_ops": live_ops, "live_ops_meta": meta, "conductor": conductor_snapshot(self.root),
-                "handback": self.handback(), "read_at": time.time()}
+                "handback": self.handback(), "self_improve": self.self_improve_status(), "read_at": time.time()}
 
     def jobs(self):
         try:
