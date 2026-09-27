@@ -112,7 +112,7 @@ lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
 | Round 12 final | `e51d9a08e94be30938e49bb8b96d3b858d076428` |
 | Pre-R13 HEAD | `4179d314a13fc76a2cdf18e1a83ddde81ccc5595` |
 | **R13 primary (code)** | `1a1aa8d06d6392be1872c4c7fe7b43fb54b87475` |
-| **Final SHA (this round)** | `7fc33e5853359a202ab19c0b4da822dc2bb21de3` |
+| **Final SHA (this round)** | `eacdd44bceae6d9fb74dd6a20621f75f385b2dcd` |
 
 ## Remaining risks
 
