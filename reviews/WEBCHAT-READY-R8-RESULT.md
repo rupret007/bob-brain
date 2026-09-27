@@ -1,7 +1,7 @@
 # Web Bob READY-FOR-PHONE — Round 8 result (Cursor lane)
 
 **Branch:** `draft/webchat-failover-20260927`  
-**Round 7 base:** `6b31d10c` · **Prior HEAD:** `a10bf7c5` · **Round 8 commit:** _(see git log after this file)_  
+**Round 7 base:** `6b31d10c` · **Prior HEAD:** `a10bf7c5` · **Round 8 commit:** `13af11b5add0f6d3fa04cd0f76f5b74ced821ce3`  
 **Design note:** `conductor/reviews/WEBCHAT-READY-R8-DESIGN.md` (research-first; sources in table)  
 **Council (no Grok):** `conductor/reviews/webchat-ready-r8-council/20260927-025152-809637.md` (Gemini, MiniMax, Claude, Codex synthesize; Cursor lane busy on propose). **Vote:** **STATE primary for Jobs tab**; handback prose for Bob takeover; applied **fcntl STATE lock** on inbox mutate (council #1).  
 **Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
