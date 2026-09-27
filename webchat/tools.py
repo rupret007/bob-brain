@@ -13,13 +13,13 @@ deleting anything outside a worktree, and using Grok as a worker. None of the
 handlers below implement any of those actions in the first place; the scanner
 is defense in depth, not the only guard.
 
-This module never starts, stops or otherwise reaches into services/job-runner.
-Lane control is a *request* event the scheduler may act on later — it does not
-spawn or kill any process itself.
+Lane requests with a durable queue id ask the scheduler to dispatch that job.
+Only a worker receipt can report a started lane. Name-only requests remain events.
 """
 from __future__ import annotations
 
 import json
+import fcntl
 import re
 import sys
 import threading
@@ -28,12 +28,14 @@ from pathlib import Path
 
 from billing import MINIMAX_CAP_USD
 from failover import atomic_text
-from job_queue import council_job_description, queue_draft
+from job_queue import council_job_description, queue_draft, queue_store
+from actions import queue_once
+from lane_dispatch import start_request
 from providers import KEY, clean_env, run
 
 _HERE = Path(__file__).resolve().parent
 _IMPORT_ROOT = _HERE.parent.parent
-_STATE_MODULE_DIR = _IMPORT_ROOT / "conductor/state"
+_STATE_MODULE_DIR = _HERE.parent / "state"
 if str(_STATE_MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(_STATE_MODULE_DIR))
 from alignment_events import append_event, read_events  # noqa: E402
@@ -191,6 +193,15 @@ def _index_path(root: Path) -> Path:
 
 
 def _rewrite_row(root: Path, filename: str, group: str, new_value) -> str:
+    # Serialize edits with assignment as well as the producer journal writes.
+    locks = root / "conductor/locks"
+    locks.mkdir(parents=True, exist_ok=True)
+    with (locks / "queue.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _rewrite_pending_row(root, filename, group, new_value)
+
+
+def _rewrite_pending_row(root: Path, filename: str, group: str, new_value) -> str:
     path = _index_path(root)
     if not path.exists():
         raise ToolError("not-found", "Queue index does not exist yet.")
@@ -205,14 +216,23 @@ def _rewrite_row(root: Path, filename: str, group: str, new_value) -> str:
             break
     if old_value is None:
         raise ToolError("not-found", f"No queue row for `{filename}`.")
+    conductor = root / "conductor"
+    identifier = "queue-" + Path(filename).stem
+    if identifier in queue_store.snapshot(conductor=conductor):
+        fields = {"priority": int(new_value)} if group == "pri" else {
+            "status": {"READY": "queued", "PAUSED": "blocked", "CANCELLED": "cancelled"}[new_value]}
+        try:
+            queue_store.edit_pending(identifier, conductor=conductor, **fields)
+        except ValueError as exc:
+            raise ToolError("already-assigned", str(exc)) from exc
     atomic_text(path, "\n".join(lines) + "\n")
     return old_value.strip()
 
 
-def queue_add(root: Path, description: str, *, cancel=None) -> dict:
+def queue_add(root: Path, description: str, *, action_id=None, cancel=None) -> dict:
     if not isinstance(description, str) or not description.strip():
         raise ToolError("invalid-args", "Job description is required.")
-    result = queue_draft(root, description.strip())
+    result = queue_once(root, action_id, description.strip()) if action_id else queue_draft(root, description.strip())
     if not result.get("ok"):
         raise ToolError("blocked", result.get("error", "Could not queue job."))
     return {
@@ -306,7 +326,17 @@ def _request_lane(root: Path, lane: str, reason: str, action: str) -> dict:
     }
 
 
-def request_lane_start(root: Path, lane: str, reason: str = "", *, cancel=None) -> dict:
+def request_lane_start(root: Path, lane: str, reason: str = "", *, request_id=None, cancel=None) -> dict:
+    if request_id is not None:
+        if lane != "auto":
+            raise ToolError("invalid-args", "Use lane=auto for a queue request; the scheduler selects an eligible lane.")
+        if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,119}", request_id):
+            raise ToolError("invalid-args", "A valid durable queue id is required.")
+        result = start_request(root, request_id, cancel=cancel)
+        summary = (f"Started lane `{result['lane']}` for `{request_id}` (worker `{result['execution_id']}`)."
+                   if result.get("started") else result.get("reason") or "Waiting for an eligible lane.")
+        return {"ok": True, "kind": "lane_started" if result.get("started") else "lane_start_pending",
+                "summary": summary, "data": result}
     return _request_lane(root, lane, reason, "start")
 
 
@@ -499,7 +529,8 @@ TOOL_SPECS = [
     {"name": "read_file", "description": "Read a repo-relative text file (never credentials/session files).",
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
     {"name": "queue_add", "description": "Queue a new draft job for the scheduler.",
-     "input_schema": {"type": "object", "properties": {"description": {"type": "string"}}, "required": ["description"]}},
+     "input_schema": {"type": "object", "properties": {"description": {"type": "string"},
+         "action_id": {"type": "string"}}, "required": ["description"]}},
     {"name": "queue_split", "description": "Queue a job split into 2-10 parts.",
      "input_schema": {"type": "object", "properties": {
          "description": {"type": "string"}, "parts": {"type": "array", "items": {"type": "string"}}},
@@ -515,9 +546,10 @@ TOOL_SPECS = [
     {"name": "queue_cancel_many", "description": "Cancel several queued jobs at once.",
      "input_schema": {"type": "object", "properties": {
          "filenames": {"type": "array", "items": {"type": "string"}}}, "required": ["filenames"]}},
-    {"name": "request_lane_start", "description": "File a request for the scheduler to start a lane. Never launches anything itself.",
+    {"name": "request_lane_start", "description": "With request_id and lane=auto, dispatch one durable job and return observed worker evidence; otherwise file a lane request.",
      "input_schema": {"type": "object", "properties": {
-         "lane": {"type": "string"}, "reason": {"type": "string"}}, "required": ["lane"]}},
+         "lane": {"type": "string"}, "reason": {"type": "string"},
+         "request_id": {"type": "string"}}, "required": ["lane"]}},
     {"name": "request_lane_stop", "description": "File a request for the scheduler to stop a lane. Never kills anything itself.",
      "input_schema": {"type": "object", "properties": {
          "lane": {"type": "string"}, "reason": {"type": "string"}}, "required": ["lane"]}},

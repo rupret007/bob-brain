@@ -593,14 +593,18 @@ class HandbackJobTests(Fixture):
         self.chat.submit(self.identifier, "start a job: merge #158", str(uuid.uuid4()))
         self.assertNotIn("pending_job", self.chat.conversations[self.identifier])
 
-    def test_do_more_offers_conductor_job(self):
+    def test_do_more_queues_conductor_job_without_an_extra_confirmation(self):
         self.assertIsNotNone(parse_do_more("I need you to do more"))
-        self.chat.submit(self.identifier, "I need you to do more", str(uuid.uuid4()))
+        with patch("tools.start_request", return_value={"started": False, "reason": "Waiting for an eligible lane."}):
+            self.chat.submit(self.identifier, "I need you to do more", str(uuid.uuid4()))
         pending = self.chat.conversations[self.identifier].get("pending_job")
-        self.assertIsNotNone(pending)
-        self.assertIn("conductor", pending.lower())
+        self.assertIsNone(pending)
         last = self.chat.conversations[self.identifier]["messages"][-1]
-        self.assertIn("not read-only", last.get("content", "").lower())
+        self.assertIn("Queued draft job", last["content"])
+        self.assertEqual(last["action_card"]["state"], "queued")
+        rows = [json.loads(line) for line in (self.root / "conductor/state/queue.jsonl").read_text().splitlines()]
+        self.assertEqual(len(rows), 1)
+        self.assertIn("conductor", rows[0]["goal"])
 
     def test_do_more_does_not_match_negation(self):
         self.assertIsNone(parse_do_more("please do not run it yourself"))
@@ -1070,8 +1074,10 @@ class HandbackJobTests(Fixture):
 
     def test_bob_parity_eval_runs(self):
         from bob_parity_eval import run_eval
+        import ledger as state_ledger
 
-        result = run_eval(Path(__file__).resolve().parents[2])
+        state_ledger.write_now(self.root, "Offline parity fixture")
+        result = run_eval(self.root)
         self.assertEqual(result["passed"], result["total"])
         self.assertEqual(result["total"], 24)
 

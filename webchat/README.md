@@ -43,11 +43,17 @@ The saved turn automatically retries when a cooldown expires; Stop cancels it.
 
 Codex runs read-only with no approval prompts or inherited user-config MCP tools;
 Cursor runs in ask mode. Providers answer, investigate and draft. The separate
-confirmed-job handler can queue a draft job; providers cannot invoke it.
+job handlers can queue draft jobs; providers cannot invoke them from model output.
+Saying `I need you to do more` queues a read-only assessment of the conductor's
+draft work and requests immediate dispatch. The same reply reports both the
+durable job and the started lane only after a fresh worker heartbeat and named
+screen are observed. Busy, paused or unconfirmed launches produce an honest
+queued/blocked reply. Replaying the request, including after a chat restart,
+does not submit or launch it again.
 Every provider receives the current
 handoff and the hard rules: drafts only, no merges/undrafts/force-push, no outward
 messages without Jeff's yes to the exact text, no spending/login changes, no
-touching Andrea or other workers' edits, and one WebJam coder. Older brain memory
+touching Andrea or other workers' edits, and scheduler-assigned scopes. Older brain memory
 cannot override those rules.
 
 `sessions/<uuid>.json` stores each conversation and its Codex thread ID, mode 600
@@ -59,10 +65,16 @@ Only one reply runs **per conversation** — not globally across all chats (othe
 calls use `chat-<provider>` locks separate from background `lane-*` locks; a busy
 CLI slot falls through to the next provider. Handback: `conductor/handback/`
 (BOB-STATE in, HANDBACK-LOG out). Say `start a job: …` then `yes, start job` to
-queue a draft READY row (scheduler launches; nothing merges automatically). Retransmitting the same request ID does not run
+queue a durable request in `conductor/state/queue.jsonl`, with a compatibility
+READY row in INDEX.md (scheduler launches; nothing merges automatically). Retransmitting the same request ID does not run
 the model twice. Confirmed jobs have durable once-only receipts before queue
 writes. Ambiguous submissions require checking Jobs; they are never replayed.
 Queue writes use the scheduler's queue lock and atomic files.
+Tool priority, pause, cancel and undo actions update the durable journal and the
+compatibility row under the same scheduler lock. Pending-queue edits reject jobs
+already assigned to a worker. A lane-start tool with `lane=auto` and `request_id`
+dispatches only that request through `services/dispatch_request.py`; name-only
+lane start/stop requests remain logged requests, not process-control receipts.
 
 Stop and per-provider deadlines terminate the process group and captured nested
 groups belonging to this chat. Stdin is an EOF-terminated prompt file or
@@ -163,6 +175,7 @@ being stored or forwarded. Avoid pasting credentials into chat.
 ```bash
 python3 conductor/webchat/test_webchat.py
 python3 -m unittest discover -s conductor/webchat -p 'test_*.py' -v
+python3 conductor/services/lane_integration_smoke.py --evidence conductor/reviews/lane-integrate-evidence/proof.md
 python3 -m py_compile conductor/webchat/app.py conductor/webchat/providers.py conductor/webchat/start.py
 bash -n conductor/webchat/start.sh conductor/webchat/run.sh conductor/launchd/install.sh
 plutil -lint conductor/launchd/com.jeff.bob-webchat.plist

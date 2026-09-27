@@ -30,6 +30,13 @@ The scheduler consumes the durable queue even when INDEX.md is absent. It also
 imports `services/backlog.json`, `services/projects.json`, and READY rows in
 `../next-prompts/INDEX.md` (optional adjacent JSON specs), including WebBob requests.
 Lower numeric priority runs first, with FIFO ordering at equal priority.
+Web Bob writes this journal directly. Its synchronous dispatch entrypoint runs a
+tick for one requested id and returns a receipt after observing the worker's
+heartbeat and named screen; ordinary periodic ticks continue to drain the queue.
+The chat process supplies an explicit state root without changing service-module
+globals. `python3 services/lane_integration_smoke.py` proves three journal-only
+assignments and the same-reply Web Bob queue/start path with temporary screen
+workers and simulated provider responses. It does not restart any service.
 Cursor is preferred for coding and is also a council/reviewer member. Codex and Cursor own coding and orchestration. Claude only provides short council critiques and small reviews: one call at a time, bounded context, 120s maximum, and a durable one-hour rate-limit cooldown. The five
 shared model lane leases permit one call per lane across every entrypoint. A sixth
 `mini` lane runs explicit local test commands without a model. Multiple coders in

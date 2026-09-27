@@ -28,18 +28,16 @@ to the exact text; this chat only prepares drafts and does not send them.
 Never touch ~/Andrea_NanoBot. Never reset, stash, overwrite others' edits or kill
 their processes. Never expose credentials (including webchat/.password), keys.env,
 auth files, cookies or session tokens. Do not read those files. Respect
-conductor/MAINTENANCE and the one-WebJam-coder rule.
-You ARE the conductor when Bob is away. You have a real, allowlisted tool layer
-(conductor/webchat/tools.py) reachable through exact chat commands, not through
-your own free-form claims: read files/logs; queue, split, prioritize and cancel
-draft jobs; file a lane start/stop request for the scheduler (it decides — you
-never spawn or kill anything yourself); run council; run tests and drills
-(isolated); read git status/diff/branch, commit and push to draft/ branches, and
-open DRAFT PRs via gh; read CI. When Jeff asks for something on this list, or
-says you're too limited or to stop being read-only, tell him the exact command
-to send — never say only Bob or Jeff can do it. You still never execute these
-yourself mid-reply and must never claim you did; only the exact recognized
-command, run before this reply started, actually happened.
+conductor/MAINTENANCE and scheduler-assigned scopes in separate draft worktrees.
+You ARE the conductor when Bob is away. The allowlisted tool layer is
+conductor/webchat/tools.py; server handlers execute recognized actions before composing the reply.
+"I need you to do more" queues a read-only draft assessment and asks the scheduler
+to start it immediately. A started lane requires a worker receipt; busy or paused
+lanes leave an honest queued/blocked reply. Other tool names are a Python API,
+not arbitrary natural-language commands. Do not invent executable chat commands.
+The tools support file reads, durable draft queue edits, scheduler requests,
+council, tests/drills, draft Git/PR actions and CI reads. You cannot call them from
+free-form model output. Report only actions backed by the current handler receipt.
 Hard-blocked, always, on every surface: merge, undraft, force-push, sending
 texts/emails/DMs/posts without Jeff's separate yes to the exact text, spending
 past the metered cap, deleting anything outside a worktree, and using Grok as
@@ -237,9 +235,10 @@ def parse_gemini(output):
 
 
 class Providers:
-    def __init__(self, root, redact, runner=run, overlay_roots=None):
+    def __init__(self, root, redact, runner=run, overlay_roots=None, overlay_pins=None):
         self.root, self.redact, self.run = root, redact, runner
         self.overlay_roots = overlay_roots if overlay_roots is not None else {}
+        self.overlay_pins = overlay_pins if overlay_pins is not None else {}
         self.env = clean_env()
         self.timeout = max(15, min(600, int(os.environ.get("BOB_WEBCHAT_TIMEOUT", "180"))))
         self.timeouts = {name: max(15, min(600, int(os.environ.get("BOB_WEBCHAT_TIMEOUT_" + name.upper(), str(self.timeout if name in ("codex", "cursor") else 120))))) for name in (*ORDER, "claude")}
@@ -287,6 +286,8 @@ class Providers:
             yield
 
     def context_root(self, conversation_id=None):
+        if conversation_id and conversation_id in self.overlay_pins:
+            return self.overlay_pins[conversation_id]
         if conversation_id and conversation_id in self.overlay_roots:
             return self.overlay_roots[conversation_id]
         return self.root
@@ -308,7 +309,7 @@ class Providers:
 
     def snapshot(self, lite=False, conversation_id=None):
         now = time.monotonic()
-        overlay = conversation_id and conversation_id in self.overlay_roots
+        overlay = conversation_id and (conversation_id in self.overlay_roots or conversation_id in self.overlay_pins)
         if not overlay:
             if lite:
                 if self._snapshot_cache_lite and now - self._snapshot_cache_lite_at < 2.0:

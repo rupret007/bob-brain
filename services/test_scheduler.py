@@ -122,6 +122,52 @@ class SchedulerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             queue.snapshot()
 
+    def test_targeted_tick_leaves_unrequested_work_queued(self):
+        self.enqueue("target")
+        self.enqueue("other", priority=1)
+        scheduler.tick(request_ids={"target"})
+        self.assertIsNotNone(self.record("target"))
+        self.assertIsNone(self.record("other"))
+        self.assertEqual(queue.snapshot()["other"]["status"], "queued")
+
+    def test_launch_intent_is_not_a_started_worker_receipt(self):
+        import dispatch_request
+        self.enqueue()
+        result = dispatch_request.start_request("task", wait_seconds=0)
+        self.assertFalse(result["started"])
+        self.assertEqual(result["status"], "running")
+        self.assertIsNone(result["worker_pid"])
+
+    def test_busy_lane_and_paused_scheduler_keep_request_queued(self):
+        import dispatch_request
+        self.enqueue()
+        for lane in self.health:
+            self.health[lane]["state"] = "busy"
+        result = dispatch_request.start_request("task", wait_seconds=0)
+        self.assertFalse(result["started"])
+        self.assertEqual(result["status"], "queued")
+        (self.core / "MAINTENANCE").touch()
+        result = dispatch_request.start_request("task", wait_seconds=0)
+        self.assertFalse(result["started"])
+        self.assertIn("paused", result["reason"])
+        self.launcher.assert_not_called()
+
+    def test_producer_updates_refuse_assigned_jobs(self):
+        self.enqueue()
+        scheduler.tick()
+        with self.assertRaisesRegex(ValueError, "already assigned"):
+            queue.edit_pending("task", status="cancelled")
+        self.assertEqual(queue.snapshot()["task"]["status"], "running")
+
+    def test_producer_roots_do_not_share_journals_or_locks(self):
+        self.enqueue()
+        other = self.root / "other/conductor"
+        queue.enqueue(dict(id="task", goal="Separate root", repo=str(self.repo)), conductor=other)
+        queue.edit_pending("task", priority=1, status="cancelled", conductor=other)
+        self.assertEqual(queue.snapshot()["task"]["status"], "queued")
+        self.assertEqual(queue.snapshot(conductor=other)["task"]["status"], "cancelled")
+        self.assertTrue((other / "locks/queue-store.lock").is_file())
+
     def test_scope_validation_and_directory_overlap(self):
         for scope in (["../outside"], ["/absolute"], [".git/config"], ["src/*.py"], []):
             with self.subTest(scope=scope), self.assertRaises(ValueError):

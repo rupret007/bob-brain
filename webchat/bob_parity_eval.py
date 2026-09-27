@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Twenty offline Jeff-task checks: routing, handback, jobs, music (no Grok, no live models)."""
+"""Twenty-four offline Jeff-task checks: routing, handback, jobs and music."""
 from __future__ import annotations
 
 import json
@@ -14,7 +14,7 @@ if str(HERE.parent / "state") not in sys.path:
 
 import ledger as state_ledger  # noqa: E402
 from handback import append_turn, refresh_summary, _pickup_from_ledger  # noqa: E402
-from job_queue import parse_confirm, parse_council, parse_council_confirm, parse_start  # noqa: E402
+from job_queue import parse_confirm, parse_council, parse_council_confirm, parse_do_more, parse_start  # noqa: E402
 from music_notebook import try_music_coach_reply  # noqa: E402
 
 
@@ -35,9 +35,11 @@ def run_eval(root: Path | None = None) -> dict:
     rows.append(_case("queue job alias", parse_start("queue job: draft polish") == "draft polish"))
     rows.append(_case("run job alias", parse_start("run a job: test harness") == "test harness"))
     rows.append(_case("inbox parse", state_ledger.parse_inbox_message("tell the builder: fix tab copy") == "fix tab copy"))
+    rows.append(_case("do more intent", parse_do_more("I need you to do more") is not None))
     rows.append(_case("music coach hook", try_music_coach_reply("help me structure a chorus") is not None))
     rows.append(_case("music coach chords", "chord" in (try_music_coach_reply("suggest chords for a folk song") or "").lower()))
     rows.append(_case("music lyrics tip", "verse" in (try_music_coach_reply("write lyrics for a verse") or "").lower()))
+    rows.append(_case("music refrain tip", "refrain" in (try_music_coach_reply("polish the refrain") or "").lower()))
 
     with tempfile.TemporaryDirectory() as tmp:
         troot = Path(tmp)

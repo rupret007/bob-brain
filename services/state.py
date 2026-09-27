@@ -20,8 +20,8 @@ def stamp():
 
 
 @contextlib.contextmanager
-def lock(name, blocking=True):
-    folder = CONDUCTOR / "locks"
+def lock(name, blocking=True, *, conductor=None):
+    folder = (conductor if conductor is not None else CONDUCTOR) / "locks"
     folder.mkdir(parents=True, exist_ok=True)
     with (folder / (name + ".lock")).open("a+") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))

@@ -89,46 +89,62 @@ def _child_spec(parent, part, index):
     return inherited
 
 
-def _path():
-    path = state.CONDUCTOR / "state/queue.jsonl"
+def _path(conductor=None):
+    path = (conductor if conductor is not None else state.CONDUCTOR) / "state/queue.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def _records():
-    rows = state._rows(_path())
+def _records(conductor=None):
+    rows = state._rows(_path(conductor))
     if any(not isinstance(r, dict) or not r.get("id") for r in rows):
         raise ValueError("invalid queue journal row")
     return {r["id"]: r for r in rows}
 
 
-def snapshot():
-    with state.lock("queue-store"):
-        return _records()
+def snapshot(*, conductor=None):
+    with state.lock("queue-store", conductor=conductor):
+        return _records(conductor)
 
 
-def _write(previous, fields):
+def _write(previous, fields, conductor=None):
     row = dict(previous, **fields)
     if row.get("status") not in STATUSES:
         raise ValueError("invalid queue status")
     if row == previous:
         return previous
     row["updated_at"] = time.time()
-    state._append(_path(), row)
+    state._append(_path(conductor), row)
     return row
 
 
-def enqueue(spec):
+def enqueue(spec, *, conductor=None):
     row = normalize(spec)
-    with state.lock("queue-store"):
-        previous = _records().get(row["id"])
+    with state.lock("queue-store", conductor=conductor):
+        previous = _records(conductor).get(row["id"])
         if previous:
             # Replaying a durable producer id never launches another copy.
             if any(previous.get(k) != row.get(k) for k in ("goal", "repo", "role", "scope", "parts", "test_commands", "depends_on")):
                 raise ValueError("queue id already belongs to a different request")
             return previous
         return _write({}, dict(row, status="queued", owner=None, heartbeat=None,
-                               created_at=time.time(), stage=row.get("stage", "work")))
+                               created_at=time.time(), stage=row.get("stage", "work")), conductor)
+
+
+def edit_pending(identifier, *, priority=None, status=None, conductor=None):
+    """Producer edits are allowed only before the scheduler creates an execution."""
+    with state.lock("queue-store", conductor=conductor):
+        previous = _records(conductor)[identifier]
+        if previous.get("execution_id") or previous["status"] not in ("queued", "blocked", "cancelled"):
+            raise ValueError("Job already assigned; pending-queue edits cannot stop a worker.")
+        fields = {}
+        if priority is not None:
+            fields["priority"] = int(priority)
+        if status is not None:
+            if status not in ("queued", "blocked", "cancelled"):
+                raise ValueError("invalid pending queue status")
+            fields.update(status=status, reason="paused by producer" if status == "blocked" else "")
+        return _write(previous, fields, conductor)
 
 
 def update(identifier, **fields):

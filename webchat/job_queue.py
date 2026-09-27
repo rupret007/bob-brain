@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Draft-only Web Bob job requests into next-prompts (scheduler picks up READY rows)."""
+"""Draft requests in the durable scheduler queue, with a legacy INDEX mirror."""
 from __future__ import annotations
 
 import re
@@ -7,9 +7,23 @@ import fcntl
 import secrets
 import shlex
 import subprocess
+import sys
 import time
 from pathlib import Path
 from failover import atomic_text
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
+import queue_store
+
+DO_MORE = re.compile(r"^(?:i )?need you to do more[.!]?$", re.I)
+DEFAULT_DO_MORE_GOAL = (
+    "Inspect the conductor's current draft work and READY queue. "
+    "Report the next concrete draft task with evidence; keep this assessment read-only."
+)
+
+
+def parse_do_more(text: str) -> str | None:
+    return DEFAULT_DO_MORE_GOAL if DO_MORE.fullmatch((text or "").strip()) else None
 
 START = re.compile(r"^(?:start|queue|run) (?:a )?job[:\s]+(.+)$", re.I | re.S)
 CONFIRM = re.compile(r"^yes[,.]?\s*(?:start|queue|run)\s+(?:the\s+)?job\s*$", re.I)
@@ -107,8 +121,8 @@ def duplicate_task(screens: str, description: str) -> bool:
 
 def queue_draft(root: Path, description: str) -> dict:
     maintenance = root / "conductor/MAINTENANCE"
-    if maintenance.exists():
-        return {"ok": False, "error": "Scheduling is paused (MAINTENANCE). Jobs were not queued."}
+    if any(path.exists() for path in (maintenance, root / "conductor/STOP-WEBBOB", root / "STOP-WEBBOB")):
+        return {"ok": False, "error": "Scheduling is paused (MAINTENANCE/STOP-WEBBOB). Jobs were not queued."}
     screens = running_screens(root)
     if duplicate_task(screens, description):
         return {"ok": False, "error": "A screen session may already be running this task. Check Jobs before queueing again."}
@@ -134,11 +148,16 @@ def _write_queue(root, description, screens):
         f"# Web Bob job request ({stamp})\n\n"
         f"**Source:** Web Bob chat (draft only; Jeff must still approve any outward action.)\n\n"
         f"## Task\n\n{description.strip()}\n\n"
-        f"## Rules\n\nDrafts only. No merge, undraft, or force-push. One WebJam coder at a time.\n"
+        f"## Rules\n\nDrafts only. No merge, undraft, or force-push. Use scheduler-assigned scopes in separate draft worktrees.\n"
     )
     path = prompts / filename
     atomic_text(path, body)
     atomic_text(inbox / filename, body)
+    request = queue_store.enqueue({
+        "id": "queue-" + path.stem, "goal": description.strip(),
+        "repo": str(root / "conductor"), "role": "research", "priority": 99,
+        "file": filename, "project": "WebBob", "source": "webchat",
+    }, conductor=root / "conductor")
     index = prompts / "INDEX.md"
     row = f"| 99 | `{filename}` | WebBob | non-coding | READY | Web Bob queued {stamp} |\n"
     if index.exists():
@@ -147,4 +166,6 @@ def _write_queue(root, description, screens):
             atomic_text(index, text.rstrip() + "\n" + row)
     else:
         atomic_text(index, "# next-prompts queue\n\n| Pri | File | Project | Kind | Status | Notes |\n| --- | --- | --- | --- | --- | --- |\n" + row)
-    return {"ok": True, "file": filename, "path": str(path.relative_to(root)), "screen_hint": screens.strip()[:500] or "none"}
+    return {"ok": True, "file": filename, "path": str(path.relative_to(root)),
+            "queue_id": request["id"], "queue_path": "conductor/state/queue.jsonl",
+            "screen_hint": screens.strip()[:500] or "none"}

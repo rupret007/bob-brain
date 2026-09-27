@@ -163,15 +163,19 @@ class QueueToolTests(unittest.TestCase):
         index = (self.root / "next-prompts/INDEX.md").read_text()
         self.assertIn(filename, index)
         self.assertIn("READY", index)
+        rows = tools.queue_store.snapshot(conductor=self.root / "conductor")
+        self.assertEqual(rows[result["data"]["queue_id"]]["status"], "queued")
 
     def test_queue_prioritize_changes_priority_and_undo_restores_it(self):
         added = tools.dispatch("queue_add", {"description": "Build the thing"}, root=self.root)
         filename = added["data"]["file"]
         result = tools.dispatch("queue_prioritize", {"filename": filename, "priority": 5}, root=self.root)
         self.assertIn("| 5 |", (self.root / "next-prompts/INDEX.md").read_text())
+        self.assertEqual(tools.queue_store.snapshot(conductor=self.root / "conductor")[added["data"]["queue_id"]]["priority"], 5)
         self.assertEqual(result["undo"]["args"]["priority"], 99)
         undone = tools.undo(result["event_seq"], root=self.root)
         self.assertIn("| 99 |", (self.root / "next-prompts/INDEX.md").read_text())
+        self.assertEqual(tools.queue_store.snapshot(conductor=self.root / "conductor")[added["data"]["queue_id"]]["priority"], 99)
         self.assertIn("Undid event", undone["summary"])
 
     def test_queue_prioritize_rejects_bad_priority(self):
@@ -187,6 +191,37 @@ class QueueToolTests(unittest.TestCase):
         index = (self.root / "next-prompts/INDEX.md").read_text()
         self.assertIn(filename, index)
         self.assertIn("CANCELLED", index)
+        self.assertEqual(tools.queue_store.snapshot(conductor=self.root / "conductor")[added["data"]["queue_id"]]["status"], "cancelled")
+
+    def test_queue_add_action_receipt_and_cancel_undo_are_durable(self):
+        args = {"description": "Inspect a draft", "action_id": str(uuid.uuid4())}
+        added = tools.dispatch("queue_add", args, root=self.root)
+        replay = tools.dispatch("queue_add", args, root=self.root)
+        self.assertEqual(added["data"], replay["data"])
+        self.assertEqual(len(tools.queue_store.snapshot(conductor=self.root / "conductor")), 1)
+        cancelled = tools.dispatch("queue_cancel", {"filename": added["data"]["file"]}, root=self.root)
+        tools.undo(cancelled["event_seq"], root=self.root)
+        self.assertEqual(tools.queue_store.snapshot(conductor=self.root / "conductor")[added["data"]["queue_id"]]["status"], "queued")
+
+    def test_dispatch_bridge_uses_explicit_root_and_pauses_without_launch(self):
+        from lane_dispatch import start_request
+        added = tools.dispatch("queue_add", {"description": "Inspect a draft"}, root=self.root)
+        (self.root / "conductor/MAINTENANCE").touch()
+        result = start_request(self.root, added["data"]["queue_id"])
+        self.assertFalse(result["started"])
+        self.assertIn("paused", result["reason"])
+        self.assertEqual(result["status"], "queued")
+        self.assertFalse((self.root / "conductor/jobs.jsonl").exists())
+
+    def test_dispatch_timeout_never_reports_started_or_adds_a_job(self):
+        from lane_dispatch import start_request
+        from providers import ProviderError
+        added = tools.dispatch("queue_add", {"description": "Inspect a draft"}, root=self.root)
+        with patch("lane_dispatch.run", side_effect=ProviderError("timed out")):
+            result = start_request(self.root, added["data"]["queue_id"])
+        self.assertFalse(result["started"])
+        self.assertIn("unconfirmed", result["reason"])
+        self.assertEqual(len(tools.queue_store.snapshot(conductor=self.root / "conductor")), 1)
 
     def test_queue_cancel_missing_row(self):
         with self.assertRaises(tools.ToolError) as ctx:
@@ -448,15 +483,37 @@ class ReplayCapabilityChatTests(unittest.TestCase):
         self.chat.close()
         self.tmp.cleanup()
 
-    def test_replay_i_need_you_to_do_more(self):
-        history = self.chat.submit(self.identifier, "I need you to do more", str(uuid.uuid4()))
+    def test_replay_i_need_you_to_do_more_waits_honestly_and_deduplicates(self):
+        request_id = str(uuid.uuid4())
+        with patch("tools.start_request", return_value={"started": False, "reason": "Waiting for an eligible lane."}) as start:
+            history = self.chat.submit(self.identifier, "I need you to do more", request_id)
+            self.chat.submit(self.identifier, "I need you to do more", request_id)
+            start.assert_called_once()
         reply = history["messages"][-1]
         self.assertEqual(reply["status"], "done")
         self.assertNotIn("This is a read-only chat", reply["content"])
         self.assertNotIn("Bob or Jeff", reply["content"])
-        for name in ("queue_add", "run_council", "git_status", "open_draft_pr"):
-            self.assertIn(name, reply["content"])
+        self.assertIn("Queued draft job", reply["content"])
+        self.assertIn("Waiting for an eligible lane", reply["content"])
+        self.assertNotIn("Started lane", reply["content"])
+        rows = tools.queue_store.snapshot(conductor=self.root / "conductor")
+        self.assertEqual(len(rows), 1)
         self.assertEqual(self.fake.calls, [])
+
+    def test_do_more_respects_pause_and_does_not_dispatch(self):
+        (self.root / "conductor/STOP-WEBBOB").touch()
+        with patch("tools.start_request") as start:
+            history = self.chat.submit(self.identifier, "I need you to do more", str(uuid.uuid4()))
+        start.assert_not_called()
+        self.assertEqual(history["messages"][-1]["action_card"]["state"], "blocked")
+        self.assertEqual(tools.queue_store.snapshot(conductor=self.root / "conductor"), {})
+
+    def test_do_more_does_not_enqueue_in_a_drill_overlay(self):
+        with patch.object(self.chat, "ledger_root", return_value=self.root / "overlay"), patch("tools.start_request") as start:
+            history = self.chat.submit(self.identifier, "I need you to do more", str(uuid.uuid4()))
+        start.assert_not_called()
+        self.assertIn("disabled during a drill", history["messages"][-1]["content"])
+        self.assertEqual(tools.queue_store.snapshot(conductor=self.root / "conductor"), {})
 
 
 if __name__ == "__main__":

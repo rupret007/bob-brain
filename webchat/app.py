@@ -39,7 +39,7 @@ from job_queue import (
     parse_start,
 )
 from actions import queue_once
-from tools import try_capability_reply
+from tools import ToolError, dispatch, try_capability_reply
 from music_notebook import get_project, list_projects, save_project, try_music_coach_reply
 from reply_guard import repair_hollow_progress
 from drill_fixture import try_bob_state_running_line
@@ -49,7 +49,7 @@ from quiet_hours import in_quiet_hours
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
-_STATE_LEDGER_DIR = ROOT / "conductor/state"
+_STATE_LEDGER_DIR = HERE.parent / "state"
 if str(_STATE_LEDGER_DIR) not in sys.path:
     sys.path.insert(0, str(_STATE_LEDGER_DIR))
 import ledger as state_ledger  # noqa: E402
@@ -444,8 +444,29 @@ class Chat:
                 return self.public(conversation)
             started = parse_start(text)
             do_more_goal = parse_do_more(text) if not started else None
-            job_text = started or do_more_goal
-            do_more = bool(do_more_goal)
+            if do_more_goal:
+                ledger = self.ledger_root(identifier)
+                queued = None
+                try:
+                    if ledger != self.root:
+                        raise ToolError("drill", "Lane actions are disabled during a drill overlay.")
+                    action_id = str(uuid.uuid5(uuid.NAMESPACE_URL, identifier + ":" + request_id))
+                    queued = dispatch("queue_add", {"description": do_more_goal, "action_id": action_id}, root=self.root)
+                    result = dispatch("request_lane_start", {"lane": "auto", "request_id": queued["data"]["queue_id"]}, root=self.root)
+                    reply = queued["summary"] + " " + result["summary"]
+                    card = {"id": request_id, "state": "started" if result["data"].get("started") else "queued",
+                            "executable": False, "reason": reply, **result["data"]}
+                except ToolError as exc:
+                    reply = ((queued["summary"] + " ") if queued else "") + exc.message
+                    card = {"id": request_id, "state": "queued" if queued else "blocked", "executable": False, "reason": reply}
+                conversation["messages"][-1].update(status="done", content=reply, provider="tools", action_card=card)
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                self.record_turn(ask=text, provider="tools", jobs=[queued["data"]["file"]] if queued else [],
+                                 files=[queued["data"]["queue_path"]] if queued else [], commits=[], confirmations=[],
+                                 refusals=[] if queued else [reply], open_items=[])
+                return self.public(conversation)
+            job_text = started
             if job_text:
                 if hard_rule_refusal(job_text):
                     refusal = hard_rule_refusal(job_text)
@@ -458,12 +479,7 @@ class Chat:
                     return self.public(conversation)
                 conversation["pending_job"] = job_text
                 conversation["pending_job_id"] = request_id
-                confirm_body = (
-                    "I can queue a **draft** screen job for the conductor scheduler — I am not read-only here. "
-                    "Reply `yes, start job` to confirm, or say `start a job: …` with your exact goal."
-                    if do_more
-                    else "I can queue a **draft** screen job for the conductor scheduler. Reply `yes, start job` to confirm, or edit your request."
-                )
+                confirm_body = "I can queue a **draft** screen job for the conductor scheduler. Reply `yes, start job` to confirm, or edit your request."
                 conversation["messages"][-1].update(status="done",
                     content=confirm_body,
                     action_card={"id": request_id, "proposal_id": request_id, "state": "confirm", "executable": True,

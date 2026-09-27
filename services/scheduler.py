@@ -277,7 +277,7 @@ def paused():
     return any(p.exists() for p in (state.CONDUCTOR / "MAINTENANCE", state.CONDUCTOR / "STOP-WEBBOB", state.ROOT / "STOP-WEBBOB"))
 
 
-def tick():
+def tick(request_ids=None):
     from runtime import screen_sessions
     with state.lock("queue", blocking=False):
         if paused():
@@ -285,7 +285,8 @@ def tick():
             return 0
         health = lanes.refresh()
         execution.recover()
-        import_requests()
+        if request_ids is None:
+            import_requests()
         for request in queue.snapshot().values():
             if request.get("parts") and request["status"] in ("queued", "split"):
                 queue.split(request["id"])
@@ -297,6 +298,7 @@ def tick():
         external = execution.external_webjam_lease(sessions)
         requests = queue.snapshot()
         candidates = sorted((r for r in requests.values() if r["status"] in ("queued", "retry") and
+                             (request_ids is None or r["id"] in request_ids) and
                              r.get("retry_at", 0) <= time.time() and not r.get("parts")),
                             key=lambda r: (r["priority"], r["created_at"], r["id"]))
         for request in candidates:
