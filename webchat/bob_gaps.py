@@ -5,6 +5,7 @@ import json
 import re
 import secrets
 import subprocess
+import sys
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -74,10 +75,17 @@ def parse_screenshot(text: str) -> str | None:
     return target[:120] if target else ""
 
 
+def _escape_applescript_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _macos_window_id(app_name: str) -> int | None:
+    if sys.platform != "darwin":
+        raise RuntimeError("The screenshot feature is only available on macOS.")
+    escaped_name = _escape_applescript_string(app_name)
     script = (
         'tell application "System Events" to id of first window of '
-        f'(first process whose name contains "{app_name}")'
+        f'(first process whose name contains "{escaped_name}")'
     )
     try:
         completed = subprocess.run(
@@ -98,6 +106,8 @@ def _macos_window_id(app_name: str) -> int | None:
 
 
 def capture_screenshot(root: Path, target: str | None = None) -> tuple[str, Path]:
+    if sys.platform != "darwin":
+        raise RuntimeError("The screenshot feature is only available on macOS.")
     folder = root / "conductor/webchat/captures"
     folder.mkdir(parents=True, exist_ok=True)
     capture_id = secrets.token_hex(8)
@@ -109,7 +119,22 @@ def capture_screenshot(root: Path, target: str | None = None) -> tuple[str, Path
             raise RuntimeError(f"I could not find an open window matching “{target}”.")
         command.extend(["-l", str(window_id)])
     command.append(str(path))
-    subprocess.run(command, check=True, timeout=45)
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Screenshot capture failed ({exc}).") from exc
+    if completed.returncode != 0:
+        detail = (completed.stderr or "").strip()
+        message = f"Screenshot capture failed (exit {completed.returncode})"
+        if detail:
+            message = f"{message}: {detail}"
+        raise RuntimeError(message)
     if not path.is_file() or path.stat().st_size == 0:
         raise RuntimeError("Screenshot capture produced no image.")
     return capture_id, path
@@ -134,7 +159,11 @@ def web_search(query: str, opener=urllib.request.urlopen) -> dict:
     url = "https://api.duckduckgo.com/?" + urllib.parse.urlencode(
         {"q": query, "format": "json", "no_redirect": 1, "no_html": 1, "skip_disambig": 1}
     )
-    with opener(url, timeout=20) as response:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "WebBob/1.0 (bob-gaps web research)"},
+    )
+    with opener(request, timeout=20) as response:
         payload = json.loads(response.read().decode("utf-8"))
     answer = (payload.get("AbstractText") or "").strip()
     source = (payload.get("AbstractURL") or "").strip()
@@ -151,7 +180,7 @@ def web_search(query: str, opener=urllib.request.urlopen) -> dict:
 
 
 def format_web_search_reply(result: dict) -> str:
-    lines = [result["answer"]]
+    lines = [result.get("answer", "")]
     if result.get("heading"):
         lines[0] = f"**{result['heading']}** — {lines[0]}"
     if result.get("source"):
