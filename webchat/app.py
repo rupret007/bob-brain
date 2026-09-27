@@ -37,6 +37,7 @@ from job_queue import (
     parse_start,
 )
 from actions import queue_once
+from tools import try_capability_reply
 from music_notebook import get_project, list_projects, save_project, try_music_coach_reply
 from reply_guard import repair_hollow_progress
 from drill_fixture import try_bob_state_running_line
@@ -500,6 +501,15 @@ class Chat:
                     )
                 except OSError:
                     pass
+            capability_reply = try_capability_reply(text)
+            if capability_reply:
+                conversation["messages"][-1].update(status="done", content=capability_reply, provider="state")
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                self.record_turn(conversation_id=identifier, ask=text, provider="state", jobs=[], files=[],
+                            commits=[], confirmations=[], refusals=[], open_items=[], request_id=request_id)
+                state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
+                return self.public(conversation)
             music_tip = try_music_coach_reply(text)
             if music_tip:
                 conversation["messages"][-1].update(status="done", content=music_tip, provider="state")
