@@ -1,7 +1,7 @@
 # Web Bob READY-FOR-PHONE — Round 3 result (Cursor lane)
 
 **Branch:** `draft/webchat-failover-20260927`  
-**Round 2 base:** `1bd019bc78e06875009faf4f8e73bc3a3691ab41` · **Round 3 commit:** _(see git rev-parse after commit)_  
+**Round 2 base:** `1bd019bc78e06875009faf4f8e73bc3a3691ab41` · **Round 3 commit:** `bf89ea4f410f93390ea99c819670015c93381a88`  
 **Council (no Grok):** `conductor/reviews/webchat-ready-r3-council/20260927-020134-750312.md` (Gemini, MiniMax, Codex; Cursor/Claude lane busy). Applied: budget reserve before hosted music calls, mandatory demo receipt on confirm, local chord sketch fallback when MiniMax 410/Replicate absent, BOB-STATE running lines in summary, job queue failures logged as refusals, handback Outcome parsing, 35MB audio cap aligned, self-improve tick records test outcome.  
 **Music research:** `reviews/webbob-music-research/20260927-004512-470258.md` — notebook + upload + local sketch + MUSIC-HANDOFF; Moises remains manual until Music.ai dev key.  
 **Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
