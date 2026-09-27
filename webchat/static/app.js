@@ -165,6 +165,7 @@ if ($("login-form")) {
     catch (error) { $("notice").textContent = error.message; }
   });
   let micRecognition = null;
+  let speakingUtterance = null;
   $("mic").addEventListener("click", () => {
     const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Speech) { $("notice").textContent = "Voice input is not supported in this browser."; return; }
@@ -180,11 +181,13 @@ if ($("login-form")) {
     micRecognition = rec;
     rec.lang = "en-US";
     rec.interimResults = true;
-    rec.continuous = false;
+    rec.continuous = matchMedia("(pointer: coarse)").matches;
     rec.maxAlternatives = 1;
     $("mic").classList.add("mic-active");
     $("mic").setAttribute("aria-pressed", "true");
-    $("notice").textContent = "Listening… tap mic again to stop.";
+    $("notice").textContent = rec.continuous
+      ? "Listening… tap mic again to stop (iPhone: allow mic when prompted)."
+      : "Listening… tap mic again to stop.";
     rec.onresult = (event) => {
       const transcript = Array.from(event.results).map((row) => row[0].transcript).join(" ").trim();
       $("message").value = ($("message").value + " " + transcript).trim();
@@ -194,13 +197,26 @@ if ($("login-form")) {
       micRecognition = null;
       $("mic").classList.remove("mic-active");
       $("mic").setAttribute("aria-pressed", "false");
-      $("notice").textContent = "";
+      if (!$("notice").textContent.startsWith("Could not")) $("notice").textContent = "";
     };
-    rec.onerror = () => { $("notice").textContent = "Could not capture voice. Try typing."; };
+    rec.onerror = () => { $("notice").textContent = "Could not capture voice. Try typing or keyboard dictation."; };
     rec.start();
   });
   $("speak").addEventListener("click", async () => {
     if (!("speechSynthesis" in window)) { $("notice").textContent = "Read-aloud is not supported here."; return; }
+    if (micRecognition) {
+      micRecognition.stop();
+      micRecognition = null;
+      $("mic").classList.remove("mic-active");
+      $("mic").setAttribute("aria-pressed", "false");
+    }
+    if (speakingUtterance) {
+      speechSynthesis.cancel();
+      speakingUtterance = null;
+      $("speak").classList.remove("mic-active");
+      $("speak").setAttribute("aria-pressed", "false");
+      return;
+    }
     try {
       const conversation = await api(`/api/conversations/${current}`);
       const last = conversation.messages.filter((m) => m.role === "assistant" && m.status === "done").at(-1);
@@ -208,6 +224,16 @@ if ($("login-form")) {
       speechSynthesis.cancel();
       const utter = new SpeechSynthesisUtterance(speechText(last.content).slice(0, 4000));
       utter.rate = 1.02;
+      const voices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith("en"));
+      if (voices.length) utter.voice = voices.find((v) => /samantha|daniel|english/i.test(v.name)) || voices[0];
+      utter.onend = utter.onerror = () => {
+        speakingUtterance = null;
+        $("speak").classList.remove("mic-active");
+        $("speak").setAttribute("aria-pressed", "false");
+      };
+      speakingUtterance = utter;
+      $("speak").classList.add("mic-active");
+      $("speak").setAttribute("aria-pressed", "true");
       speechSynthesis.speak(utter);
     } catch (error) { $("notice").textContent = error.message; }
   });
@@ -271,7 +297,7 @@ if ($("login-form")) {
       if (quote.needs_confirm) {
         receipt = quote.receipt || "";
         if (!quote.can_afford_demo) { $("song-notice").textContent = quote.message || "Cap too low for a demo."; return; }
-        if (!window.confirm(quote.message || "Generate MiniMax demo?")) return;
+        if (!window.confirm(quote.message || "Generate local sketch demo ($0)?")) return;
       }
     } catch (error) { $("song-notice").textContent = error.message; return; }
     $("song-notice").textContent = "Generating demo…";
@@ -283,7 +309,7 @@ if ($("login-form")) {
         const player = $("song-player");
         player.hidden = false;
         player.src = `/api/audio/${demo.audio_id}`;
-        $("song-notice").textContent = `Demo ready · ~$${demo.cost_usd.toFixed(2)} · ${demo.bytes} bytes`;
+        $("song-notice").textContent = `Demo ready · ${demo.engine || "local-sketch"} · ${demo.bytes} bytes`;
       } else $("song-notice").textContent = demo.message || "Demo queued.";
     } catch (error) { $("song-notice").textContent = error.message; }
   });
@@ -310,15 +336,27 @@ if ($("login-form")) {
       const state = data.handback?.bob_state?.text || "";
       $("handback-chip").textContent = state ? state.split("\n").find((line) => line.trim() && !line.startsWith("#"))?.slice(0, 140) || state.slice(0, 140) : "Handback: no BOB-STATE yet";
       const dash = data.dashboard_modified_at ? new Date(data.dashboard_modified_at * 1000).toLocaleString() : "unknown";
-      const results = (data.recent_results || []).map((r) => r.name).join(", ") || "none";
-      $("status-summary").textContent = `dashboard ${dash}`;
+      const ops = data.live_ops || {};
+      const spend = ops.minimax_spend || {};
+      const roles = ops.roles || {};
+      const jobs = (ops.running_jobs || []).slice(0, 4);
+      $("status-summary").textContent = `round ${ops.webchat_round || "?"} · MiniMax $${(spend.committed_usd ?? 0).toFixed(2)}/${spend.cap_usd || 59}`;
+      const scoreLines = (ops.scores || []).slice(0, 6).map((row) => `${row.area}: ${row.score}`).join(" · ");
+      const jobLines = jobs.map((job) => {
+        const commit = job.last_commit?.sha ? ` · ${job.last_commit.sha}` : "";
+        const mins = Math.round((job.elapsed_seconds || 0) / 60);
+        const tail = (job.log_tail || []).slice(-2).join(" | ");
+        const detail = tail || job.plain_now || "working";
+        return `• ${job.engine || "job"} ${job.stall_state} · ${mins}m · ${detail}${commit}`;
+      });
       const lines = [
         `Dashboard fresh: ${dash}`,
-        `Recent RESULT files: ${results}`,
-        `Screens: ${(data.jobs.screens || "").split("\n")[0] || "n/a"}`,
+        `Builder: ${roles.building || "idle"} · Review: ${roles.reviewing || "idle"}`,
+        scoreLines ? `Scores: ${scoreLines}` : "",
+        jobLines.length ? "Live jobs:\n" + jobLines.join("\n") : "Live jobs: none on screen",
         "",
-        (data.handback?.bob_state?.text || "").slice(0, 1200),
-      ];
+        (data.handback?.summary?.text || data.handback?.bob_state?.text || "").slice(0, 900),
+      ].filter(Boolean);
       $("status-body").textContent = lines.join("\n");
     } catch (_) {
       $("status-summary").textContent = "unavailable";

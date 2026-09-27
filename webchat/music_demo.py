@@ -210,34 +210,14 @@ def generate_demo(root: Path, *, lyrics: str, style: str, dry_run: bool = False)
     if not lyrics:
         raise ValueError("Lyrics are required for a demo sketch.")
     if dry_run:
-        try:
-            status = music_budget_status(root)
-        except (ImportError, OSError, ModuleNotFoundError):
-            status = {"cap_usd": 59.0, "committed_usd": 0.0, "remaining_usd": 59.0,
-                      "demo_estimate_usd": MUSIC_ESTIMATE_USD, "can_afford_demo": True}
-        return {"ok": True, "dry_run": True, "estimated_usd": MUSIC_ESTIMATE_USD, "style": style, "lyrics_chars": len(lyrics),
-                "receipt": demo_receipt(lyrics, style), **status}
-    call_id = _reserve_music_budget(root)
-    try:
-        result = _try_minimax_hosted(root, lyrics=lyrics, style=style)
-        if result is None:
-            result = _try_replicate(root, lyrics=lyrics, style=style)
-        if result is None:
-            _finalize_music_budget(root, call_id, charged=False)
-            result = render_sketch(root, lyrics=lyrics, style=style)
-            append_turn(root, ask=f"music demo (local sketch): {style[:120]}", provider="local-sketch", jobs=[],
-                        files=[result["path"]], commits=[], confirmations=[], refusals=[],
-                        open_items=[result.get("note", "")[:200]])
-            return result
-        charged = float(result.get("cost_usd") or 0) > 0
-        _finalize_music_budget(root, call_id, charged=charged)
-        append_turn(root, ask=f"music demo: {style[:120]}", provider=result.get("engine", "minimax-music"), jobs=[],
-                    files=[result["path"]], commits=[], confirmations=[], refusals=[],
-                    open_items=[f"demo cost ~${result.get('cost_usd', MUSIC_ESTIMATE_USD):.4f}"])
-        return result
-    except Exception:
-        _finalize_music_budget(root, call_id, charged=False)
-        raise
+        return {"ok": True, "dry_run": True, "engine": "local-sketch", "estimated_usd": 0.0, "style": style,
+                "lyrics_chars": len(lyrics), "receipt": demo_receipt(lyrics, style),
+                "can_afford_demo": True, "demo_estimate_usd": 0.0}
+    result = render_sketch(root, lyrics=lyrics, style=style)
+    append_turn(root, ask=f"music demo (local sketch): {style[:120]}", provider="local-sketch", jobs=[],
+                files=[result["path"]], commits=[], confirmations=[], refusals=[],
+                open_items=[result.get("note", "")[:200]])
+    return result
 
 
 def store_upload(root: Path, data: bytes, suffix: str) -> dict:

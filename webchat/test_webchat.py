@@ -533,6 +533,17 @@ class HandbackJobTests(Fixture):
         self.assertIn("lanes", data)
         self.assertIn("handback", data)
         self.assertIn("recent_results", data)
+        self.assertIn("live_ops", data)
+
+    def test_handback_drill_backup_restore(self):
+        from live_handback_drill import backup_handback, restore_handback
+        folder = self.root / "conductor/handback"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "BOB-STATE.md").write_text("original state\n")
+        saved = backup_handback(self.root)
+        (folder / "BOB-STATE.md").write_text("drill overwrite\n")
+        restore_handback(self.root, saved)
+        self.assertEqual((folder / "BOB-STATE.md").read_text(), "original state\n")
 
     def test_song_notebook_roundtrip(self):
         from music_notebook import get_project, list_projects, save_project

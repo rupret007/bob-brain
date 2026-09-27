@@ -240,12 +240,17 @@ def reviewer_cycle():
 
 
 def snapshot():
+    from live_dashboard import build_live_ops
+
     records = list(jobs().values())
     runs = [r for r in journal_rows("model-runs") if r.get("timestamp", 0) > time.time() - 86400]
     supervisor = read_json(CONDUCTOR / "supervisor.json", {})
     sessions = screen_sessions()
     pending = [r for r in records if r["state"] != "harvested"]
-    return {"generated_at": stamp(), "services": health(sessions=sessions),
+    spend = {lane: __import__("budget").totals(lane) for lane in __import__("lanes").LANES}
+    lanes = read_json(CONDUCTOR / "lanes.json", {})
+    live_ops = build_live_ops(sessions=sessions, jobs_map=jobs(), lanes=lanes, spend=spend)
+    return {"generated_at": stamp(), "live_ops": live_ops, "services": health(sessions=sessions),
             "jobs": {"total": len(records), "launched": sum(r["state"] == "launched" for r in records),
                      "running": sum(r["state"] == "running" for r in records),
                      "harvested": sum(r["state"] == "harvested" for r in records),
@@ -259,8 +264,8 @@ def snapshot():
             "models_succeeded_last_24h": sorted(set(r["model"] for r in runs if r.get("ok"))),
             "models_attempted_last_24h": sorted(set(r["model"] for r in runs)),
             "alerts": read_json(CONDUCTOR / "alerts.json", {}),
-            "lanes": read_json(CONDUCTOR / "lanes.json", {}),
-            "spend": {lane: __import__("budget").totals(lane) for lane in __import__("lanes").LANES}}
+            "lanes": lanes,
+            "spend": spend}
 
 
 def github_token():
@@ -274,6 +279,7 @@ def github_token():
 
 def push_dashboard(data):
     from api import http_json
+    from live_dashboard import public_live_ops
     token = github_token()
     base = "https://api.github.com/repos/rupret007/bob-ops-dashboard"
     headers = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
@@ -297,6 +303,7 @@ def push_dashboard(data):
     # Public payload intentionally excludes job names, private PRs, local paths,
     # prompts, logs, status prose, alerts and credentials.
     public = {"source": "mini-conductor-services", "checked_at": data["generated_at"], "agents": agents,
+              "live_ops": public_live_ops(data.get("live_ops") or {}),
               "conductor": {"services": data["services"], "models_succeeded_last_24h": models,
                             "jobs_running": data["jobs"]["running"], "jobs_unharvested": len(data["jobs"]["unharvested"]),
                             "restarts_last_hour": data["restarts_last_hour"]}}

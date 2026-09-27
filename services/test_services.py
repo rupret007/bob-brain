@@ -234,4 +234,15 @@ class ServicesTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'cooldown'):lanes.ask('claude','review',purpose='review')
         cli.assert_not_called()
 
+    def test_live_dashboard_snapshot_fields(self):
+        import live_dashboard
+        jobs_map = {"job-a": {"job_id": "job-a", "state": "running", "launched_at": time.time() - 120,
+                               "engine": "cursor", "job_dir": str(self.root / "job-a")}}
+        ops = live_dashboard.build_live_ops(sessions={"job-a": "1.job-a"}, jobs_map=jobs_map,
+                                            lanes={"cursor": {"state": "busy"}}, spend={"minimax": {"committed_usd": 1.5}},
+                                            now=time.time())
+        self.assertIn("running_jobs", ops)
+        self.assertEqual(ops["minimax_spend"]["cap_usd"], 59.0)
+        self.assertTrue(ops["running_jobs"][0]["plain_now"])
+
 if __name__=='__main__':unittest.main(verbosity=2)

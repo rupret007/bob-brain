@@ -458,10 +458,20 @@ class Chat:
                 results.append({"name": path.name, "modified_at": path.stat().st_mtime})
             except OSError:
                 continue
-        status_path = self.root / "conductor/STATUS.md"
-        dashboard_age = status_path.stat().st_mtime if status_path.exists() else None
+        dash_path = self.root / "conductor/dashboard.json"
+        live_ops = {}
+        dashboard_age = None
+        if dash_path.exists():
+            try:
+                live_ops = json.loads(dash_path.read_text(errors="replace")).get("live_ops") or {}
+                dashboard_age = dash_path.stat().st_mtime
+            except (OSError, json.JSONDecodeError, ValueError):
+                live_ops = {}
+        if dashboard_age is None:
+            status_path = self.root / "conductor/STATUS.md"
+            dashboard_age = status_path.stat().st_mtime if status_path.exists() else None
         return {"lanes": lanes, "jobs": jobs, "recent_results": results, "dashboard_modified_at": dashboard_age,
-                "handback": self.handback(), "read_at": time.time()}
+                "live_ops": live_ops, "handback": self.handback(), "read_at": time.time()}
 
     def jobs(self):
         try:
@@ -679,21 +689,13 @@ class Handler(BaseHTTPRequestHandler):
             lyrics = data.get("lyrics") or ""
             style = data.get("style") or ""
             receipt = demo_receipt(lyrics, style)
-            budget = music_budget_status(chat.root)
             if not data.get("confirm"):
-                remaining = budget.get("remaining_usd", 0)
-                cap = budget.get("cap_usd", 59)
                 return self.send(200, {"ok": False, "needs_confirm": True, "receipt": receipt,
-                                       "estimate_usd": 0.04, "cap_usd": cap, "remaining_usd": remaining,
-                                       "can_afford_demo": budget.get("can_afford_demo", False),
-                                       "message": (
-                                           f"Music demo ~$0.04 when MiniMax/Replicate succeeds; "
-                                           f"otherwise a free local chord sketch (${cap:.0f} cap, ${remaining:.2f} left). Confirm to generate."
-                                       )})
+                                       "estimate_usd": 0.0, "engine": "local-sketch",
+                                       "can_afford_demo": True,
+                                       "message": "Generate a free local chord sketch from your lyrics? Confirm to render ($0)."})
             if data.get("receipt") != receipt:
                 raise RequestError(400, "Demo confirmation does not match current lyrics/style. Save and try again.")
-            if not budget.get("can_afford_demo"):
-                raise RequestError(402, "MiniMax chat cap does not have headroom for a demo sketch.")
             try:
                 result = generate_demo(chat.root, lyrics=lyrics, style=style, dry_run=bool(data.get("dry_run")))
             except Exception as exc:

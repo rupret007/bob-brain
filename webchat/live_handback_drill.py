@@ -12,6 +12,29 @@ from handback import append_turn, refresh_summary
 from live_failover import Curl, HERE, ROOT
 from live_ready_drill import origin_url
 
+HANDBACK_FILES = ("BOB-STATE.md", "HANDBACK-LOG.md", "HANDBACK-SUMMARY.md", ".bob-last-seen")
+
+
+def backup_handback(root: Path) -> dict[str, bytes]:
+    folder = root / "conductor/handback"
+    saved: dict[str, bytes] = {}
+    for name in HANDBACK_FILES:
+        path = folder / name
+        if path.exists():
+            saved[name] = path.read_bytes()
+    return saved
+
+
+def restore_handback(root: Path, saved: dict[str, bytes]) -> None:
+    folder = root / "conductor/handback"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in HANDBACK_FILES:
+        path = folder / name
+        if name in saved:
+            path.write_bytes(saved[name])
+        elif path.exists():
+            path.unlink()
+
 
 def ledger_round(root: Path, tag: str) -> dict:
     folder = root / "conductor/handback"
@@ -31,8 +54,16 @@ def ledger_round(root: Path, tag: str) -> dict:
     text = summary_path.read_text(errors="replace") if summary_path.exists() else ""
     log_text = log_path.read_text(errors="replace") if log_path.exists() else ""
     combined = text + "\n" + log_text
-    ok = all(token in combined for token in (f"handback drill {tag}", "Running: handback drill", f"drill-{tag}"))
-    return {"tag": tag, "ledger_ok": ok, "summary_chars": len(text)}
+    ledger_ok = all(token in combined for token in (
+        f"handback drill {tag}", "Running: handback drill", f"drill-{tag}", "abc1234", "drill open item",
+    ))
+    bob_pickup_ok = "abc1234" in text and "drill open item" in text and f"drill-{tag}" in text
+    return {
+        "tag": tag,
+        "ledger_ok": ledger_ok,
+        "bob_pickup_ok": bob_pickup_ok,
+        "summary_chars": len(text),
+    }
 
 
 def live_round(url: str, tag: str) -> dict:
@@ -40,35 +71,55 @@ def live_round(url: str, tag: str) -> dict:
     client = Curl(url if "://" in url else "http://" + parsed_host)
     conv = client.new()
     started = time.monotonic()
-    client.submit(conv, "From BOB-STATE and handback only: what's running right now? One short paragraph.", str(uuid.uuid4()))
-    value = client.wait(conv)
-    elapsed = time.monotonic() - started
-    msg = value["messages"][-1]
-    body = (msg.get("content") or "").lower()
-    mentions_running = "drill" in body or "running" in body or "handback" in body
+    prompts = [
+        "From BOB-STATE and handback only: what's running right now? Include the exact screen/job id.",
+        f"From BOB-STATE only: quote the Running line for handback drill `{tag}` in one sentence.",
+    ]
+    last = {}
+    for prompt in prompts:
+        client.submit(conv, prompt, str(uuid.uuid4()))
+        value = client.wait(conv)
+        msg = value["messages"][-1]
+        body = (msg.get("content") or "").lower()
+        tag_bits = tag.replace("-", " ").split()
+        specific = f"drill-{tag}" in body or f"handback drill {tag}" in body or all(bit in body for bit in tag_bits)
+        mentions_running = specific and any(word in body for word in ("running", "drill", "screen", "active"))
+        last = {
+            "tag": tag,
+            "status": msg.get("status"),
+            "provider": msg.get("provider"),
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+            "mentions_running": mentions_running,
+            "snippet": (msg.get("content") or "")[:220],
+            "live_ok": msg.get("status") == "done" and mentions_running,
+        }
+        if last["live_ok"]:
+            break
     client.close()
-    return {
-        "tag": tag,
-        "status": msg.get("status"),
-        "provider": msg.get("provider"),
-        "elapsed_seconds": round(elapsed, 3),
-        "mentions_running": mentions_running,
-        "live_ok": msg.get("status") == "done" and mentions_running,
-    }
+    return last
 
 
 def main():
-    evidence = {"started_at": time.time(), "rounds": []}
+    evidence = {"started_at": time.time(), "rounds": [], "restored_handback": False}
     url = origin_url()
-    for index in (1, 2):
-        tag = f"r4-{index}"
-        round_evidence = {"ledger": ledger_round(ROOT, tag), "live": None}
-        try:
-            round_evidence["live"] = live_round(url, tag)
-        except (AssertionError, RuntimeError, OSError) as exc:
-            round_evidence["live"] = {"tag": tag, "live_ok": False, "error": str(exc)[:300]}
-        round_evidence["pass"] = round_evidence["ledger"]["ledger_ok"] and round_evidence["live"].get("live_ok")
-        evidence["rounds"].append(round_evidence)
+    saved = backup_handback(ROOT)
+    try:
+        for index in (1, 2):
+            tag = f"r5-{index}"
+            round_evidence = {"ledger": ledger_round(ROOT, tag), "live": None}
+            try:
+                round_evidence["live"] = live_round(url, tag)
+            except (AssertionError, RuntimeError, OSError) as exc:
+                round_evidence["live"] = {"tag": tag, "live_ok": False, "error": str(exc)[:300]}
+            round_evidence["pass"] = (
+                round_evidence["ledger"]["ledger_ok"]
+                and round_evidence["ledger"]["bob_pickup_ok"]
+                and round_evidence["live"].get("live_ok")
+            )
+            evidence["rounds"].append(round_evidence)
+    finally:
+        restore_handback(ROOT, saved)
+        evidence["restored_handback"] = True
     evidence["finished_at"] = time.time()
     evidence["result"] = "PASS" if all(row["pass"] for row in evidence["rounds"]) else "FAIL"
     out = HERE / "evidence/handback-drill.json"

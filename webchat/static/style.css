@@ -40,7 +40,7 @@ option { background: #202d28; color: #e9efec; }
 .handback-chip { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; margin-bottom: 8px; line-height: 1.4; max-height: 3.2em; overflow: hidden; }
 #status-panel { font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 6px; }
 #status-panel summary { cursor: pointer; min-height: 28px; color: #e9efec; }
-.status-body { white-space: pre-wrap; max-height: 22dvh; overflow: auto; font-size: 11px; line-height: 1.45; }
+.status-body { white-space: pre-wrap; max-height: 28dvh; overflow: auto; font-size: 11px; line-height: 1.45; }
 #song-panel { font-size: 12px; border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 6px; }
 #song-panel summary { cursor: pointer; min-height: 28px; color: #e9efec; }
 .song-body { display: grid; gap: 8px; padding-bottom: 6px; }
