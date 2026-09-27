@@ -280,7 +280,9 @@ class Texting:
         clean = re.sub(r"^(?:(?:ask|have|tell|use) (?:codex|claude|cursor|gemini|minimax|mini)(?: to)?\s+|"
                        r"start (?:a )?job:\s*|(?:codex|claude|cursor|gemini|minimax|mini):\s*)", "", clean, flags=re.I)
         command = clean.casefold().rstrip(".?!")
-        confirmation = re.match(r"^yes\s+wbtxt-", clean, re.I) or (active and command in ("yes", "ok", "send it", "send it now", "send now", "go", "do it"))
+        text_context = active and (active["state"] in ("pending", "editing") or
+            len(conversation["messages"]) >= 3 and conversation["messages"][-3].get("texting"))
+        confirmation = re.match(r"^yes\s+wbtxt-", clean, re.I) or (text_context and command in ("yes", "ok", "send it", "send it now", "send now", "go", "do it"))
         edit = re.fullmatch(r"(edit|cancel) text draft ([0-9a-f]{16})", clean, re.I)
         replace = re.fullmatch(r"replace text draft ([0-9a-f]{16}) to (.+?):\s*([\s\S]+)", clean, re.I)
         compose = re.fullmatch(r"(?:draft|write|compose|send) (?:a )?(?:text|reply|sms|message)(?: reply)? to (.+?)(?::\s*| saying )([\s\S]+)", clean, re.I)
