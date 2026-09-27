@@ -139,18 +139,19 @@ def cli(lane, prompt, cwd, coding, timeout):
 
 
 def live_managed_worker(engine):
-    """True only when a managed job screen is actually running on this lane."""
+    """True when a managed worker screen is running, or screen inventory is unavailable."""
     try:
         from runtime import screen_sessions
         sessions = screen_sessions()
     except Exception:
-        return False
+        return True
     for record in jobs().values():
         if record.get("engine") != engine or not record.get("managed"):
             continue
         if record["state"] not in ("launched", "running"):
             continue
-        if record["job_id"] in sessions:
+        job_id = record["job_id"]
+        if job_id in sessions or any(name.endswith("." + job_id) for name in sessions.values()):
             return True
     return False
 

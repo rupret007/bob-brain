@@ -156,7 +156,7 @@ def takeover():
     sessions = screen_sessions()
     if not all("svc-" + name in sessions for name in INTERVALS):
         log("takeover pending: waiting for all four service screens")
-        return
+        return False
     if "mini-conductor" in sessions:
         # Old run-conductor left this PID lock while its pass was active.
         old_lock = Path("/tmp/mini-conductor.lock")
@@ -165,15 +165,15 @@ def takeover():
                 try:
                     os.kill(int(old_lock.read_text().strip()), 0)
                     log("old conductor pass still active; takeover will retry")
-                    return
+                    return False
                 except (ProcessLookupError, ValueError):
                     pass
                 except PermissionError:
                     log("cannot verify old pass PID; leaving it until the next check")
-                    return
+                    return False
         except PermissionError:
             log("cannot probe /tmp/mini-conductor.lock; takeover will retry")
-            return
+            return False
         stopped = run(["screen", "-S", sessions["mini-conductor"], "-X", "quit"], capture_output=True, timeout=15)
         if stopped.returncode:
             raise RuntimeError("old mini-conductor screen could not be stopped")
@@ -186,6 +186,7 @@ def takeover():
             run(["launchctl", "bootout", "gui/%s/%s" % (os.getuid(), label)],
                            capture_output=True, timeout=10)
         write_json(marker, {"at": stamp(), "legacy_screen_retired": True})
+    return True
 
 
 def schedule_pass():
@@ -409,8 +410,8 @@ def cycle(name):
     elif name == "watchdog":
         ensure_services(check_stale=True, self_name="watchdog")
         try:
-            takeover()
-            alert("takeover")
+            if takeover():
+                alert("takeover")
         except PermissionError:
             log("takeover deferred: PermissionError probing legacy lock")
             alert("takeover", "legacy takeover deferred: PermissionError")

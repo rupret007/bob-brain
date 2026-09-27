@@ -246,12 +246,11 @@ def can_assign(spec, lane, active, health):
     return len(active) < 5
 
 
-def candidate_rank(spec, external_coder):
+def candidate_rank(spec):
     project = spec.get("project", "shelf")
-    if external_coder and project == "WebJam" and spec.get("kind") == "coding":
-        return (len(PROJECTS), spec.get("priority", 99), spec.get("job_id") or spec.get("id"))
+    ident = str(spec.get("id") or spec.get("job_id") or "")
     return (PROJECTS.index(project) if project in PROJECTS else len(PROJECTS),
-            spec.get("priority", 99), spec.get("job_id") or spec.get("id"))
+            spec.get("priority", 99), ident)
 
 
 def external_webjam_lease(sessions):
@@ -288,7 +287,7 @@ def tick():
         if external_coder:
             candidates = [c for c in candidates
                           if not (c.get("project") == "WebJam" and c.get("kind") == "coding")]
-        candidates.sort(key=lambda r: candidate_rank(r, external_coder))
+        candidates.sort(key=candidate_rank)
         for spec in candidates:
             lane_order = ("cursor", "codex") if spec["kind"] == "coding" else ("gemini", "minimax", "cursor", "codex", "claude")
             for lane in lane_order:

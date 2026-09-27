@@ -263,13 +263,16 @@ class ServicesTest(unittest.TestCase):
         with patch.object(runtime,'screen_sessions',return_value={}),patch.object(lanes,'cli',return_value='Council answer with enough evidence to pass validation.'):
             lanes.ask('cursor','critique prompt with enough context',purpose='council')
 
-    def test_external_lease_prioritizes_non_webjam_backlog(self):
-        webjam={'project':'WebJam','kind':'coding','priority':0,'id':'wj'}
-        story={'project':'StoryBoard','kind':'coding','priority':99,'id':'sb'}
-        self.assertLess(jobs.candidate_rank(story,True),jobs.candidate_rank(webjam,True))
+    def test_external_lease_drops_webjam_coding_candidates(self):
         held=[{'project':'WebJam','kind':'coding','job_id':'x'},{'project':'AdoptIQ','kind':'coding','job_id':'y'}]
         filtered=[c for c in held if not (c.get('project')=='WebJam' and c.get('kind')=='coding')]
         self.assertEqual([c['job_id'] for c in filtered],['y'])
+        self.assertEqual(jobs.candidate_rank({'project':'AdoptIQ','kind':'coding','id':'a'})[2],'a')
+
+    def test_live_managed_worker_blocks_lane(self):
+        state.job_event('live-cursor','running',engine='cursor',managed=True)
+        with patch.object(runtime,'screen_sessions',return_value={'live-cursor':'42.live-cursor'}):
+            with self.assertRaises(BlockingIOError):lanes.ask('cursor','prompt long enough for lane check')
 
     def test_takeover_lock_permission_error_is_graceful(self):
         sessions={name:'1.svc-'+name for name in runtime.INTERVALS}
@@ -278,7 +281,8 @@ class ServicesTest(unittest.TestCase):
         real_exists=Path.exists
         def exists(self):
             return True if self==old_lock else real_exists(self)
-        with patch.object(runtime,'screen_sessions',return_value=sessions),patch.object(Path,'exists',exists),patch.object(Path,'read_text',side_effect=PermissionError()):
-            runtime.takeover()
+        with patch.object(runtime,'screen_sessions',return_value=sessions),patch.object(Path,'exists',exists),patch.object(Path,'read_text',side_effect=PermissionError()),patch.object(runtime,'run') as run_cmd:
+            self.assertFalse(runtime.takeover())
+        run_cmd.assert_not_called()
 
 if __name__=='__main__':unittest.main(verbosity=2)
