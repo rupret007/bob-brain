@@ -77,6 +77,48 @@ def _latest_jobs(root: Path) -> dict[str, dict]:
     return merged
 
 
+def provider_health(root: Path, now: float | None = None) -> dict:
+    """Generation health, distinct from scheduler locks and configuration probes."""
+    now = time.time() if now is None else now
+    entries = _read_json(root / "conductor/webchat/sessions/provider-health.json", {})
+    events = {}
+    try:
+        with (root / "logs/webchat-failover.log").open("rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            handle.seek(max(0, size - 65536))
+            if size > 65536:
+                handle.readline()
+            lines = handle.read().decode("utf-8", "replace").splitlines()
+        for line in lines:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if (event.get("context", "production") == "production" and not event.get("injected")
+                    and event.get("event") in ("success", "failure")):
+                events[event.get("provider")] = event
+    except OSError:
+        pass
+    result = {}
+    for name in ("codex", "claude", "cursor", "gemini", "minimax"):
+        row = entries.get(name) or {}
+        event = events.get(name) or {}
+        checked = row.get("checked_at") or 0
+        success, reason, retry = row.get("last_success"), row.get("reason"), row.get("retry_at") or 0
+        if event.get("timestamp", 0) >= checked:
+            checked = event.get("timestamp", checked)
+            if event.get("event") == "success":
+                success, reason, retry = checked, None, 0
+            elif event.get("event") == "failure":
+                reason, retry = event.get("reason"), event.get("retry_at", 0)
+        state = "cooldown" if retry > now else "recovery_due" if reason else "ready" if success else "unchecked"
+        result[name] = dict(state=state, reason=reason, retry_at=retry, checked_at=checked,
+                            last_success=success, probe=row.get("probe"), probed_at=row.get("probed_at"),
+                            last_event=event.get("event"), last_event_at=event.get("timestamp"))
+    return result
+
+
 def _job_bucket(record: dict) -> str:
     state = (record.get("status") or record.get("state") or "unknown").lower()
     outcome = (record.get("outcome") or "").lower()
@@ -318,6 +360,8 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
         "screen_lanes": screens,
         "queue_counts": queue_counts,
         "queue_jobs": {key: rows[:24] for key, rows in queue.items()},
+        "provider_health": provider_health(root, now),
+        "provider_health_sources": ["conductor/webchat/sessions/provider-health.json", "logs/webchat-failover.log"],
         "lane_locks": {
             lane: {
                 "state": (lanes.get(lane) or {}).get("state"),
@@ -340,6 +384,9 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
             "an empty active_jobs list does not prove an idle or stale lock. Report unidentified work as unknown, "
             "and do not infer that all workers are idle from an empty queue. "
             "Do not say you cannot see workers if this block lists them."
+            " Chat provider health comes only from provider_health, not old messages or lane locks. "
+            "A successful probe checks configuration; last_success proves generation. "
+            "A past failure followed by success is recovered, not a current outage."
         ),
     }
 

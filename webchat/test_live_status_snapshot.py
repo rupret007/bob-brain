@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from live_status_snapshot import build_live_status_snapshot, encode_snapshot
+from live_status_snapshot import build_live_status_snapshot, encode_snapshot, provider_health
 from providers import Providers
 
 
@@ -37,6 +37,24 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(snap["lane_locks"]["cursor"]["active_jobs"], ["task-a"])
         self.assertEqual(self.queue.read_text(), original)
         self.assertIsNone(snap["now_line"])
+
+    def test_recovered_generation_overrides_old_failure_and_ignores_drills(self):
+        path = self.root / "conductor/webchat/sessions/provider-health.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"gemini": {"reason": "network", "retry_at": 500, "checked_at": 100},
+                                   "minimax": {"reason": "network", "retry_at": 500, "checked_at": 100, "probe": "ok"}}))
+        log = self.root / "logs/webchat-failover.log"
+        log.parent.mkdir()
+        log.write_text('\n'.join(json.dumps(r) for r in [
+            dict(provider="gemini", event="success", timestamp=200, context="production"),
+            dict(provider="gemini", event="failure", timestamp=300, context="live-drill", reason="network"),
+            dict(provider="minimax", event="probe", result="ok", timestamp=400, context="production")]))
+        health = provider_health(self.root, now=450)
+        self.assertEqual(health["gemini"]["state"], "ready")
+        self.assertIsNone(health["gemini"]["reason"])
+        self.assertEqual(health["minimax"]["state"], "cooldown")
+        self.assertEqual(provider_health(self.root, now=600)["minimax"]["state"], "recovery_due")
+        self.assertEqual(health["cursor"]["state"], "unchecked")
 
     def test_successful_harvest_recovery_is_done_and_counts_include_omitted_rows(self):
         rows = [dict(job_id=f"job-{i}", state="harvested", outcome="result",

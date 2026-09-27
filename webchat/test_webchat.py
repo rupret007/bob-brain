@@ -280,7 +280,9 @@ class HTTPTests(Fixture):
                 self.assertEqual(code, 202)
                 self.wait()
                 self.assertEqual(self.fake.calls[-1]["preferred_provider"], provider)
-                self.assertEqual(self.chat.history(self.identifier)["messages"][-1]["content"], "A saved reply.")
+                answer = self.chat.history(self.identifier)["messages"][-1]
+                self.assertIn("Answering provider: " + answer["provider"], answer["content"])
+                self.assertIn("Queue:", answer["content"])
         for provider in ("grok", "unknown", None):
             self.assertEqual(self.request("POST", "/api/messages", {
                 "conversation_id": self.identifier, "message": "hello",
@@ -786,14 +788,16 @@ class HandbackJobTests(Fixture):
             self.assertTrue(row["display_state"])
             self.assertTrue(row["stall_plain"])
 
-    def test_inbox_message_queues_builder_note(self):
+    def test_inbox_work_request_creates_executable_task(self):
         request_id = str(uuid.uuid4())
         value = self.chat.submit(self.identifier, "tell the builder: fix Jobs tab copy", request_id)
         assistant = value["messages"][-1]
         self.assertEqual(assistant["status"], "done")
-        self.assertEqual(assistant.get("provider"), "inbox")
-        inbox = (self.root / "conductor/state/INBOX.md").read_text()
-        self.assertIn("fix Jobs tab copy", inbox)
+        self.assertEqual(assistant.get("provider"), "dispatcher")
+        from task_dispatch import task_queue
+        task = task_queue.tasks(self.root)[assistant["task_id"]]
+        self.assertEqual(task["prompt"], "fix Jobs tab copy")
+        self.assertEqual(task["status"], "queued")
 
     def test_status_chip_answers_from_state_without_model(self):
         ledger_dir = Path(__file__).resolve().parent.parent / "state"
@@ -808,6 +812,8 @@ class HandbackJobTests(Fixture):
         self.assertEqual(assistant["status"], "done")
         self.assertEqual(assistant.get("provider"), "state")
         self.assertIn("mini", assistant["content"].lower())
+        self.assertIn("provider-health.json", assistant["content"])
+        self.assertNotIn("tests running", assistant["content"])
 
     def test_panel_and_handback_api_shape(self):
         data = self.chat.panel()

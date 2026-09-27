@@ -28,6 +28,26 @@ class ChatDispatchTests(Fixture):
         self.assertEqual(len(queue.tasks(self.root)), 4)
         self.assertEqual(self.fake.calls, [])
 
+    def test_live_incident_conversational_work_request_is_durable(self):
+        value = self.submit("Ok figure out what’s wrong with Gemini and minimax")
+        receipt = value["messages"][-1]
+        row = queue.tasks(self.root)[receipt["task_id"]]
+        self.assertEqual(row["status"], "queued")
+        self.assertIn(row["id"], receipt["content"])
+        self.assertFalse(self.fake.calls)
+        claim = queue.claim(self.root, "gemini")
+        queue.transition(self.root, claim["id"], claim["claim_token"], "running")
+        self.chat.reconcile_tasks()
+        receipt = self.chat.history(self.identifier)["messages"][-1]
+        self.assertIn("running on gemini", receipt["content"])
+        self.assertEqual(receipt["action_card"]["worker"], "gemini")
+
+    def test_explicit_file_write_uses_a_tool_worker(self):
+        value = self.submit("start a job: write hello to /tmp/wb-proof.txt", worker="claude")
+        row = queue.tasks(self.root)[value["messages"][-1]["task_id"]]
+        self.assertEqual(row["kind"], "artifact")
+        self.assertIsNotNone(queue.claim(self.root, "claude"))
+
     def test_worker_routing_and_grok_rejected(self):
         self.submit(worker="cursor-agent")
         self.assertEqual(next(iter(queue.tasks(self.root).values()))["requested_worker"], "cursor")
@@ -41,6 +61,7 @@ class ChatDispatchTests(Fixture):
         value = self.submit("start a job: merge #158")
         self.assertEqual(value["messages"][-1]["action_card"]["state"], "refused")
         self.assertFalse(queue.tasks(self.root))
+        self.assertNotIn("Queued", self.chat.history(self.identifier)["messages"][-1]["content"])
 
     def test_duplicate_request_creates_one_task(self):
         request = str(uuid.uuid4())

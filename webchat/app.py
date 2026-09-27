@@ -322,6 +322,11 @@ class Chat(TaskDispatch):
                 conversation["title"] = text[:65]
             work, route = parse_work(text)
             started = parse_start(text)
+            inbox_task = state_ledger.parse_inbox_message(text)
+            if inbox_task:
+                inbox_work, inbox_route = parse_work(inbox_task)
+                if parse_start(inbox_task) or inbox_work:
+                    work, route = parse_start(inbox_task) or inbox_work, inbox_route
             if started or work or worker is not None:
                 conversation.pop("pending_job", None)
                 conversation.pop("pending_job_id", None)
@@ -508,6 +513,13 @@ class Chat(TaskDispatch):
                 if not state_ledger._DRILL_NOISE_RE.search(text):
                     state_ledger.record_webchat_turn(ledger, ask=text, provider="inbox", request_id=request_id)
                 return self.public(conversation)
+            from reply_authority import STATUS_QUESTION, operational_reply
+            if ledger == self.root and provider == "auto" and STATUS_QUESTION.search(text):
+                conversation["messages"][-1].update(status="done", provider="state",
+                    content=self.redact(operational_reply(self.root, "server")))
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                return self.public(conversation)
             if ledger == self.root:
                 try:
                     state_ledger.sync_from_live_ops(
@@ -581,6 +593,8 @@ class Chat(TaskDispatch):
                 value.pop("retry_prompt", None)
                 answer["content"] = repair_hollow_progress(self.redact(answer["content"]))
                 user_msg = next((m for m in reversed(value["messages"]) if m["role"] == "user"), {})
+                from reply_authority import enforce
+                answer["content"] = self.redact(enforce(self.ledger_root(identifier), user_msg.get("content", ""), answer))
                 rid = user_msg.get("request_id")
                 value["messages"][-1].update(answer, status="done")
                 if rid:

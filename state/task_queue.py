@@ -5,6 +5,7 @@ import contextlib
 import fcntl
 import json
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -16,6 +17,12 @@ ACTIVE = ("claimed", "running")
 TERMINAL = ("succeeded", "failed")
 LEASE_SECONDS = 90
 MAX_ATTEMPTS = 3
+
+
+def file_request(prompt):
+    """A small explicit temporary-file task may use any tool-capable CLI."""
+    match = re.fullmatch(r"(?:please\s+)?write\s+([^\n]{1,1000}?)\s+to\s+(/tmp/[A-Za-z0-9_-]+\.(?:txt|md|json))\s*", prompt, re.I)
+    return (match[1].strip("\"'"), match[2]) if match else None
 
 
 def worker_name(value):
@@ -81,7 +88,7 @@ def tasks(root):
 
 
 def worker_order(kind):
-    return {"coding": ("codex", "cursor"), "local": ("mini",),
+    return {"coding": ("codex", "cursor"), "artifact": ("codex", "cursor", "claude"), "local": ("mini",),
             "analysis": ("claude", "gemini", "minimax", "codex", "cursor")}[kind]
 
 
@@ -94,8 +101,10 @@ def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="a
     worker = worker_name(worker)
     if worker == "mini":
         kind = "local"
-    if kind not in ("analysis", "coding", "local") or not prompt.strip():
+    if kind not in ("analysis", "coding", "artifact", "local") or not prompt.strip():
         raise ValueError("Task needs a description and a supported kind")
+    if kind == "artifact" and not file_request(prompt):
+        raise ValueError("Small file tasks require an explicit text and /tmp file destination")
     if worker != "auto" and worker not in worker_order(kind):
         raise ValueError("Code changes require codex or cursor-agent. API workers can analyze supplied evidence.")
     key = "webbob:" + str(conversation_id) + ":" + str(request_id)

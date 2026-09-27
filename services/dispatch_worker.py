@@ -99,7 +99,8 @@ def execute(identifier, token):
             branch = "draft/" + identifier
             record = dict(repo=str(repo), worktree=str(ROOT / "workspaces" / identifier),
                           branch=branch, job_dir=str(folder))
-            cwd = Path(__file__).resolve().parents[1] if row["worker"] == "mini" else prepare_task(record, row["kind"] == "coding")
+            coding = row["kind"] in ("coding", "artifact")
+            cwd = Path(__file__).resolve().parents[1] if row["worker"] == "mini" else prepare_task(record, coding)
             prompt = ("Web Bob assigned this task from Jeff. Complete it and return the actual result in your final answer. "
                       "Do not merely propose a plan or claim another worker will do it. If blocked, begin BLOCKER:. "
                       "Keep all work local: never push or create/modify a PR. "
@@ -107,15 +108,30 @@ def execute(identifier, token):
                       "For code changes, commit locally and report the SHA, changed paths and tests. "
                       "For analysis, use the evidence in the request; do not invent repository observations.\n\n"
                       "TASK:\n" + row["prompt"])
+            if row["kind"] == "artifact":
+                contents, destination = task_queue.file_request(row["prompt"])
+                target = Path(destination)
+                if target.is_symlink():
+                    raise RuntimeError("Refusing a symlink destination")
+                previous_mtime = target.stat().st_mtime_ns if target.exists() else None
+                prompt += ("\nThis small file task explicitly authorizes writing only " + destination +
+                           " outside the worktree. Write the requested text even if the file already exists, verify it, and return its path. "
+                           "No repository changes or commit are needed. Keep the answer under 80 words.")
             if not task_queue.transition(ROOT, identifier, token, "executing"):
                 return 0
-            answer = redact(mini_worker.execute(row) if row["worker"] == "mini" else ask(row["worker"], prompt, cwd=cwd, coding=row["kind"] == "coding",
-                                timeout=1800 if row["kind"] == "coding" else 240,
-                                purpose="small-review" if row["worker"] == "claude" else "webbob-" + identifier,
+            answer = redact(mini_worker.execute(row) if row["worker"] == "mini" else ask(row["worker"], prompt, cwd=cwd, coding=coding,
+                                timeout=90 if row["kind"] == "artifact" else 1800 if coding else 240,
+                                purpose="small-file" if row["kind"] == "artifact" else "small-review" if row["worker"] == "claude" else "webbob-" + identifier,
                                 locked=True)).strip()
-            if not answer or re.search(r"(?im)^\s*(?:```\s*)?(?:\*\*)?BLOCKER\s*:", answer):
+            if not answer or re.search(r"(?im)^\s*(?:```\s*)?(?:#{1,6}\s*)?(?:\*\*)?BLOCKER\s*:", answer):
                 raise RuntimeError(answer[:1500] or "Worker returned an empty answer")
-            if row["kind"] == "coding":
+            if row["kind"] == "artifact":
+                if target.is_symlink() or target.read_text().rstrip("\n") != contents:
+                    raise RuntimeError("Worker did not write the requested file contents")
+                if target.stat().st_mtime_ns == previous_mtime:
+                    raise RuntimeError("Worker left the preexisting file unchanged; no write verified")
+                answer += "\n\nServer verified file: " + destination + "; SHA-256: " + hashlib.sha256(target.read_bytes()).hexdigest()
+            if coding:
                 if git(cwd, "branch", "--show-current") != branch:
                     raise RuntimeError("Worker changed its assigned draft branch")
                 if git(cwd, "status", "--porcelain", "--untracked-files=normal"):

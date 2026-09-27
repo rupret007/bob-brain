@@ -13,9 +13,11 @@ import task_queue
 import max_mode
 
 WORK = re.compile(
-    r"^(?:(?:please|bob)[,:]?\s+)*(?:(?:can|could|would|will) you\s+|i (?:want|need) you to\s+)?"
+    r"^(?:(?:please|bob)[,:]?\s+)*(?:(?:can|could|would|will) you\s+|i (?:want|need) (?:you )?to\s+|let['’]s\s+)?"
     r"(?:review|analy[sz]e|audit|research|investigate|inspect|check|compare|summari[sz]e|calculate|"
-    r"write|draft|create|build|implement|fix|repair|debug|test|trace|update|refactor|add|remove)\b.+", re.I | re.S)
+    r"write|draft|create|build|implement|fix|repair|debug|test|trace|update|refactor|add|remove|"
+    r"diagnose|figure out|find out|look into|work on|improve|make)\b.+", re.I | re.S)
+PREAMBLE = re.compile(r"^(?:(?:ok(?:ay)?|yes|yeah|sure|great|thanks)[,.!]?\s+)+", re.I)
 ROUTED = re.compile(r"^(?:(?:please|bob)[,:]?\s+)*(?:ask|use|assign(?:\s+to)?|delegate(?:\s+to)?)\s+"
                     r"(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\b\s*(?:to\b|[:,])?\s*(.+)$", re.I | re.S)
 PREFIX = re.compile(r"^(?:worker\s*[:=]\s*)?(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\s*:\s*(.+)$", re.I | re.S)
@@ -24,6 +26,7 @@ CODING = re.compile(r"\b(?:fix|repair|implement|refactor|debug|build|run|execute
 
 
 def parse_work(text):
+    text = PREAMBLE.sub("", text.strip())
     if max_mode.MAX_MODE.search(text):
         return text.strip(), "max"
     lane = re.fullmatch(r"(?:start|run)\s+(?:a\s+)?lane\s+(codex|cursor-agent|cursor|claude|gemini|minimax|grok)\s*:\s*(.+)", text.strip(), re.I | re.S)
@@ -38,6 +41,8 @@ def parse_work(text):
 
 
 def task_kind(prompt):
+    if task_queue.file_request(prompt):
+        return "artifact"
     # An analysis of code is still analysis; actual edits/execution need a CLI.
     if re.search(r"\bread[- ]only\b", prompt, re.I) and re.search(r"\b(?:review|audit|analysis|inspection)\b", prompt, re.I):
         return "analysis"
@@ -115,7 +120,7 @@ class TaskDispatch:
                     row = task_queue.enqueue(self.root, identifier, intent["request_id"], intent["prompt"],
                                              worker=intent["worker"], kind=intent["kind"])
                     message.update(task_id=row["id"], status="done", provider="dispatcher",
-                                   content="Queued for " + (row["requested_worker"] if row["requested_worker"] != "auto" else "an available worker") +
+                                   content="Queued job `" + row["id"] + "` for " + (row["requested_worker"] if row["requested_worker"] != "auto" else "an available worker") +
                                    ". I’ll post the result here when it finishes.",
                                    action_card={"id": message["request_id"], "state": "queued", "executable": False,
                                                 "queue_id": row["id"], "task_id": row["id"], "goal_text": row["prompt"][:160]})
@@ -129,6 +134,19 @@ class TaskDispatch:
                 if row.get("group_id"):
                     continue
                 identifier = row["conversation_id"]
+                if identifier in self.conversations and row["status"] in task_queue.ACTIVE:
+                    value = copy.deepcopy(self.conversations[identifier])
+                    changed = False
+                    for message in value["messages"]:
+                        if message.get("task_id") == row["id"] and message.get("action_card"):
+                            card = message["action_card"]
+                            if (card.get("state"), card.get("worker")) != (row["status"], row["worker"]):
+                                card.update(state=row["status"], worker=row["worker"])
+                                message.update(content="Job `" + row["id"] + "` " + row["status"] + " on " + row["worker"] + ". I’ll post the result here.")
+                                changed = True
+                    if changed:
+                        self.save(value)
+                        self.conversations[identifier] = value
                 if row["status"] not in task_queue.TERMINAL or row.get("delivered_at") or identifier not in self.conversations:
                     continue
                 value = copy.deepcopy(self.conversations[identifier])
@@ -139,8 +157,8 @@ class TaskDispatch:
                 message_id = str(uuid.uuid5(uuid.NAMESPACE_URL, row["id"] + ":result"))
                 if not any(m["id"] == message_id for m in value["messages"]):
                     success = row["status"] == "succeeded"
-                    content = (row["worker"] + " finished:\n\n" + row["result"] if success else
-                               "Task failed after " + str(row["attempts"]) + " attempts on " + str(row["worker"]) + ": " + row.get("error", "Unknown worker failure"))
+                    content = ("Job `" + row["id"] + "` finished on " + row["worker"] + ":\n\n" + row["result"] if success else
+                               "Job `" + row["id"] + "` failed after " + str(row["attempts"]) + " attempts on " + str(row["worker"]) + ": " + row.get("error", "Unknown worker failure"))
                     value["messages"].append(dict(id=message_id, request_id=row["request_id"], task_id=row["id"],
                                                   role="assistant", status="done", provider=row["worker"],
                                                   content=self.redact(content), created_at=time.time(),

@@ -197,6 +197,29 @@ class DispatchTests(unittest.TestCase):
         self.assertLessEqual(result["started_at"], result["finished_at"])
         self.assertTrue((self.core / "state/task-runs" / row["id"] / "RESULT.md").exists())
 
+    def test_small_file_worker_must_actually_write_before_success(self):
+        target = Path('/tmp') / ('webbob-unit-' + __import__('uuid').uuid4().hex + '.txt')
+        self.addCleanup(lambda: target.unlink(missing_ok=True))
+        row = queue.enqueue(self.root, 'conversation', 'artifact', 'write hello to ' + str(target), worker='claude', kind='artifact')
+        claim = queue.claim(self.root, 'claude')
+        def answer(*args, **kwargs):
+            self.assertTrue(kwargs['coding'])
+            self.assertEqual(kwargs['purpose'], 'small-file')
+            target.write_text('hello\n')
+            return 'Wrote the file.'
+        with patch.object(dispatch_worker, 'prepare_task', return_value=self.root), \
+                patch.object(dispatch_worker, 'ask', side_effect=answer), \
+                patch.object(dispatch_worker, 'git', side_effect=['draft/' + row['id'], '']):
+            self.assertEqual(dispatch_worker.execute(claim['id'], claim['claim_token']), 0)
+        result = queue.tasks(self.root)[row['id']]
+        self.assertEqual(result['status'], 'succeeded')
+        self.assertIn('Server verified file:', result['result'])
+        row = queue.enqueue(self.root, 'conversation', 'false-artifact', 'write hello to ' + str(target), worker='claude', kind='artifact')
+        claim = queue.claim(self.root, 'claude')
+        with patch.object(dispatch_worker, 'prepare_task', return_value=self.root), patch.object(dispatch_worker, 'ask', return_value='Wrote the file.'):
+            self.assertEqual(dispatch_worker.execute(claim['id'], claim['claim_token']), 1)
+        self.assertEqual(queue.tasks(self.root)[row['id']]['status'], 'queued')
+
     def test_busy_lane_does_not_spend_attempt_or_run_model(self):
         self.enqueue(worker="gemini")
         row = queue.claim(self.root, "gemini")

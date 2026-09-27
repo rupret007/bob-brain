@@ -184,7 +184,7 @@ def ask(lane, prompt, *, cwd=None, coding=False, timeout=300, purpose="analysis"
     if lane not in task_queue.MODEL_WORKERS:
         raise ValueError("unknown lane")
     if lane == "claude":
-        if coding or purpose not in ("review", "council-critique", "smoke", "small-review"):
+        if (coding and purpose != "small-file") or purpose not in ("review", "council-critique", "smoke", "small-review", "small-file"):
             raise RuntimeError("Claude is reserved for short critiques and small reviews")
         prompt = prompt[:6000] + ("\n[Evidence shortened; flag missing proof.]" if len(prompt) > 6000 else "")
         timeout = min(timeout, 120)
