@@ -8,7 +8,25 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'services'))
 from command import run
 from state import CONDUCTOR,ROOT
 
+def install_webchat_only():
+    agents = Path.home() / "Library/LaunchAgents"
+    agents.mkdir(parents=True, exist_ok=True)
+    domain = "gui/" + str(os.getuid())
+    label = "com.jeff.bob-webchat"
+    source = CONDUCTOR / "launchd" / (label + ".plist")
+    target = agents / source.name
+    run(["plutil", "-lint", str(source)], capture_output=True, timeout=15, check=True)
+    shutil.copy2(source, target)
+    run(["launchctl", "bootout", domain + "/" + label], capture_output=True, timeout=15)
+    run(["launchctl", "bootstrap", domain, str(target)], capture_output=True, timeout=30, check=True)
+    run(["launchctl", "print", domain + "/" + label], capture_output=True, timeout=15, check=True)
+    run(["/bin/bash", str(CONDUCTOR / "webchat/start.sh")], timeout=60, check=True, detach=True)
+    print("Installed and loaded " + label, flush=True)
+
+
 def main():
+    if "--webchat-only" in sys.argv:
+        return install_webchat_only()
     agents=Path.home()/'Library/LaunchAgents'
     agents.mkdir(parents=True,exist_ok=True)
     retired=CONDUCTOR/'launchd/retired';retired.mkdir(exist_ok=True)

@@ -11,6 +11,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 button.primary { color: #13261c; background: var(--accent); border-color: var(--accent); font-weight: 650; }
 button.primary:hover { background: #ccf4df; }
 button.quiet { border-color: transparent; background: transparent; color: var(--muted); }
+button.mic-active { color: #ffd7b1; border-color: #6a4a32; background: #3a2a22; }
 [hidden] { display: none !important; }
 h1, h2, p { margin: 0; }
 .app { max-width: 900px; height: 100vh; height: 100dvh; margin: auto; display: flex; flex-direction: column; padding: 0 max(24px, env(safe-area-inset-right)) 0 max(24px, env(safe-area-inset-left)); }

@@ -55,7 +55,7 @@ inside a mode-700 directory. Conversation history survives server restarts.
 Login cookies expire after 12 hours and are invalidated by logout or a restart.
 An interrupted running reply is marked as interrupted; it is never automatically
 replayed. A waiting all-down request survives restart with its frozen context.
-Only one reply runs **per conversation** (other chats can reply in parallel). CLI
+Only one reply runs **per conversation** — not globally across all chats (other conversations can reply in parallel). CLI
 calls use `chat-<provider>` locks separate from background `lane-*` locks; a busy
 CLI slot falls through to the next provider. Handback: `conductor/handback/`
 (BOB-STATE in, HANDBACK-LOG out). Say `start a job: …` then `yes, start job` to

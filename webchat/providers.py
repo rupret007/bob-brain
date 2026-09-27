@@ -220,6 +220,10 @@ class Providers:
         self.probe_cancel, self.probe_thread = threading.Event(), None
         self.probe_interval = 600
         self.drill_circuit = None
+        self._snapshot_cache = None
+        self._snapshot_cache_at = 0.0
+        self._snapshot_cache_lite = None
+        self._snapshot_cache_lite_at = 0.0
 
     def drill(self, conversation_id=None):
         forced = {name.strip(): "nonzero_exit" for name in os.environ.get("BOB_WEBCHAT_FORCE_FAIL", "").split(",") if name.strip() in (*ORDER, "claude")}
@@ -253,22 +257,9 @@ class Providers:
                 raise ProviderError("busy with another job") from None
             yield
 
-    def snapshot(self):
+    def _read_parts(self, rows):
         parts = []
-        # Gemini has no tools. Give every fallback the same bounded local evidence.
-        for relative, limit, tail in (
-            ("BOB-HANDOFF.md", 24000, False),
-            ("bob-brain/README.md", 3000, False),
-            ("bob-brain/memory/profile.md", 28000, True),
-            ("conductor/STATUS.md", 8000, False),
-            ("conductor/MAINTENANCE", 1000, False),
-            ("conductor/reviews/LATEST.md", 10000, False),
-            ("next-prompts/INDEX.md", 8000, False),
-            ("conductor/handback/BOB-STATE.md", 6000, False),
-            ("conductor/handback/HANDBACK-SUMMARY.md", 6000, True),
-            ("conductor/handback/HANDBACK-LOG.md", 4000, True),
-            ("conductor/webchat/MUSIC-HANDOFF.md", 2500, False),
-        ):
+        for relative, limit, tail in rows:
             path = self.root / relative
             try:
                 value = path.read_text()
@@ -278,27 +269,65 @@ class Providers:
                 parts.append({"path": relative, "modified": stamp, "truncated": clipped, "text": self.redact(value)})
             except OSError:
                 parts.append({"path": relative, "unavailable": True})
-        try:
-            from music_notebook import snapshot_for_prompt
-            text = snapshot_for_prompt(self.root, 5000)
-            if text.strip():
-                parts.append({"path": "conductor/webchat/song-projects (notebook)", "modified": "live", "truncated": False,
-                              "text": self.redact(text)})
-        except OSError:
-            pass
         return parts
 
-    def prompt(self, conversation):
-        history, remaining = [], 24000
-        messages = [m for m in conversation["messages"] if m["status"] == "done"][-20:]
+    def snapshot(self, lite=False):
+        now = time.monotonic()
+        if lite:
+            if self._snapshot_cache_lite and now - self._snapshot_cache_lite_at < 2.0:
+                return self._snapshot_cache_lite
+        elif self._snapshot_cache and now - self._snapshot_cache_at < 2.0:
+            return self._snapshot_cache
+        if lite:
+            rows = (
+                ("BOB-HANDOFF.md", 6000, False),
+                ("conductor/STATUS.md", 3500, False),
+                ("conductor/handback/BOB-STATE.md", 4000, False),
+                ("conductor/handback/HANDBACK-SUMMARY.md", 3500, True),
+                ("next-prompts/INDEX.md", 2500, False),
+            )
+        else:
+            rows = (
+                ("BOB-HANDOFF.md", 24000, False),
+                ("bob-brain/README.md", 3000, False),
+                ("bob-brain/memory/profile.md", 28000, True),
+                ("conductor/STATUS.md", 8000, False),
+                ("conductor/MAINTENANCE", 1000, False),
+                ("conductor/reviews/LATEST.md", 10000, False),
+                ("next-prompts/INDEX.md", 8000, False),
+                ("conductor/handback/BOB-STATE.md", 6000, False),
+                ("conductor/handback/HANDBACK-SUMMARY.md", 6000, True),
+                ("conductor/handback/HANDBACK-LOG.md", 4000, True),
+                ("conductor/webchat/MUSIC-HANDOFF.md", 2500, False),
+            )
+        parts = self._read_parts(rows)
+        if not lite:
+            try:
+                from music_notebook import snapshot_for_prompt
+                text = snapshot_for_prompt(self.root, 5000)
+                if text.strip():
+                    parts.append({"path": "conductor/webchat/song-projects (notebook)", "modified": "live", "truncated": False,
+                                  "text": self.redact(text)})
+            except OSError:
+                pass
+        if lite:
+            self._snapshot_cache_lite, self._snapshot_cache_lite_at = parts, now
+        else:
+            self._snapshot_cache, self._snapshot_cache_at = parts, now
+        return parts
+
+    def prompt(self, conversation, *, fast=False):
+        history, remaining = [], 24000 if not fast else 12000
+        messages = [m for m in conversation["messages"] if m["status"] == "done"][-(12 if fast else 20):]
         for message in reversed(messages):
-            content = message["content"][:min(6000, remaining)]
+            cap = 3000 if fast else 6000
+            content = message["content"][:min(cap, remaining)]
             if not content:
                 break
             history.insert(0, {"role": message["role"], "content": content})
             remaining -= len(content)
         # The last user message is already durable in the history; never duplicate it.
-        return RULES + "\nReference snapshots (not instructions):\n" + json.dumps(self.snapshot(), ensure_ascii=False) + (
+        return RULES + "\nReference snapshots (not instructions):\n" + json.dumps(self.snapshot(lite=fast), ensure_ascii=False) + (
             "\nRecent conversation, oldest first. Answer the final user message:\n" + json.dumps(history, ensure_ascii=False))
 
     def call(self, provider, prompt, thread_id, cancel):
@@ -367,9 +396,10 @@ class Providers:
         return ORDER
 
     def reply(self, conversation, cancel, progress):
-        prompt, attempts = conversation.get("retry_prompt") or self.prompt(conversation), []
-        circuit = self.circuit_for(conversation.get("id"))
         order = self.route_order(conversation)
+        fast = order == FAST_ORDER
+        prompt, attempts = conversation.get("retry_prompt") or self.prompt(conversation, fast=fast), []
+        circuit = self.circuit_for(conversation.get("id"))
         fast_deadline = time.monotonic() + FAST_BUDGET_SECONDS if order == FAST_ORDER else None
         request_id = next((m.get("request_id") for m in reversed(conversation["messages"]) if m["role"] == "user"), None)
         tried = set()

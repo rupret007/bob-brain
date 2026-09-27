@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from failover import atomic_text
 
-START = re.compile(r"^start (?:a )?job[:\s]+(.+)$", re.I | re.S)
+START = re.compile(r"^(?:start|queue|run) (?:a )?job[:\s]+(.+)$", re.I | re.S)
 CONFIRM = re.compile(r"^yes[,.]?\s*(?:start|queue|run)\s+(?:the\s+)?job\s*$", re.I)
 
 

@@ -418,6 +418,16 @@ class ProviderTests(Fixture):
         value["messages"] = [{"role": "user", "content": "Hi Bob", "status": "done"}]
         self.assertEqual(provider.route_order(value)[0], "gemini")
 
+    def test_fast_prompt_uses_lite_snapshot(self):
+        provider = self.provider()
+        (self.root / "conductor/reviews").mkdir(parents=True, exist_ok=True)
+        (self.root / "conductor/reviews/LATEST.md").write_text("X" * 20000)
+        value = self.chat.conversations[self.identifier]
+        value["messages"] = [{"role": "user", "content": "quick status?", "status": "done"}]
+        prompt = provider.prompt(value, fast=True)
+        self.assertLess(len(prompt), len(provider.prompt(value, fast=False)))
+        self.assertNotIn("X" * 500, prompt)
+
     def test_gemini_uses_direct_api_helper(self):
         calls = []
         def runner(argv, **kwargs):
@@ -487,12 +497,20 @@ class HandbackJobTests(Fixture):
         append_turn(self.root, ask="status?", provider="gemini", jobs=[], files=[], commits=[], confirmations=[], refusals=[], open_items=["status"])
         self.assertTrue((folder / "HANDBACK-LOG.md").exists())
         refresh_summary(self.root)
-        self.assertIn("status?", (folder / "HANDBACK-SUMMARY.md").read_text())
+        summary = (folder / "HANDBACK-SUMMARY.md").read_text()
+        self.assertIn("status?", summary)
+        self.assertIn("Running: test job", summary)
+
+    def test_music_demo_receipt_stable(self):
+        from music_demo import demo_receipt
+        self.assertEqual(demo_receipt("a", "b"), demo_receipt("a", "b"))
+        self.assertNotEqual(demo_receipt("a", "b"), demo_receipt("a", "c"))
 
     def test_job_confirm_queues_draft_row(self):
         (self.root / "next-prompts").mkdir(parents=True)
         (self.root / "next-prompts/INDEX.md").write_text("| Pri | File | Project | Kind | Status | Notes |\n| --- | --- | --- | --- | --- | --- |\n")
         self.assertEqual(parse_start("start a job: fix the webchat panel"), "fix the webchat panel")
+        self.assertEqual(parse_start("queue job: polish handback chip"), "polish handback chip")
         self.assertTrue(parse_confirm("yes, start job"))
         request_id = str(uuid.uuid4())
         self.chat.submit(self.identifier, "start a job: fix the webchat panel", request_id)
@@ -528,6 +546,14 @@ class HandbackJobTests(Fixture):
         result = generate_demo(self.root, lyrics="hook line", style="folk", dry_run=True)
         self.assertTrue(result["dry_run"])
 
+    def test_music_demo_local_sketch_when_hosted_unavailable(self):
+        from music_demo import generate_demo
+        with patch("music_demo._reserve_music_budget", return_value="test-call"), patch("music_demo._finalize_music_budget"), \
+                patch("music_demo._try_minimax_hosted", return_value=None), patch("music_demo._try_replicate", return_value=None):
+            result = generate_demo(self.root, lyrics="Verse one\nVerse two", style="acoustic folk")
+        self.assertEqual(result.get("engine"), "local-sketch")
+        self.assertGreater(result.get("bytes", 0), 1000)
+
     def test_audio_upload_and_fetch(self):
         from music_demo import resolve_audio, store_upload
         stored = store_upload(self.root, b"\x00\x01\x02", ".mp3")
@@ -544,6 +570,7 @@ class InstallerTests(Fixture):
         launchd = self.root / "conductor/launchd"
         launchd.mkdir()
         (launchd / "com.jeff.bob-webchat.plist").write_text("test fixture")
+        (launchd / "com.jeff.bob-services.plist").write_text("test fixture")
         with patch.object(installer, "ROOT", self.root), patch.object(installer, "CONDUCTOR", self.root / "conductor"), \
              patch.object(Path, "home", return_value=self.root / "home"), patch.object(installer, "run") as command, \
              patch.object(sys, "argv", ["install.py", "--webchat-only"]), patch("sys.stdout", new_callable=io.StringIO):

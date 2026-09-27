@@ -20,6 +20,11 @@ if ($("login-form")) {
   function escapeHtml(text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
+  function speechText(text) {
+    return text.replace(/```[\s\S]*?```/g, " ").replace(/`([^`]+)`/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/[#>*_-]/g, " ").replace(/\s+/g, " ").trim();
+  }
   function renderMarkdown(text) {
     let html = escapeHtml(text);
     html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre class="code-block"><code>${code.trim()}</code></pre>`);
@@ -159,17 +164,36 @@ if ($("login-form")) {
     try { const conversation = await api("/api/conversations", {}); current = conversation.id; revision = ""; await refreshList(); render(conversation); $("message").focus(); }
     catch (error) { $("notice").textContent = error.message; }
   });
+  let micRecognition = null;
   $("mic").addEventListener("click", () => {
     const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Speech) { $("notice").textContent = "Voice input is not supported in this browser."; return; }
+    if (micRecognition) {
+      micRecognition.stop();
+      micRecognition = null;
+      $("mic").classList.remove("mic-active");
+      $("mic").setAttribute("aria-pressed", "false");
+      $("notice").textContent = "";
+      return;
+    }
     const rec = new Speech();
+    micRecognition = rec;
     rec.lang = "en-US";
-    rec.interimResults = false;
-    $("notice").textContent = "Listening…";
+    rec.interimResults = true;
+    rec.continuous = false;
+    rec.maxAlternatives = 1;
+    $("mic").classList.add("mic-active");
+    $("mic").setAttribute("aria-pressed", "true");
+    $("notice").textContent = "Listening… tap mic again to stop.";
     rec.onresult = (event) => {
-      const transcript = event.results[0][0].transcript.trim();
+      const transcript = Array.from(event.results).map((row) => row[0].transcript).join(" ").trim();
       $("message").value = ($("message").value + " " + transcript).trim();
       $("message").dispatchEvent(new Event("input"));
+    };
+    rec.onend = () => {
+      micRecognition = null;
+      $("mic").classList.remove("mic-active");
+      $("mic").setAttribute("aria-pressed", "false");
       $("notice").textContent = "";
     };
     rec.onerror = () => { $("notice").textContent = "Could not capture voice. Try typing."; };
@@ -182,7 +206,9 @@ if ($("login-form")) {
       const last = conversation.messages.filter((m) => m.role === "assistant" && m.status === "done").at(-1);
       if (!last?.content) { $("notice").textContent = "No finished reply to read."; return; }
       speechSynthesis.cancel();
-      speechSynthesis.speak(new SpeechSynthesisUtterance(last.content.slice(0, 4000)));
+      const utter = new SpeechSynthesisUtterance(speechText(last.content).slice(0, 4000));
+      utter.rate = 1.02;
+      speechSynthesis.speak(utter);
     } catch (error) { $("notice").textContent = error.message; }
   });
   $("stop").addEventListener("click", async () => {
@@ -239,10 +265,20 @@ if ($("login-form")) {
   $("song-demo").addEventListener("click", async () => {
     const lyrics = $("song-lyrics").value.trim();
     if (!lyrics) { $("song-notice").textContent = "Add lyrics first."; return; }
-    if (!window.confirm("Generate a MiniMax music sketch for ~$0.04 against the metered cap?")) return;
+    let receipt = "";
+    try {
+      const quote = await api("/api/music/demo", { lyrics, style: $("song-notes").value || "acoustic songwriter" });
+      if (quote.needs_confirm) {
+        receipt = quote.receipt || "";
+        if (!quote.can_afford_demo) { $("song-notice").textContent = quote.message || "Cap too low for a demo."; return; }
+        if (!window.confirm(quote.message || "Generate MiniMax demo?")) return;
+      }
+    } catch (error) { $("song-notice").textContent = error.message; return; }
     $("song-notice").textContent = "Generating demo…";
     try {
-      const demo = await api("/api/music/demo", { lyrics, style: $("song-notes").value || "acoustic songwriter", confirm: true });
+      const demo = await api("/api/music/demo", {
+        lyrics, style: $("song-notes").value || "acoustic songwriter", confirm: true, receipt,
+      });
       if (demo.audio_id) {
         const player = $("song-player");
         player.hidden = false;

@@ -66,19 +66,29 @@ def _one_line(block: str) -> str:
     return head
 
 
+def _outcome(block: str) -> str | None:
+    match = re.search(r"\*\*Outcome:\*\*\s*([a-z]+)", block, re.I)
+    return match.group(1).lower() if match else None
+
+
 def grouped_sections(blocks: list[str]) -> dict[str, list[str]]:
     done, running, waiting, risks = [], [], [], []
     for block in blocks:
         line = _one_line(block)
         lower = block.lower()
-        if "**outcome:** refused" in lower or "**refused:**" in lower:
+        outcome = _outcome(block)
+        if outcome == "refused" or "**refused:**" in lower:
             risks.append(line)
-        elif "**outcome:** waiting" in lower or "**jeff confirmed:**" in lower:
+        elif outcome == "waiting" or "**jeff confirmed:**" in lower:
             waiting.append(line)
-        elif "**outcome:** job" in lower or "music demo" in lower or "**jobs:**" in lower:
+        elif outcome == "running":
+            running.append(line)
+        elif outcome == "job" or "music demo" in lower or "**jobs:**" in lower:
             done.append(line)
-        elif "**outcome:** chat" in lower:
+        elif outcome == "chat":
             done.append(line)
+        elif "**outcome:** error" in lower or "**cancelled:**" in lower:
+            risks.append(line)
         else:
             waiting.append(line)
     return {"done": done[-12:], "running": running[-8:], "waiting": waiting[-12:], "risks": risks[-8:]}
@@ -95,7 +105,14 @@ def refresh_summary(root: Path) -> None:
     groups = grouped_sections(entries)
     for line in state_text.splitlines():
         stripped = line.strip()
-        if stripped.lower().startswith(("running:", "active:", "in progress:")):
+        if not stripped or stripped.startswith("#"):
+            continue
+        lower = stripped.lower()
+        if lower.startswith(("running:", "active:", "in progress:")):
+            groups["running"].append(stripped[:160])
+        elif re.search(r"\b(running|active job|in progress)\b", lower) and ":" in stripped:
+            groups["running"].append(stripped[:160])
+        elif lower.startswith("- ") and re.search(r"\b(running|active)\b", lower):
             groups["running"].append(stripped[:160])
     lines = [
         "# HANDBACK-SUMMARY",

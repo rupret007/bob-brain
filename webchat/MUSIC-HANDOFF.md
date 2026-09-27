@@ -4,7 +4,7 @@
 
 - **Lyrics / chords / structure:** any automatic provider (Gemini fast path).
 - **Song notebook:** Status panel → Song project (persists under `conductor/webchat/song-projects/`).
-- **MiniMax demo:** ~$0.04 per sketch; confirm in the Song panel before spend. Audio serves from `/api/audio/<id>`.
+- **Music demo:** tries MiniMax hosted `music-3.0` / `music-01`, then optional `REPLICATE_API_TOKEN` (music-01), then an honest **local chord sketch** WAV (no vocal AI) when the account is not entitled (HTTP 410). ~$0.04 when a paid route succeeds; local sketch is free. Song panel uses receipt-bound confirm; budget reserves before paid calls only.
 - **Uploads:** attach audio in the Song panel (playback in chat). Jeff can describe chords/key/BPM from Moises exports in the message.
 
 ## Moises (app today — no Music.ai dev key verified)

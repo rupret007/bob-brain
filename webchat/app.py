@@ -29,7 +29,7 @@ from handback import append_turn, public_digest
 from job_queue import parse_confirm, parse_start
 from actions import queue_once
 from music_notebook import get_project, list_projects, save_project
-from music_demo import generate_demo, resolve_audio, store_upload
+from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -283,17 +283,21 @@ class Chat:
                 self.conversations[identifier] = conversation
                 self.record_turn(ask=text, provider=None, jobs=[result.get("file", "")] if result.get("ok") else [],
                             files=[result.get("path", "")] if result.get("ok") else [], commits=[],
-                            confirmations=[text[:200]] if result.get("ok") else [], refusals=[], open_items=[])
+                            confirmations=[text[:200]] if result.get("ok") else [],
+                            refusals=[result.get("error", "blocked")] if not result.get("ok") else [], open_items=[])
                 return self.public(conversation)
             if pending and not parse_confirm(text):
                 conversation.pop("pending_job", None)
             job_text = parse_start(text)
             if job_text:
                 if hard_rule_refusal(job_text):
-                    conversation["messages"][-1].update(status="done", content=hard_rule_refusal(job_text),
+                    refusal = hard_rule_refusal(job_text)
+                    conversation["messages"][-1].update(status="done", content=refusal,
                         action_card={"id": request_id, "state": "refused", "executable": False, "reason": "Standing rule: drafts only"})
                     self.save(conversation)
                     self.conversations[identifier] = conversation
+                    self.record_turn(ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
+                                refusals=[refusal], open_items=[])
                     return self.public(conversation)
                 conversation["pending_job"] = job_text
                 conversation["pending_job_id"] = request_id
@@ -613,6 +617,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, chat.handback())
         if route == "/api/panel":
             return self.send(200, chat.panel())
+        if route == "/api/music/eligibility":
+            try:
+                status = music_budget_status(chat.root)
+            except Exception as exc:
+                raise RequestError(503, str(exc)) from exc
+            return self.send(200, {"ok": True, **status})
         if route == "/api/song-projects":
             return self.send(200, {"projects": list_projects(chat.root)})
         if route.startswith("/api/song-projects/"):
@@ -668,13 +678,27 @@ class Handler(BaseHTTPRequestHandler):
             data = self.body()
             lyrics = data.get("lyrics") or ""
             style = data.get("style") or ""
+            receipt = demo_receipt(lyrics, style)
+            budget = music_budget_status(chat.root)
             if not data.get("confirm"):
-                return self.send(200, {"ok": False, "needs_confirm": True,
-                                       "estimate_usd": 0.04, "message": "Reply yes or tap confirm to spend ~$0.04 on a MiniMax demo."})
+                remaining = budget.get("remaining_usd", 0)
+                cap = budget.get("cap_usd", 59)
+                return self.send(200, {"ok": False, "needs_confirm": True, "receipt": receipt,
+                                       "estimate_usd": 0.04, "cap_usd": cap, "remaining_usd": remaining,
+                                       "can_afford_demo": budget.get("can_afford_demo", False),
+                                       "message": (
+                                           f"Music demo ~$0.04 when MiniMax/Replicate succeeds; "
+                                           f"otherwise a free local chord sketch (${cap:.0f} cap, ${remaining:.2f} left). Confirm to generate."
+                                       )})
+            if data.get("receipt") != receipt:
+                raise RequestError(400, "Demo confirmation does not match current lyrics/style. Save and try again.")
+            if not budget.get("can_afford_demo"):
+                raise RequestError(402, "MiniMax chat cap does not have headroom for a demo sketch.")
             try:
                 result = generate_demo(chat.root, lyrics=lyrics, style=style, dry_run=bool(data.get("dry_run")))
             except Exception as exc:
                 raise RequestError(400, str(exc)) from exc
+            result["receipt"] = receipt
             return self.send(200, result)
         if route == "/api/audio/upload":
             data = self.body(limit=MAX_AUDIO_BODY)

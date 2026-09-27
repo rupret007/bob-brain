@@ -98,8 +98,17 @@ def snapshot_for_prompt(root: Path, limit: int = 6000) -> str:
             project = get_project(root, row["id"])
             snippet = (project.get("lyrics") or "").strip().splitlines()
             preview = "\n".join(snippet[:12])
-            lines.append(f"### {project['title']} ({project['id'][:8]})\n{preview}")
+            chords = (project.get("chords") or "").strip().splitlines()
+            chord_line = "\n".join(chords[:4])
+            notes = (project.get("notes") or "").strip()[:400]
+            block = f"### {project['title']} ({project['id'][:8]})\n{preview}"
+            if chord_line:
+                block += f"\nChords: {chord_line}"
+            if notes:
+                block += f"\nNotes: {notes}"
+            lines.append(block)
         except (OSError, json.JSONDecodeError, KeyError):
+            lines.append(f"### (corrupt project {row.get('id', '?')[:8]}) — fix in Song panel")
             continue
     text = "\n\n".join(lines)
     return text[:limit]
