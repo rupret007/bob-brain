@@ -1,0 +1,16 @@
+{
+  "name": "In-motion board push (hourly)",
+  "prompt": "In-motion board push (TOKEN CONSERVE, weekdays hourly). Scan board for material outcomes only. Wake parent only for: new hosted-green OPEN DRAFT needing Karen leftover+security handoff, or leftover-squash after Karen PASS not yet done. Stay silent for healthy Claude/Codex leases, CI still pending, duplicate landings already notified, billing/empty-runner honesty holds, and WebJam stack not-yet-green. Never filler digests.",
+  "schedule": "40 9-21 * * 1-5",
+  "triggerPresentation": {
+    "version": 1,
+    "trigger": {
+      "type": "cron",
+      "schedule": "40 9-21 * * 1-5"
+    }
+  },
+  "enabled": true,
+  "provenance": "user",
+  "createdAt": 1788498353728,
+  "lastRunAt": 1789526577072
+}
