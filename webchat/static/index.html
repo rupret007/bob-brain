@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Bob">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <title>Bob · Chat</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="identity"><span class="avatar" aria-hidden="true">b</span><div><h1>Bob</h1><p id="connection">Your chat on the mini</p></div></div>
+      <button id="logout" class="quiet">Log out</button>
+    </header>
+    <nav aria-label="Bob reports">
+      <button data-report="status">Status</button>
+      <button data-report="review">Gemini review</button>
+      <button data-report="jobs">Jobs</button>
+    </nav>
+    <details id="lanes-panel"><summary>Model lanes <span id="lanes-summary"></span></summary><div id="lanes" aria-live="polite"></div></details>
+    <div class="conversation-bar">
+      <label class="sr-only" for="conversations">Conversation</label>
+      <select id="conversations" aria-label="Conversation"></select>
+      <button id="new-chat" class="quiet">+ New chat</button>
+    </div>
+    <main id="messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions text"></main>
+    <div id="notice" class="notice" role="status"></div>
+    <div class="routing"><label for="provider-choice">Reply with</label><select id="provider-choice"><option value="auto">Automatic · Codex → Cursor → Gemini → MiniMax</option><option value="claude">Claude · short critique (explicit choice)</option></select></div>
+    <form id="composer" class="composer">
+      <label class="sr-only" for="message">Message Bob</label>
+      <textarea id="message" name="message" placeholder="Message Bob…" rows="1" maxlength="6000" required></textarea>
+      <button id="stop" type="button" hidden>Stop</button>
+      <button id="send" type="submit" class="primary">Send <span aria-hidden="true">↑</span></button>
+    </form>
+    <footer>Drafts stay drafts. You decide what gets sent.</footer>
+  </div>
+  <dialog id="report">
+    <div class="report-heading"><h2 id="report-title"></h2><button id="close-report" aria-label="Close report">Close</button></div>
+    <p id="report-date" class="muted"></p>
+    <pre id="report-body"></pre>
+  </dialog>
+</body>
+</html>

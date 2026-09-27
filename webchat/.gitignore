@@ -1,0 +1,9 @@
+.password
+.session-secret
+.public-origin
+.drill.json
+sessions/
+evidence/
+__pycache__/
+*.pyc
+*.lock

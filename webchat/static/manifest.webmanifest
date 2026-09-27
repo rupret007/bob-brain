@@ -1,0 +1,11 @@
+{
+  "name": "Bob · Chat",
+  "short_name": "Bob",
+  "description": "Private Bob web chat on the mini",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#111817",
+  "theme_color": "#111817",
+  "lang": "en"
+}
