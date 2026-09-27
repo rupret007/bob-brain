@@ -1,7 +1,7 @@
 # Web Bob READY-FOR-PHONE — Round 3 result (Cursor lane)
 
 **Branch:** `draft/webchat-failover-20260927`  
-**Round 2 base:** `1bd019bc78e06875009faf4f8e73bc3a3691ab41` · **Round 3 commit:** _(see `git rev-parse HEAD` after this file lands)_  
+**Round 2 base:** `1bd019bc78e06875009faf4f8e73bc3a3691ab41` · **Round 3 commit:** `a47699f35deb9cc210bea949c580faff961983ea`  
 **Council (no Grok):** `conductor/reviews/webchat-ready-r3-council/20260927-015249-756404.md` (Gemini, MiniMax, Claude, Codex; Cursor propose lock busy). Applied: structured handback **Outcome**, budget headroom before music transport, UUID notebook paths, 35MB audio upload cap, MAINTENANCE queue guard, `$59` failover copy, self-improve branch/test exit guard.  
 **Music research:** `reviews/webbob-music-research/20260927-004512-470258.md` — items below 9 addressed in notebook/demo/upload/MUSIC-HANDOFF; Moises remains manual until Music.ai dev key.  
 **Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
