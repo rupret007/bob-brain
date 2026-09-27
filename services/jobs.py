@@ -201,7 +201,7 @@ def setup_record(record):
                             capture_output=True, text=True, timeout=30, check=True).stdout)
         if not pr["isDraft"] or pr["state"] != "OPEN":
             raise RuntimeError("target PR is not an open draft")
-        record.update(fetch_ref=pr["headRefName"], publish_branch=pr["headRefName"], pr_url=pr["url"])
+        record.update(fetch_ref=pr["headRefName"], publish_branch=record["branch"] if record.get("publish_new_draft") else pr["headRefName"], pr_url=pr["url"])
         job_event(record["job_id"], **{k: record[k] for k in ("fetch_ref", "publish_branch", "pr_url")})
     workspace = prepare(record)
     body = evidence(record, workspace)

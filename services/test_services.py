@@ -206,4 +206,14 @@ class ServicesTest(unittest.TestCase):
             command.run(workspaces.sandbox_command(['git','-C',str(repo),*args],repo),capture_output=True,timeout=10,check=True)
         self.assertEqual(workspaces.git(repo,'rev-parse','HEAD'),workspaces.git(remote,'rev-parse','refs/heads/draft/fixture'))
 
+    def test_rebase_replacement_uses_authorized_new_draft_branch(self):
+        folder=self.folder();record={'job_id':'a','job_dir':str(folder),'pr':26,'remote':'owner/repo',
+                                   'branch':'draft/replacement','repo':str(self.root),'publish_new_draft':True}
+        state.job_event('a','running',**{k:v for k,v in record.items() if k!='job_id'})
+        response=NS(stdout=json.dumps({'isDraft':True,'state':'OPEN','headRefName':'published-26','url':'fixture'}))
+        with patch.object(jobs,'run',return_value=response),patch.object(jobs,'prepare',return_value=self.root),patch.object(jobs,'evidence',return_value=''):
+            jobs.setup_record(record)
+        self.assertEqual(state.jobs()['a']['publish_branch'],'draft/replacement')
+        self.assertEqual(record['fetch_ref'],'published-26')
+
 if __name__=='__main__':unittest.main(verbosity=2)

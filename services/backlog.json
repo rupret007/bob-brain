@@ -55,7 +55,8 @@
     "kind": "coding",
     "priority": 0,
     "pr": 26,
-    "prompt": "Refresh draft AdoptIQ #26 against #25. Inspect both current heads and ancestry. Rebase locally only if a normal fast-forward push can preserve published history; never force-push or retarget to main before #25 merges. If published history would require rewriting, publish the rebased result as a new draft PR and record the replacement link. Verify relevant tests and report exact SHAs. Never merge a PR."
+    "prompt": "Refresh draft AdoptIQ #26 against #25. Inspect both current heads and ancestry. Rebase locally only if a normal fast-forward push can preserve published history; never force-push or retarget to main before #25 merges. If published history would require rewriting, publish the rebased result as a new draft PR and record the replacement link. Verify relevant tests and report exact SHAs. Never merge a PR. A new draft branch and replacement DRAFT PR are explicitly authorized; the approved push target is the assigned draft/ branch. Preserve any already-tested local replacement, finish tests if needed, push it normally and create the replacement draft PR. Do not ask for approval to publish this authorized draft.",
+    "publish_new_draft": true
   },
   {
     "id": "shelf-10-green",

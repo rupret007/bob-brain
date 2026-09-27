@@ -5,6 +5,8 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import sys
+import re
+import json
 import time
 from pathlib import Path
 
@@ -46,7 +48,7 @@ def execute(job):
             answer = ask(record["engine"], prompt, cwd=cwd, coding=coding, timeout=5400 if coding else 300,
                          purpose="job-" + job, locked=True)
             atomic_write(folder / (record["engine"] + ".log"), answer + "\n")
-            if answer.lstrip().upper().startswith("BLOCKER:"):
+            if re.search(r"(?im)^\s*(?:\*\*)?BLOCKER\s*:", answer):
                 raise RuntimeError(answer[:1000])
             if coding:
                 if git(cwd, "status", "--porcelain", "--untracked-files=no"):
@@ -57,6 +59,13 @@ def execute(job):
                 remote = git(cwd, "ls-remote", "origin", "refs/heads/" + target).split()
                 if not remote or remote[0] != git(cwd, "rev-parse", "HEAD"):
                     raise RuntimeError("HEAD is not pushed to the approved draft branch")
+                if record.get("publish_new_draft"):
+                    pr = json.loads(run(["gh", "pr", "view", target, "-R", record["remote"],
+                                         "--json", "isDraft,state,url"], capture_output=True, text=True,
+                                        timeout=30, check=True).stdout)
+                    if not pr["isDraft"] or pr["state"] != "OPEN":
+                        raise RuntimeError("replacement PR is not an open draft")
+                    job_event(job, replacement_pr_url=pr["url"])
             atomic_write(folder / "RESULT.txt", answer + "\n")
             job_event(job, verified=True, recovery="result verified; pending harvest")
             note = cwd / "STATUS-NOTE.md"
