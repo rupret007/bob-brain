@@ -71,6 +71,68 @@ def _outcome(block: str) -> str | None:
     return match.group(1).lower() if match else None
 
 
+def _ledger_module(root: Path):
+    import sys
+
+    ledger_dir = root / "conductor/state"
+    if str(ledger_dir) not in sys.path:
+        sys.path.insert(0, str(ledger_dir))
+    import ledger as state_ledger  # noqa: WPS433
+
+    return state_ledger
+
+
+def _pickup_from_ledger(root: Path, recent_blocks: list[str]) -> list[str]:
+    """Actionable pickup: ledger open_asks + live jobs, commits from recent log (deduped)."""
+    try:
+        state_ledger = _ledger_module(root)
+        state = state_ledger.load_state(root)
+    except (OSError, ImportError):
+        return []
+    lines: list[str] = []
+    seen_shas: set[str] = set()
+    if state.get("last_sha"):
+        lines.append(f"Draft HEAD: {str(state['last_sha'])[:12]}")
+    for ask in state.get("open_asks") or []:
+        if ask.get("status") in ("new", "in_progress"):
+            lines.append(f"Open ask {ask.get('id', '?')}: {ask.get('body', '')[:120]}")
+    for job in state.get("jobs") or []:
+        if job.get("live"):
+            jid = str(job.get("job_id") or job.get("engine") or "job")[:24]
+            lines.append(f"Running job: {jid} ({job.get('engine', 'worker')})")
+    for block in recent_blocks:
+        match = re.search(r"\*\*Commits/SHAs:\*\*\s*(.+)", block)
+        if not match:
+            continue
+        for sha in re.findall(r"\b[a-f0-9]{7,40}\b", match.group(1)):
+            key = sha[:12]
+            if key in seen_shas:
+                continue
+            seen_shas.add(key)
+            lines.append(f"Recent commit: {key}")
+    return lines[:12]
+
+
+def _sync_open_items(root: Path, open_items: list[str]) -> None:
+    if not open_items:
+        return
+    try:
+        state_ledger = _ledger_module(root)
+        state = state_ledger.load_state(root)
+        pending = {
+            (a.get("body") or "").strip()[:500]
+            for a in state.get("open_asks") or []
+            if a.get("status") in ("new", "in_progress")
+        }
+        for item in open_items[:8]:
+            body = (item or "").strip()[:500]
+            if body and body not in pending:
+                state_ledger.add_open_ask(root, body)
+                pending.add(body)
+    except (OSError, ImportError):
+        pass
+
+
 def grouped_sections(blocks: list[str]) -> dict[str, list[str]]:
     done, running, waiting, risks = [], [], [], []
     for block in blocks:
@@ -131,18 +193,10 @@ def refresh_summary(root: Path) -> None:
     lines += [f"- {row}" for row in groups["waiting"]] or ["_No open confirmations._"]
     lines += ["", "## Risks"]
     lines += [f"- {row}" for row in groups["risks"]] or ["- Drafts only; no merge/send/spend without yes."]
-    pickup: list[str] = []
-    for block in [text for _, text in _parse_blocks(log_path)][-4:]:
-        for label, pattern in (
-            ("Commits", r"\*\*Commits/SHAs:\*\*\s*(.+)"),
-            ("Open", r"\*\*Open:\*\*\s*(.+)"),
-            ("Jobs", r"\*\*Jobs:\*\*\s*(.+)"),
-        ):
-            match = re.search(pattern, block)
-            if match:
-                pickup.append(f"{label}: {match.group(1).strip()[:140]}")
-    lines += ["", "## Latest pickup (commits / open / jobs)"]
-    lines += [f"- {row}" for row in pickup[-8:]] or ["- See HANDBACK-LOG for full detail."]
+    recent_blocks = [text for _, text in _parse_blocks(log_path)][-6:]
+    pickup = _pickup_from_ledger(root, recent_blocks)
+    lines += ["", "## Latest pickup (ledger + recent commits)"]
+    lines += [f"- {row}" for row in pickup] or ["- Ledger synced; no open asks or live jobs."]
     lines += ["", "## Web Bob turns since last seen (detail)"]
     if entries:
         lines.extend(entries[-8:])
@@ -193,6 +247,25 @@ def append_turn(root: Path, *, ask: str, provider: str | None, jobs: list[str], 
         handle.write("\n".join(block))
         handle.flush()
         os.fsync(handle.fileno())
+    _sync_open_items(root, open_items)
+    try:
+        import sys
+
+        events_dir = root / "conductor/state"
+        if str(events_dir) not in sys.path:
+            sys.path.insert(0, str(events_dir))
+        import alignment_events  # noqa: WPS433
+
+        alignment_events.append_event(
+            root,
+            actor="web-bob",
+            kind="handback-turn",
+            summary=ask.strip()[:200],
+            provider=provider,
+            request_id=request_id,
+        )
+    except (OSError, ImportError):
+        pass
     refresh_summary(root)
     return True
 

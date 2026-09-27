@@ -181,7 +181,20 @@ def append_inbox(root: Path, body: str, *, source: str = "web-bob", request_id: 
         state["inbox"] = state["inbox"][-80:]
         return item
 
-    return _mutate(root, _apply, inbox=True, catchup=True)
+    result = _mutate(root, _apply, inbox=True, catchup=True)
+    _log_alignment(root, actor=source, kind="inbox", summary=body.strip()[:200], request_id=request_id)
+    return result
+
+
+def _log_alignment(root: Path, *, actor: str, kind: str, summary: str, **fields) -> None:
+    try:
+        import alignment_events  # noqa: WPS433
+    except ImportError:
+        return
+    try:
+        alignment_events.append_event(root, actor=actor, kind=kind, summary=summary, **fields)
+    except OSError:
+        pass
 
 
 def record_webchat_turn(root: Path, *, ask: str, provider: str | None, request_id: str | None = None) -> None:
@@ -192,6 +205,14 @@ def record_webchat_turn(root: Path, *, ask: str, provider: str | None, request_i
         state["webchat_turns"] = state["webchat_turns"][-40:]
 
     _mutate(root, _apply, catchup=True)
+    _log_alignment(
+        root,
+        actor="web-bob",
+        kind="chat-turn",
+        summary=ask.strip()[:200],
+        provider=provider or "none",
+        request_id=request_id,
+    )
 
 
 def record_decision(root: Path, text: str, *, kind: str = "jeff") -> None:

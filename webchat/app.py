@@ -682,10 +682,20 @@ class Chat:
         if dashboard_age is None:
             status_path = self.root / "conductor/STATUS.md"
             dashboard_age = status_path.stat().st_mtime if status_path.exists() else None
+        alignment_events: dict = {}
+        try:
+            import alignment_events as align_ev  # noqa: WPS433
+
+            alignment_events = {
+                "latest_seq": align_ev.latest_seq(self.root),
+                "recent": align_ev.read_events(self.root, since_seq=max(0, align_ev.latest_seq(self.root) - 20)),
+            }
+        except (ImportError, OSError):
+            alignment_events = {}
         return {"lanes": lanes, "jobs": jobs, "recent_results": results, "dashboard_modified_at": dashboard_age,
                 "live_ops": live_ops, "live_ops_meta": meta, "conductor": conductor_snapshot(self.root),
                 "handback": self.handback(), "self_improve": self.self_improve_status(),
-                "alignment": alignment,
+                "alignment": alignment, "alignment_events": alignment_events,
                 "read_at": time.time()}
 
     def jobs(self):
@@ -815,6 +825,43 @@ class Handler(BaseHTTPRequestHandler):
     do_DELETE = dispatch
     do_PATCH = dispatch
 
+    def stream_alignment(self, chat):
+        try:
+            import alignment_events as align_ev  # noqa: WPS433
+        except ImportError:
+            raise RequestError(503, "Alignment stream unavailable.") from None
+        query = parse_qs(urlsplit(self.path).query)
+        try:
+            since = int(query.get("since", ["0"])[0] or 0)
+        except ValueError:
+            raise RequestError(400, "Invalid since parameter.") from None
+        self.connection.settimeout(45.0)
+        self.send_response(200)
+        for key, value in {
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "X-Bob-Webchat": "1",
+        }.items():
+            self.send_header(key, value)
+        self.end_headers()
+        deadline = time.time() + 40
+        cursor = since
+        try:
+            while time.time() < deadline:
+                batch = align_ev.read_events(chat.root, since_seq=cursor)
+                for row in batch:
+                    cursor = max(cursor, int(row.get("seq") or 0))
+                    payload = json.dumps(row, ensure_ascii=False).encode()
+                    self.wfile.write(b"data: " + payload + b"\n\n")
+                self.wfile.flush()
+                if batch:
+                    self.wfile.write(f"event: ping\ndata: {{\"latest_seq\":{cursor}}}\n\n".encode())
+                    self.wfile.flush()
+                time.sleep(2)
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+            pass
+
     def get(self, session):
         route, chat = self.path_only, self.server.chat
         assets = {"/style.css": ("style.css", "text/css; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -872,6 +919,16 @@ class Handler(BaseHTTPRequestHandler):
             if identifier:
                 chat.get(identifier)
             return self.send(200, chat.providers.health(identifier))
+        if route == "/api/alignment/events":
+            try:
+                import alignment_events as align_ev  # noqa: WPS433
+
+                since = int(parse_qs(urlsplit(self.path).query).get("since", ["0"])[0] or 0)
+            except ValueError:
+                raise RequestError(400, "Invalid since parameter.") from None
+            return self.send(200, {"events": align_ev.read_events(chat.root, since_seq=since), "latest_seq": align_ev.latest_seq(chat.root)})
+        if route == "/api/alignment/stream":
+            return self.stream_alignment(chat)
         raise RequestError(404, "Not found.")
 
     def post(self, session):

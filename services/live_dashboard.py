@@ -189,10 +189,18 @@ def build_live_ops(*, sessions: dict, jobs_map: dict, lanes: dict, spend: dict, 
             if line.strip():
                 now_line = _redact_line(line.strip())[:240]
                 break
+    dash_path = CONDUCTOR / "dashboard.json"
+    dashboard_freshness_seconds = None
+    if dash_path.is_file():
+        try:
+            dashboard_freshness_seconds = round(max(0, now - dash_path.stat().st_mtime))
+        except OSError:
+            dashboard_freshness_seconds = None
     return {
         "generated_at": datetime.fromtimestamp(now, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00"),
         "now_line": now_line,
         "webchat_round": _webchat_round(),
+        "dashboard_freshness_seconds": dashboard_freshness_seconds,
         "scores": _scores_table(),
         "minimax_spend": {
             "committed_usd": round(float(minimax.get("committed_usd") or 0), 4),

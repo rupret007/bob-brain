@@ -38,3 +38,4 @@ if [[ "$WEBCHAT_RC" -ne 0 || "$FAILOVER_RC" -ne 0 ]]; then
 fi
 echo "[$STAMP] self-improve tick OK webchat=$WEBCHAT_RC failover=$FAILOVER_RC sha=$SHA" >>"$SELF_LOG"
 python3 -c "import sys; from pathlib import Path; sys.path.insert(0, '$ROOT/conductor/state'); import ledger; ledger.write_catchup(Path('$ROOT'))" || true
+python3 -c "import sys; from pathlib import Path; sys.path.insert(0, '$ROOT/conductor/state'); import alignment_events; alignment_events.append_event(Path('$ROOT'), actor='self-improve', kind='tick', summary='self-improve tick OK', sha='$SHA')" || true

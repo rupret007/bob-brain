@@ -252,6 +252,19 @@ class ServicesTest(unittest.TestCase):
         self.assertIn("log_tail", job)
         self.assertIn("last_commit", job)
         self.assertIn("stall_state", job)
+        self.assertIn("dashboard_freshness_seconds", ops)
+
+    def test_alignment_events_append_and_tail(self):
+        ledger_dir = str(HERE.parent / "state")
+        if ledger_dir not in sys.path:
+            sys.path.insert(0, ledger_dir)
+        import alignment_events
+
+        seq = alignment_events.append_event(self.root, actor="test", kind="chat-turn", summary="hello alignment")
+        self.assertGreaterEqual(seq, 1)
+        rows = alignment_events.read_events(self.root, since_seq=seq - 1)
+        self.assertTrue(any(r.get("summary") == "hello alignment" for r in rows))
+        self.assertTrue((self.root / "conductor/state/events.jsonl").exists())
 
     def test_state_ledger_catchup_and_now(self):
         ledger_dir = str(HERE.parent / "state")

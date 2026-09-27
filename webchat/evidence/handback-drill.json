@@ -1,20 +1,20 @@
 {
-  "started_at": 1790495974.568695,
+  "started_at": 1790496663.840201,
   "rounds": [
     {
       "ledger": {
-        "tag": "r8-1",
+        "tag": "r9-1",
         "ledger_ok": true,
         "bob_pickup_ok": true,
-        "summary_chars": 936
+        "summary_chars": 1133
       },
       "live": {
-        "tag": "r8-1",
+        "tag": "r9-1",
         "status": "done",
         "provider": "gemini",
-        "elapsed_seconds": 1.789,
+        "elapsed_seconds": 2.253,
         "mentions_running": true,
-        "snippet": "Right now, the `handback drill screen drill-r8-1` is running.\n\nAlso, the `cursor-queue-23-recordin` job is active on a screen session.",
+        "snippet": "The `Running` line for `handback drill r9-1` from `BOB-STATE.md` is: \"Running: handback drill screen `drill-r9-1`\".",
         "live_ok": true
       },
       "reverse_handback_ok": true,
@@ -22,18 +22,18 @@
     },
     {
       "ledger": {
-        "tag": "r8-2",
+        "tag": "r9-2",
         "ledger_ok": true,
         "bob_pickup_ok": true,
-        "summary_chars": 1583
+        "summary_chars": 2382
       },
       "live": {
-        "tag": "r8-2",
+        "tag": "r9-2",
         "status": "done",
         "provider": "gemini",
-        "elapsed_seconds": 1.12,
+        "elapsed_seconds": 1.979,
         "mentions_running": true,
-        "snippet": "Right now, the `handback drill screen drill-r8-1` is running.\n\nAlso, the `cursor-queue-23-recordin` job is active on a screen session. It's been running for 78 minutes.",
+        "snippet": "The `Running` line for handback drill `r9-2` is: `Running: handback drill screen drill-r9-2`.",
         "live_ok": true
       },
       "reverse_handback_ok": true,
@@ -41,6 +41,6 @@
     }
   ],
   "restored_handback": true,
-  "finished_at": 1790495978.100945,
+  "finished_at": 1790496668.3016582,
   "result": "PASS"
 }

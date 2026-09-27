@@ -277,6 +277,21 @@ if ($("login-form")) {
       if (speechSynthesis.getVoices().length) speechVoicesReady = true;
     };
   }
+  function ensureSpeechVoices(timeoutMs = 600) {
+    primeSpeechVoices();
+    if (speechVoicesReady) return Promise.resolve();
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (speechSynthesis.getVoices().length) speechVoicesReady = true;
+        resolve();
+      };
+      speechSynthesis.onvoiceschanged = finish;
+      setTimeout(finish, timeoutMs);
+    });
+  }
   let speakingUtterance = null;
   $("mic").addEventListener("click", () => {
     const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -353,10 +368,10 @@ if ($("login-form")) {
       const conversation = await api(`/api/conversations/${current}`);
       const last = conversation.messages.filter((m) => m.role === "assistant" && m.status === "done").at(-1);
       if (!last?.content) { $("notice").textContent = "No finished reply to read."; return; }
+      await ensureSpeechVoices();
       speechSynthesis.cancel();
       const utter = new SpeechSynthesisUtterance(speechText(last.content).slice(0, 4000));
       utter.rate = 1.02;
-      if (!speechVoicesReady) primeSpeechVoices();
       const voices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith("en"));
       if (voices.length) utter.voice = voices.find((v) => /samantha|daniel|english/i.test(v.name)) || voices[0];
       utter.onend = utter.onerror = () => {
@@ -574,7 +589,9 @@ if ($("login-form")) {
       const committed = spend.committed_usd;
       const cap = spend.cap_usd || 59;
       const spendText = committed === undefined || committed === null ? "budget unknown" : `$${committed.toFixed(2)} of $${cap}`;
-      const freshness = meta.stale ? "Refreshing dashboard…" : "Live";
+      const dashAge = ops.dashboard_freshness_seconds;
+      const dashNote = dashAge === null || dashAge === undefined ? "" : ` · dashboard ${dashAge}s ago`;
+      const freshness = meta.stale ? "Refreshing dashboard…" : `Live${dashNote}`;
       const scoreStamp = ops.generated_at ? ` · scores ${ops.generated_at.replace("T", " ").slice(0, 16)} UTC` : "";
       const liveCards = jobs.filter((j) => j.live_screen && j.stall_state === "running");
       const jobLead = liveCards.length
@@ -669,6 +686,24 @@ if ($("login-form")) {
       setInterval(refreshPanel, 8000);
       setInterval(refreshLanes, 5000);
       setInterval(poll, 1200);
+      if ("EventSource" in window) {
+        let alignSince = 0;
+        const connectAlign = () => {
+          const source = new EventSource(`/api/alignment/stream?since=${alignSince}`);
+          source.onmessage = (event) => {
+            try {
+              const row = JSON.parse(event.data);
+              if (row.seq) alignSince = Math.max(alignSince, row.seq);
+              if (["chat-turn", "handback-turn", "inbox", "tick"].includes(row.kind)) refreshPanel();
+            } catch (_) { /* ignore */ }
+          };
+          source.onerror = () => {
+            source.close();
+            setTimeout(connectAlign, 5000);
+          };
+        };
+        connectAlign();
+      }
     } catch (error) { $("notice").textContent = error.message; }
   }
   composerState(); init();

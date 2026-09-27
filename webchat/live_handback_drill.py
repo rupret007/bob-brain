@@ -51,8 +51,9 @@ def ledger_round(root: Path, tag: str) -> dict:
         f"# BOB-STATE ({tag})\n\nRunning: handback drill screen `drill-{tag}`\n"
         "Waiting on Jeff: approve demo sketch\n"
     )
+    state_ledger.add_open_ask(root, f"drill open item ({tag})")
     append_turn(root, ask=f"handback drill {tag}: status check", provider="gemini", jobs=[], files=[],
-                commits=[], confirmations=[], refusals=[], open_items=["drill open item"])
+                commits=[], confirmations=[], refusals=[], open_items=[f"drill open item ({tag})"])
     append_turn(root, ask=f"handback drill {tag}: queued review", provider="gemini", jobs=[f"drill-{tag}"],
                 files=[], commits=["abc1234"], confirmations=[], refusals=[], open_items=[])
     refresh_summary(root)
@@ -66,7 +67,12 @@ def ledger_round(root: Path, tag: str) -> dict:
     ledger_ok = all(token in combined for token in (
         f"handback drill {tag}", "Running: handback drill", f"drill-{tag}", "abc1234", "drill open item",
     ))
-    bob_pickup_ok = "abc1234" in text and "drill open item" in text and f"drill-{tag}" in text
+    bob_pickup_ok = (
+        "abc1234" in combined
+        and "drill open item" in combined
+        and f"drill-{tag}" in combined
+        and ("Open ask" in text or f"drill open item ({tag})" in combined)
+    )
     return {
         "tag": tag,
         "ledger_ok": ledger_ok,
