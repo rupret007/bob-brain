@@ -234,4 +234,28 @@ class ServicesTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'cooldown'):lanes.ask('claude','review',purpose='review')
         cli.assert_not_called()
 
+    def test_blocked_legacy_job_does_not_mark_index_ready(self):
+        prompts=self.root/'next-prompts';prompts.mkdir()
+        index=prompts/'INDEX.md'
+        index.write_text('| 17 | `17-webjam-identity-line.md` | WebJam | coding | BLOCKED | blocked legacy |\n')
+        state.job_event('webjam-identity-line-2238','blocked',legacy=True,file='17-webjam-identity-line.md',job_dir=str(self.folder()))
+        self.recover()
+        self.assertIn('BLOCKED',index.read_text())
+
+    def test_launchd_plists_use_home_bin_launchers(self):
+        launchd=HERE.parent/'launchd'
+        for name in ('com.jeff.bob-services.plist','com.jeff.bob-watchdog.plist','com.jeff.bob-webchat.plist'):
+            text=(launchd/name).read_text()
+            block=text.split('<key>ProgramArguments</key>',1)[1].split('</array>',1)[0]
+            self.assertIn('/bin/bob-launch-',block)
+            self.assertNotIn('/Documents/bob-overnight-inject/conductor/',block)
+
+    def test_http_failure_abandons_reservation(self):
+        before=budget.totals('minimax')['committed_usd']
+        with patch.object(api,'run',return_value=NS(returncode=1,stdout='000',stderr='')):
+            with self.assertRaises(RuntimeError):api.http_json('https://example.invalid',lane='minimax',prompt='x',max_tokens=10,attempts=1)
+        after=budget.totals('minimax')
+        self.assertGreater(after['spent_usd'],before)
+        self.assertEqual(after['reserved_usd'],0)
+
 if __name__=='__main__':unittest.main(verbosity=2)

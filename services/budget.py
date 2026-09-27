@@ -52,6 +52,13 @@ def reserve(lane, prompt, max_tokens, purpose="model"):
         return row
 
 
+def abandon(lane, reservation, reason="transport-failed"):
+    """Charge the worst-case reservation when a metered call never returned a response."""
+    with lock("ledger-" + lane):
+        _append(path(lane), dict(reservation, event="abandoned", cost_usd=reservation["reserved_usd"],
+                                reason=reason, timestamp=time.time()))
+
+
 def settle(lane, reservation, data):
     usage = data.get("usage", {}) if lane == "minimax" else data.get("usageMetadata", {})
     cost = None

@@ -129,7 +129,7 @@ def recover(refill=None):
             blocked(record, "BLOCKER.txt requires retry")
         if record.get("legacy") and record["state"] != "blocked":
             blocked(record, "legacy job needs a private worktree specification")
-        if record.get("legacy") and record.get("file"):
+        if record.get("legacy") and record.get("file") and record["state"] != "blocked":
             # Requeue its prompt through the new scheduler; never replay old run.sh.
             update_index(record, "READY")
         unresolved.append(record["job_id"])

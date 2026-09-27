@@ -48,6 +48,9 @@ def http_json(url, method="GET", payload=None, headers=None, validate=None, allo
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
             last = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
             log("HTTP attempt %d/%d failed: %s" % (attempt + 1, attempts, last))
+            if reservation and lane:
+                budget.abandon(lane, reservation, last)
+                reservation = None
             if attempt < attempts - 1:
                 time.sleep(2 ** (attempt + 1))
     raise RuntimeError(last)
