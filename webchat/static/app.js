@@ -278,6 +278,18 @@ if ($("login-form")) {
     $("conversations").value = current;
     remember("bob.conversation", current);
   }
+  async function waitForReply(conversationId, requestId, { timeoutMs = 120000 } = {}) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const value = await api(`/api/conversations/${conversationId}`);
+      const assistant = requestId
+        ? value.messages.find((m) => m.role === "assistant" && m.request_id === requestId)
+        : value.messages.filter((m) => m.role === "assistant").at(-1);
+      if (assistant && !["queued", "running"].includes(assistant.status)) return value;
+      await new Promise((resolve) => setTimeout(resolve, 900));
+    }
+    throw new Error("Reply timed out — check chat.");
+  }
   async function poll() {
     if (!current || polling) return;
     polling = true;
@@ -496,6 +508,118 @@ if ($("login-form")) {
     try { await api("/api/cancel", { conversation_id: current }); $("notice").textContent = "Stopping this reply…"; }
     catch (error) { $("notice").textContent = error.message; }
   });
+  let callSession = null;
+  function appendCallLine(role, text) {
+    const host = $("call-transcript");
+    if (!host || !text) return;
+    const row = document.createElement("p");
+    row.className = role === "you" ? "call-you" : "call-bob";
+    row.textContent = (role === "you" ? "You: " : "Bob: ") + text.trim();
+    host.append(row);
+    host.scrollTop = host.scrollHeight;
+  }
+  async function speakCallReply(text) {
+    if (!("speechSynthesis" in window) || !text) return;
+    await ensureSpeechVoices();
+    return new Promise((resolve) => {
+      const utter = new SpeechSynthesisUtterance(speechText(text).slice(0, 2000));
+      utter.rate = 1.05;
+      const voices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith("en"));
+      if (voices.length) utter.voice = voices.find((v) => /samantha|daniel|english/i.test(v.name)) || voices[0];
+      utter.onend = utter.onerror = () => resolve();
+      if (callSession) callSession.speaking = utter;
+      speechSynthesis.speak(utter);
+    });
+  }
+  function stopLiveCall() {
+    if (callSession?.recognition) {
+      try { callSession.recognition.stop(); } catch (_) { /* ignore */ }
+    }
+    speechSynthesis.cancel();
+    callSession = null;
+    $("live-call")?.classList.remove("call-active");
+    $("call-dialog")?.close();
+    $("call-status").textContent = "";
+    $("call-transcript").replaceChildren();
+  }
+  async function handleCallUtterance(transcript) {
+    if (!callSession || !transcript.trim()) return;
+    const sessionId = callSession.id;
+    appendCallLine("you", transcript);
+    $("call-status").textContent = "Bob is thinking…";
+    speechSynthesis.cancel();
+    try {
+      const requestId = crypto.randomUUID();
+      const payload = {
+        conversation_id: current,
+        message: transcript,
+        provider: $("provider-choice").value,
+        request_id: requestId,
+      };
+      await api("/api/messages", payload);
+      const value = await waitForReply(current, requestId);
+      if (!callSession || callSession.id !== sessionId) return;
+      const msg = value.messages.find((m) => m.role === "assistant" && m.request_id === requestId);
+      const body = msg?.content || "No reply yet.";
+      appendCallLine("bob", body);
+      $("call-status").textContent = "Listening… speak anytime (tap End to stop).";
+      await speakCallReply(body);
+    } catch (error) {
+      $("call-status").textContent = error.message || "Call error";
+    }
+  }
+  $("live-call")?.addEventListener("click", () => {
+    if (callSession) { stopLiveCall(); return; }
+    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Speech) {
+      $("notice").textContent = "Live call needs Safari on iPhone (HTTPS) or Chrome. Use the mic for dictation.";
+      return;
+    }
+    const rec = new Speech();
+    callSession = { id: crypto.randomUUID(), recognition: rec, speaking: null, resultIndex: 0, busy: false };
+    $("call-dialog")?.showModal();
+    $("call-transcript").replaceChildren();
+    $("call-status").textContent = "Listening… speak naturally. Bob will answer out loud.";
+    $("live-call").classList.add("call-active");
+    rec.lang = "en-US";
+    rec.interimResults = true;
+    rec.continuous = true;
+    rec.onresult = (event) => {
+      if (!callSession) return;
+      if (callSession.speaking) {
+        speechSynthesis.cancel();
+        callSession.speaking = null;
+      }
+      for (let index = callSession.resultIndex; index < event.results.length; index += 1) {
+        const row = event.results[index];
+        if (!row.isFinal) continue;
+        callSession.resultIndex = index + 1;
+        const said = (row[0]?.transcript || "").trim();
+        if (said.length > 2 && !callSession.busy) {
+          callSession.busy = true;
+          handleCallUtterance(said).finally(() => {
+            if (callSession) callSession.busy = false;
+          });
+        }
+      }
+    };
+    rec.onerror = (event) => {
+      if (!callSession) return;
+      if (event.error === "not-allowed") $("call-status").textContent = "Microphone blocked — allow mic in Settings.";
+      else if (event.error !== "aborted") $("call-status").textContent = "Mic error — try again or type in chat.";
+    };
+    rec.onend = () => {
+      if (callSession?.recognition === rec) {
+        try { rec.start(); } catch (_) { /* restart loop while call open */ }
+      }
+    };
+    try { rec.start(); } catch (_) {
+      stopLiveCall();
+      $("notice").textContent = "Could not start live call.";
+    }
+  });
+  $("end-call")?.addEventListener("click", () => stopLiveCall());
+  $("call-dialog")?.addEventListener("close", () => stopLiveCall());
   $("logout").addEventListener("click", async () => {
     try { await api("/api/logout", {}); location.assign("/login"); }
     catch (error) { $("notice").textContent = error.message; }
@@ -768,6 +892,7 @@ if ($("login-form")) {
       $("status-summary").textContent = `${freshness}${scoreStamp} · ${jobLead} · MiniMax ${spendText} · round ${ops.webchat_round || "?"}`;
       renderLiveJobs(jobs);
       lastPanelScores = ops.scores;
+      lastPanelOps = ops;
       if (activeBottomTab === "lanes") renderScoresTable(ops.scores);
       const c = data.conductor || {};
       $("conductor-summary").textContent = `Draft work on ${c.draft_branch || "unknown branch"}`;
@@ -812,9 +937,23 @@ if ($("login-form")) {
     }
   }
   let lastPanelScores = null;
+  let lastPanelOps = null;
   async function refreshLanes() {
     try {
       renderScoresTable(lastPanelScores);
+      const ops = lastPanelOps || {};
+      const spend = ops.minimax_spend || {};
+      const roles = ops.roles || {};
+      const dashAge = ops.dashboard_freshness_seconds;
+      const dashBit = dashAge == null ? "dashboard age unknown" : `dashboard ${dashAge}s ago`;
+      const spendBit = spend.committed_usd == null ? "MiniMax spend unknown" : `MiniMax $${Number(spend.committed_usd).toFixed(2)} / $${spend.cap_usd || 59}`;
+      $("lanes-summary").textContent = [
+        ops.now_line || "Live ops from the mini",
+        dashBit,
+        spendBit,
+        `Builder ${roles.building || "idle"} · Reviews ${roles.reviewing || "idle"}`,
+        ops.webchat_round ? `Round ${ops.webchat_round} scores below` : "",
+      ].filter(Boolean).join(" · ");
       const data = await api("/api/lanes" + (current ? "?conversation_id=" + encodeURIComponent(current) : ""));
       const entries = Object.entries(data.providers);
       const cooling = entries.filter(([, lane]) => lane.state === "cooldown").length;

@@ -293,6 +293,31 @@ class ServicesTest(unittest.TestCase):
         rev1 = int(state_ledger.load_state(self.root).get("revision") or 0)
         self.assertGreater(rev1, rev0)
 
+    def test_scores_table_uses_highest_round_not_mtime(self):
+        import live_dashboard
+        with patch.object(live_dashboard, "CONDUCTOR", self.core):
+            reviews = self.core / "reviews"
+            reviews.mkdir(parents=True, exist_ok=True)
+            old = reviews / "WEBCHAT-READY-R5-RESULT.md"
+            new = reviews / "WEBCHAT-READY-R11-RESULT.md"
+            old.write_text("| Area | R4 | **R5** |\n| Reliability | 9 | **9.5** |\n")
+            new.write_text("| Area | R10 | **R11** |\n| Reliability | 9.8 | **9.9** |\n")
+            os.utime(old, (time.time() + 60, time.time() + 60))
+            rows = live_dashboard._scores_table()
+        self.assertTrue(rows)
+        self.assertIn("9.9", rows[0]["score"])
+
+    def test_alignment_events_paginated_read(self):
+        ledger_dir = str(HERE.parent / "state")
+        if ledger_dir not in sys.path:
+            sys.path.insert(0, ledger_dir)
+        import alignment_events
+
+        for index in range(1, 95):
+            alignment_events.append_event(self.root, actor="test", kind="tick", summary=f"tick {index}")
+        page = alignment_events.read_events_since_paginated(self.root, since_seq=0, page_size=40, max_pages=3)
+        self.assertEqual(len(page), 94)
+
     def test_public_live_ops_allowlists_log_tail(self):
         import live_dashboard
         payload = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())

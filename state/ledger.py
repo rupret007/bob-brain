@@ -221,8 +221,15 @@ def _log_alignment(root: Path, *, actor: str, kind: str, summary: str, **fields)
         pass
 
 
+def _drill_fixture_ledger(root: Path) -> bool:
+    return "drill-fixtures" in root.resolve().parts
+
+
 def record_webchat_turn(root: Path, *, ask: str, provider: str | None, request_id: str | None = None) -> None:
-    turn = {"at": _now_ct(), "ask": ask.strip()[:500], "provider": provider or "none", "request_id": request_id}
+    body = (ask or "").strip()
+    if not _drill_fixture_ledger(root) and _DRILL_NOISE_RE.search(body):
+        return
+    turn = {"at": _now_ct(), "ask": body[:500], "provider": provider or "none", "request_id": request_id}
 
     def _apply(state: dict) -> None:
         state.setdefault("webchat_turns", []).append(turn)
@@ -328,7 +335,8 @@ def _write_catchup_body(root: Path, state: dict) -> None:
     try:
         import alignment_events  # noqa: WPS433
 
-        pending_events = alignment_events.read_events(root, since_seq=ack, limit=40)
+        pending_events = alignment_events.read_events_since_paginated(root, since_seq=ack, page_size=40, max_pages=6)
+        overflow = len(pending_events) > 20
         for ev in pending_events:
             kind = ev.get("kind") or "note"
             if kind not in ("chat-turn", "handback-turn", "inbox", "decision", "tick", "blocker"):
@@ -336,8 +344,8 @@ def _write_catchup_body(root: Path, state: dict) -> None:
             event_lines.append(
                 f"Event {ev.get('seq')}: {kind} — {(ev.get('summary') or '')[:100]}"
             )
-        if len(pending_events) > 20:
-            blockers.insert(0, f"+{len(pending_events) - 20} alignment events since ack seq {ack}")
+        if overflow:
+            blockers.insert(0, f"+{len(pending_events) - 20} more alignment events since ack seq {ack} (paginated)")
     except (ImportError, OSError):
         pending_events = []
     delivered_seq = ack

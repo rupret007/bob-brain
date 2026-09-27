@@ -675,15 +675,27 @@ class HandbackJobTests(Fixture):
         self.assertNotIn("drill open item", reply)
 
     def test_handback_drill_isolated_fixture(self):
-        from drill_fixture import assert_prod_unchanged, ledger_round, new_fixture_root, prod_fingerprint, try_bob_state_running_line
+        from drill_fixture import assert_prod_unchanged, events_ok, ledger_round, new_fixture_root, prod_fingerprint, try_bob_state_running_line
 
         before = prod_fingerprint(self.root)
         fixture = new_fixture_root(self.folder)
         result = ledger_round(fixture, "unit-test")
         self.assertTrue(result["ledger_ok"])
+        self.assertTrue(events_ok(fixture, "unit-test"))
         assert_prod_unchanged(before, self.root)
         line = try_bob_state_running_line(fixture, "From BOB-STATE only: what's running?")
         self.assertIn("drill-unit-test", (line or "").lower())
+
+    def test_record_webchat_turn_skips_ready_drill_on_prod(self):
+        ledger_dir = Path(__file__).resolve().parent.parent / "state"
+        if str(ledger_dir) not in sys.path:
+            sys.path.insert(0, str(ledger_dir))
+        import alignment_events
+        import ledger as state_ledger
+
+        before = alignment_events.latest_seq(self.root)
+        state_ledger.record_webchat_turn(self.root, ask="Reply with exactly: drill A1", provider="gemini")
+        self.assertEqual(alignment_events.latest_seq(self.root), before)
 
     def test_purge_drill_open_asks(self):
         ledger_dir = Path(__file__).resolve().parent.parent / "state"
@@ -756,6 +768,8 @@ class HandbackJobTests(Fixture):
         from music_notebook import try_music_coach_reply
         self.assertIn("chorus", (try_music_coach_reply("help with chorus hook") or "").lower())
         self.assertIn("rhyme", (try_music_coach_reply("fix the rhyme scheme") or "").lower())
+        self.assertIn("bridge", (try_music_coach_reply("help with song structure and bridge") or "").lower())
+        self.assertIn("bpm", (try_music_coach_reply("what tempo bpm should I use") or "").lower())
 
     def test_self_improve_healthy_flag(self):
         (self.root / "conductor/launchd").mkdir(parents=True, exist_ok=True)

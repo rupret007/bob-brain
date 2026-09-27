@@ -321,6 +321,50 @@ textarea {
 }
 textarea::placeholder { color: var(--muted); }
 .composer button { flex-shrink: 0; }
+button.call-btn {
+  min-width: 44px;
+  min-height: 44px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  border: 0;
+  background: var(--text);
+  color: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+button.call-btn.call-active {
+  background: #6fcf97;
+  color: #13261c;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #6fcf97 35%, transparent);
+}
+button.send-btn {
+  min-width: 44px;
+  width: 44px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 18px;
+  font-weight: 700;
+}
+.call-dialog {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--text);
+  max-width: min(420px, 96vw);
+  width: 96vw;
+}
+.call-transcript {
+  min-height: 120px;
+  max-height: 40vh;
+  overflow-y: auto;
+  font-size: 15px;
+  line-height: 1.45;
+  padding: 8px 4px;
+  margin-top: 8px;
+}
 
 .conductor-block, .handback-block { margin-top: 8px; }
 .conductor-actions {

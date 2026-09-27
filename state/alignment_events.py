@@ -106,6 +106,36 @@ def read_events(root: Path, *, since_seq: int = 0, limit: int = 80) -> list[dict
     return rows[-limit:]
 
 
+def read_events_since_paginated(
+    root: Path,
+    *,
+    since_seq: int = 0,
+    page_size: int = 80,
+    max_pages: int = 8,
+) -> list[dict]:
+    """Read events after since_seq oldest-first, up to page_size * max_pages."""
+    path = _folder(root) / EVENTS_FILE
+    if not path.is_file():
+        return []
+    cap = max(1, page_size) * max(1, max_pages)
+    rows: list[dict] = []
+    with path.open("r", errors="replace") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if int(row.get("seq") or 0) <= since_seq:
+                continue
+            rows.append(row)
+            if len(rows) >= cap:
+                break
+    return rows
+
+
 def latest_seq(root: Path) -> int:
     path = _folder(root) / EVENTS_FILE
     if not path.is_file():

@@ -115,7 +115,7 @@ def snapshot_for_prompt(root: Path, limit: int = 6000) -> str:
 
 
 _MUSIC_COACH_RE = re.compile(
-    r"\b(?:(?:my |a )?song|lyrics|chorus|verse|bridge|hook|chords?|progression|melody|arrange|rhyme|meter)\b",
+    r"\b(?:(?:my |a )?song|lyrics|chorus|verse|bridge|hook|chords?|progression|melody|arrange|rhyme|meter|tempo|bpm|structure)\b",
     re.I,
 )
 
@@ -149,6 +149,18 @@ def try_music_coach_reply(text: str) -> str | None:
             "Melody: start with the chorus on fewer notes than the verse; leave space at phrase ends. "
             "Arrangement: add one layer at a time (guitar → bass → pad). "
             "Use Songs for structure notes; Logic on the mini is confirm-first for tempo/markers/bounce."
+        )
+    if "bridge" in lower or "structure" in lower or "verse" in lower:
+        return (
+            "Structure: verse sets the story, chorus is the emotional headline, bridge is one new angle before the final chorus. "
+            "Try 8-bar sections in 4/4; label them in Songs → notes so versions stay clear. "
+            "When a section feels long, cut a line instead of adding chords."
+        )
+    if "tempo" in lower or "bpm" in lower or "key" in lower:
+        return (
+            "Tempo/key: pick BPM in Songs notes (e.g. 92 BPM, key of G). "
+            "Match chord voicings to the singer’s comfortable range; capo is fine. "
+            "Upload a rough take in Songs for reference — local sketch demo can follow lyrics + style ($0)."
         )
     return (
         "Song structure: verse → chorus → verse → chorus → bridge → chorus is a solid default. "

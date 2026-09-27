@@ -44,8 +44,11 @@
         <button type="button" id="mic" class="quiet icon-btn" aria-label="Voice input" title="Voice input">🎤</button>
         <textarea id="message" name="message" placeholder="Message Bob…" rows="1" maxlength="6000" required enterkeyhint="send"></textarea>
         <button type="button" id="speak" class="quiet icon-btn" aria-label="Read last reply aloud" title="Read aloud">🔊</button>
+        <button type="button" id="live-call" class="call-btn" aria-label="Live voice call" title="Live call">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 10v4h2l3 3V7L6 10H4zm12.5 2c0-1.77-1.02-3.29-2.5-4.03v8.06c1.48-.74 2.5-2.26 2.5-4.03zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+        </button>
         <button type="button" id="stop" hidden>Stop</button>
-        <button type="submit" id="send" class="primary">Send <span aria-hidden="true">↑</span></button>
+        <button type="submit" id="send" class="primary send-btn" aria-label="Send">↑</button>
       </form>
     </section>
 
@@ -129,7 +132,7 @@
         </div>
         <div class="settings-group">
           <h3 class="settings-group-title">Voice</h3>
-          <p class="muted view-hint">On iPhone, tap 🎤 and allow the mic, or hold the keyboard mic for dictation. Read-aloud uses your device voices.</p>
+          <p class="muted view-hint">Tap 🎤 for dictation or the waveform button for a live call (hands-free listen + speak). Read-aloud uses your device voices.</p>
         </div>
         <div class="settings-group">
           <h3 class="settings-group-title">Self-improve</h3>
@@ -182,6 +185,15 @@
     <div class="report-heading"><h2 id="report-title"></h2><button type="button" id="close-report" aria-label="Close report">Close</button></div>
     <p id="report-date" class="muted"></p>
     <pre id="report-body"></pre>
+  </dialog>
+
+  <dialog id="call-dialog" class="call-dialog">
+    <div class="report-heading">
+      <h2>Live call</h2>
+      <button type="button" id="end-call" class="primary">End call</button>
+    </div>
+    <p id="call-status" class="muted">Connecting…</p>
+    <div id="call-transcript" class="call-transcript" aria-live="polite"></div>
   </dialog>
 </body>
 </html>

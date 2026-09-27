@@ -107,9 +107,17 @@ def _webchat_round() -> int | None:
     return best or None
 
 
+def _result_round(path: Path) -> int:
+    match = re.search(r"R(\d+)-RESULT", path.name)
+    return int(match.group(1)) if match else 0
+
+
 def _scores_table() -> list[dict]:
-    reviews = sorted((CONDUCTOR / "reviews").glob("WEBCHAT-READY-R*-RESULT.md"),
-                     key=lambda p: p.stat().st_mtime, reverse=True)
+    reviews = sorted(
+        (CONDUCTOR / "reviews").glob("WEBCHAT-READY-R*-RESULT.md"),
+        key=_result_round,
+        reverse=True,
+    )
     if not reviews:
         return []
     text = reviews[0].read_text(errors="replace")
