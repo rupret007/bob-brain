@@ -39,8 +39,11 @@ def main():
             print("Bob web chat is healthy at " + URL)
             return 0
         result = subprocess.run(["/usr/bin/screen", "-ls"], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=5)
+        for session in re.findall(r"\t(\d+\.svc-webchat)\s+\(", result.stdout):
+            subprocess.run(["/usr/bin/screen", "-S", session, "-X", "quit"], stdin=subprocess.DEVNULL, timeout=5)
+        result = subprocess.run(["/usr/bin/screen", "-ls"], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=5)
         if re.search(r"\b\d+\.svc-webchat\s+\(", result.stdout):
-            print("svc-webchat exists but HTTP is not ready; inspect logs/webchat-server.log. No process was replaced.")
+            print("svc-webchat still present after quit; inspect logs/webchat-server.log.")
             return 1
         subprocess.run(["/usr/bin/screen", "-dmS", "svc-webchat", "/bin/bash", str(HERE / "run.sh")],
                        stdin=subprocess.DEVNULL, check=True, timeout=10, env=os.environ.copy())
