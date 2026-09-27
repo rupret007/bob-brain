@@ -348,6 +348,7 @@ class ServicesTest(unittest.TestCase):
         payload["roles"] = {"building": "cursor", "reviewing": "gemini"}
         public = live_dashboard.public_live_ops(payload)
         self.assertEqual(public.get("dashboard_freshness_seconds"), 42)
+        self.assertEqual(public.get("service_screen_count"), 0)
         self.assertEqual(public.get("roles", {}).get("building"), "cursor")
         tail = public["running_jobs"][0]["log_tail"]
         self.assertEqual(len(tail), 1)
@@ -355,6 +356,27 @@ class ServicesTest(unittest.TestCase):
         events = public["running_jobs"][0]["events"]
         self.assertTrue(any(e.get("kind") == "log" for e in events))
         self.assertTrue(any(e.get("kind") == "commit" for e in events))
+
+
+    def test_public_live_ops_screen_count_contract(self):
+        import json
+
+        import live_dashboard
+
+        payload = {
+            "service_screens": ["svc-a", "svc-b", "ghp_supersecrettoken12345678901234567890"],
+            "service_screen_count": "3",
+            "running_jobs": [],
+        }
+        public = live_dashboard.public_live_ops(payload)
+        self.assertEqual(public.get("service_screen_count"), 3)
+        self.assertNotIn("service_screens", public)
+        blob = json.dumps(public)
+        self.assertNotIn("ghp_", blob)
+        bad = live_dashboard.public_live_ops({"service_screen_count": -5, "service_screens": ["x"]})
+        self.assertEqual(bad.get("service_screen_count"), 0)
+        typed = live_dashboard.public_live_ops({"service_screen_count": True, "service_screens": ["a", "b"]})
+        self.assertEqual(typed.get("service_screen_count"), 2)
 
     def test_compact_handback_digest(self):
         webchat = HERE.parent / "webchat"

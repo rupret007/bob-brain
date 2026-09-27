@@ -12,6 +12,7 @@ import mimetypes
 import os
 import re
 import secrets
+import shlex
 import signal
 import stat
 import subprocess
@@ -43,6 +44,7 @@ from reply_guard import repair_hollow_progress
 from drill_fixture import try_bob_state_running_line
 from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
 from ops_panel import conductor_snapshot, draft_head_sha, enrich_live_ops, load_live_ops, maybe_spawn_dashboard_refresh
+from quiet_hours import in_quiet_hours
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -824,11 +826,27 @@ class Chat:
             summary = schedule_hint + " " + summary
         if loop_ready:
             summary = f"Loop ready ({tick_ok_streak} recent OK tick{'s' if tick_ok_streak != 1 else ''}). " + summary
+        if loop_ready:
+            plain_status = f"Loop ready — {tick_ok_streak} OK tick{'s' if tick_ok_streak != 1 else ''} on the mini."
+        elif launchd_loaded is True and recent_ok:
+            plain_status = "Launchd loaded and the last tick passed tests."
+        elif launchd_loaded is False and files_ok:
+            plain_status = "Copy the install command below and run it once on the mini."
+        elif not files_ok:
+            plain_status = "Self-improve files missing in the repo — pull latest draft branch."
+        elif recent_ok:
+            plain_status = "Last tick OK — load launchd on the mini to stay on schedule."
+        else:
+            plain_status = "Waiting for a successful tick (webchat + failover + services tests)."
+        if last_tick_outcome:
+            plain_status = f"{plain_status} Latest: {last_tick_outcome[:120]}."
         bootstrap = root / "conductor/webchat/bootstrap_self_improve_launchd.sh"
         install_ready = bool(files_ok and bootstrap.is_file())
-        bootstrap_command = (
-            f"bash {bootstrap.relative_to(root)}" if bootstrap.is_file() else None
-        )
+        if bootstrap.is_file():
+            rel = bootstrap.relative_to(root)
+            bootstrap_command = f"cd {shlex.quote(str(root))} && bash {shlex.quote(str(rel))}"
+        else:
+            bootstrap_command = None
         return {
             "launchd_plist": plist.exists(),
             "tick_script": tick.exists(),
@@ -846,6 +864,7 @@ class Chat:
             "loop_ready": loop_ready,
             "install_ready": install_ready,
             "bootstrap_command": bootstrap_command,
+            "plain_status": plain_status,
             "summary": summary,
         }
 
@@ -935,11 +954,17 @@ class Chat:
             live_ops = {**live_ops, "dashboard_freshness_seconds": round(max(0, time.time() - dashboard_age))}
         live_ops = enrich_live_ops(live_ops)
         changelog = self.round_changelog()
+        qh = in_quiet_hours()
         return {"lanes": lanes, "jobs": jobs, "recent_results": results, "round_changelog": changelog,
                 "dashboard_modified_at": dashboard_age,
                 "live_ops": live_ops, "live_ops_meta": meta, "conductor": conductor_snapshot(self.root),
                 "handback": self.handback(), "self_improve": self.self_improve_status(),
                 "alignment": alignment, "alignment_events": alignment_events,
+                "quiet_hours": {
+                    "active": qh,
+                    "window": "11 PM–7 AM CT",
+                    "read_aloud_blocked": qh,
+                },
                 "read_at": time.time()}
 
     def jobs(self):

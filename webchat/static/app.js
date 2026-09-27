@@ -16,6 +16,7 @@ if ($("login-form")) {
   });
 } else {
   let csrf = "", current = "", busy = false, sending = false, revision = "", polling = false, draftRequest = null, pollFailures = 0;
+  let lastQuietHoursActive = null, lastQuietHoursFetchedAt = 0, lastBootstrapCommand = "";
   const providers = { codex: "Codex", cursor: "Cursor", gemini: "Gemini", minimax: "MiniMax", claude: "Claude" };
   function escapeHtml(text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -28,7 +29,11 @@ if ($("login-form")) {
     try {
       const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", hour: "numeric", hour12: false }).formatToParts(new Date());
       const hour = Number(parts.find((p) => p.type === "hour")?.value ?? 12);
-      return hour >= 23 || hour < 7;
+      const local = hour >= 23 || hour < 7;
+      if (lastQuietHoursFetchedAt && Date.now() - lastQuietHoursFetchedAt < 120000 && lastQuietHoursActive === true) {
+        return true;
+      }
+      return local;
     } catch (_) {
       return true;
     }
@@ -1106,7 +1111,8 @@ if ($("login-form")) {
       const bootstrap = si.bootstrap_command
         ? `One-time on mini: ${si.bootstrap_command}`
         : (si.bootstrap_script ? `One-time on mini: bash ${si.bootstrap_script}` : "");
-      const siLine = [health, streak, loaded, schedule, bootstrap, logFresh, si.summary || ""].filter(Boolean).join(" · ");
+      const siShort = si.plain_status || health;
+      const siLine = [siShort, streak, loaded, logFresh].filter(Boolean).join(" · ");
       $("self-improve-status").textContent = siLine;
       const jobsSi = $("jobs-self-improve-status");
       if (jobsSi) {
@@ -1117,6 +1123,24 @@ if ($("login-form")) {
           jobsSi.hidden = true;
         }
       }
+      const qh = data.quiet_hours || {};
+      if (qh.active === true || qh.active === false) {
+        lastQuietHoursActive = qh.active === true;
+        lastQuietHoursFetchedAt = Date.now();
+      }
+      const qhHost = $("quiet-hours-hint");
+      if (qhHost) {
+        if (qh.active) {
+          qhHost.hidden = false;
+          qhHost.textContent = `Quiet hours (${qh.window || "11 PM–7 AM CT"}) — read-aloud is off. Live call still works.`;
+        } else {
+          qhHost.hidden = true;
+          qhHost.textContent = "";
+        }
+      }
+      lastBootstrapCommand = si.bootstrap_command || (si.bootstrap_script ? `bash ${si.bootstrap_script}` : "");
+      const copyBootstrap = $("copy-bootstrap");
+      if (copyBootstrap) copyBootstrap.hidden = !lastBootstrapCommand;
       const cl = data.round_changelog || {};
       const clHost = $("changelog-line");
       if (clHost) {
@@ -1140,6 +1164,16 @@ if ($("login-form")) {
       }
     }
   }
+  $("copy-bootstrap")?.addEventListener("click", async () => {
+    const cmd = lastBootstrapCommand;
+    if (!cmd) return;
+    try {
+      await navigator.clipboard.writeText(cmd);
+      $("notice").textContent = "Install command copied — paste in Terminal on the mini.";
+    } catch (_) {
+      $("notice").textContent = cmd;
+    }
+  });
   $("refresh-dashboard")?.addEventListener("click", async () => {
     const btn = $("refresh-dashboard");
     if (!btn || btn.disabled) return;

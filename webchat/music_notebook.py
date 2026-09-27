@@ -193,11 +193,23 @@ def try_music_coach_reply(text: str) -> str | None:
             "Match the mood in the Songs tab — save a version after each pass. "
             "Local sketch demo ($0) can render a rough MP3 from lyrics + style when you are ready."
         )
+    if "verse" in lower and "chorus" not in lower and "bridge" not in lower:
+        return (
+            "Verse polish: one image per line, end lines on unstressed syllables so the chorus hits harder. "
+            "Keep rhyme loose until the hook — save each draft in Songs → versions ($0). "
+            "If a line feels crowded, cut a word and let the refrain carry the title."
+        )
     if "refrain" in lower and "chorus" not in lower and "hook" not in lower:
         return (
             "Refrain polish: keep it to one repeatable line (often the title) with the same rhythm each time. "
             "Trim extra syllables on beat 1; if the verse is wordy, make the refrain the emotional release. "
             "Save each pass in Songs → versions so Bob sees what changed ($0)."
+        )
+    if "hook" in lower and "chorus" not in lower and "refrain" not in lower:
+        return (
+            "Hook polish: one singable phrase (3–7 syllables) that names the feeling, not the plot. "
+            "Repeat it in the chorus and tag the last line of the verse with the same rhythm ($0). "
+            "Save hook drafts in Songs → versions so Bob picks up the winner."
         )
     if "chorus" in lower or "hook" in lower or "refrain" in lower:
         return (

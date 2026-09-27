@@ -242,6 +242,22 @@ def build_live_ops(*, sessions: dict, jobs_map: dict, lanes: dict, spend: dict, 
 
 def public_live_ops(live_ops: dict) -> dict:
     """Strip local paths and ids for GitHub Pages payload."""
+
+    def _public_screen_count(source: dict) -> int:
+        screens = source.get("service_screens")
+        if isinstance(screens, (list, tuple, set)):
+            base = len(screens)
+        else:
+            base = 0
+        raw = source.get("service_screen_count")
+        if isinstance(raw, bool):
+            return min(base, 64)
+        if isinstance(raw, int):
+            return min(max(0, raw), 64)
+        if isinstance(raw, float) and raw.is_integer():
+            return min(max(0, int(raw)), 64)
+        return min(base, 64)
+
     jobs = []
     for row in live_ops.get("running_jobs") or []:
         tail = []
@@ -273,6 +289,7 @@ def public_live_ops(live_ops: dict) -> dict:
             "round": row.get("round"),
             "live_screen": row.get("live_screen"),
         })
+    screens = live_ops.get("service_screens") or []
     return {
         "generated_at": live_ops.get("generated_at"),
         "now_line": live_ops.get("now_line"),
@@ -281,5 +298,6 @@ def public_live_ops(live_ops: dict) -> dict:
         "scores": live_ops.get("scores"),
         "minimax_spend": live_ops.get("minimax_spend"),
         "roles": live_ops.get("roles"),
+        "service_screen_count": _public_screen_count(live_ops),
         "running_jobs": jobs,
     }

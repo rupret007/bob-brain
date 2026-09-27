@@ -638,7 +638,11 @@ class HandbackJobTests(Fixture):
         bootstrap.write_text("#!/bin/bash\n")
         status = self.chat.self_improve_status()
         self.assertTrue(status["install_ready"])
-        self.assertIn("bootstrap_self_improve_launchd.sh", status.get("bootstrap_command") or "")
+        cmd = status.get("bootstrap_command") or ""
+        self.assertIn("bootstrap_self_improve_launchd.sh", cmd)
+        self.assertIn("cd ", cmd)
+        self.assertIn("plain_status", status)
+        self.assertTrue(status["plain_status"])
 
     def test_quiet_hours_ct(self):
         from datetime import datetime
@@ -656,6 +660,13 @@ class HandbackJobTests(Fixture):
 
         script = Path(__file__).resolve().parent / "test_quiet_hours_js.mjs"
         subprocess.run(["node", str(script)], check=True, cwd=str(self.root))
+
+    def test_panel_includes_quiet_hours(self):
+        panel = self.chat.panel()
+        qh = panel.get("quiet_hours") or {}
+        self.assertIn("active", qh)
+        self.assertIn("read_aloud_blocked", qh)
+        self.assertEqual(qh["read_aloud_blocked"], qh["active"])
 
     def test_public_live_ops_carries_display_fields(self):
         from ops_panel import enrich_live_ops
@@ -885,6 +896,12 @@ class HandbackJobTests(Fixture):
         refrain_only = (try_music_coach_reply("polish the refrain") or "").lower()
         self.assertIn("refrain", refrain_only)
         self.assertIn("versions", refrain_only)
+        verse_only = (try_music_coach_reply("tighten the verse lyrics") or "").lower()
+        self.assertIn("verse", verse_only)
+        self.assertNotIn("chorus/refrain tip", verse_only)
+        hook_only = (try_music_coach_reply("sharpen the hook line only") or "").lower()
+        self.assertIn("hook", hook_only)
+        self.assertNotIn("chorus/refrain tip", hook_only)
         self.assertIn("rhyme", (try_music_coach_reply("fix the rhyme scheme") or "").lower())
         self.assertIn("bridge", (try_music_coach_reply("help with song structure and bridge") or "").lower())
         self.assertIn("bpm", (try_music_coach_reply("what tempo bpm should I use") or "").lower())
