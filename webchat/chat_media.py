@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Chat attachments: store, serve, and describe images/video/files for Web Bob."""
+"""Private conversation attachments and bounded, local media preparation."""
 from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import re
 import secrets
 import shutil
 import subprocess
-import struct
+import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 UPLOADS = Path("conductor/webchat/uploads")
@@ -20,48 +23,26 @@ MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_VIDEO_BYTES = 35 * 1024 * 1024
 MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_PROMPT_IMAGE_BYTES = 420_000
-MAX_VIDEO_FRAMES = 8
+MAX_VIDEO_FRAMES = 4
 MAX_VIDEO_DURATION_S = 120
+MEDIA_PREP_SECONDS = 20
+PROCESS_SLOTS = threading.BoundedSemaphore(2)
 ALLOWED_IMAGE = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif"}
 ALLOWED_VIDEO = {".mp4", ".mov", ".webm", ".m4v", ".mkv"}
 ALLOWED_FILE = {".pdf", ".txt", ".md", ".csv", ".json", ".log"}
-ATTACHMENT_TAG = re.compile(
-    r'<bob-webchat-attachment\s+media_id="([0-9a-f]{16})"(?:\s+label="([^"]*)")?\s*/>',
-    re.I,
-)
-MEDIA_LINK = re.compile(r"!\[[^\]]*\]\(/api/media/([0-9a-f]{16})\)")
+ATTACHMENT_TAG = re.compile(r'<bob-webchat-attachment\b[^>]*(?:>|$)', re.I)
+MEDIA_LINK = re.compile(r'!?\[[^\]]*\]\(/api/media/([^\s)]+)\)')
 
 
 def _upload_dir(root: Path) -> Path:
     path = root / UPLOADS
-    path.mkdir(parents=True, exist_ok=True)
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.chmod(0o700)
     return path
 
 
 def _meta_path(root: Path, media_id: str) -> Path:
     return _upload_dir(root) / (media_id + ".meta.json")
-
-
-def _find_blob(root: Path, media_id: str) -> Path | None:
-    if not MEDIA_ID_RE.fullmatch(media_id):
-        return None
-    folder = _upload_dir(root)
-    meta = _meta_path(root, media_id)
-    if meta.exists():
-        try:
-            suffix = json.loads(meta.read_text()).get("suffix", "")
-            if suffix:
-                candidate = folder / (media_id + suffix)
-                if candidate.is_file():
-                    return candidate
-        except (OSError, json.JSONDecodeError, TypeError):
-            pass
-    for path in folder.glob(media_id + ".*"):
-        if path.name.endswith(".meta.json"):
-            continue
-        if path.is_file():
-            return path
-    return None
 
 
 def classify_suffix(suffix: str) -> str:
@@ -75,281 +56,314 @@ def classify_suffix(suffix: str) -> str:
     raise ValueError("Unsupported file type for chat.")
 
 
-def store_media(root: Path, data: bytes, filename: str) -> dict:
-    name = Path(filename or "upload").name
-    suffix = Path(name).suffix.lower() or ""
+def media_limit(filename: str) -> int:
+    if not isinstance(filename, str) or not filename or len(filename) > 240 or re.search(r'[\x00-\x1f\x7f]', filename):
+        raise ValueError("Invalid attachment filename.")
+    kind = classify_suffix(Path(filename).suffix)
+    return {"image": MAX_IMAGE_BYTES, "video": MAX_VIDEO_BYTES, "file": MAX_FILE_BYTES}[kind]
+
+
+def _check_signature(data: bytes, suffix: str):
+    """Do not feed disguised playlists/HTML/arbitrary data to media decoders."""
+    if suffix in {".jpg", ".jpeg"}:
+        valid = data.startswith(b'\xff\xd8\xff')
+    elif suffix == ".png":
+        valid = data.startswith(b'\x89PNG\r\n\x1a\n')
+    elif suffix == ".gif":
+        valid = data.startswith((b'GIF87a', b'GIF89a'))
+    elif suffix == ".webp":
+        valid = data[:4] == b'RIFF' and data[8:12] == b'WEBP'
+    elif suffix in {".heic", ".heif", ".mp4", ".mov", ".m4v"}:
+        valid = data[4:8] in (b'ftyp', b'moov', b'mdat', b'wide')
+    elif suffix in {".mkv", ".webm"}:
+        valid = data.startswith(b'\x1aE\xdf\xa3')
+    elif suffix == ".pdf":
+        valid = data.startswith(b'%PDF-')
+    else:
+        try:
+            data.decode("utf-8")
+            valid = b'\x00' not in data
+        except UnicodeError:
+            valid = False
+    if not valid:
+        raise ValueError("File content does not match its type, or is not UTF-8 text.")
+
+
+def store_media(root: Path, data: bytes, filename: str, *, conversation_id: str, redact=None) -> dict:
+    from providers import UUID
+    if not isinstance(conversation_id, str) or not UUID.fullmatch(conversation_id):
+        raise ValueError("A conversation is required for attachments.")
+    limit = media_limit(filename)
+    name = Path(filename.replace('\\', '/')).name
+    suffix = Path(name).suffix.lower()
     kind = classify_suffix(suffix)
-    limit = MAX_IMAGE_BYTES if kind == "image" else MAX_VIDEO_BYTES if kind == "video" else MAX_FILE_BYTES
     if len(data) > limit:
         raise ValueError(f"File too large ({limit // (1024 * 1024)}MB max for {kind}).")
-    if len(data) < 1:
+    if not data:
         raise ValueError("Empty file.")
+    _check_signature(data, suffix)
+    # Scan the complete upload, not just the eventual prompt excerpt. No secrets
+    # in a text file, filename, or embedded metadata are persisted through HTTP.
+    if redact:
+        text = data.decode("utf-8", errors="replace")
+        if redact(name) != name or redact(text) != text:
+            raise ValueError("This attachment appears to contain a secret. Remove it before uploading.")
     token = secrets.token_hex(8)
     path = _upload_dir(root) / (token + suffix)
-    path.write_bytes(data)
-    os.chmod(path, 0o600)
-    meta = {
-        "media_id": token,
-        "filename": name,
-        "suffix": suffix,
-        "kind": kind,
-        "bytes": len(data),
-        "path": str(path.relative_to(root)),
-    }
-    _meta_path(root, token).write_text(json.dumps(meta, indent=2) + "\n")
-    os.chmod(_meta_path(root, token), 0o600)
-    meta["url"] = f"/api/media/{token}"
+    meta = {"media_id": token, "conversation_id": conversation_id, "filename": name,
+            "suffix": suffix, "kind": kind, "bytes": len(data), "path": str(path.relative_to(root))}
+    try:
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as out:
+            out.write(data)
+        with os.fdopen(os.open(_meta_path(root, token), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as out:
+            json.dump(meta, out)
+    except Exception:
+        path.unlink(missing_ok=True)
+        _meta_path(root, token).unlink(missing_ok=True)
+        raise
     return meta
 
 
-def load_meta(root: Path, media_id: str) -> dict:
-    path = _find_blob(root, media_id)
-    if not path:
-        raise FileNotFoundError(media_id)
-    meta_file = _meta_path(root, media_id)
-    if meta_file.exists():
-        meta = json.loads(meta_file.read_text())
-    else:
-        meta = {
-            "media_id": media_id,
-            "filename": path.name,
-            "suffix": path.suffix.lower(),
-            "kind": classify_suffix(path.suffix),
-            "bytes": path.stat().st_size,
-            "path": str(path.relative_to(root)),
-        }
-    meta["url"] = f"/api/media/{media_id}"
-    return meta
+def load_meta(root: Path, media_id: str, *, conversation_id: str) -> dict:
+    # A blob is addressable only through a valid, owned sidecar. Never glob or
+    # manufacture metadata for an orphan; legacy unbound uploads fail closed.
+    if not isinstance(media_id, str) or not MEDIA_ID_RE.fullmatch(media_id):
+        raise FileNotFoundError("Attachment not found.")
+    try:
+        sidecar = _meta_path(root, media_id)
+        if sidecar.is_symlink():
+            raise ValueError()
+        meta = json.loads(sidecar.read_text())
+        suffix = meta["suffix"]
+        if (not conversation_id or meta["conversation_id"] != conversation_id
+                or meta["media_id"] != media_id or suffix not in ALLOWED_IMAGE | ALLOWED_VIDEO | ALLOWED_FILE
+                or meta["kind"] != classify_suffix(suffix)):
+            raise ValueError()
+        path = _upload_dir(root) / (media_id + suffix)
+        if path.is_symlink() or not path.is_file():
+            raise ValueError()
+        meta["path"] = str(path.relative_to(root))
+        return meta
+    except (OSError, ValueError, TypeError, KeyError):
+        raise FileNotFoundError("Attachment not found.") from None
 
 
-def resolve_media(root: Path, media_id: str) -> Path:
-    path = _find_blob(root, media_id)
-    if not path:
-        raise FileNotFoundError(media_id)
-    return path
+def resolve_media(root: Path, media_id: str, *, conversation_id: str) -> Path:
+    return root / load_meta(root, media_id, conversation_id=conversation_id)["path"]
 
 
-def validate_attachment_ids(root: Path, ids: list) -> list[dict]:
+def validate_attachment_ids(root: Path, ids: list, *, conversation_id: str) -> list[dict]:
     if not isinstance(ids, list):
         raise ValueError("attachments must be a list.")
     if len(ids) > MAX_ATTACHMENTS_PER_MESSAGE:
         raise ValueError(f"At most {MAX_ATTACHMENTS_PER_MESSAGE} attachments per message.")
-    out = []
-    seen = set()
+    out, seen = [], set()
     for item in ids:
         mid = item if isinstance(item, str) else (item.get("media_id") if isinstance(item, dict) else None)
         if not isinstance(mid, str) or not MEDIA_ID_RE.fullmatch(mid):
             raise ValueError("Invalid attachment id.")
-        if mid in seen:
-            continue
-        seen.add(mid)
-        out.append(load_meta(root, mid))
+        if mid not in seen:
+            seen.add(mid)
+            out.append(load_meta(root, mid, conversation_id=conversation_id))
     return out
 
 
-def _ffmpeg_available() -> bool:
-    return bool(shutil.which("ffmpeg"))
+class MediaBudget:
+    def __init__(self, cancel=None, seconds=MEDIA_PREP_SECONDS):
+        self.cancel = cancel or threading.Event()
+        self.deadline = time.monotonic() + seconds
+
+    def run(self, args, timeout=5):
+        from providers import Cancelled, ProviderError, run
+        if self.cancel.is_set():
+            raise Cancelled("Reply stopped.")
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("Media preparation timed out; try a smaller attachment.")
+        try:
+            code, out, _ = run(args, cwd=Path(tempfile.gettempdir()),
+                               env=dict(os.environ, OMP_THREAD_LIMIT="1", OMP_NUM_THREADS="1"),
+                               cancel=self.cancel, timeout=min(timeout, remaining))
+        except Cancelled:
+            raise
+        except (ProviderError, OSError, subprocess.TimeoutExpired):
+            raise ValueError("Media preparation failed or timed out; try a smaller attachment.") from None
+        if code:
+            raise ValueError("Could not decode or read this attachment.")
+        return out
 
 
-def _run_ffmpeg(args: list[str], timeout: int = 45) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        args,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
+def _run_ffmpeg(args: list[str], budget=None):
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise ValueError("Media preview unavailable: ffmpeg is not installed.")
+    return (budget or MediaBudget()).run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+        "-threads", "1", "-filter_threads", "1", "-max_alloc", "67108864", "-protocol_whitelist", "file,pipe", *args])
 
 
-def _probe_duration(path: Path) -> float | None:
+def _probe_duration(path: Path, budget=None) -> float | None:
     ffprobe = shutil.which("ffprobe")
     if not ffprobe:
         return None
-    proc = subprocess.run(
-        [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-        capture_output=True,
-        text=True,
-        timeout=20,
-        check=False,
-    )
     try:
-        return float(proc.stdout.strip())
+        out = (budget or MediaBudget()).run([ffprobe, "-v", "error", "-protocol_whitelist", "file,pipe",
+            "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(path)], timeout=3)
+        value = float(out.strip())
+        return value if math.isfinite(value) and value > 0 else None
     except ValueError:
         return None
 
 
-def _image_size(data: bytes) -> tuple[int, int] | None:
-    if data[:3] == b"\xff\xd8\xff":
-        i = 2
-        while i < len(data) - 8:
-            i += 1
-            marker = data[i]
-            if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
-                h = struct.unpack(">H", data[i + 3 : i + 5])[0]
-                w = struct.unpack(">H", data[i + 5 : i + 7])[0]
-                return w, h
-            length = struct.unpack(">H", data[i + 1 : i + 3])[0]
-            i += length
-    if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) >= 24:
-        w, h = struct.unpack(">II", data[16:24])
-        return w, h
-    return None
+def prompt_image_bytes(path: Path, budget=None) -> tuple[bytes, str]:
+    # Normalize even small images: strip embedded metadata and turn HEIC into a
+    # broadly supported image. sips is the native decoder on the Mac mini.
+    budget = budget or MediaBudget()
+    with tempfile.TemporaryDirectory() as tmp:
+        source = path
+        if path.suffix.lower() in {".heic", ".heif"} and shutil.which("sips"):
+            source = Path(tmp) / "decoded.png"
+            budget.run(["sips", "-s", "format", "png", str(path), "--out", str(source)])
+        out = Path(tmp) / "image.jpg"
+        _run_ffmpeg(["-i", str(source), "-frames:v", "1", "-vf",
+                     "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease", "-threads", "1",
+                     "-map_metadata", "-1", "-q:v", "6", str(out)], budget)
+        if not out.is_file() or not 0 < out.stat().st_size <= MAX_PROMPT_IMAGE_BYTES:
+            raise ValueError("Image too large or invalid after resizing.")
+        return out.read_bytes(), "jpeg"
 
 
-def prompt_image_bytes(path: Path) -> tuple[bytes, str]:
-    raw = path.read_bytes()
-    if len(raw) <= MAX_PROMPT_IMAGE_BYTES:
-        return raw, path.suffix.lstrip(".") or "jpeg"
-    if _ffmpeg_available():
-        with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp) / "thumb.jpg"
-            proc = _run_ffmpeg(
-                ["ffmpeg", "-y", "-i", str(path), "-vf", "scale='min(1280,iw)':-2", "-q:v", "8", str(out)],
-                timeout=40,
-            )
-            if proc.returncode == 0 and out.is_file() and out.stat().st_size <= MAX_PROMPT_IMAGE_BYTES:
-                return out.read_bytes(), "jpeg"
-    if len(raw) > MAX_PROMPT_IMAGE_BYTES:
-        raise ValueError("Image too large to include in model context after resize.")
-    return raw, path.suffix.lstrip(".") or "jpeg"
-
-
-def extract_video_frames(path: Path, duration: float | None) -> list[dict]:
-    if not _ffmpeg_available():
-        return []
-    dur = duration or _probe_duration(path) or 0.0
-    if dur <= 0:
-        dur = 30.0
-    dur = min(dur, MAX_VIDEO_DURATION_S)
-    count = min(MAX_VIDEO_FRAMES, max(3, int(dur // 4) + 1))
-    times = [round(dur * i / max(count - 1, 1), 2) for i in range(count)]
+def extract_video_frames(path: Path, duration: float | None, budget=None) -> list[dict]:
+    budget = budget or MediaBudget()
+    dur = min(duration or 30.0, MAX_VIDEO_DURATION_S)
     frames = []
     with tempfile.TemporaryDirectory() as tmp:
-        for idx, t in enumerate(times):
+        for idx in range(MAX_VIDEO_FRAMES):
+            # Stay before EOF, including sub-second phone clips.
+            at = round(dur * idx / MAX_VIDEO_FRAMES, 3)
             out = Path(tmp) / f"frame_{idx}.jpg"
-            proc = _run_ffmpeg(
-                ["ffmpeg", "-y", "-ss", str(t), "-i", str(path), "-frames:v", "1", "-q:v", "6", str(out)],
-                timeout=35,
-            )
-            if proc.returncode != 0 or not out.is_file():
-                continue
-            blob = out.read_bytes()
-            if len(blob) > MAX_PROMPT_IMAGE_BYTES:
-                continue
-            frames.append({"time_s": t, "mime": "image/jpeg", "data_base64": base64.b64encode(blob).decode()})
+            try:
+                _run_ffmpeg(["-ss", str(at), "-i", str(path), "-frames:v", "1", "-vf",
+                    "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease", "-threads", "1",
+                    "-map_metadata", "-1", "-q:v", "6", str(out)], budget)
+            except ValueError:
+                break
+            if out.is_file() and 0 < out.stat().st_size <= MAX_PROMPT_IMAGE_BYTES:
+                frames.append({"time_s": at, "mime": "image/jpeg", "data_base64": base64.b64encode(out.read_bytes()).decode()})
     return frames
 
 
-def extract_audio_transcript(path: Path) -> str:
-    if not _ffmpeg_available():
+def extract_audio_transcript(path: Path, budget=None) -> str:
+    # Only use the Python Whisper CLI with its matching flags and an already
+    # cached model. Never download model weights on a chat request.
+    whisper = shutil.which("whisper")
+    if not whisper or not (Path.home() / ".cache/whisper/tiny.pt").is_file():
         return ""
-    whisper = shutil.which("whisper") or shutil.which("whisper-cli")
-    if not whisper:
-        return ""
+    budget = budget or MediaBudget()
     with tempfile.TemporaryDirectory() as tmp:
         wav = Path(tmp) / "audio.wav"
-        proc = _run_ffmpeg(
-            ["ffmpeg", "-y", "-i", str(path), "-ac", "1", "-ar", "16000", "-t", str(MAX_VIDEO_DURATION_S), str(wav)],
-            timeout=60,
-        )
-        if proc.returncode != 0 or not wav.is_file():
-            return ""
         try:
-            out = subprocess.run(
-                [whisper, str(wav), "--model", "tiny", "--output_format", "txt", "--output_dir", tmp, "--language", "en"],
-                capture_output=True,
-                text=True,
-                timeout=120,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
+            _run_ffmpeg(["-i", str(path), "-vn", "-ac", "1", "-ar", "16000", "-t", "30", str(wav)], budget)
+            budget.run([whisper, str(wav), "--model", "tiny", "--output_format", "txt", "--output_dir", tmp,
+                        "--language", "en", "--threads", "1", "--fp16", "False"], timeout=8)
+            return (Path(tmp) / "audio.txt").read_text(errors="replace")[:8000].strip()
+        except (ValueError, OSError):
             return ""
-        if out.returncode != 0:
-            return ""
-        for txt in Path(tmp).glob("*.txt"):
-            text = txt.read_text(encoding="utf-8", errors="replace").strip()
-            if text:
-                return text[:8000]
-    return ""
 
 
-def describe_video(path: Path) -> dict:
-    duration = _probe_duration(path)
-    frames = extract_video_frames(path, duration)
-    transcript = extract_audio_transcript(path)
-    return {
-        "duration_s": duration,
-        "frame_count": len(frames),
-        "frames": frames,
-        "transcript": transcript,
-    }
-
-
-def read_text_file(path: Path, limit: int = 12000) -> str:
-    try:
-        raw = path.read_bytes()[: limit + 1]
-    except OSError:
-        return ""
-    if b"\x00" in raw[:4096]:
-        return "[binary file; text excerpt unavailable]"
-    return raw[:limit].decode("utf-8", errors="replace")
-
-
-def enrich_for_model(root: Path, metas: list[dict]) -> dict:
-    """Build model-facing attachment bundle (text + optional vision parts)."""
-    text_blocks: list[str] = []
-    vision: list[dict] = []
-    for meta in metas:
-        path = resolve_media(root, meta["media_id"])
-        kind = meta.get("kind") or classify_suffix(path.suffix)
-        label = meta.get("filename") or path.name
-        if kind == "image":
-            try:
-                blob, fmt = prompt_image_bytes(path)
-            except ValueError as exc:
-                text_blocks.append(f"Image {label}: {exc}")
-                continue
-            mime = f"image/{'jpeg' if fmt == 'jpg' else fmt}"
-            b64 = base64.b64encode(blob).decode()
-            size = _image_size(blob)
-            dim = f"{size[0]}x{size[1]}" if size else "unknown size"
-            text_blocks.append(f"Image attachment {label} ({dim}, {mime}). Jeff shared this image for you to see.")
-            vision.append({"mime": mime, "data_base64": b64, "caption": label})
-        elif kind == "video":
-            info = describe_video(path)
-            dur = info.get("duration_s")
-            dur_s = f"{dur:.1f}s" if isinstance(dur, (int, float)) else "unknown duration"
-            text_blocks.append(f"Video attachment {label} ({dur_s}). Sampled {info['frame_count']} frame(s).")
-            if info.get("transcript"):
-                text_blocks.append("Video audio transcript:\n" + info["transcript"])
-            else:
-                text_blocks.append("Video audio transcript: (none — whisper/ffmpeg unavailable or silent clip).")
-            for frame in info.get("frames") or []:
-                vision.append({
-                    "mime": frame["mime"],
-                    "data_base64": frame["data_base64"],
-                    "caption": f"{label} @ {frame['time_s']}s",
-                })
+def read_text_file(path: Path, limit=MAX_FILE_BYTES, budget=None) -> str:
+    if path.suffix == ".pdf":
+        binary = shutil.which("pdftotext")
+        budget = budget or MediaBudget()
+        if binary:
+            text = budget.run([binary, "-f", "1", "-l", "20", str(path), "-"])
+        elif sys.platform == "darwin" and shutil.which("osascript"):
+            text = budget.run(["osascript", "-l", "JavaScript", str(Path(__file__).with_name("pdf_text.js")), str(path)])
         else:
-            excerpt = read_text_file(path)
-            text_blocks.append(f"File attachment {label} ({meta.get('bytes', path.stat().st_size)} bytes):\n{excerpt}")
-    return {"text": "\n\n".join(text_blocks).strip(), "vision": vision}
+            raise ValueError("PDF text extraction is unavailable; download the PDF or attach a text export.")
+        if not text.strip():
+            raise ValueError("This PDF has no readable text; attach images of the scanned pages or a text export.")
+        return text[:limit]
+    with path.open("r", encoding="utf-8") as src:
+        return src.read(limit)
+
+
+def scan_image(blob: bytes, budget: MediaBudget, redact) -> str:
+    """Local OCR before any remote vision. Fail closed on scanner failure."""
+    ocr = shutil.which("tesseract")
+    if not ocr:
+        raise ValueError("Image analysis unavailable: the local text safety check is not installed.")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "scan.jpg"
+        path.write_bytes(blob)
+        text = budget.run([ocr, str(path), "stdout", "--psm", "11"], timeout=3)
+    if redact(text) != text or redact(re.sub(r'\s+', '', text)) != re.sub(r'\s+', '', text):
+        raise ValueError("Image analysis blocked: visible text appears to contain a secret. Remove it and reattach.")
+    return text[:4000].strip()
+
+
+def enrich_for_model(root: Path, metas: list[dict], *, redact, cancel=None) -> dict:
+    """One shared deadline and at most two preparations, on reply workers only."""
+    text_blocks, vision, warnings = [], [], []
+    if not PROCESS_SLOTS.acquire(blocking=False):
+        return {"text": "Media preparation busy. No attachment content was read.", "vision": [],
+                "warnings": ["Attachments could not be analyzed because media processing is busy. Please retry."]}
+    budget = MediaBudget(cancel)
+    try:
+        for meta in metas:
+            label = redact(meta.get("filename") or "Attachment")
+            label += f" [media_id={meta['media_id']}]"
+            try:
+                path = resolve_media(root, meta["media_id"], conversation_id=meta["conversation_id"])
+                if meta["kind"] == "image":
+                    blob, fmt = prompt_image_bytes(path, budget)
+                    ocr = scan_image(blob, budget, redact)
+                    text_blocks.append(f"Image attachment {label}. Local text: {ocr or '(no text detected)'}")
+                    vision.append({"mime": f"image/{fmt}", "data_base64": base64.b64encode(blob).decode(), "caption": label})
+                elif meta["kind"] == "video":
+                    duration = _probe_duration(path, budget)
+                    frames = extract_video_frames(path, duration, budget)
+                    safe_frames, frame_text = [], []
+                    for frame in frames:
+                        ocr = scan_image(base64.b64decode(frame["data_base64"]), budget, redact)
+                        safe_frames.append({**frame, "caption": f"{label} @ {frame['time_s']}s"})
+                        if ocr:
+                            frame_text.append(ocr)
+                    transcript = redact(extract_audio_transcript(path, budget))
+                    if not safe_frames:
+                        raise ValueError("No video frames could be read; try a shorter MP4 or MOV clip.")
+                    vision.extend(safe_frames)
+                    text_blocks.append(f"Video attachment {label}. Sampled {len(safe_frames)} frames from the first {MAX_VIDEO_DURATION_S}s maximum.\n"
+                                       + "\n".join(frame_text) + "\nAudio transcript (first 30s maximum): " + (transcript or "unavailable"))
+                    if not transcript:
+                        warnings.append(f"{redact(meta['filename'])}: audio transcript unavailable; analysis uses sampled frames only.")
+                else:
+                    excerpt = redact(read_text_file(path, budget=budget))[:12000]
+                    text_blocks.append(f"File attachment {label} (excerpt):\n{excerpt}")
+            except (ValueError, OSError) as exc:
+                # Never expose decoder stderr or local paths to the chat/model.
+                reason = str(exc) if isinstance(exc, ValueError) else "Attachment could not be read."
+                warning = f"{redact(meta['filename'])}: {redact(reason)}"
+                warnings.append(warning)
+                text_blocks.append(warning)
+    finally:
+        PROCESS_SLOTS.release()
+    return {"text": redact("\n\n".join(text_blocks)), "vision": vision, "warnings": warnings}
 
 
 def strip_assistant_attachment_markers(content: str) -> tuple[str, list[dict]]:
-    attachments: list[dict] = []
-    for match in ATTACHMENT_TAG.finditer(content):
-        attachments.append({"media_id": match.group(1), "label": match.group(2) or ""})
-    cleaned = ATTACHMENT_TAG.sub("", content).strip()
-    for match in MEDIA_LINK.finditer(content):
-        attachments.append({"media_id": match.group(1), "label": ""})
-    return cleaned, attachments
+    attachments = []
+    def tag(match):
+        mid = re.search(r'media_id=["\x27]([^"\x27]*)["\x27]', match[0], re.I)
+        attachments.append({"media_id": mid[1] if mid else ""})
+        return ""
+    def link(match):
+        attachments.append({"media_id": match[1].split('?', 1)[0]})
+        return ""
+    cleaned = MEDIA_LINK.sub(link, ATTACHMENT_TAG.sub(tag, content))
+    return cleaned.strip(), attachments
 
 
 def public_attachment(meta: dict) -> dict:
-    return {
-        "media_id": meta["media_id"],
-        "filename": meta.get("filename") or meta["media_id"],
-        "kind": meta.get("kind", "file"),
-        "url": meta.get("url") or f"/api/media/{meta['media_id']}",
-        "bytes": meta.get("bytes", 0),
-    }
+    url = f"/api/media/{meta['media_id']}?conversation_id={meta['conversation_id']}"
+    return {"media_id": meta["media_id"], "filename": meta.get("filename") or meta["media_id"],
+            "kind": meta.get("kind", "file"), "url": url, "bytes": meta.get("bytes", 0)}

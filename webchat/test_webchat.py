@@ -312,12 +312,12 @@ class HTTPTests(Fixture):
         from chat_media import resolve_media
         self.login()
         png = base64.b64decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+            "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC"
         )
         code, _, body = self.request(
             "POST",
             "/api/media/upload",
-            {"filename": "dot.png", "data_base64": base64.b64encode(png).decode()},
+            {"conversation_id": self.identifier, "filename": "dot.png", "data_base64": base64.b64encode(png).decode()},
         )
         self.assertEqual(code, 201)
         media_id = json.loads(body)["media_id"]
@@ -334,25 +334,25 @@ class HTTPTests(Fixture):
         self.assertEqual(user["attachments"][0]["media_id"], media_id)
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         headers = {"Cookie": self.cookie} if self.cookie else {}
-        connection.request("GET", f"/api/media/{media_id}", headers=headers)
+        connection.request("GET", f"/api/media/{media_id}?conversation_id={self.identifier}", headers=headers)
         response = connection.getresponse()
         payload = response.read()
         connection.close()
         self.assertEqual(response.status, 200)
         self.assertTrue(payload.startswith(b"\x89PNG"))
-        self.assertTrue(resolve_media(self.root, media_id).exists())
+        self.assertTrue(resolve_media(self.root, media_id, conversation_id=self.identifier).exists())
 
     def test_attachment_only_message_allowed(self):
         import base64
 
         self.login()
         png = base64.b64decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+            "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC"
         )
         _, _, body = self.request(
             "POST",
             "/api/media/upload",
-            {"filename": "dot.png", "data_base64": base64.b64encode(png).decode()},
+            {"conversation_id": self.identifier, "filename": "dot.png", "data_base64": base64.b64encode(png).decode()},
         )
         media_id = json.loads(body)["media_id"]
         code, _, _ = self.request(
@@ -447,7 +447,7 @@ class ProviderTests(Fixture):
         provider.call("gemini", "context", None, threading.Event())
         self.assertIn("api_call.py", calls[-1][0][-2])
         self.assertEqual(calls[-1][0][-1], "gemini")
-        self.assertTrue(calls[-1][1]["prompt"].startswith("context"))
+        self.assertTrue(json.loads(calls[-1][1]["prompt"])["prompt"].startswith("context"))
         self.assertIn("<bob-webchat-reply>", calls[-1][1]["prompt"])
 
     def test_gemini_short_answers_and_retry_logs(self):
@@ -547,9 +547,9 @@ class ProviderTests(Fixture):
         from chat_media import store_media
 
         png = base64.b64decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+            "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC"
         )
-        stored = store_media(self.root, png, "dot.png")
+        stored = store_media(self.root, png, "dot.png", conversation_id=self.identifier)
         provider = self.provider()
         value = self.chat.conversations[self.identifier]
         value["messages"] = [{
@@ -558,7 +558,8 @@ class ProviderTests(Fixture):
             "status": "done",
             "attachments": [{"media_id": stored["media_id"], "filename": "dot.png", "kind": "image"}],
         }]
-        prompt = provider.prompt(value, fast=True)
+        with patch("chat_media.prompt_image_bytes", return_value=(png, "png")), patch("chat_media.scan_image", return_value=""):
+            prompt = provider.prompt(value, fast=True)
         self.assertIn("chat_attachments (current turn)", prompt)
         self.assertIn("Image attachment", prompt)
         self.assertGreaterEqual(len(provider._vision_parts), 1)
