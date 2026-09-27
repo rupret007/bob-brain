@@ -28,7 +28,14 @@ from urllib.parse import parse_qs, urlsplit
 from providers import Cancelled, ProviderError, Providers, Redactor, UUID, clean_env, run
 from failover import AllDown
 from handback import append_turn, public_digest
-from job_queue import council_job_description, parse_confirm, parse_council, parse_council_cancel, parse_council_confirm, parse_start
+from job_queue import (
+    council_job_description,
+    parse_council,
+    parse_council_cancel,
+    parse_council_confirm_proposal,
+    parse_job_confirm,
+    parse_start,
+)
 from actions import queue_once
 from music_notebook import get_project, list_projects, save_project, try_music_coach_reply
 from reply_guard import repair_hollow_progress
@@ -268,7 +275,24 @@ class Chat:
                 conversation["title"] = text[:65]
             pending = conversation.get("pending_job")
             pending_council = conversation.get("pending_council")
-            if parse_council_confirm(text) and pending_council:
+            council_confirm, council_proposal = parse_council_confirm_proposal(text)
+            if council_confirm and pending_council:
+                expected_council = conversation.get("pending_council_id")
+                if council_proposal and (not expected_council or council_proposal != expected_council):
+                    conversation["messages"][-1].update(
+                        status="done",
+                        content="That council button is stale. Use the latest card or ask again.",
+                        action_card={
+                            "id": request_id,
+                            "proposal_id": council_proposal,
+                            "state": "refused",
+                            "executable": False,
+                            "reason": "Stale council proposal",
+                        },
+                    )
+                    self.save(conversation)
+                    self.conversations[identifier] = conversation
+                    return self.public(conversation)
                 conversation.pop("pending_council", None)
                 blocked = hard_rule_refusal(pending_council) or hard_rule_refusal(text)
                 if blocked:
@@ -299,7 +323,24 @@ class Chat:
                             confirmations=[text[:200]] if result.get("ok") else [],
                             refusals=[result.get("error", "blocked")] if not result.get("ok") else [], open_items=[])
                 return self.public(conversation)
-            if parse_confirm(text) and pending:
+            job_confirm, job_proposal = parse_job_confirm(text)
+            if job_confirm and pending:
+                expected_job = conversation.get("pending_job_id")
+                if job_proposal and (not expected_job or job_proposal != expected_job):
+                    conversation["messages"][-1].update(
+                        status="done",
+                        content="That approve button is stale. Use the latest card or ask again.",
+                        action_card={
+                            "id": request_id,
+                            "proposal_id": job_proposal,
+                            "state": "refused",
+                            "executable": False,
+                            "reason": "Stale job proposal",
+                        },
+                    )
+                    self.save(conversation)
+                    self.conversations[identifier] = conversation
+                    return self.public(conversation)
                 conversation.pop("pending_job", None)
                 blocked = hard_rule_refusal(pending) or hard_rule_refusal(text)
                 if blocked:
@@ -326,7 +367,7 @@ class Chat:
                             confirmations=[text[:200]] if result.get("ok") else [],
                             refusals=[result.get("error", "blocked")] if not result.get("ok") else [], open_items=[])
                 return self.public(conversation)
-            if pending and not parse_confirm(text):
+            if pending and not job_confirm:
                 conversation.pop("pending_job", None)
             if parse_council_cancel(text) and pending_council:
                 conversation.pop("pending_council", None)
@@ -336,7 +377,7 @@ class Chat:
                 self.save(conversation)
                 self.conversations[identifier] = conversation
                 return self.public(conversation)
-            if pending_council and not parse_council_confirm(text) and not parse_council_cancel(text):
+            if pending_council and not council_confirm and not parse_council_cancel(text):
                 conversation.pop("pending_council", None)
             council_text = parse_council(text)
             if council_text:
@@ -353,7 +394,7 @@ class Chat:
                 conversation["pending_council_id"] = request_id
                 conversation["messages"][-1].update(status="done",
                     content="I can queue a **draft** council critique on the mini (Gemini + MiniMax + Claude; no Grok). Reply `yes, run council` to confirm.",
-                    action_card={"id": request_id, "state": "confirm", "executable": True,
+                    action_card={"id": request_id, "proposal_id": request_id, "state": "confirm", "executable": True,
                                  "reason": "Council: " + council_text[:120]})
                 self.save(conversation)
                 self.conversations[identifier] = conversation
@@ -373,7 +414,7 @@ class Chat:
                 conversation["pending_job_id"] = request_id
                 conversation["messages"][-1].update(status="done",
                     content="I can queue a **draft** screen job for the conductor scheduler. Reply `yes, start job` to confirm, or edit your request.",
-                    action_card={"id": request_id, "state": "confirm", "executable": True,
+                    action_card={"id": request_id, "proposal_id": request_id, "state": "confirm", "executable": True,
                                  "reason": "Queue job: " + job_text[:120]})
                 self.save(conversation)
                 self.conversations[identifier] = conversation
@@ -668,25 +709,39 @@ class Chat:
     def round_changelog(self) -> dict:
         import re
 
+        def round_num(path: Path) -> int:
+            match = re.search(r"R(\d+)", path.name)
+            return int(match.group(1)) if match else 0
+
         paths = sorted(
             self.root.glob("conductor/reviews/WEBCHAT-READY-R*-RESULT.md"),
-            key=lambda p: p.stat().st_mtime,
+            key=round_num,
             reverse=True,
         )
         if not paths:
             return {}
         path = paths[0]
         name = path.name
-        round_no = None
-        if match := re.search(r"R(\d+)", name):
-            round_no = int(match.group(1))
+        round_no = round_num(path) or None
         line = ""
         try:
             text = path.read_text(errors="replace")
-            for row in text.splitlines():
-                if "**beat**" in row or "Time-to-value" in row or "visible improvement" in row.lower():
-                    line = row.strip().lstrip("|").rstrip("|").strip()[:220]
-                    break
+            section = re.search(r"^## Changelog\s*\n+(.+?)(?:\n## |\Z)", text, re.M | re.S)
+            if section:
+                for row in section.group(1).splitlines():
+                    cleaned = row.strip()
+                    if cleaned and not cleaned.startswith("#"):
+                        line = cleaned[:220]
+                        break
+            if not line:
+                explicit = re.search(r"^\*\*Changelog:\*\*\s*(.+)$", text, re.M)
+                if explicit:
+                    line = explicit.group(1).strip()[:220]
+            if not line:
+                for row in text.splitlines():
+                    if "Time-to-value" in row or "visible improvement" in row.lower():
+                        line = row.strip().lstrip("|").rstrip("|").strip()[:220]
+                        break
             if not line:
                 for row in text.splitlines():
                     if row.startswith("|") and "iPhone" in row:

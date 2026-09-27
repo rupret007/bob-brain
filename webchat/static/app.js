@@ -208,11 +208,13 @@ if ($("login-form")) {
         if (message.action_card.state === "confirm" && message.action_card.executable) {
           const actions = document.createElement("div"); actions.className = "action-card-actions";
           const council = /council/i.test(message.action_card.reason || "");
+          const proposalId = message.action_card.proposal_id || message.action_card.id || "";
           const approve = document.createElement("button");
           approve.type = "button"; approve.className = "action-approve";
           approve.textContent = council ? "Yes, run council" : "Yes, start job";
           approve.addEventListener("click", () => {
-            $("message").value = council ? "yes, run council" : "yes, start job";
+            const suffix = proposalId ? ` proposal ${proposalId}` : "";
+            $("message").value = council ? `yes, run council${suffix}` : `yes, start job${suffix}`;
             $("message").dispatchEvent(new Event("input"));
             $("composer").requestSubmit();
           });
@@ -612,7 +614,8 @@ if ($("login-form")) {
       stall.textContent = job.stall_state || "unknown";
       const elapsed = document.createElement("span");
       const mins = Math.round((job.elapsed_seconds || 0) / 60);
-      elapsed.textContent = `${mins}m elapsed${job.started_at ? " · " + job.started_at.replace("T", " ").slice(0, 16) : ""}`;
+      const roundNote = job.round ? ` · round ${job.round}` : "";
+      elapsed.textContent = `${mins}m elapsed${roundNote}${job.started_at ? " · " + job.started_at.replace("T", " ").slice(0, 16) : ""}`;
       header.append(title, stall, elapsed);
       const now = document.createElement("p");
       const events = (job.events || []).filter((e) => e && (e.text || e.sha));

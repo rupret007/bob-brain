@@ -1,20 +1,20 @@
 {
-  "started_at": 1790497424.675688,
+  "started_at": 1790497988.6234272,
   "rounds": [
     {
       "ledger": {
-        "tag": "r7-1",
+        "tag": "r11-1",
         "ledger_ok": true,
         "bob_pickup_ok": true,
-        "summary_chars": 1133
+        "summary_chars": 3379
       },
       "live": {
-        "tag": "r7-1",
+        "tag": "r11-1",
         "status": "done",
         "provider": "gemini",
-        "elapsed_seconds": 2.486,
+        "elapsed_seconds": 1.237,
         "mentions_running": true,
-        "snippet": "The `Running` line for `handback drill r7-1` from `BOB-STATE.md` is: \"Running: handback drill screen `drill-r7-1`\".",
+        "snippet": "Right now, the `handback drill screen drill-r11-1` is running.",
         "live_ok": true
       },
       "events_ok": true,
@@ -23,18 +23,18 @@
     },
     {
       "ledger": {
-        "tag": "r7-2",
+        "tag": "r11-2",
         "ledger_ok": true,
         "bob_pickup_ok": true,
-        "summary_chars": 2739
+        "summary_chars": 3522
       },
       "live": {
-        "tag": "r7-2",
+        "tag": "r11-2",
         "status": "done",
         "provider": "gemini",
-        "elapsed_seconds": 1.916,
+        "elapsed_seconds": 1.926,
         "mentions_running": true,
-        "snippet": "The `Running` line for `handback drill r7-2` is: \"Running: handback drill screen `drill-r7-2`\".",
+        "snippet": "The `Running` line for handback drill `r11-2` is: \"Running: handback drill screen `drill-r11-2`\".",
         "live_ok": true
       },
       "events_ok": true,
@@ -44,6 +44,6 @@
   ],
   "restored_handback": true,
   "restored_state": true,
-  "finished_at": 1790497429.324713,
+  "finished_at": 1790497993.053397,
   "result": "PASS"
 }

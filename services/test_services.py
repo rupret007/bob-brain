@@ -302,7 +302,11 @@ class ServicesTest(unittest.TestCase):
             "last_commit": {"sha": "abc1234", "message": "fix webchat panel"},
             "round": 6, "live_screen": True, "started_at": "2026-09-27T00:00:00+00:00",
         }]
+        payload["dashboard_freshness_seconds"] = 42
+        payload["roles"] = {"building": "cursor", "reviewing": "gemini"}
         public = live_dashboard.public_live_ops(payload)
+        self.assertEqual(public.get("dashboard_freshness_seconds"), 42)
+        self.assertEqual(public.get("roles", {}).get("building"), "cursor")
         tail = public["running_jobs"][0]["log_tail"]
         self.assertEqual(len(tail), 1)
         self.assertIn("handback", tail[0].lower())

@@ -21,6 +21,7 @@ from live_ready_drill import origin_url
 
 HANDBACK_FILES = ("BOB-STATE.md", "HANDBACK-LOG.md", "HANDBACK-SUMMARY.md", ".bob-last-seen")
 STATE_FILES = ("STATE.json", "BOB-CATCHUP.md", "NOW.md")
+DRILL_COMMIT_SHA = "drill0001"
 
 
 def backup_handback(root: Path) -> dict[str, bytes]:
@@ -77,9 +78,9 @@ def ledger_round(root: Path, tag: str) -> dict:
     append_turn(root, ask=f"handback drill {tag}: status check", provider="gemini", jobs=[], files=[],
                 commits=[], confirmations=[], refusals=[], open_items=[f"drill open item ({tag})"])
     append_turn(root, ask=f"handback drill {tag}: queued review", provider="gemini", jobs=[f"drill-{tag}"],
-                files=[], commits=["abc1234"], confirmations=[], refusals=[], open_items=[])
+                files=[], commits=[DRILL_COMMIT_SHA], confirmations=[], refusals=[], open_items=[])
     refresh_summary(root)
-    state_ledger.write_now(root, f"Handback drill {tag}: running screen drill-{tag}", sha="abc1234")
+    state_ledger.write_now(root, f"Handback drill {tag}: running screen drill-{tag}", sha=DRILL_COMMIT_SHA)
     state_ledger.write_catchup(root)
     summary_path = folder / "HANDBACK-SUMMARY.md"
     log_path = folder / "HANDBACK-LOG.md"
@@ -87,10 +88,10 @@ def ledger_round(root: Path, tag: str) -> dict:
     log_text = log_path.read_text(errors="replace") if log_path.exists() else ""
     combined = text + "\n" + log_text
     ledger_ok = all(token in combined for token in (
-        f"handback drill {tag}", "Running: handback drill", f"drill-{tag}", "abc1234", "drill open item",
+        f"handback drill {tag}", "Running: handback drill", f"drill-{tag}", DRILL_COMMIT_SHA, "drill open item",
     ))
     bob_pickup_ok = (
-        "abc1234" in combined
+        DRILL_COMMIT_SHA in combined
         and "drill open item" in combined
         and f"drill-{tag}" in combined
         and ("Open ask" in text or f"drill open item ({tag})" in combined)
@@ -152,7 +153,7 @@ def main():
                 round_evidence["live"] = {"tag": tag, "live_ok": False, "error": str(exc)[:300]}
             log_path = ROOT / "conductor/handback/HANDBACK-LOG.md"
             log_text = log_path.read_text(errors="replace").lower() if log_path.exists() else ""
-            reverse_ok = f"handback drill {tag}" in log_text and "abc1234" in log_text
+            reverse_ok = f"handback drill {tag}" in log_text and DRILL_COMMIT_SHA in log_text
             events_ok = False
             try:
                 if str(ROOT / "conductor/state") not in sys.path:

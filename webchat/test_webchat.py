@@ -695,11 +695,27 @@ class HandbackJobTests(Fixture):
         reviews = self.root / "conductor/reviews"
         reviews.mkdir(parents=True, exist_ok=True)
         (reviews / "WEBCHAT-READY-R99-RESULT.md").write_text(
-            "# R99\n\n| iPhone design | 9.5 | **9.6** · chat bubbles |\n"
+            "# R99\n\n## Changelog\nApprove buttons bind to proposal IDs.\n\n| iPhone design | 9.5 | **9.6** · chat bubbles |\n"
         )
         data = self.chat.panel()
         self.assertIn("round_changelog", data)
         self.assertEqual(data["round_changelog"].get("round"), 99)
+        self.assertIn("proposal", (data["round_changelog"].get("line") or "").lower())
+
+    def test_job_confirm_rejects_stale_proposal_id(self):
+        (self.root / "next-prompts").mkdir(parents=True)
+        (self.root / "next-prompts/INDEX.md").write_text("| Pri | File | Project | Kind | Status | Notes |\n| --- | --- | --- | --- | --- | --- |\n")
+        proposal = str(uuid.uuid4())
+        stale = str(uuid.uuid4())
+        self.chat.submit(self.identifier, "start a job: fix the webchat panel", proposal)
+        self.assertEqual(self.chat.conversations[self.identifier].get("pending_job_id"), proposal)
+        value = self.chat.submit(self.identifier, f"yes, start job proposal {stale}", str(uuid.uuid4()))
+        assistant = value["messages"][-1]
+        self.assertEqual(assistant["action_card"]["state"], "refused")
+        self.assertIn("pending_job", self.chat.conversations[self.identifier])
+        self.chat.submit(self.identifier, f"yes, start job proposal {proposal}", str(uuid.uuid4()))
+        self.wait()
+        self.assertNotIn("pending_job", self.chat.conversations[self.identifier])
 
     def test_song_notebook_roundtrip(self):
         from music_notebook import get_project, list_projects, save_project

@@ -13,8 +13,18 @@ from failover import atomic_text
 
 START = re.compile(r"^(?:start|queue|run) (?:a )?job[:\s]+(.+)$", re.I | re.S)
 CONFIRM = re.compile(r"^yes[,.]?\s*(?:start|queue|run)\s+(?:the\s+)?job\s*$", re.I)
+CONFIRM_WITH_PROPOSAL = re.compile(
+    r"^yes[,.]?\s*(?:start|queue|run)\s+(?:the\s+)?job(?:\s+proposal\s+"
+    r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?\s*$",
+    re.I,
+)
 COUNCIL = re.compile(r"^(?:run|start)\s+council(?:\s+on)?[:\s]+(.+)$", re.I | re.S)
 COUNCIL_CONFIRM = re.compile(r"^yes[,.]?\s*run\s+council\s*$", re.I)
+COUNCIL_CONFIRM_WITH_PROPOSAL = re.compile(
+    r"^yes[,.]?\s*run\s+council(?:\s+proposal\s+"
+    r"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?\s*$",
+    re.I,
+)
 COUNCIL_CANCEL = re.compile(r"^(?:never mind|cancel|dismiss)(?:\s+council)?\s*$", re.I)
 
 
@@ -24,7 +34,17 @@ def parse_start(text: str) -> str | None:
 
 
 def parse_confirm(text: str) -> bool:
-    return bool(CONFIRM.match(text.strip()))
+    return parse_job_confirm(text)[0]
+
+
+def parse_job_confirm(text: str) -> tuple[bool, str | None]:
+    stripped = text.strip()
+    match = CONFIRM_WITH_PROPOSAL.match(stripped)
+    if match:
+        return True, match.group(1)
+    if CONFIRM.match(stripped):
+        return True, None
+    return False, None
 
 
 def parse_council(text: str) -> str | None:
@@ -33,7 +53,17 @@ def parse_council(text: str) -> str | None:
 
 
 def parse_council_confirm(text: str) -> bool:
-    return bool(COUNCIL_CONFIRM.match(text.strip()))
+    return parse_council_confirm_proposal(text)[0]
+
+
+def parse_council_confirm_proposal(text: str) -> tuple[bool, str | None]:
+    stripped = text.strip()
+    match = COUNCIL_CONFIRM_WITH_PROPOSAL.match(stripped)
+    if match:
+        return True, match.group(1)
+    if COUNCIL_CONFIRM.match(stripped):
+        return True, None
+    return False, None
 
 
 def parse_council_cancel(text: str) -> bool:

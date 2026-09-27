@@ -261,6 +261,7 @@ def public_live_ops(live_ops: dict) -> dict:
         "generated_at": live_ops.get("generated_at"),
         "now_line": live_ops.get("now_line"),
         "webchat_round": live_ops.get("webchat_round"),
+        "dashboard_freshness_seconds": live_ops.get("dashboard_freshness_seconds"),
         "scores": live_ops.get("scores"),
         "minimax_spend": live_ops.get("minimax_spend"),
         "roles": live_ops.get("roles"),
