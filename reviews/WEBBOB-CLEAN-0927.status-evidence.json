@@ -1,0 +1,387 @@
+{
+  "started_at": "2026-09-27T19:37:48.266820+00:00",
+  "root": "/var/folders/qd/q3p1r3ln62569ybqrs84wgp40000gn/T/webbob-status-proof-3qhwd6t6",
+  "url": "http://127.0.0.1:49847",
+  "live_listener_before": [
+    "99149 Sun Sep 27 12:40:03 2026     /opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python"
+  ],
+  "service_screens_before": [
+    "17509.svc-dashboard-updater",
+    "45974.svc-reviewer",
+    "53542.svc-watchdog",
+    "77277.svc-webbob-reviewers",
+    "94801.svc-disk-watch",
+    "99081.svc-job-runner",
+    "99147.svc-webchat"
+  ],
+  "source_sha256": {
+    "webchat/app.py": "acbf96b5ced0cf9dc7d951907fa245b0f48134f39ef419af1524dd726e51ebdc",
+    "webchat/reply_authority.py": "c18a585c020417bc6f22ba5a91634c34cbc569729c7cd014ec562bb477dacca2",
+    "webchat/live_status_snapshot.py": "f4cb82eca1e944cc9a6974d585fa21b0782a608c38d629210b5a77da9a3e5269",
+    "webchat/providers.py": "e6f8604c1bef68d9a0ce1562dd565d859d4f26075153e1954054d5f7f2e102a1",
+    "webchat/worker_activity.py": "102077879227b9f8004ef10cebfd88c27977fbad89e8f2ef604d39ff144a0ad6",
+    "webchat/ops_panel.py": "b66959f71a443c70439b5c3c28d2870f84c3c3138815a7a1c509178ece19eac3",
+    "webchat/test_worker_activity.py": "999453548748197f8fe184da3ffedea9782a8ce43a009a0b4cbf73e746a663a8",
+    "webchat/isolated_status_proof.py": "2f90cc37993ea3bf8e69f84486f9606af1dab615ea6bf7887fc2c2f49010043d"
+  },
+  "evidence_kind": "Four-lane screen/ps fixtures and actual read-only host observation; no model calls or worker execution.",
+  "examples": [
+    {
+      "message": "The hold is lifted. Bob already started WebJam #161, AdoptIQ #26, StoryBoard #47, and Shelf #10 on Claude, so don't start duplicates. For anything new, use start a job: plus the task. When I ask for status, give it in plain words from the real queue.",
+      "reply": "Ready when you are.",
+      "evidence": "fixture"
+    },
+    {
+      "message": "Ok great is it moving along now?",
+      "reply": "Yes — 4 workers are running.\n\n- Projects push — Claude (opus) — running for 24 min.\n- Web Bob clean — Codex (gpt-fixture) — running for 18 min.\n- Web Bob clean 2 — Codex — running for 12 min.\n- Web Bob MiniMax — Codex — running for 8 min.\n\nNothing else is waiting in the queue.",
+      "evidence": "fixture"
+    },
+    {
+      "message": "status",
+      "reply": "Yes — 4 workers are running.\n\n- Projects push — Claude (opus) — running for 24 min.\n- Web Bob clean — Codex (gpt-fixture) — running for 18 min.\n- Web Bob clean 2 — Codex — running for 12 min.\n- Web Bob MiniMax — Codex — running for 8 min.\n\nNothing else is waiting in the queue.",
+      "evidence": "fixture"
+    },
+    {
+      "message": "Status with screen names, job IDs and PIDs",
+      "reply": "Yes — 4 workers are running.\n\n- Projects push — Claude (opus) — running for 24 min (lane-projects-push, 103).\n- Web Bob clean — Codex (gpt-fixture) — running for 18 min (lane-webbob-clean, 202).\n- Web Bob clean 2 — Codex — running for 12 min (lane-webbob-clean2, 302).\n- Web Bob MiniMax — Codex — running for 8 min (lane-webbob-minimax, 402).\n\nNothing else is waiting in the queue.\n\nChat health: Codex — no recent reply verified; Claude — no recent reply verified; Cursor — no recent reply verified; Gemini — no recent reply verified; MiniMax — no recent reply verified.\n\nService sessions: svc-job-runner.\n\nRecently finished: shelf-load-1659.",
+      "evidence": "fixture"
+    },
+    {
+      "message": "Is it moving along now?",
+      "reply": "Yes — 1 worker is running.\n\n- Web Bob clean 3 — Codex — running for 18 min.\n- Web Bob ui — session open; worker activity unconfirmed.\n\nNothing else is waiting in the queue.",
+      "evidence": "read-only live observation"
+    }
+  ],
+  "result": "PASS",
+  "fixture": {
+    "screens": {
+      "lane-projects-push": "100.lane-projects-push",
+      "lane-webbob-clean": "200.lane-webbob-clean",
+      "lane-webbob-clean2": "300.lane-webbob-clean2",
+      "lane-webbob-minimax": "400.lane-webbob-minimax",
+      "svc-job-runner": "500.svc-job-runner"
+    },
+    "ps": "\n100 1 40:00 Ss SCREEN -dmS lane-projects-push /tmp/project-push.sh\n101 100 40:00 Ss+ login -pflq jeff /tmp/project-push.sh\n102 101 39:59 S+ /bin/bash /tmp/project-push.sh\n103 102 24:00 S+ /opt/homebrew/bin/claude --model opus -p Private task text\n200 1 30:00 Ss SCREEN -dmS lane-webbob-clean bash\n201 200 29:59 S+ /bin/bash\n202 201 18:00 S+ node /opt/node_modules/@openai/codex/bin/codex.js exec --model gpt-fixture Private prompt\n203 202 17:59 S+ /opt/codex/vendor/aarch64/codex exec --model gpt-fixture Private prompt\n300 1 20:00 Ss SCREEN -dmS lane-webbob-clean2 bash\n301 300 20:00 S+ /bin/bash\n302 301 12:00 R+ codex exec --dangerously-bypass-approvals-and-sandbox Follow-up 2: Jeff's task --model not-a-real-model\n400 1 15:00 Ss SCREEN -dmS lane-webbob-minimax bash\n401 400 15:00 S+ /bin/bash\n402 401 08:00 S+ codex exec Fix MiniMax\n500 1 2-02:00:00 Ss SCREEN -dmS svc-job-runner bash\n501 500 2-02:00:00 S+ python3 runtime.py job-runner\n",
+    "snapshot": {
+      "captured_at": "2026-09-27T19:37:48+00:00",
+      "live_ops_source": null,
+      "live_ops_stale": false,
+      "now_line": null,
+      "plain_summary": "4 live worker(s) running, including work outside the queue. Services 0/4 healthy; 0 claimed job(s), 0 queued. 5 screen session(s) on the mini. Disk 12.1 GB free on /System/Volumes/Data (84% used).",
+      "work": [
+        {
+          "title": "Projects push",
+          "worker": "claude",
+          "model": "opus",
+          "state": "running",
+          "elapsed_seconds": 1440,
+          "pid": 103,
+          "screen": "lane-projects-push",
+          "job_id": null,
+          "source": "process"
+        },
+        {
+          "title": "Web Bob clean",
+          "worker": "codex",
+          "model": "gpt-fixture",
+          "state": "running",
+          "elapsed_seconds": 1080,
+          "pid": 202,
+          "screen": "lane-webbob-clean",
+          "job_id": null,
+          "source": "process"
+        },
+        {
+          "title": "Web Bob clean 2",
+          "worker": "codex",
+          "model": null,
+          "state": "running",
+          "elapsed_seconds": 720,
+          "pid": 302,
+          "screen": "lane-webbob-clean2",
+          "job_id": null,
+          "source": "process"
+        },
+        {
+          "title": "Web Bob MiniMax",
+          "worker": "codex",
+          "model": null,
+          "state": "running",
+          "elapsed_seconds": 480,
+          "pid": 402,
+          "screen": "lane-webbob-minimax",
+          "job_id": null,
+          "source": "process"
+        }
+      ],
+      "work_counts": {
+        "running": 4,
+        "paused": 0,
+        "claimed": 0,
+        "unverified": 0
+      },
+      "inspection": {
+        "screens_available": true,
+        "processes_available": true
+      },
+      "screen_lanes": [
+        {
+          "screen": "lane-projects-push",
+          "pid_session": "100.lane-projects-push",
+          "role": "worker",
+          "doing": "screen session running (no job journal match)"
+        },
+        {
+          "screen": "lane-webbob-clean",
+          "pid_session": "200.lane-webbob-clean",
+          "role": "worker",
+          "doing": "screen session running (no job journal match)"
+        },
+        {
+          "screen": "lane-webbob-clean2",
+          "pid_session": "300.lane-webbob-clean2",
+          "role": "worker",
+          "doing": "screen session running (no job journal match)"
+        },
+        {
+          "screen": "lane-webbob-minimax",
+          "pid_session": "400.lane-webbob-minimax",
+          "role": "worker",
+          "doing": "screen session running (no job journal match)"
+        },
+        {
+          "screen": "svc-job-runner",
+          "pid_session": "500.svc-job-runner",
+          "role": "service",
+          "service": "job-runner",
+          "doing": "service screen svc-job-runner is present"
+        }
+      ],
+      "queue_counts": {
+        "queued": 0,
+        "claimed": 0,
+        "done": 1,
+        "failed": 0
+      },
+      "queue_jobs": {
+        "queued": [],
+        "claimed": [],
+        "done": [
+          {
+            "job_id": "shelf-load-1659",
+            "state": "harvested",
+            "bucket": "done",
+            "worker": null,
+            "recovery": null,
+            "journal": "conductor/jobs.jsonl",
+            "updated_at": null,
+            "title": null,
+            "pid": null,
+            "started_at": null,
+            "claimed_at": null,
+            "launched_at": null
+          }
+        ],
+        "failed": []
+      },
+      "provider_health": {
+        "codex": {
+          "state": "unchecked",
+          "reason": null,
+          "retry_at": 0,
+          "checked_at": 0,
+          "last_success": null,
+          "probe": null,
+          "probed_at": null,
+          "last_event": null,
+          "last_event_at": null
+        },
+        "claude": {
+          "state": "unchecked",
+          "reason": null,
+          "retry_at": 0,
+          "checked_at": 0,
+          "last_success": null,
+          "probe": null,
+          "probed_at": null,
+          "last_event": null,
+          "last_event_at": null
+        },
+        "cursor": {
+          "state": "unchecked",
+          "reason": null,
+          "retry_at": 0,
+          "checked_at": 0,
+          "last_success": null,
+          "probe": null,
+          "probed_at": null,
+          "last_event": null,
+          "last_event_at": null
+        },
+        "gemini": {
+          "state": "unchecked",
+          "reason": null,
+          "retry_at": 0,
+          "checked_at": 0,
+          "last_success": null,
+          "probe": null,
+          "probed_at": null,
+          "last_event": null,
+          "last_event_at": null
+        },
+        "minimax": {
+          "state": "unchecked",
+          "reason": null,
+          "retry_at": 0,
+          "checked_at": 0,
+          "last_success": null,
+          "probe": null,
+          "probed_at": null,
+          "last_event": null,
+          "last_event_at": null
+        }
+      },
+      "provider_health_sources": [
+        "conductor/webchat/sessions/provider-health.json",
+        "logs/webchat-failover.log"
+      ],
+      "lane_locks": {
+        "codex": {
+          "state": "busy",
+          "cached_state": "ready",
+          "detail": null,
+          "checked_at": null,
+          "active_jobs": []
+        },
+        "claude": {
+          "state": "busy",
+          "cached_state": "ready",
+          "detail": null,
+          "checked_at": null,
+          "active_jobs": []
+        },
+        "cursor": {
+          "state": "ready",
+          "cached_state": "ready",
+          "detail": null,
+          "checked_at": null,
+          "active_jobs": []
+        },
+        "gemini": {
+          "state": "ready",
+          "cached_state": "ready",
+          "detail": null,
+          "checked_at": null,
+          "active_jobs": []
+        },
+        "minimax": {
+          "state": "ready",
+          "cached_state": "ready",
+          "detail": null,
+          "checked_at": null,
+          "active_jobs": []
+        },
+        "mini": {
+          "state": null,
+          "cached_state": null,
+          "detail": null,
+          "checked_at": null,
+          "active_jobs": []
+        }
+      },
+      "lane_log_tails": {},
+      "service_health": {
+        "job-runner": {
+          "heartbeat_age_seconds": null,
+          "screen_running": true,
+          "healthy": false,
+          "interval_seconds": 60
+        },
+        "reviewer": {
+          "heartbeat_age_seconds": null,
+          "screen_running": false,
+          "healthy": false,
+          "interval_seconds": 300
+        },
+        "dashboard-updater": {
+          "heartbeat_age_seconds": null,
+          "screen_running": false,
+          "healthy": false,
+          "interval_seconds": 300
+        },
+        "watchdog": {
+          "heartbeat_age_seconds": null,
+          "screen_running": false,
+          "healthy": false,
+          "interval_seconds": 180
+        }
+      },
+      "disk": {
+        "available": true,
+        "mount": "/System/Volumes/Data",
+        "total_gb": 228.27,
+        "used_gb": 192.55,
+        "avail_gb": 12.1,
+        "used_percent": 84
+      },
+      "instruction": "When Jeff asks what workers, lanes, jobs, or services are doing, answer from this snapshot in short plain English: say what is moving, the worker/model, and elapsed time from work. Live process observations in work include lane screens and workers outside the queue. Running means a live worker process, not proof of forward progress or completion. An unverified screen has no confirmed worker; a claimed entry is only a queue record. Missing model or elapsed time is unknown; do not invent it. Hide internal IDs, screen names, history and raw fields unless Jeff asks for those details. Never print None. Queue counts include all jobs; lists show recent examples. Done/failed jobs are history, not active work. Lane lock reports are cached at checked_at; current queue claims and screen presence take precedence. active_jobs only covers journaled queue claims. Background work may hold a busy lane without a claim; an empty active_jobs list does not prove an idle or stale lock. Report unidentified work as unknown, and do not infer that all workers are idle from an empty queue. Do not tell Jeff to use special job syntax. Do not say you cannot see workers if this block lists them. Chat provider health comes only from provider_health, not old messages or lane locks. A successful probe checks configuration; last_success proves generation. A past failure followed by success is recovered, not a current outage."
+    }
+  },
+  "live_observation": {
+    "captured_at": "2026-09-27T19:37:48+00:00",
+    "work": [
+      {
+        "title": "Web Bob clean 3",
+        "worker": "codex",
+        "model": null,
+        "state": "running",
+        "elapsed_seconds": 1106,
+        "pid": 95251,
+        "screen": "lane-webbob-clean3",
+        "job_id": null,
+        "source": "process"
+      },
+      {
+        "title": "Web Bob ui",
+        "worker": null,
+        "model": null,
+        "state": "unverified",
+        "elapsed_seconds": null,
+        "screen": "lane-webbob-ui",
+        "source": "screen"
+      }
+    ],
+    "work_counts": {
+      "running": 1,
+      "paused": 0,
+      "claimed": 0,
+      "unverified": 1
+    },
+    "inspection": {
+      "screens_available": true,
+      "processes_available": true
+    },
+    "queue_counts": {
+      "queued": 0,
+      "claimed": 0,
+      "done": 184,
+      "failed": 14
+    }
+  },
+  "isolated_queue_rows": [],
+  "provider_calls": 0,
+  "checks_passed": true,
+  "live_listener_after": [
+    "99149 Sun Sep 27 12:40:03 2026     /opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python"
+  ],
+  "service_screens_after": [
+    "17509.svc-dashboard-updater",
+    "45974.svc-reviewer",
+    "53542.svc-watchdog",
+    "77277.svc-webbob-reviewers",
+    "94801.svc-disk-watch",
+    "99081.svc-job-runner",
+    "99147.svc-webchat"
+  ],
+  "finished_at": "2026-09-27T19:37:48.919491+00:00"
+}

@@ -58,10 +58,12 @@ shell/git from inside the model reply — answer from snapshots now, or ask one 
 question about the missing detail. You can offer a concrete next task with "I can ...";
 the server can resolve a follow-up like "go" from that proposal.
 When Jeff asks what workers, lanes, jobs, or services are doing, use live_status_snapshot
-in Reference snapshots: cite real job_id, screen, worker, log tail, health, and disk fields—
-never claim you cannot see workers if that snapshot lists them.
-Include at least one full job_id from queue_jobs when available; label done/failed jobs
-as history when nothing is claimed. Cite actual screen names and the lane state timestamp.
+in Reference snapshots. Say plainly what is moving, which worker/model is doing it, and
+how long its process has been running. The work list includes live lane screens and
+worker processes outside the queue. A live process does not prove forward progress.
+Keep IDs, screen names, raw fields and finished-job history out unless Jeff asks for them.
+Never print None or tell Jeff to use special job syntax. Unknown task/model details
+must stay unknown. Never claim you cannot see workers if that snapshot lists them.
 An empty queue or active_jobs list means no journaled job, not that all workers are idle.
 Background reviewers and other work can hold lane locks without a queue claim. Never call
 a busy lock stale, leftover, or idle merely because active_jobs is empty. If a screen or

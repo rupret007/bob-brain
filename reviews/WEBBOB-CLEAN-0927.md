@@ -101,3 +101,55 @@ The live listener remained **PID 99149**, started **Sun Sep 27 12:40:03 2026**, 
 ```sh
 python3 webchat/isolated_intent_proof.py --output reviews/WEBBOB-CLEAN-0927.followup-evidence.json
 ```
+
+## Follow-up 3: live workers and plain status
+
+PASS. Read the last four messages in Jeff's session `2bd59fcd-cb1d-40e5-adcf-2da66824ec88`. The old status counted only queue claims, classified unmatched `lane-*` screens as “other,” and missed “Ok great is it moving along now?”. Its default formatter also exposed provider internals, old job IDs and `None` worker values.
+
+Status now joins the queue with read-only `screen -ls` and `ps` observations. It follows screen descendants through login/shell/CLI wrappers, includes standalone CLI workers and verified dispatch processes, and counts a queue claim and its observed worker once. Each active item shows its task label, actual worker, explicit model argument when available, and elapsed process time. Process evidence overrides cached “ready” lane states. Screen names do not determine the model: the MiniMax-fix lane in the reproduction correctly runs on **Codex**.
+
+Open screens without an observed worker stay unverified. Stopped workers are reported as paused, zombies and desktop app helpers are excluded, and unavailable process/screen checks cannot produce an idle claim. Task labels come from queue titles/projects or readable lane names; raw process prompts and claim tokens never enter the snapshot. Model variants and unknown task details are not guessed. A running process establishes activity, not successful forward progress or completion. Reading a stale dashboard now skips the ledger-writing inline refresh.
+
+The exact progress question uses the server status path without a model call or queue write. Default replies omit internal IDs, screen names, old-job history, health-file names and null values. Explicit requests can reveal identifiers and health in readable text; a request to omit those details keeps them hidden. Provider instructions agree with the formatter, and the final reply guard removes special job-syntax advice regardless of whether it says “type,” “submit,” or “use.” Natural work requests retain their existing dispatch behavior. The earlier hold-lift message now receives “Ready when you are.” and creates no duplicate project jobs.
+
+### Validation
+
+| Command | Final result |
+| --- | --- |
+| `python3 -m unittest discover -s webchat -p 'test_*.py'` | **206 passed**, 13.061 s |
+| `python3 -m unittest discover -s services -p 'test_*.py'` | **111 passed**, 2.542 s |
+| `node --test webchat/test_quiet_hours_js.mjs` | **1 passed** |
+| `python3 bootstrap.py check` | **syntax: PASS** |
+| `python3 -m py_compile` on the new collector/proof and changed status modules | **Passed** |
+| `git diff --check` | **Passed** |
+
+The 16 added regressions cover the four-lane/empty-queue case, screen ancestry and duplicate wrappers, actual worker/model/elapsed metadata, standalone workers, desktop helpers, paused/zombie/disappeared workers, API dispatch processes and reused PIDs, unavailable checks, prompt-budget retention, stale-dashboard read-only behavior, hidden/requested identifiers, syntax advice, and authenticated status without duplicate dispatch. Existing tests that required the raw provider/footer dump were updated to require plain replies. No tests were skipped. Service-suite restart log lines come from mocked watchdog tests.
+
+### Authenticated HTTP proof
+
+The [proof runner](../webchat/isolated_status_proof.py) used a fresh temporary data root and ephemeral loopback server, authenticated login and CSRF-protected `/api/messages`. It reproduced the original four screen names with deterministic process fixtures and an empty dispatch queue. **The four workers, durations and model flags below are fixtures, including the synthetic `gpt-fixture` model; no model or worker was launched by the proof.**
+
+For both “Ok great is it moving along now?” and “status,” the actual HTTP reply was:
+
+```text
+Yes — 4 workers are running.
+
+- Projects push — Claude (opus) — running for 24 min.
+- Web Bob clean — Codex (gpt-fixture) — running for 18 min.
+- Web Bob clean 2 — Codex — running for 12 min.
+- Web Bob MiniMax — Codex — running for 8 min.
+
+Nothing else is waiting in the queue.
+```
+
+The proof also requested screen names, job IDs and PIDs explicitly; only that reply included them. All default replies excluded `Answering provider:`, `History:`, `None`, internal IDs and the obsolete syntax advice. There were **zero provider calls, zero dispatch jobs and no dispatch journal created**.
+
+A separate **actual read-only host observation**, passed through the same isolated HTTP handler, found one running worker (`lane-webbob-clean3`, Codex, process age 1,106 seconds), an open `lane-webbob-ui` session with unconfirmed worker activity, and zero queue claims. Its reply reported that work plainly instead of treating the empty queue as inactivity. This later observation does not claim the original four sessions were still running.
+
+The final proof ran **2026-09-27T19:37:48.266820+00:00 → 2026-09-27T19:37:48.919491+00:00**. The [evidence](WEBBOB-CLEAN-0927.status-evidence.json) contains both fixture and actual observations, HTTP replies, inspection availability, zero-call/zero-job checks and verified SHA-256 hashes of the final implementation and proof sources.
+
+The live listener remained **PID 99149**, started **Sun Sep 27 12:40:03 2026**; all seven service screen identities matched before and after. No live service restart, deployment, merge, force-push or Grok invocation occurred. The proof closed only its own isolated listener.
+
+```sh
+python3 webchat/isolated_status_proof.py --live-root .. --output reviews/WEBBOB-CLEAN-0927.status-evidence.json
+```

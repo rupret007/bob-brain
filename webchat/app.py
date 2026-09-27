@@ -539,7 +539,7 @@ class Chat(TaskDispatch):
                 return self.intent_reply(conversation, chat_intent.hold_reply(scopes) if scopes else "Ready when you are.")
             if ledger == self.root and provider == "auto" and STATUS_QUESTION.search(text):
                 conversation["messages"][-1].update(status="done", provider="state",
-                    content=self.redact(operational_reply(self.root, "server")))
+                    content=self.redact(operational_reply(self.root, "server", text)))
                 self.save(conversation)
                 self.conversations[identifier] = conversation
                 return self.public(conversation)

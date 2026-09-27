@@ -48,11 +48,11 @@ subscription quota measurements.
 ## Max-mode tasks
 
 Ordinary work requests such as `Ok figure out what is wrong with Gemini` and
-`start a job: ...` go directly to the durable dispatcher. A server receipt names
+`fix the login button` go directly to the durable dispatcher. A server receipt names
 the job only after the queue write succeeds; claim updates name the actual worker,
 and the completed result is posted in the originating conversation. Model prose
 cannot acknowledge queue or inbox effects. Explicit small text writes such as
-`start a job: write hello to /tmp/example.txt` use Codex, Cursor or Claude with file
+`write hello to /tmp/example.txt` use Codex, Cursor or Claude with file
 tools; success requires the server to verify the changed file and its contents.
 
 Named multi-project requests create one durable job per project. For example,
@@ -70,7 +70,20 @@ Holds govern new chat submissions; they do not stop already queued/running jobs
 or restart services. Old conversations migrate user directives in order without
 dispatching them, and assistant text cannot restore a cleared hold.
 
-Operational replies use the current queue, lane locks and generation health from
+Status questions, including `is it moving along now?`, get a short server summary
+of live work: task label, worker/model and elapsed process time. Read-only `screen
+-ls` and `ps` observations include `lane-*` work and standalone CLI workers outside
+the queue. Queue claims, screen descendants and CLI wrappers are joined to avoid
+duplicates; live workers override cached ready lanes. Desktop apps and helpers
+are excluded. Open screens without a confirmed worker and unavailable checks are
+reported as unverified. A running process proves activity, not forward progress;
+an exact model variant is shown only when present in the process arguments.
+Task labels come from queue titles/projects or readable screen names, never raw
+process prompts. Unknown task details stay unknown. Internal job IDs, screen
+names, PIDs and finished-job history are shown only when requested. Ordinary chat
+never recommends special job syntax.
+
+Operational replies also use lane locks and generation health from
 `webchat/sessions/provider-health.json` plus `logs/webchat-failover.log`. The server
 identifies the actual answering provider on each attempt. Old chat errors never
 override recovered health, and configuration probes alone do not prove generation.
