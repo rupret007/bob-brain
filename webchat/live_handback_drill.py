@@ -105,7 +105,7 @@ def main():
     saved = backup_handback(ROOT)
     try:
         for index in (1, 2):
-            tag = f"r6-{index}"
+            tag = f"r7-{index}"
             round_evidence = {"ledger": ledger_round(ROOT, tag), "live": None}
             try:
                 round_evidence["live"] = live_round(url, tag)

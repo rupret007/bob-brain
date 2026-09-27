@@ -158,6 +158,26 @@ option { background: var(--surface-2); color: var(--text); }
 .notice { min-height: 20px; color: #ffd7b1; font-size: 13px; margin: 0 0 6px; flex-shrink: 0; }
 .notice:empty { min-height: 0; margin: 0; }
 
+.quick-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 0 2px 6px;
+  flex-shrink: 0;
+  -webkit-overflow-scrolling: touch;
+}
+.quick-chips .chip {
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.quick-chips .chip:active { transform: scale(0.98); }
+
 .composer {
   display: flex;
   align-items: flex-end;
@@ -167,8 +187,32 @@ option { background: var(--surface-2); color: var(--text); }
   border-radius: 22px;
   padding: 8px;
   flex-shrink: 0;
-  margin-bottom: max(8px, env(safe-area-inset-bottom));
+  margin-bottom: 6px;
   box-shadow: 0 -4px 24px color-mix(in srgb, var(--bg) 70%, transparent);
+}
+.bottom-tabs {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 4px 0 max(6px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+}
+.bottom-tab {
+  flex: 1;
+  min-height: 44px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  padding: 6px 4px;
+}
+.bottom-tab.active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 textarea {
   flex: 1;

@@ -30,7 +30,7 @@ from job_queue import council_job_description, parse_confirm, parse_council, par
 from actions import queue_once
 from music_notebook import get_project, list_projects, save_project
 from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
-from ops_panel import conductor_snapshot, load_live_ops
+from ops_panel import conductor_snapshot, draft_head_sha, load_live_ops
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -420,8 +420,10 @@ class Chat:
                 value["messages"][-1].pop("retry_at", None)
                 self.save(value)
                 user = next((m["content"] for m in reversed(value["messages"]) if m["role"] == "user"), "")
+                head = draft_head_sha(self.root)
+                commits = [head] if head else []
                 self.record_turn(ask=user, provider=answer.get("provider"),
-                            jobs=[], files=[], commits=[], confirmations=[], refusals=[],
+                            jobs=[], files=[], commits=commits, confirmations=[], refusals=[],
                             open_items=[user[:200]] if user else [])
         except AllDown as exc:
             with self.lock:
@@ -584,11 +586,12 @@ class Handler(BaseHTTPRequestHandler):
         if isinstance(data, str):
             data = data.encode()
         self.send_response(status)
+        extra = {"X-Bob-Webchat-Drills": "1"} if os.environ.get("BOB_WEBCHAT_DRILLS") == "1" else {}
         for key, value in {
             "Content-Type": content_type, "Content-Length": str(len(data)), "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
             "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
-            "X-Bob-Webchat": "1", **(headers or {}),
+            "X-Bob-Webchat": "1", **extra, **(headers or {}),
         }.items():
             self.send_header(key, value)
         self.end_headers()
@@ -803,7 +806,7 @@ def main():
             threading.Thread(target=server.shutdown, daemon=True).start()
         for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             signal.signal(signum, shutdown)
-        print(f"Bob web chat listening on http://{HOST}:{PORT}; password: {HERE / '.password'}", flush=True)
+        print(f"Bob web chat listening on http://{HOST}:{PORT} (auth via local session file; secret never logged)", flush=True)
         try:
             server.serve_forever(poll_interval=0.25)
         finally:

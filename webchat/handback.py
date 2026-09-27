@@ -176,6 +176,29 @@ def append_turn(root: Path, *, ask: str, provider: str | None, jobs: list[str], 
     refresh_summary(root)
 
 
+def compact_digest(root: Path, *, limit: int = 900) -> str:
+    """One-line + ranked bullets for every provider turn (failover context)."""
+    refresh_summary(root)
+    summary = read_slice(root, SUMMARY, 4000, tail=True)
+    state = read_slice(root, STATE, 1200)
+    parts: list[str] = []
+    if state.get("available"):
+        for line in state["text"].splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#"):
+                parts.append(stripped[:200])
+                break
+    if summary.get("available"):
+        for line in summary["text"].splitlines():
+            stripped = line.strip()
+            if stripped.startswith("- ") and not stripped.startswith("- _"):
+                parts.append(stripped[2:][:160])
+            if len(parts) >= 5:
+                break
+    text = " · ".join(parts) if parts else "(no handback digest yet)"
+    return text[:limit]
+
+
 def public_digest(root: Path, redact) -> dict:
     refresh_summary(root)
     state = read_slice(root, STATE, 2500)

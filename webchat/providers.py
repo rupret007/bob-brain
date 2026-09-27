@@ -295,6 +295,7 @@ class Providers:
                 ("conductor/STATUS.md", 3500, False),
                 ("conductor/handback/BOB-STATE.md", 4000, False),
                 ("conductor/handback/HANDBACK-SUMMARY.md", 3500, True),
+                ("conductor/handback/HANDBACK-LOG.md", 1800, True),
                 ("next-prompts/INDEX.md", 2500, False),
             )
         else:
@@ -312,6 +313,19 @@ class Providers:
                 ("conductor/webchat/MUSIC-HANDOFF.md", 2500, False),
             )
         parts = self._read_parts(rows)
+        try:
+            from handback import compact_digest
+
+            digest = compact_digest(self.root)
+            if digest.strip():
+                parts.append({
+                    "path": "conductor/handback/handoff-digest (every turn)",
+                    "modified": "live",
+                    "truncated": len(digest) > 900,
+                    "text": self.redact(digest),
+                })
+        except OSError:
+            pass
         if not lite:
             try:
                 from music_notebook import snapshot_for_prompt

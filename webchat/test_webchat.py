@@ -428,6 +428,19 @@ class ProviderTests(Fixture):
         self.assertLess(len(prompt), len(provider.prompt(value, fast=False)))
         self.assertNotIn("X" * 500, prompt)
 
+    def test_lite_snapshot_includes_handoff_digest(self):
+        folder = self.root / "conductor/handback"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "BOB-STATE.md").write_text("Running: council review\n")
+        (folder / "HANDBACK-LOG.md").write_text("")
+        (folder / "HANDBACK-SUMMARY.md").write_text("# HANDBACK-SUMMARY\n\n## Running\n- council review\n")
+        provider = self.provider()
+        value = self.chat.conversations[self.identifier]
+        value["messages"] = [{"role": "user", "content": "hey", "status": "done"}]
+        prompt = provider.prompt(value, fast=True)
+        self.assertIn("handoff-digest", prompt)
+        self.assertIn("council review", prompt.lower())
+
     def test_handoff_questions_use_full_snapshot_on_fast_path(self):
         from providers import needs_handoff_context
 

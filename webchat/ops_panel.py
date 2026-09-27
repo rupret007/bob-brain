@@ -10,6 +10,67 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 LIVE_OPS_MAX_AGE = 120.0
+_REFRESH_COOLDOWN = 45.0
+_last_refresh_spawn = 0.0
+
+
+def maybe_spawn_dashboard_refresh(root: Path) -> bool:
+    """Non-blocking dashboard-updater tick when dashboard.json is stale."""
+    global _last_refresh_spawn
+    now = time.time()
+    if now - _last_refresh_spawn < _REFRESH_COOLDOWN:
+        return False
+    dash = root / "conductor/dashboard.json"
+    if dash.exists() and now - dash.stat().st_mtime <= LIVE_OPS_MAX_AGE:
+        return False
+    lock = root / "conductor/locks/webchat-dashboard-refresh.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        handle = lock.open("a")
+        try:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (OSError, ImportError):
+            handle.close()
+            return False
+        handle.close()
+    except OSError:
+        return False
+    services = root / "conductor/services"
+    script = (
+        f"import sys; sys.path.insert(0, '{services}'); "
+        "from runtime import dashboard_cycle; dashboard_cycle()"
+    )
+    try:
+        subprocess.Popen(
+            [sys.executable, "-c", script],
+            cwd=str(root),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        _last_refresh_spawn = now
+        return True
+    except OSError:
+        return False
+
+
+def draft_head_sha(root: Path) -> str | None:
+    conductor = root / "conductor"
+    for base in (conductor, root):
+        if not (base / ".git").exists():
+            continue
+        try:
+            return subprocess.check_output(
+                ["git", "-C", str(base), "rev-parse", "--short", "HEAD"],
+                text=True,
+                timeout=5,
+            ).strip()
+        except (subprocess.SubprocessError, OSError):
+            continue
+    return None
 
 
 def _parse_generated_at(live_ops: dict) -> float | None:
@@ -48,6 +109,8 @@ def load_live_ops(root: Path, *, max_age: float = LIVE_OPS_MAX_AGE) -> dict:
             if live_ops and age <= max_age:
                 meta.update(source="dashboard.json", stale=False)
                 return {"live_ops": live_ops, "meta": meta}
+            meta["stale"] = True
+            maybe_spawn_dashboard_refresh(root)
         except (OSError, json.JSONDecodeError, ValueError):
             live_ops = {}
     try:

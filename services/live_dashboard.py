@@ -197,6 +197,20 @@ def build_live_ops(*, sessions: dict, jobs_map: dict, lanes: dict, spend: dict, 
     }
 
 
+def _structured_events(row: dict, tail: list[str], commit: dict, plain: str | None) -> list[dict]:
+    events: list[dict] = []
+    if plain:
+        events.append({"kind": "status", "text": plain})
+    for line in tail:
+        events.append({"kind": "log", "text": line})
+    if commit.get("sha"):
+        events.append({"kind": "commit", "sha": commit.get("sha"), "message": commit.get("message")})
+    stall = row.get("stall_state")
+    if stall:
+        events.append({"kind": "stall", "state": stall})
+    return events[:8]
+
+
 def public_live_ops(live_ops: dict) -> dict:
     """Strip local paths and ids for GitHub Pages payload."""
     jobs = []
@@ -214,6 +228,7 @@ def public_live_ops(live_ops: dict) -> dict:
         if isinstance(message, str):
             message = _allowlisted_line(message) or _redact_line(message)[:120]
             commit = {"sha": commit.get("sha"), "message": message}
+        events = _structured_events(row, tail[-3:], commit, plain)
         jobs.append({
             "engine": row.get("engine") or "worker",
             "stall_state": row.get("stall_state"),
@@ -221,6 +236,7 @@ def public_live_ops(live_ops: dict) -> dict:
             "elapsed_seconds": row.get("elapsed_seconds"),
             "plain_now": plain,
             "log_tail": tail[-3:],
+            "events": events,
             "last_commit": commit,
             "round": row.get("round"),
             "live_screen": row.get("live_screen"),

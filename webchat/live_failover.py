@@ -39,13 +39,14 @@ class Curl:
         self.headers.write_text("\n".join(headers) + "\n")
         self.headers.chmod(0o600)
         response = self.folder / "response"
-        argv = ["/usr/bin/curl", "--noproxy", "*", "-sS", "--max-time", "15", "-b", str(self.jar), "-c", str(self.jar), "-H", "@" + str(self.headers), "-o", str(response), "-w", "%{http_code}", self.url + path]
+        curl_timeout = int(os.environ.get("BOB_WEBCHAT_CURL_TIMEOUT", "45"))
+        argv = ["/usr/bin/curl", "--noproxy", "*", "-sS", "--max-time", str(curl_timeout), "-b", str(self.jar), "-c", str(self.jar), "-H", "@" + str(self.headers), "-o", str(response), "-w", "%{http_code}", self.url + path]
         payload = None
         if data is not None:
             argv += ["--data-binary", "@-"]
             payload = data if form else json.dumps(data)
         started = time.monotonic()
-        result = subprocess.run(argv, input=payload, text=True, capture_output=True, timeout=20)
+        result = subprocess.run(argv, input=payload, text=True, capture_output=True, timeout=curl_timeout + 10)
         if result.returncode:
             raise RuntimeError("curl transport failed: " + str(result.returncode))
         return int(result.stdout), response.read_text(), time.monotonic() - started
@@ -81,6 +82,16 @@ def main():
     args = parser.parse_args()
     os.umask(0o077)
     client = Curl(args.url)
+    drills = subprocess.run(
+        ["/usr/bin/curl", "--noproxy", "*", "-sS", "-D", "-", "-o", "/dev/null", args.url.rstrip("/") + "/login"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if "x-bob-webchat-drills: 1" not in drills.stdout.lower():
+        raise SystemExit(
+            "live_failover requires the server started with BOB_WEBCHAT_DRILLS=1 "
+            "(see conductor/webchat/README.md). Restart: "
+            "lsof -ti :8787 | xargs kill; BOB_WEBCHAT_DRILLS=1 bash conductor/webchat/start.sh"
+        )
     ids, evidence = [], {"url": args.url, "started_at": time.time(), "checks": []}
     drill_path = HERE / ".drill.json"
     assert not drill_path.exists(), "Existing drill configuration must be handled by its owner"

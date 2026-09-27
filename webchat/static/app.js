@@ -81,6 +81,47 @@ if ($("login-form")) {
   for (const tab of document.querySelectorAll(".sheet-tab")) {
     tab.addEventListener("click", () => showSheetTab(tab.dataset.sheet));
   }
+  function setBottomTab(name) {
+    for (const btn of document.querySelectorAll(".bottom-tab")) {
+      const on = btn.dataset.bottom === name;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-current", on ? "page" : "false");
+    }
+    if (name === "chat") {
+      setSheetOpen(false);
+      return;
+    }
+    const sheetMap = { ops: "ops", conductor: "conductor", song: "song", settings: "settings", lanes: "lanes", models: "lanes" };
+    const panel = sheetMap[name] || name;
+    setSheetOpen(true);
+    showSheetTab(panel === "settings" ? "settings" : panel);
+  }
+  for (const btn of document.querySelectorAll(".bottom-tab")) {
+    btn.addEventListener("click", () => setBottomTab(btn.dataset.bottom));
+  }
+  const chipActions = {
+    status: "From BOB-STATE and handback: what's running and what needs my yes?",
+    round: "start a job: Web Bob ready round (draft only, no merge)",
+    council: "run council on: score Web Bob mobile UX after bottom tab bar",
+    song: "",
+  };
+  $("quick-chips")?.addEventListener("click", (event) => {
+    const chip = event.target.closest("[data-chip]");
+    if (!chip) return;
+    const key = chip.dataset.chip;
+    if (key === "song") {
+      setBottomTab("song");
+      $("song-title")?.focus();
+      return;
+    }
+    const text = chipActions[key];
+    if (!text) return;
+    setBottomTab("chat");
+    const field = $("message");
+    field.value = text;
+    field.focus();
+    field.dispatchEvent(new Event("input"));
+  });
   $("handback-chip")?.addEventListener("click", () => {
     const sheetOpen = $("tools-sheet")?.classList.contains("open");
     if (!sheetOpen) { setSheetOpen(true); showSheetTab("ops"); }

@@ -258,5 +258,22 @@ class ServicesTest(unittest.TestCase):
         tail = public["running_jobs"][0]["log_tail"]
         self.assertEqual(len(tail), 1)
         self.assertIn("handback", tail[0].lower())
+        events = public["running_jobs"][0]["events"]
+        self.assertTrue(any(e.get("kind") == "log" for e in events))
+        self.assertTrue(any(e.get("kind") == "commit" for e in events))
+
+    def test_compact_handback_digest(self):
+        webchat = HERE.parent / "webchat"
+        sys.path.insert(0, str(webchat))
+        from handback import append_turn, compact_digest, refresh_summary
+        folder = self.core / "handback"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "BOB-STATE.md").write_text("# state\nRunning: nightly review\n")
+        append_turn(self.root, ask="status?", provider="gemini", jobs=[], files=[], commits=["deadbeef"],
+                    confirmations=[], refusals=[], open_items=[])
+        refresh_summary(self.root)
+        digest = compact_digest(self.root)
+        self.assertIn("nightly", digest.lower())
+        self.assertIn("status", digest.lower())
 
 if __name__=='__main__':unittest.main(verbosity=2)

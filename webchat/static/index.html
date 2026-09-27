@@ -36,6 +36,12 @@
     </div>
     <main id="messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions text"></main>
     <div id="notice" class="notice" role="status"></div>
+    <div class="quick-chips" id="quick-chips" role="toolbar" aria-label="Quick actions">
+      <button type="button" class="chip" data-chip="status">Status</button>
+      <button type="button" class="chip" data-chip="round">Start round</button>
+      <button type="button" class="chip" data-chip="council">Ask council</button>
+      <button type="button" class="chip" data-chip="song">New song</button>
+    </div>
     <form id="composer" class="composer">
       <label class="sr-only" for="message">Message Bob</label>
       <button type="button" id="mic" class="quiet icon-btn" aria-label="Voice input" title="Voice input">🎤</button>
@@ -44,6 +50,13 @@
       <button type="button" id="stop" hidden>Stop</button>
       <button type="submit" id="send" class="primary">Send <span aria-hidden="true">↑</span></button>
     </form>
+    <nav class="bottom-tabs" aria-label="Main">
+      <button type="button" class="bottom-tab active" data-bottom="chat" aria-current="page">Chat</button>
+      <button type="button" class="bottom-tab" data-bottom="ops">Jobs</button>
+      <button type="button" class="bottom-tab" data-bottom="lanes">Models</button>
+      <button type="button" class="bottom-tab" data-bottom="song">Songs</button>
+      <button type="button" class="bottom-tab" data-bottom="settings">Settings</button>
+    </nav>
   </div>
 
   <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
