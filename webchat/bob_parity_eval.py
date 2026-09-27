@@ -25,6 +25,9 @@ def _case(name: str, ok: bool, detail: str = "") -> dict:
 def run_eval(root: Path | None = None) -> dict:
     root = root or ROOT
     rows: list[dict] = []
+    from task_dispatch import parse_work, task_queue
+    rows.append(_case("dispatch natural work", parse_work("Can you fix the queue consumer?")[0] is not None))
+    rows.append(_case("worker allowlist", task_queue.worker_name("cursor-agent") == "cursor" and "grok" not in task_queue.WORKERS))
 
     rows.append(_case("status routing", state_ledger.try_status_reply(root, "status") is not None))
     rows.append(_case("handback skips cheap status", state_ledger.try_status_reply(root, "From BOB-STATE: what's running?") is None))

@@ -140,7 +140,7 @@ class ServicesTest(unittest.TestCase):
         self.assertNotEqual(result.returncode,0)
     def test_codex_has_commit_push_configuration(self):
         response='{"type":"item.completed","item":{"type":"agent_message","text":"evidence"}}\n'
-        with patch.object(lanes,'run',return_value=NS(returncode=0,stdout=response,stderr='')) as call,patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd:cmd):lanes.cli('codex','task',self.root,True,100)
+        with patch.object(lanes,'run',return_value=NS(returncode=0,stdout=response,stderr='')) as call,patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd,**kwargs:cmd):lanes.cli('codex','task',self.root,True,100)
         self.assertEqual(call.call_args.kwargs['cwd'],str(self.root));self.assertIn('--dangerously-bypass-approvals-and-sandbox',call.call_args.args[0])
     def test_watchdog_caps_restarts(self):
         now=time.time();runtime.HEARTBEATS.mkdir();sessions={'svc-'+n:'1.svc-'+n for n in runtime.INTERVALS}
@@ -172,6 +172,8 @@ class ServicesTest(unittest.TestCase):
         workspaces.git(self.core,'init','-b','draft/test');workspaces.git(self.core,'add','.')
         workspaces.git(self.core,'-c','user.name=Test','-c','user.email=test@localhost','commit','-m','good');workspaces.git(self.core,'tag','last-good')
         p.write_text('def broken(:\n')
+        workspaces.git(self.core,'add','services/example.py')
+        workspaces.git(self.core,'-c','user.name=Test','-c','user.email=test@localhost','commit','-m','broken committed release')
         result=command.run([sys.executable,str(self.core/'bootstrap.py'),'guard'],capture_output=True,text=True,timeout=15)
         self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(p.read_text(),'VALUE = 1\n');self.assertEqual(p.stat().st_mode & 0o222,0)
         self.assertTrue(list((self.core/'reviews/quarantine').rglob('ROLLBACK.txt')))
@@ -180,7 +182,7 @@ class ServicesTest(unittest.TestCase):
         lines=[{"type":"item.completed","item":{"type":"agent_message","text":"Working on it."}},
                {"type":"item.completed","item":{"type":"agent_message","text":"BLOCKER: actual failure"}}]
         output="\n".join(map(json.dumps,lines))
-        with patch.object(lanes,'run',return_value=NS(returncode=0,stdout=output,stderr='')),patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd:cmd):
+        with patch.object(lanes,'run',return_value=NS(returncode=0,stdout=output,stderr='')),patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd,**kwargs:cmd):
             self.assertEqual(lanes.cli('codex','task',self.root,True,100),'BLOCKER: actual failure')
 
     def test_incorrect_harvest_is_reopened_and_retry_does_not_move(self):
@@ -228,7 +230,7 @@ class ServicesTest(unittest.TestCase):
             lanes.ask('claude','x'*20000,purpose='review',timeout=500)
         self.assertLess(len(cli.call_args.args[1]),7000);self.assertEqual(cli.call_args.args[4],120)
         result=NS(returncode=1,stdout='{"is_error":true,"result":"rate_limit_error"}',stderr='')
-        with patch.object(lanes,'run',return_value=result),patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd:cmd):
+        with patch.object(lanes,'run',return_value=result),patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd,**kwargs:cmd):
             with self.assertRaises(RuntimeError):lanes.cli('claude','review',self.root,False,120)
         with patch.object(lanes,'cli') as cli:
             with self.assertRaisesRegex(RuntimeError,'cooldown'):lanes.ask('claude','review',purpose='review')

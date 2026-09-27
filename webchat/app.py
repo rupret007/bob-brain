@@ -45,9 +45,10 @@ from drill_fixture import try_bob_state_running_line
 from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
 from ops_panel import conductor_snapshot, draft_head_sha, enrich_live_ops, load_live_ops, maybe_spawn_dashboard_refresh
 from quiet_hours import in_quiet_hours
+from task_dispatch import TaskDispatch, parse_work, task_queue
 
-HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent.parent
+HERE = Path(os.environ.get("BOB_WEBCHAT_DIR", Path(__file__).resolve().parent)).resolve()
+ROOT = Path(os.environ.get("BOB_ROOT", HERE.parent.parent)).resolve()
 _STATE_LEDGER_DIR = ROOT / "conductor/state"
 if str(_STATE_LEDGER_DIR) not in sys.path:
     sys.path.insert(0, str(_STATE_LEDGER_DIR))
@@ -109,7 +110,7 @@ def password_at(folder):
     return password
 
 
-class Chat:
+class Chat(TaskDispatch):
     def __init__(self, folder=HERE, root=ROOT, providers=None):
         self.folder, self.root = folder, root
         folder.mkdir(parents=True, exist_ok=True)
@@ -151,6 +152,8 @@ class Chat:
                 self.save(value)
         if not self.conversations:
             self.new_conversation()
+        self.migrate_legacy_tasks()
+        self.reconcile_tasks()
 
     def save(self, conversation):
         conversation["updated_at"] = time.time()
@@ -216,6 +219,7 @@ class Chat:
 
     def history(self, identifier):
         with self.lock:
+            self.reconcile_tasks()
             return self.public(self.get(identifier))
 
     def worker_info(self, identifier):
@@ -280,7 +284,7 @@ class Chat:
             self.sessions[digest] = {"expires": now + SESSION_SECONDS, "csrf": secrets.token_urlsafe(32), "digest": digest}
             return token
 
-    def submit(self, identifier, text, request_id, provider="auto"):
+    def submit(self, identifier, text, request_id, provider="auto", worker=None):
         if provider not in ("auto", "claude"):
             raise RequestError(400, "Choose automatic routing or explicitly select Claude for a short critique.")
         if not isinstance(text, str) or not text.strip() or len(text) > 6000:
@@ -298,7 +302,8 @@ class Chat:
             conversation = copy.deepcopy(self.get(identifier))
             for message in conversation["messages"]:
                 if message.get("request_id") == request_id:
-                    if message["content"] != text or message.get("preferred_provider", "auto") != provider:
+                    if (message["content"] != text or message.get("preferred_provider", "auto") != provider
+                            or message.get("requested_worker") != worker):
                         raise RequestError(409, "That request ID was already used for a different message.")
                     return self.public(conversation)
             self.sweep_stuck()
@@ -309,12 +314,18 @@ class Chat:
             conversation["preferred_provider"] = provider
             conversation["messages"] += [
                 {"id": str(uuid.uuid4()), "request_id": request_id, "preferred_provider": provider, "role": "user", "content": text,
-                 "status": "done", "created_at": time.time()},
+                 "status": "done", "created_at": time.time(), "requested_worker": worker},
                 {"id": str(uuid.uuid4()), "request_id": request_id, "role": "assistant", "content": "", "status": "queued",
                  "provider": None, "attempts": [], "created_at": time.time()},
             ]
             if conversation["title"] == "New conversation":
                 conversation["title"] = text[:65]
+            work, route = parse_work(text)
+            started = parse_start(text)
+            if started or work or worker is not None:
+                conversation.pop("pending_job", None)
+                conversation.pop("pending_job_id", None)
+                return self.submit_task(conversation, started or work or text, request_id, worker or route)
             pending = conversation.get("pending_job")
             pending_council = conversation.get("pending_council")
             council_confirm, council_proposal = parse_council_confirm_proposal(text)
@@ -354,7 +365,7 @@ class Chat:
                         "Gemini, MiniMax, and Claude will critique; transcript lands under `conductor/reviews/`."
                     )
                     conversation["messages"][-1].update(status="done", content=reply,
-                        action_card={"id": request_id, "state": "queued", "executable": False, "reason": "Council queued (draft)"})
+                        action_card={"id": request_id, "state": "queued", "executable": False, "reason": "Council queued (draft)", "queue_id": result.get("file")})
                 else:
                     conversation["messages"][-1].update(status="done", content=result["error"],
                         action_card={"id": request_id, "state": "blocked", "executable": False, "reason": "Duplicate or blocked"})
@@ -394,21 +405,7 @@ class Chat:
                                 refusals=[blocked], open_items=[])
                     return self.public(conversation)
                 action_id = conversation.pop("pending_job_id", None) or str(uuid.uuid5(uuid.NAMESPACE_URL, identifier + pending))
-                result = queue_once(self.root, action_id, pending)
-                if result["ok"]:
-                    reply = f"Queued draft job `{result['file']}` on the mini. The scheduler picks up READY rows; nothing merged or sent."
-                    conversation["messages"][-1].update(status="done", content=reply,
-                        action_card={"id": request_id, "state": "queued", "executable": False, "reason": "Job queued (draft)"})
-                else:
-                    conversation["messages"][-1].update(status="done", content=result["error"],
-                        action_card={"id": request_id, "state": "blocked", "executable": False, "reason": "Duplicate or blocked"})
-                self.save(conversation)
-                self.conversations[identifier] = conversation
-                self.record_turn(ask=text, provider=None, jobs=[result.get("file", "")] if result.get("ok") else [],
-                            files=[result.get("path", "")] if result.get("ok") else [], commits=[],
-                            confirmations=[text[:200]] if result.get("ok") else [],
-                            refusals=[result.get("error", "blocked")] if not result.get("ok") else [], open_items=[])
-                return self.public(conversation)
+                return self.submit_task(conversation, pending, action_id)
             if pending and not job_confirm:
                 conversation.pop("pending_job", None)
             if parse_council_cancel(text) and pending_council:
@@ -660,6 +657,8 @@ class Chat:
             while not self.closing.wait(1):
                 try:
                     if not self.closing.is_set():
+                        self.migrate_legacy_tasks()
+                        self.reconcile_tasks()
                         self.retry_queued()
                         self.sweep_stuck()
                 except Exception:
@@ -980,6 +979,9 @@ class Chat:
             queue = {"text": "Queue not available yet.", "modified_at": None}
         maintenance = self.root / "conductor/MAINTENANCE"
         return {"screens": self.redact(screens), "queue": queue, "read_at": time.time(),
+                "dispatch": [{k: row.get(k) for k in ("id", "conversation_id", "status", "worker", "requested_worker",
+                             "created_at", "claimed_at", "started_at", "finished_at", "delivered_at", "attempts", "error")}
+                             for row in task_queue.tasks(self.root).values()],
                 "maintenance": self.redact(maintenance.read_text()[:1000]) if maintenance.exists() else None}
 
 
@@ -1221,7 +1223,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(202, {"ok": True, "spawned": spawned})
         if route == "/api/messages":
             data = self.body()
-            return self.send(202, chat.submit(data.get("conversation_id"), data.get("message"), data.get("request_id"), data.get("provider", "auto")))
+            return self.send(202, chat.submit(data.get("conversation_id"), data.get("message"), data.get("request_id"), data.get("provider", "auto"), worker=data.get("worker")))
         if route == "/api/cancel":
             chat.stop(self.body().get("conversation_id"))
             return self.send(202, {"ok": True})

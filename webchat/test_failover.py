@@ -261,7 +261,7 @@ class QueueTests(Fixture):
             time.sleep(.01)
         self.assertFalse(self.chat.worker_info(self.identifier))
 
-    def submit(self, text="Debug a safe memory question", request_id=None):
+    def submit(self, text="What is a safe memory question?", request_id=None):
         self.chat.submit(self.identifier, text, request_id or str(uuid.uuid4()))
         self.wait()
 
@@ -276,7 +276,7 @@ class QueueTests(Fixture):
         self.chat.close()
         self.chat = Chat(self.chat.folder, self.root, self.provider)
         self.assertEqual(self.chat.history(self.identifier)["messages"][-1]["status"], "waiting")
-        self.chat.submit(self.identifier, "Debug a safe memory question", request_id)
+        self.chat.submit(self.identifier, "What is a safe memory question?", request_id)
         self.assertEqual(len(self.chat.history(self.identifier)["messages"]), 2)
         with self.assertRaises(RequestError):
             self.chat.submit(self.identifier, "Different turn", str(uuid.uuid4()))
@@ -314,16 +314,22 @@ class QueueTests(Fixture):
         self.assertFalse(result["messages"][-1]["action_card"]["executable"])
 
     def test_confirmation_receipt_survives_failed_conversation_save(self):
-        self.submit("start a job: review the draft UI")
+        self.submit("do it")
         request_id = str(uuid.uuid4())
-        result = {"ok": True, "file": "one-job.md", "path": "next-prompts/one-job.md"}
-        with patch("actions.queue_draft", return_value=result) as queue:
-            with patch.object(self.chat, "save", side_effect=OSError("disk full")):
-                with self.assertRaises(OSError):
-                    self.chat.submit(self.identifier, "yes, start job", request_id)
-            self.chat.submit(self.identifier, "yes, start job", request_id)
-            self.chat.submit(self.identifier, "yes, start job", request_id)
-            self.assertEqual(queue.call_count, 1)
+        from task_dispatch import task_queue
+        original_save = self.chat.save
+        calls = []
+        def interrupted_save(value):
+            calls.append(1)
+            if len(calls) == 2:
+                raise OSError("disk full after enqueue")
+            original_save(value)
+        with patch.object(self.chat, "save", side_effect=interrupted_save):
+            with self.assertRaises(OSError):
+                self.chat.submit(self.identifier, "yes, start job", request_id)
+        self.chat.submit(self.identifier, "yes, start job", request_id)
+        self.chat.reconcile_tasks()
+        self.assertEqual(len(task_queue.tasks(self.root)), 1)
         self.assertEqual(self.chat.history(self.identifier)["messages"][-1]["action_card"]["state"], "queued")
 
     def test_ambiguous_action_and_crash_after_effect_never_execute_twice(self):

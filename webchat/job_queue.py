@@ -26,11 +26,46 @@ COUNCIL_CONFIRM_WITH_PROPOSAL = re.compile(
     re.I,
 )
 COUNCIL_CANCEL = re.compile(r"^(?:never mind|cancel|dismiss)(?:\s+council)?\s*$", re.I)
+DO_MORE = re.compile(
+    r"^(?:i )?need you to do more\.?$|^(?:please )?(?:you )?(?:do it|handle it)\.?$|"
+    r"^(?:don't|do not) tell me to (?:do it|run it|queue it) myself\.?$|"
+    r"^(?:queue|launch|run) (?:that|this|it)(?: repair| brief| task)?\.?$|"
+    r"^start (?:a )?(?:conductor )?job for me\.?$",
+    re.I,
+)
+READY_ROUND = re.compile(r"start\s+(?:a\s+)?web\s+bob\s+ready\s+round", re.I)
+DEFAULT_DO_MORE_GOAL = (
+    "Web Bob conductor follow-up: review READY queue, assign next draft lane, report SHA (draft only)"
+)
+DEFAULT_READY_ROUND_GOAL = (
+    "Web Bob READY phone round: fix lowest scores, failover both ways, council critique, "
+    "tests + RESULT on draft branch (no merge, no Grok)"
+)
 
 
 def parse_start(text: str) -> str | None:
     match = START.match(text.strip())
     return match.group(1).strip()[:4000] if match else None
+
+
+def parse_ready_round(text: str) -> str | None:
+    stripped = (text or "").strip()
+    if not stripped or len(stripped) > 400:
+        return None
+    if READY_ROUND.search(stripped):
+        return DEFAULT_READY_ROUND_GOAL
+    return None
+
+
+def parse_do_more(text: str) -> str | None:
+    stripped = (text or "").strip()
+    if not stripped or len(stripped) > 400:
+        return None
+    if DO_MORE.match(stripped):
+        return DEFAULT_DO_MORE_GOAL
+    if parse_start(stripped) or parse_council(stripped) or parse_ready_round(stripped):
+        return None
+    return None
 
 
 def parse_confirm(text: str) -> bool:
@@ -90,6 +125,74 @@ def council_job_description(question: str) -> str:
     )
 
 
+def count_ready_queue(root: Path) -> int:
+    """Count READY rows in next-prompts/INDEX.md (scheduler backlog)."""
+    return len(list_ready_queue_jobs(root, limit=999))
+
+
+def _safe_prompt_path(prompts_dir: Path, filename: str) -> Path | None:
+    name = (filename or "").strip()
+    if not name or "/" in name or "\\" in name or name.startswith("."):
+        return None
+    try:
+        resolved = (prompts_dir / name).resolve()
+        if prompts_dir.resolve() not in resolved.parents and resolved != prompts_dir.resolve():
+            return None
+    except OSError:
+        return None
+    return resolved if resolved.is_file() else None
+
+
+def _goal_from_prompt(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    text = path.read_text(errors="replace")
+    match = re.search(r"##\s*Task\s*\n+(.+?)(?:\n##|\Z)", text, re.I | re.S)
+    if match:
+        goal = " ".join(match.group(1).strip().split())
+        return goal[:200]
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            return stripped[:200]
+    return ""
+
+
+def list_ready_queue_jobs(root: Path, limit: int = 8) -> list[dict]:
+    """READY rows in next-prompts/INDEX.md with plain-English goal from the prompt body."""
+    index = root / "next-prompts" / "INDEX.md"
+    if not index.is_file():
+        return []
+    prompts = root / "next-prompts"
+    rows: list[dict] = []
+    for line in index.read_text(errors="replace").splitlines():
+        if not re.search(r"\|\s*READY\s*\|", line, re.I):
+            continue
+        file_match = re.search(r"`([^`]+\.md)`", line)
+        if not file_match:
+            continue
+        filename = file_match.group(1)
+        safe = _safe_prompt_path(prompts, filename)
+        goal = _goal_from_prompt(safe) if safe else ""
+        if not goal:
+            goal = "Draft job waiting for the scheduler"
+        rows.append({"id": filename, "goal": goal, "status": "READY", "position": len(rows) + 1})
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def queue_position_for_file(root: Path, filename: str) -> int | None:
+    """1-based position among READY rows in INDEX.md (scheduler order)."""
+    name = (filename or "").strip()
+    if not name:
+        return None
+    for row in list_ready_queue_jobs(root, limit=999):
+        if row.get("id") == name:
+            return int(row.get("position") or 0) or None
+    return None
+
+
 def running_screens(root: Path) -> str:
     try:
         result = subprocess.run(
@@ -147,4 +250,13 @@ def _write_queue(root, description, screens):
             atomic_text(index, text.rstrip() + "\n" + row)
     else:
         atomic_text(index, "# next-prompts queue\n\n| Pri | File | Project | Kind | Status | Notes |\n| --- | --- | --- | --- | --- | --- |\n" + row)
-    return {"ok": True, "file": filename, "path": str(path.relative_to(root)), "screen_hint": screens.strip()[:500] or "none"}
+    ready = count_ready_queue(root)
+    position = queue_position_for_file(root, filename) or ready
+    return {
+        "ok": True,
+        "file": filename,
+        "path": str(path.relative_to(root)),
+        "screen_hint": screens.strip()[:500] or "none",
+        "queue_ready_count": ready,
+        "queue_position": position,
+    }

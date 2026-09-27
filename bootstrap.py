@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import fcntl
 import signal
 import subprocess
 import sys
@@ -49,8 +50,22 @@ def validate():
 
 
 def gate():
+    # Several service/worker launches can arrive together. One guard owns
+    # validation/recovery, and an in-progress local edit is never rolled back.
+    with (HERE / ".bootstrap-guard.lock").open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        return _gate_locked()
+
+
+def _gate_locked():
     failures = validate()
     if failures:
+        failures = validate()  # A file may have been replaced during validation.
+    if failures:
+        rc, _, _ = bounded(["git", "-C", str(HERE), "diff", "--quiet", "HEAD", "--",
+                            "bootstrap.py", "PROMPT.md", "services", "launchd", "*.sh"])
+        if rc:
+            raise RuntimeError("core validation failed with local changes; launch deferred without rollback")
         rc, tracked, _ = bounded(["git", "-C", str(HERE), "ls-tree", "-r", "--name-only", "last-good"])
         if rc:
             raise RuntimeError("core invalid; no last-good tag; launch refused")

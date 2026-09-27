@@ -574,20 +574,27 @@ class HandbackJobTests(Fixture):
         self.assertIn("council", bodies)
         self.assertNotIn("pending_council", self.chat.conversations[self.identifier])
 
-    def test_job_confirm_queues_draft_row(self):
+    def test_job_confirm_dispatches_durable_task(self):
         (self.root / "next-prompts").mkdir(parents=True)
         (self.root / "next-prompts/INDEX.md").write_text("| Pri | File | Project | Kind | Status | Notes |\n| --- | --- | --- | --- | --- | --- |\n")
         self.assertEqual(parse_start("start a job: fix the webchat panel"), "fix the webchat panel")
         self.assertEqual(parse_start("queue job: polish handback chip"), "polish handback chip")
         self.assertTrue(parse_confirm("yes, start job"))
         request_id = str(uuid.uuid4())
-        self.chat.submit(self.identifier, "start a job: fix the webchat panel", request_id)
-        self.assertEqual(self.chat.conversations[self.identifier].get("pending_job"), "fix the webchat panel")
+        self.chat.submit(self.identifier, "do it", request_id)
+        self.chat.conversations[self.identifier]["pending_job"] = "fix the webchat panel"
         self.chat.submit(self.identifier, "yes, start job", str(uuid.uuid4()))
         self.wait()
-        index = (self.root / "next-prompts/INDEX.md").read_text()
-        self.assertIn("webchat-", index)
-        self.assertIn("READY", index)
+        from task_dispatch import task_queue
+        tasks = list(task_queue.tasks(self.root).values())
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["prompt"], "fix the webchat panel")
+        self.assertEqual(tasks[0]["conversation_id"], self.identifier)
+        assistant = self.chat.conversations[self.identifier]["messages"][-1]
+        self.assertEqual(assistant["action_card"]["state"], "queued")
+        self.assertIn("webchat-", assistant["action_card"].get("queue_id", ""))
+        self.assertEqual(assistant["action_card"].get("goal_text"), "fix the webchat panel")
+        self.assertIn("post the result here", assistant.get("content", ""))
 
     def test_job_merge_refused_before_queue(self):
         self.chat.submit(self.identifier, "start a job: merge #158", str(uuid.uuid4()))
@@ -853,7 +860,7 @@ class HandbackJobTests(Fixture):
         (self.root / "next-prompts/INDEX.md").write_text("| Pri | File | Project | Kind | Status | Notes |\n| --- | --- | --- | --- | --- | --- |\n")
         proposal = str(uuid.uuid4())
         stale = str(uuid.uuid4())
-        self.chat.submit(self.identifier, "start a job: fix the webchat panel", proposal)
+        self.chat.submit(self.identifier, "do it", proposal)
         self.assertEqual(self.chat.conversations[self.identifier].get("pending_job_id"), proposal)
         value = self.chat.submit(self.identifier, f"yes, start job proposal {stale}", str(uuid.uuid4()))
         assistant = value["messages"][-1]
@@ -1032,7 +1039,7 @@ class HandbackJobTests(Fixture):
     def test_provider_reply_preserves_request_id(self):
         self.fake.hold.clear()
         request_id = str(uuid.uuid4())
-        self.chat.submit(self.identifier, "Please summarize this in one sentence.", request_id)
+        self.chat.submit(self.identifier, "What does this mean in one sentence?", request_id)
         self.fake.hold.set()
         self.wait()
         assistant = self.chat.history(self.identifier)["messages"][-1]

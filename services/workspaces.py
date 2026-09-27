@@ -74,11 +74,17 @@ done
     return folder
 
 
-def sandbox_command(argv, workspace):
+def sandbox_command(argv, workspace, read_only=False):
     """macOS denies core writes even to same-user jobs using --force/bypass."""
     if os.uname().sysname != "Darwin":
         raise RuntimeError("the configured core write boundary requires macOS sandbox-exec")
-    denied = [CONDUCTOR, ROOT / "bin", ROOT / "next-prompts", ROOT / "BOB-HANDOFF.md"]
+    denied = [Path(__file__).resolve().parents[1], CONDUCTOR, ROOT / "bin", ROOT / "next-prompts", ROOT / "BOB-HANDOFF.md"]
+    if read_only:
+        denied.append(Path(workspace))
+        # A Git worktree's refs/index may live outside its working directory.
+        # Deny those writes too while allowing the CLI to maintain its own cache.
+        metadata = git(workspace, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        denied.append(Path(metadata))
     filters = " ".join("(subpath " + json.dumps(str(p.resolve())) + ")" for p in denied)
     policy = '(version 1) (allow default) (deny file-write* ' + filters + ')'
     policy += ' (deny file-read-data (literal ' + json.dumps(str(CONDUCTOR / "keys.env")) + '))'

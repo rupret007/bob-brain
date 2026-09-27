@@ -8,12 +8,16 @@ import os
 import shutil
 import subprocess
 import time
+import sys
 from pathlib import Path
 
 import budget
 from command import run
 from state import CONDUCTOR, alert, append_event, atomic_write, jobs, lock, read_json, write_json
 from workspaces import analysis_workspace, sandbox_command
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
+import task_queue
 
 LANES = budget.LANES
 CURSOR = Path.home() / ".local/bin/cursor-agent"
@@ -38,6 +42,9 @@ def refresh():
     previous = read_json(CONDUCTOR / "lanes.json", {})
     cooldowns = read_json(CONDUCTOR / "lane-cooldowns.json", {})
     data = {}
+    reserved = {r["worker"] for r in task_queue.tasks(CONDUCTOR.parent).values() if r["status"] in task_queue.ACTIVE}
+    reserved.update(r.get("engine") for r in jobs().values()
+                    if r.get("managed") and r["state"] in ("launched", "running"))
     for lane in LANES:
         state, detail = "ready", "available"
         if lane == "cursor":
@@ -68,6 +75,8 @@ def refresh():
                     pass
             except BlockingIOError:
                 state, detail = "busy", "lane lease held"
+        if state == "ready" and lane in reserved:
+            state, detail = "busy", "Web Bob worker claim reserved"
         data[lane] = {"state": state, "detail": detail, "checked_at": time.time(),
                       "retry_at": cooldown.get("retry_at", 0)}
         alert("lane-" + lane, lane + ": " + detail if state in ("needs_login", "needs_key", "unavailable", "budget_exhausted", "cooldown") else None)
@@ -86,9 +95,10 @@ def defer_lane(lane, reason):
 
 def cli(lane, prompt, cwd, coding, timeout):
     if lane == "codex":
+        # sandbox-exec cannot be nested on macOS. The outer boundary below
+        # enforces read-only analysis and protects the live core for all tasks.
         argv = ["codex", "--no-daemon", "exec", "--json", "--ephemeral", "--ignore-user-config",
-                "--dangerously-bypass-approvals-and-sandbox"] if coding else [
-                "codex", "--no-daemon", "exec", "--json", "--ephemeral", "--ignore-user-config", "-s", "read-only"]
+                "--dangerously-bypass-approvals-and-sandbox"]
         argv += ["-c", 'model_reasoning_effort="low"', prompt]
     elif lane == "claude":
         argv = ["claude", "-p", prompt, "--output-format", "json"]
@@ -97,7 +107,7 @@ def cli(lane, prompt, cwd, coding, timeout):
         argv = [str(CURSOR), "-p", prompt, "--output-format", "json", "--trust"]
         argv += ["--force"] if coding else ["--mode", "ask"]
     try:
-        result = run(sandbox_command(argv, cwd), cwd=str(cwd), env=clean_env(),
+        result = run(sandbox_command(argv, cwd, read_only=not coding), cwd=str(cwd), env=clean_env(),
                      capture_output=True, text=True, timeout=timeout)
     except Exception:
         budget.record_cli(lane, [], False, "coding" if coding else "analysis")
@@ -150,6 +160,9 @@ def ask(lane, prompt, *, cwd=None, coding=False, timeout=300, purpose="analysis"
         raise RuntimeError(lane + " rate-limit cooldown active")
     if not locked:
         with lock("lane-" + lane, blocking=False):
+            if any(r["worker"] == lane and r["status"] in task_queue.ACTIVE
+                   for r in task_queue.tasks(CONDUCTOR.parent).values()):
+                raise BlockingIOError("lane reserved for a Web Bob worker")
             if any(r.get("engine") == lane and r["state"] in ("launched", "running")
                    and r.get("managed") for r in jobs().values()):
                 raise BlockingIOError("lane reserved for a scheduled worker")
