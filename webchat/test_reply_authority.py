@@ -29,8 +29,18 @@ class AuthorityTests(unittest.TestCase):
         for claim in ("I've queued a task.", "Started on Claude — job abc123.",
                       "No server-confirmed job was created by this reply. Send `start a job: <task>` to create a tracked job."):
             with self.subTest(claim=claim):
-                answer = enforce(Path('/unused'), "Keep replies short", dict(content="Got it — I’ll keep it short.\n\n" + claim, provider="gemini"))
+                answer = enforce(Path('/unused'), "Please be brief", dict(content="Got it — I’ll keep it short.\n\n" + claim, provider="gemini"))
                 self.assertEqual(answer, "Got it — I’ll keep it short.")
+
+    def test_style_preference_never_gets_an_unsolicited_status_report(self):
+        answer = enforce(Path('/unused'), "Keep replies short and friendly.",
+                         dict(content="Hey! All quiet — no jobs running, ledger's synced. Nothing to report right now.", provider="claude"))
+        self.assertEqual(answer, "Got it.")
+
+    def test_no_work_notices_do_not_leak_into_casual_replies(self):
+        for notice in ("No jobs running.", "No task has been queued.", "Nothing was started."):
+            answer = enforce(Path('/unused'), "Hi Bob", dict(content="Hi Jeff! " + notice, provider="claude"))
+            self.assertEqual(answer, "Hi Jeff!")
 
     def test_identity_and_health_are_derived_from_server_not_model(self):
         with tempfile.TemporaryDirectory() as folder:

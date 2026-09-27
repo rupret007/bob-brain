@@ -27,7 +27,7 @@ CODING = re.compile(r"\b(?:fix|repair|implement|refactor|debug|build|run|execute
 FOLLOW_UP = re.compile(r"^(?:go(?: ahead)?|do it|handle it|yes(?: please)?|let['’]s do it)[.!?]*$", re.I)
 CHAT_STYLE = re.compile(r"^" + POLITE + r"(?:keep|make)\s+(?:your\s+)?(?:replies|answers|responses)\s+"
                         r"(?:short(?:er)?|brief(?:er)?|concise|friendly|friendlier|plain(?:er)?|natural)\b", re.I)
-PROPOSAL = re.compile(r"^(?:I can|Shall I|Want me to|Would you like me to)\s+(.+?)[.!?]*$", re.I)
+PROPOSAL = re.compile(r"^(?:I can|I could|Happy to|Shall I|Want me to|Would you like me to)\s+(.+?)[.!?]*$", re.I)
 
 
 def needs_task_detail(prompt):
@@ -51,10 +51,13 @@ def followup_work(conversation):
     last = previous[-1]
     if last.get("role") != "assistant" or last.get("status") != "done" or last.get("action_card") or last.get("task_id"):
         return None, "auto"
-    proposal = PROPOSAL.fullmatch(last.get("content", "").strip())
+    text = last.get("content", "").strip()
+    text = re.sub(r"\s*(?:[.!]|[—–])\s*(?:want me to|shall I|should I)(?:\s+(?:go ahead|start|do (?:it|that)|prep a review job for it))?\?\s*$", "", text, flags=re.I)
+    proposal = PROPOSAL.fullmatch(text)
     if not proposal or re.search(r"\bor\b|\n|[.!?]\s", proposal[1], re.I):
         return None, "auto"
-    return parse_work(proposal[1])
+    prompt = re.sub(r"^take a look at\b", "review", proposal[1], flags=re.I)
+    return parse_work(prompt)
 
 
 def parse_work(text):

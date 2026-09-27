@@ -955,7 +955,8 @@ class HandbackJobTests(Fixture):
         (self.root / "next-prompts/INDEX.md").write_text("| Pri | File | Project | Kind | Status | Notes |\n| --- | --- | --- | --- | --- | --- |\n")
         proposal = str(uuid.uuid4())
         stale = str(uuid.uuid4())
-        self.chat.submit(self.identifier, "do it", proposal)
+        self.chat.conversations[self.identifier].update(pending_job="review PR #161", pending_job_id=proposal)
+        self.chat.save(self.chat.conversations[self.identifier])
         self.assertEqual(self.chat.conversations[self.identifier].get("pending_job_id"), proposal)
         value = self.chat.submit(self.identifier, f"yes, start job proposal {stale}", str(uuid.uuid4()))
         assistant = value["messages"][-1]

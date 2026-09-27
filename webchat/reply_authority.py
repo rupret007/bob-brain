@@ -12,7 +12,8 @@ QUEUE_CLAIM = re.compile(
     r"\b(?:codex|claude|cursor|gemini|minimax)(?:['’]s|\s+(?:is|has started))\s+(?:working|running|reviewing|fixing|on it)\b|"
     r"\b(?:codex|claude|cursor|gemini|minimax)\s+has\s+(?:your|the|this)\s+(?:job|task|work|review)\b", re.I)
 NO_JOB_NOTICE = re.compile(
-    r"\bno (?:server[- ]confirmed )?(?:job|task) (?:was|has been) (?:created|queued|started)\b|"
+    r"\bno (?:server[- ]confirmed )?(?:jobs?|tasks?)\s+(?:(?:was|were|has been|are)\s+)?(?:created|queued|started|running)\b|"
+    r"\b(?:nothing|no work) (?:was |is |has been )?(?:queued|started|running)\b|"
     r"\b(?:send|say|use)\s+[`\"']?start a job\s*:", re.I)
 STATUS_QUESTION = re.compile(
     r"\b(?:status|resources?|workers? doing|each (?:worker|model)|all (?:workers|models)|"
@@ -41,6 +42,11 @@ def operational_reply(root, provider):
 
 def enforce(root, text, answer):
     content = answer["content"]
+    from task_dispatch import CHAT_STYLE, PREAMBLE
+    # A style preference calls for a simple acknowledgement, never a status
+    # report from operational snapshots included in the model context.
+    if CHAT_STYLE.match(PREAMBLE.sub("", text.strip())):
+        return "Got it."
     if STATUS_QUESTION.search(text):
         content = operational_reply(root, answer["provider"])
     else:

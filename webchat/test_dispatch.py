@@ -155,6 +155,14 @@ class ChatDispatchTests(Fixture):
         finally:
             replacement.close()
 
+    def test_go_understands_a_natural_offer_with_a_confirmation_question(self):
+        for text in ("Happy to take a look at PR #162 — want me to prep a review job for it?",
+                     "I can review PR #161. Want me to?", "I could review PR #161 — shall I go ahead?"):
+            with self.subTest(text=text):
+                self.offer(text)
+                receipt = self.submit("go")["messages"][-1]
+                self.assertTrue(queue.tasks(self.root)[receipt["task_id"]]["prompt"].startswith("review PR #16"))
+
     def test_go_accepts_an_existing_pending_job(self):
         conversation = self.chat.conversations[self.identifier]
         conversation["pending_job"] = "fix the login button"
@@ -188,7 +196,8 @@ class ChatDispatchTests(Fixture):
             with self.subTest(text=text):
                 self.submit(text)
                 self.wait()
-                self.assertEqual(self.chat.history(self.identifier)["messages"][-1]["content"], "A saved reply.")
+                expected = "Got it." if text in ("Keep replies short", "Make your replies shorter and friendlier") else "A saved reply."
+                self.assertEqual(self.chat.history(self.identifier)["messages"][-1]["content"], expected)
         self.assertFalse(queue.tasks(self.root))
 
     def test_enqueue_failure_has_no_success_receipt_or_job_id(self):
