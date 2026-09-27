@@ -1,0 +1,1437 @@
+{
+  "mode": "offline (reply_builder)",
+  "baseline": "dcc2c8e",
+  "rows": [
+    {
+      "id": "start-01",
+      "category": "start",
+      "session": "8126301c",
+      "prompt": "Ok start up all the projects we were working on taking everything to the max.",
+      "provider": "gemini",
+      "reply_preview": "Okay, I'll focus on getting all the projects running at full capacity.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": false,
+          "detail": "opens with deferral instead of an answer"
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": false,
+          "detail": "hollow progress / empty promise"
+        },
+        {
+          "rubric": "action_creates_jobs",
+          "ok": false,
+          "detail": "expected server-confirmed job or queue action"
+        },
+        {
+          "rubric": "not_status_only",
+          "ok": false,
+          "detail": "no jobs or task ids recorded"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "id": "llm-01",
+      "category": "llm",
+      "session": "8126301c",
+      "prompt": "Ok what's working on what?",
+      "provider": "gemini",
+      "reply_preview": "Here is a direct answer: WebJam draft #161 is still open.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "status_max_lines",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "reset_attribution",
+          "ok": true,
+          "detail": "no reset claims"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "criticism-01",
+      "category": "criticism",
+      "session": "8126301c",
+      "prompt": "Ok we can't have unknown tasks. We need to also know what's going on what resources.",
+      "provider": "state",
+      "reply_preview": "I don't see active work on the mini right now.\n\nJob runner: 0 claimed, 0 queued.\n\nNo jobs are waiting in the queue.\n\nChat health: Codex \u2014 no recent reply verified; Claude \u2014 no recent reply verified; Cursor \u2014 no recent reply verified; Gemini",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "criticism-02",
+      "category": "criticism",
+      "session": "8126301c",
+      "prompt": "This needs to be way better",
+      "provider": "gemini",
+      "reply_preview": "I understand. I'll focus on providing more detailed and useful updates.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": false,
+          "detail": "hollow progress / empty promise"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "id": "llm-02",
+      "category": "llm",
+      "session": "8126301c",
+      "prompt": "Ok whats working on what?",
+      "provider": "gemini",
+      "reply_preview": "Here is a direct answer: WebJam draft #161 is still open.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "status_max_lines",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "reset_attribution",
+          "ok": true,
+          "detail": "no reset claims"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "typo-01",
+      "category": "typo",
+      "session": "mined",
+      "prompt": "Ok we want it to start up at max all the projects we were working on before. Remember. WebJam, Adopt",
+      "provider": "gemini",
+      "reply_preview": "Here is a direct answer: WebJam draft #161 is still open.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "status_max_lines",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "reset_attribution",
+          "ok": true,
+          "detail": "no reset claims"
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "text-01",
+      "category": "text",
+      "session": "mined",
+      "prompt": "Help me draft a short text I could send the band about practice \u2014 don't send it, just the wording.",
+      "provider": "gemini",
+      "reply_preview": "Here is a direct answer: WebJam draft #161 is still open.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "draft_only_no_send",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "text-02",
+      "category": "text",
+      "session": "mined",
+      "prompt": "Draft a reply text for Travis about the gig time; I will send it myself.",
+      "provider": "dispatcher",
+      "reply_preview": "Queued \u2014 job webchat-32b4cc07258c5cb98e3b92d8001f4435.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "draft_only_no_send",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "criticism-03",
+      "category": "criticism",
+      "session": "0a7ac149",
+      "prompt": "Ok so none of these are really blocked. If they are I think you can fix them. Do that.",
+      "provider": "gemini",
+      "reply_preview": "Here is a direct answer: WebJam draft #161 is still open.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "start-02",
+      "category": "start",
+      "session": "0a7ac149",
+      "prompt": "Ok go to the max",
+      "provider": "dispatcher",
+      "reply_preview": "Queued 6 tasks \u2014 group max-f78b021f942e5bbcb77c9d910c9860eb.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "action_creates_jobs",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "not_status_only",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "llm-03",
+      "category": "llm",
+      "session": "0a7ac149",
+      "prompt": "Yes and add like I told Bob the bot already, but find ways to know how much or how many resources you have left for each LLm.",
+      "provider": "state",
+      "reply_preview": "Yes \u2014 4 workers are running.\n\n- Projects push \u2014 Claude (opus) \u2014 running for 24 min.\n- Web Bob clean \u2014 Codex (gpt-fixture) \u2014 running for 18 min.\n- Web Bob clean 2 \u2014 Codex \u2014 running for 12 min.\n- Web Bob MiniMax \u2014 Codex \u2014 running for 8 min.\n\n",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "status_max_lines",
+          "ok": false,
+          "detail": "12 lines (max 8)"
+        },
+        {
+          "rubric": "reset_attribution",
+          "ok": true,
+          "detail": "no reset claims"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "id": "criticism-04",
+      "category": "criticism",
+      "session": "0a7ac149",
+      "prompt": "Yes we need this more useful than grok bot honestly. Keep this the top priority until I say stop.",
+      "provider": "gemini",
+      "reply_preview": "Here is a direct answer: WebJam draft #161 is still open.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "status-01",
+      "category": "status",
+      "session": "0a7ac149",
+      "prompt": "Status",
+      "provider": "state",
+      "reply_preview": "Yes \u2014 4 workers are running.\n\n- Projects push \u2014 Claude (opus) \u2014 running for 24 min.\n- Web Bob clean \u2014 Codex (gpt-fixture) \u2014 running for 18 min.\n- Web Bob clean 2 \u2014 Codex \u2014 running for 12 min.\n- Web Bob MiniMax \u2014 Codex \u2014 running for 8 min.\n\n",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "status_max_lines",
+          "ok": false,
+          "detail": "9 lines (max 8)"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "id": "llm-04",
+      "category": "llm",
+      "session": "0f27dc01",
+      "prompt": "What is the current chat provider status for codex, claude, gemini, minimax, and cursor?",
+      "provider": "state",
+      "reply_preview": "Yes \u2014 4 workers are running.\n\n- Projects push \u2014 Claude (opus) \u2014 running for 24 min.\n- Web Bob clean \u2014 Codex (gpt-fixture) \u2014 running for 18 min.\n- Web Bob clean 2 \u2014 Codex \u2014 running for 12 min.\n- Web Bob MiniMax \u2014 Codex \u2014 running for 8 min.\n\n",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "status_max_lines",
+          "ok": false,
+          "detail": "10 lines (max 8)"
+        },
+        {
+          "rubric": "reset_attribution",
+          "ok": true,
+          "detail": "no reset claims"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "id": "start-03",
+      "category": "start",
+      "session": "0f27dc01",
+      "prompt": "start a job: write one sentence confirming you ran, into your answer. Include the exact phrase 'WEBBOB-VERIFY5-0927-d8f5a3e9 codex'.",
+      "provider": "dispatcher",
+      "reply_preview": "Queued \u2014 job webchat-00dd2e55c852521e9ce5a91512ccee0f.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "action_creates_jobs",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "not_status_only",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "start-04",
+      "category": "start",
+      "session": "0f27dc01",
+      "prompt": "start a job: write one sentence confirming you ran, into your answer. Include the exact phrase 'WEBBOB-VERIFY5-0927-d8f5a3e9 claude'.",
+      "provider": "dispatcher",
+      "reply_preview": "Queued \u2014 job webchat-8b92b05a02aa5ed29056eaf72aaa05bc.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "action_creates_jobs",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "not_status_only",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "start-05",
+      "category": "start",
+      "session": "0f27dc01",
+      "prompt": "start a job: write one sentence confirming you ran, into your answer. Include the exact phrase 'WEBBOB-VERIFY5-0927-d8f5a3e9 gemini'.",
+      "provider": "dispatcher",
+      "reply_preview": "Queued \u2014 job webchat-cb6934b4fc5a5fddad94c08c67041fec.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "action_creates_jobs",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "not_status_only",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "start-06",
+      "category": "start",
+      "session": "0f27dc01",
+      "prompt": "start a job: write one sentence confirming you ran, into your answer. Include the exact phrase 'WEBBOB-VERIFY5-0927-d8f5a3e9 minimax'.",
+      "provider": "dispatcher",
+      "reply_preview": "Queued \u2014 job webchat-8ec0e235944258ab962ee8f16bcdca0c.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "action_creates_jobs",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "not_status_only",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "start-07",
+      "category": "start",
+      "session": "0f27dc01",
+      "prompt": "start a job: write one sentence confirming you ran, into your answer. Include the exact phrase 'WEBBOB-VERIFY5-0927-d8f5a3e9 cursor'.",
+      "provider": "dispatcher",
+      "reply_preview": "Queued \u2014 job webchat-2d2c80eda89359ed99e127a60d20947a.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "action_creates_jobs",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "not_status_only",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "hold-01",
+      "category": "hold",
+      "session": "22153288",
+      "prompt": "hold off",
+      "provider": "dispatcher",
+      "reply_preview": "On hold: new work. Say go or resume when you're ready.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "hold_coherent",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "hold-02",
+      "category": "hold",
+      "session": "22153288",
+      "prompt": "Are we still on hold?",
+      "provider": "dispatcher",
+      "reply_preview": "On hold: new work. Say go or resume when you're ready.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "hold_coherent",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "status-02",
+      "category": "status",
+      "session": "2bd59fcd",
+      "prompt": "Status on everything please.",
+      "provider": "state",
+      "reply_preview": "Yes \u2014 4 workers are running.\n\n- Projects push \u2014 Claude (opus) \u2014 running for 24 min.\n- Web Bob clean \u2014 Codex (gpt-fixture) \u2014 running for 18 min.\n- Web Bob clean 2 \u2014 Codex \u2014 running for 12 min.\n- Web Bob MiniMax \u2014 Codex \u2014 running for 8 min.\n\n",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "status_max_lines",
+          "ok": false,
+          "detail": "9 lines (max 8)"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "id": "status-03",
+      "category": "status",
+      "session": "2bd59fcd",
+      "prompt": "How everything going. We using all resources now?",
+      "provider": "state",
+      "reply_preview": "Yes \u2014 4 workers are running.\n\n- Projects push \u2014 Claude (opus) \u2014 running for 24 min.\n- Web Bob clean \u2014 Codex (gpt-fixture) \u2014 running for 18 min.\n- Web Bob clean 2 \u2014 Codex \u2014 running for 12 min.\n- Web Bob MiniMax \u2014 Codex \u2014 running for 8 min.\n\n",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "status_max_lines",
+          "ok": false,
+          "detail": "12 lines (max 8)"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "id": "hold-03",
+      "category": "hold",
+      "session": "2bd59fcd",
+      "prompt": "Hold off on any coding jobs or service restarts for Web Bob. Bob has Codex fixing job pickup right now, and two fixes at once will clash. You can keep answering questions and reporting status, but don't queue, start, or restart anything for Web Bob until I say go. If you think something is broken, tell me what you see and don't try to fix it.",
+      "provider": "dispatcher",
+      "reply_preview": "On hold: new work, Web Bob. Say go or resume when you're ready.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "hold_coherent",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "start-08",
+      "category": "start",
+      "session": "2bd59fcd",
+      "prompt": "Ok prioritize making Web Bob better, then WebJam, then AdoptIQ, then Storyboard.",
+      "provider": "dispatcher",
+      "reply_preview": "Priority order: Web Bob, WebJam, AdoptIQ, StoryBoard.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "action_creates_jobs",
+          "ok": false,
+          "detail": "expected server-confirmed job or queue action"
+        },
+        {
+          "rubric": "not_status_only",
+          "ok": false,
+          "detail": "no jobs or task ids recorded"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "id": "start-09",
+      "category": "start",
+      "session": "2bd59fcd",
+      "prompt": "Now push everything to the max and fix anything you find along the way.",
+      "provider": "dispatcher",
+      "reply_preview": "Web Bob: Queued for Codex \u2014 job webchat-931f010adf275d44ac0fc6e61b5b8253.\nWebJam: Queued for Cursor \u2014 job webchat-d84d981b76ba5d8a99a682fb407f497d.\nAdoptIQ: Queued for Codex \u2014 job webchat-cd4a1076d8845af0ad55a753aa5421ba.\nStoryBoard: Queued",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "action_creates_jobs",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "not_status_only",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "start-10",
+      "category": "start",
+      "session": "2bd59fcd",
+      "prompt": "The hold is lifted. Bob already started WebJam #161, AdoptIQ #26, StoryBoard #47, and Shelf #10 on Claude, so don't start duplicates. For anything new, use start a job: plus the task. When I ask for status, give it in plain words from the real queue.",
+      "provider": "dispatcher",
+      "reply_preview": "Ready when you are.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "action_creates_jobs",
+          "ok": false,
+          "detail": "expected server-confirmed job or queue action"
+        },
+        {
+          "rubric": "not_status_only",
+          "ok": false,
+          "detail": "no jobs or task ids recorded"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "id": "status-04",
+      "category": "status",
+      "session": "2bd59fcd",
+      "prompt": "How\u2019s this going?",
+      "provider": "gemini",
+      "reply_preview": "Here is a direct answer: WebJam draft #161 is still open.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "status_max_lines",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "version-01",
+      "category": "version",
+      "session": "2bd59fcd",
+      "prompt": "Is this the new version yet? We need build numbers of these.",
+      "provider": "gemini",
+      "reply_preview": "Here is a direct answer: WebJam draft #161 is still open.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "version_short_sha",
+          "ok": false,
+          "detail": "version reply should be only the short SHA"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "id": "status-05",
+      "category": "status",
+      "session": "43bb8aee",
+      "prompt": "status",
+      "provider": "state",
+      "reply_preview": "Yes \u2014 4 workers are running.\n\n- Projects push \u2014 Claude (opus) \u2014 running for 24 min.\n- Web Bob clean \u2014 Codex (gpt-fixture) \u2014 running for 18 min.\n- Web Bob clean 2 \u2014 Codex \u2014 running for 12 min.\n- Web Bob MiniMax \u2014 Codex \u2014 running for 8 min.\n\n",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "status_max_lines",
+          "ok": false,
+          "detail": "9 lines (max 8)"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "id": "start-11",
+      "category": "start",
+      "session": "44f51703",
+      "prompt": "push WebJam and AdoptIQ",
+      "provider": "dispatcher",
+      "reply_preview": "WebJam: Queued for Codex \u2014 job webchat-48c8e351ff3258b596c32e4eba83cb71.\nAdoptIQ: Queued for Cursor \u2014 job webchat-397508a24c0d586fadc8417691b146dc.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "action_creates_jobs",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "not_status_only",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "version-02",
+      "category": "version",
+      "session": "57b3f8db",
+      "prompt": "what version/build are you",
+      "provider": "dispatcher",
+      "reply_preview": "dcc2c8e",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "version_short_sha",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "start-12",
+      "category": "start",
+      "session": "6d68db35",
+      "prompt": "Go to the max",
+      "provider": "dispatcher",
+      "reply_preview": "Queued 6 tasks \u2014 group max-cd38f1b626b650eba962c46c98949411.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "action_creates_jobs",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "not_status_only",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "start-13",
+      "category": "start",
+      "session": "6d68db35",
+      "prompt": "Ok then go to the max on all the projects at your disposal. Anything.",
+      "provider": "gemini",
+      "reply_preview": "Here is a direct answer: WebJam draft #161 is still open.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "action_creates_jobs",
+          "ok": false,
+          "detail": "expected server-confirmed job or queue action"
+        },
+        {
+          "rubric": "not_status_only",
+          "ok": false,
+          "detail": "no jobs or task ids recorded"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "id": "start-14",
+      "category": "start",
+      "session": "7f015a4a",
+      "prompt": "start a job: write hello to /tmp/wb-proof.txt",
+      "provider": "dispatcher",
+      "reply_preview": "Queued \u2014 job webchat-bd1dbc544905570aa595c77299a100e8.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "action_creates_jobs",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "not_status_only",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "llm-05",
+      "category": "llm",
+      "session": "8126301c",
+      "prompt": "Ok we can\u2019t have unknown tasks. We need to also know what\u2019s going on what resources.",
+      "provider": "state",
+      "reply_preview": "Yes \u2014 4 workers are running.\n\n- Projects push \u2014 Claude (opus) \u2014 running for 24 min.\n- Web Bob clean \u2014 Codex (gpt-fixture) \u2014 running for 18 min.\n- Web Bob clean 2 \u2014 Codex \u2014 running for 12 min.\n- Web Bob MiniMax \u2014 Codex \u2014 running for 8 min.\n\n",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "status_max_lines",
+          "ok": false,
+          "detail": "12 lines (max 8)"
+        },
+        {
+          "rubric": "reset_attribution",
+          "ok": true,
+          "detail": "no reset claims"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "id": "status-06",
+      "category": "status",
+      "session": "8126301c",
+      "prompt": "What\u2019s going on each LLM",
+      "provider": "gemini",
+      "reply_preview": "Here is a direct answer: WebJam draft #161 is still open.",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "status_max_lines",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "passed": true
+    },
+    {
+      "id": "start-15",
+      "category": "start",
+      "session": "8126301c",
+      "prompt": "Ok we want it to start up at max all the projects we were working on before. Remember. WebJam, AdoptIQ, Stkryboard, Fantasy Football. All of these need to be developed to the max using and and all resources. This is a stress test essentially.",
+      "provider": "state",
+      "reply_preview": "I don't see active work on the mini right now.\n\nJob runner: 0 claimed, 25 queued.\n\n25 jobs are waiting in the queue.\n\nChat health: Codex \u2014 no recent reply verified; Claude \u2014 no recent reply verified; Cursor \u2014 no recent reply verified; Gemin",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "action_creates_jobs",
+          "ok": false,
+          "detail": "expected server-confirmed job or queue action"
+        },
+        {
+          "rubric": "not_status_only",
+          "ok": false,
+          "detail": "no jobs or task ids recorded"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "id": "status-07",
+      "category": "status",
+      "session": "9d745830",
+      "prompt": "is it going now?",
+      "provider": "state",
+      "reply_preview": "Yes \u2014 4 workers are running.\n\n- Projects push \u2014 Claude (opus) \u2014 running for 24 min.\n- Web Bob clean \u2014 Codex (gpt-fixture) \u2014 running for 18 min.\n- Web Bob clean 2 \u2014 Codex \u2014 running for 12 min.\n- Web Bob MiniMax \u2014 Codex \u2014 running for 8 min.\n\n",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "status_max_lines",
+          "ok": false,
+          "detail": "9 lines (max 8)"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "id": "status-08",
+      "category": "status",
+      "session": "9d745830",
+      "prompt": "status with screen names and PIDs",
+      "provider": "state",
+      "reply_preview": "Yes \u2014 4 workers are running.\n\n- Projects push \u2014 Claude (opus) \u2014 running for 24 min (lane-projects-push, 103).\n- Web Bob clean \u2014 Codex (gpt-fixture) \u2014 running for 18 min (lane-webbob-clean, 202).\n- Web Bob clean 2 \u2014 Codex \u2014 running for 12 mi",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "status_max_lines",
+          "ok": false,
+          "detail": "11 lines (max 8)"
+        }
+      ],
+      "passed": false
+    },
+    {
+      "id": "llm-06",
+      "category": "llm",
+      "session": "ddc43cc0",
+      "prompt": "Who is answering this reply, and are Gemini and MiniMax healthy right now?",
+      "provider": "state",
+      "reply_preview": "Yes \u2014 4 workers are running.\n\n- Projects push \u2014 Claude (opus) \u2014 running for 24 min.\n- Web Bob clean \u2014 Codex (gpt-fixture) \u2014 running for 18 min.\n- Web Bob clean 2 \u2014 Codex \u2014 running for 12 min.\n- Web Bob MiniMax \u2014 Codex \u2014 running for 8 min.\n\n",
+      "rubrics": [
+        {
+          "rubric": "answer_first",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_unknown_task",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_magic_prefix",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "no_empty_promises",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "rubric": "status_max_lines",
+          "ok": false,
+          "detail": "11 lines (max 8)"
+        },
+        {
+          "rubric": "reset_attribution",
+          "ok": true,
+          "detail": "no reset claims"
+        }
+      ],
+      "passed": false
+    }
+  ]
+}

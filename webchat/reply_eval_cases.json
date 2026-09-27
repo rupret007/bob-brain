@@ -1,0 +1,546 @@
+{
+  "baseline_sha": "dcc2c8e",
+  "cases": [
+    {
+      "id": "start-01",
+      "category": "start",
+      "prompt": "Ok start up all the projects we were working on taking everything to the max.",
+      "session": "8126301c",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "action_creates_jobs",
+        "not_status_only"
+      ],
+      "stub_model": "Okay, I'll focus on getting all the projects running at full capacity."
+    },
+    {
+      "id": "llm-01",
+      "category": "llm",
+      "prompt": "Ok what's working on what?",
+      "session": "8126301c",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "status_max_lines",
+        "reset_attribution"
+      ],
+      "fixture": "busy_workers"
+    },
+    {
+      "id": "criticism-01",
+      "category": "criticism",
+      "prompt": "Ok we can't have unknown tasks. We need to also know what's going on what resources.",
+      "session": "8126301c",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises"
+      ]
+    },
+    {
+      "id": "criticism-02",
+      "category": "criticism",
+      "prompt": "This needs to be way better",
+      "session": "8126301c",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises"
+      ],
+      "stub_model": "I understand. I'll focus on providing more detailed and useful updates."
+    },
+    {
+      "id": "llm-02",
+      "category": "llm",
+      "prompt": "Ok whats working on what?",
+      "session": "8126301c",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "status_max_lines",
+        "reset_attribution"
+      ],
+      "fixture": "busy_workers"
+    },
+    {
+      "id": "typo-01",
+      "category": "typo",
+      "prompt": "Ok we want it to start up at max all the projects we were working on before. Remember. WebJam, Adopt",
+      "session": "mined",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "status_max_lines",
+        "reset_attribution"
+      ],
+      "fixture": "busy_workers"
+    },
+    {
+      "id": "text-01",
+      "category": "text",
+      "prompt": "Help me draft a short text I could send the band about practice \u2014 don't send it, just the wording.",
+      "session": "mined",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "draft_only_no_send"
+      ]
+    },
+    {
+      "id": "text-02",
+      "category": "text",
+      "prompt": "Draft a reply text for Travis about the gig time; I will send it myself.",
+      "session": "mined",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "draft_only_no_send"
+      ]
+    },
+    {
+      "id": "criticism-03",
+      "category": "criticism",
+      "prompt": "Ok so none of these are really blocked. If they are I think you can fix them. Do that.",
+      "session": "0a7ac149",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises"
+      ]
+    },
+    {
+      "id": "start-02",
+      "category": "start",
+      "prompt": "Ok go to the max",
+      "session": "0a7ac149",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "action_creates_jobs",
+        "not_status_only"
+      ]
+    },
+    {
+      "id": "llm-03",
+      "category": "llm",
+      "prompt": "Yes and add like I told Bob the bot already, but find ways to know how much or how many resources you have left for each LLm.",
+      "session": "0a7ac149",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "status_max_lines",
+        "reset_attribution"
+      ],
+      "fixture": "busy_workers"
+    },
+    {
+      "id": "criticism-04",
+      "category": "criticism",
+      "prompt": "Yes we need this more useful than grok bot honestly. Keep this the top priority until I say stop.",
+      "session": "0a7ac149",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises"
+      ]
+    },
+    {
+      "id": "status-01",
+      "category": "status",
+      "prompt": "Status",
+      "session": "0a7ac149",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "status_max_lines"
+      ],
+      "fixture": "busy_workers"
+    },
+    {
+      "id": "llm-04",
+      "category": "llm",
+      "prompt": "What is the current chat provider status for codex, claude, gemini, minimax, and cursor?",
+      "session": "0f27dc01",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "status_max_lines",
+        "reset_attribution"
+      ],
+      "fixture": "busy_workers"
+    },
+    {
+      "id": "start-03",
+      "category": "start",
+      "prompt": "start a job: write one sentence confirming you ran, into your answer. Include the exact phrase 'WEBBOB-VERIFY5-0927-d8f5a3e9 codex'.",
+      "session": "0f27dc01",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "action_creates_jobs",
+        "not_status_only"
+      ]
+    },
+    {
+      "id": "start-04",
+      "category": "start",
+      "prompt": "start a job: write one sentence confirming you ran, into your answer. Include the exact phrase 'WEBBOB-VERIFY5-0927-d8f5a3e9 claude'.",
+      "session": "0f27dc01",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "action_creates_jobs",
+        "not_status_only"
+      ]
+    },
+    {
+      "id": "start-05",
+      "category": "start",
+      "prompt": "start a job: write one sentence confirming you ran, into your answer. Include the exact phrase 'WEBBOB-VERIFY5-0927-d8f5a3e9 gemini'.",
+      "session": "0f27dc01",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "action_creates_jobs",
+        "not_status_only"
+      ]
+    },
+    {
+      "id": "start-06",
+      "category": "start",
+      "prompt": "start a job: write one sentence confirming you ran, into your answer. Include the exact phrase 'WEBBOB-VERIFY5-0927-d8f5a3e9 minimax'.",
+      "session": "0f27dc01",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "action_creates_jobs",
+        "not_status_only"
+      ]
+    },
+    {
+      "id": "start-07",
+      "category": "start",
+      "prompt": "start a job: write one sentence confirming you ran, into your answer. Include the exact phrase 'WEBBOB-VERIFY5-0927-d8f5a3e9 cursor'.",
+      "session": "0f27dc01",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "action_creates_jobs",
+        "not_status_only"
+      ]
+    },
+    {
+      "id": "hold-01",
+      "category": "hold",
+      "prompt": "hold off",
+      "session": "22153288",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "hold_coherent"
+      ]
+    },
+    {
+      "id": "hold-02",
+      "category": "hold",
+      "prompt": "Are we still on hold?",
+      "session": "22153288",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "hold_coherent"
+      ]
+    },
+    {
+      "id": "status-02",
+      "category": "status",
+      "prompt": "Status on everything please.",
+      "session": "2bd59fcd",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "status_max_lines"
+      ],
+      "fixture": "busy_workers"
+    },
+    {
+      "id": "status-03",
+      "category": "status",
+      "prompt": "How everything going. We using all resources now?",
+      "session": "2bd59fcd",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "status_max_lines"
+      ],
+      "fixture": "busy_workers"
+    },
+    {
+      "id": "hold-03",
+      "category": "hold",
+      "prompt": "Hold off on any coding jobs or service restarts for Web Bob. Bob has Codex fixing job pickup right now, and two fixes at once will clash. You can keep answering questions and reporting status, but don't queue, start, or restart anything for Web Bob until I say go. If you think something is broken, tell me what you see and don't try to fix it.",
+      "session": "2bd59fcd",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "hold_coherent"
+      ]
+    },
+    {
+      "id": "start-08",
+      "category": "start",
+      "prompt": "Ok prioritize making Web Bob better, then WebJam, then AdoptIQ, then Storyboard.",
+      "session": "2bd59fcd",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "action_creates_jobs",
+        "not_status_only"
+      ]
+    },
+    {
+      "id": "start-09",
+      "category": "start",
+      "prompt": "Now push everything to the max and fix anything you find along the way.",
+      "session": "2bd59fcd",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "action_creates_jobs",
+        "not_status_only"
+      ]
+    },
+    {
+      "id": "start-10",
+      "category": "start",
+      "prompt": "The hold is lifted. Bob already started WebJam #161, AdoptIQ #26, StoryBoard #47, and Shelf #10 on Claude, so don't start duplicates. For anything new, use start a job: plus the task. When I ask for status, give it in plain words from the real queue.",
+      "session": "2bd59fcd",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "action_creates_jobs",
+        "not_status_only"
+      ]
+    },
+    {
+      "id": "status-04",
+      "category": "status",
+      "prompt": "How\u2019s this going?",
+      "session": "2bd59fcd",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "status_max_lines"
+      ],
+      "fixture": "busy_workers"
+    },
+    {
+      "id": "version-01",
+      "category": "version",
+      "prompt": "Is this the new version yet? We need build numbers of these.",
+      "session": "2bd59fcd",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "version_short_sha"
+      ]
+    },
+    {
+      "id": "status-05",
+      "category": "status",
+      "prompt": "status",
+      "session": "43bb8aee",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "status_max_lines"
+      ],
+      "fixture": "busy_workers"
+    },
+    {
+      "id": "start-11",
+      "category": "start",
+      "prompt": "push WebJam and AdoptIQ",
+      "session": "44f51703",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "action_creates_jobs",
+        "not_status_only"
+      ]
+    },
+    {
+      "id": "version-02",
+      "category": "version",
+      "prompt": "what version/build are you",
+      "session": "57b3f8db",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "version_short_sha"
+      ]
+    },
+    {
+      "id": "start-12",
+      "category": "start",
+      "prompt": "Go to the max",
+      "session": "6d68db35",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "action_creates_jobs",
+        "not_status_only"
+      ]
+    },
+    {
+      "id": "start-13",
+      "category": "start",
+      "prompt": "Ok then go to the max on all the projects at your disposal. Anything.",
+      "session": "6d68db35",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "action_creates_jobs",
+        "not_status_only"
+      ]
+    },
+    {
+      "id": "start-14",
+      "category": "start",
+      "prompt": "start a job: write hello to /tmp/wb-proof.txt",
+      "session": "7f015a4a",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "action_creates_jobs",
+        "not_status_only"
+      ]
+    },
+    {
+      "id": "llm-05",
+      "category": "llm",
+      "prompt": "Ok we can\u2019t have unknown tasks. We need to also know what\u2019s going on what resources.",
+      "session": "8126301c",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "status_max_lines",
+        "reset_attribution"
+      ],
+      "fixture": "busy_workers"
+    },
+    {
+      "id": "status-06",
+      "category": "status",
+      "prompt": "What\u2019s going on each LLM",
+      "session": "8126301c",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "status_max_lines"
+      ],
+      "fixture": "busy_workers"
+    },
+    {
+      "id": "start-15",
+      "category": "start",
+      "prompt": "Ok we want it to start up at max all the projects we were working on before. Remember. WebJam, AdoptIQ, Stkryboard, Fantasy Football. All of these need to be developed to the max using and and all resources. This is a stress test essentially.",
+      "session": "8126301c",
+      "rubrics": [
+        "answer_first",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "action_creates_jobs",
+        "not_status_only"
+      ]
+    },
+    {
+      "id": "status-07",
+      "category": "status",
+      "prompt": "is it going now?",
+      "session": "9d745830",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "status_max_lines"
+      ],
+      "fixture": "busy_workers"
+    },
+    {
+      "id": "status-08",
+      "category": "status",
+      "prompt": "status with screen names and PIDs",
+      "session": "9d745830",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "status_max_lines"
+      ],
+      "fixture": "busy_workers"
+    },
+    {
+      "id": "llm-06",
+      "category": "llm",
+      "prompt": "Who is answering this reply, and are Gemini and MiniMax healthy right now?",
+      "session": "ddc43cc0",
+      "rubrics": [
+        "answer_first",
+        "no_unknown_task",
+        "no_magic_prefix",
+        "no_empty_promises",
+        "status_max_lines",
+        "reset_attribution"
+      ],
+      "fixture": "busy_workers"
+    }
+  ]
+}

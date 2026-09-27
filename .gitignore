@@ -27,6 +27,9 @@ webjam-ux/*.error.txt
 launchd/retired/
 !services/projects.json
 !services/backlog.json
+!webchat/reply_eval_cases.json
+!reviews/WEBBOB-EVALS-0927.json
+.reply-eval-runtime/
 
 screenrc/
 webchat/.password
