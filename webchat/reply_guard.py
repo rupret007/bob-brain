@@ -30,11 +30,7 @@ def is_hollow_progress_reply(text: str) -> bool:
 def repair_hollow_progress(text: str) -> str:
     if not is_hollow_progress_reply(text):
         return text
-    return (
-        "I can't run a background scan from this chat — I only answer from what's already on the mini "
-        "(STATE, handback, and the snapshots loaded for this turn). "
-        "Ask again with a specific path or paste what you see, and I'll work from that."
-    )
+    return "I can't tell from what I have here. Which file or detail should I look at?"
 
 
 def is_drill_noise(text: str) -> bool:

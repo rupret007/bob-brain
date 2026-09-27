@@ -9,10 +9,25 @@ from reply_authority import enforce
 class AuthorityTests(unittest.TestCase):
     def test_model_cannot_confirm_a_queue_write(self):
         for text in ("I've added this job to the builder inbox.", "The job I queued is still running.",
-                     "I queued a council pass."):
+                     "I queued a council pass.", "Started on Claude — job abc123.",
+                     "I've queued it.", "Claude is working on it."):
             with self.subTest(text=text):
                 answer = enforce(Path('/unused'), "Ok going now?", dict(content=text, provider="gemini"))
-                self.assertIn("No server-confirmed job", answer)
+                self.assertEqual(answer, "What would you like me to work on?")
+
+    def test_plain_answers_and_job_explanations_are_unchanged(self):
+        for text in ("Got it — I’ll keep it short.", "Hi Jeff!", "A lease expires; a lock needs to be released.",
+                     "Jobs wait in the queue until a worker is free.", "I can review PR #161.",
+                     "Here are the details:\n\n- First fact.\n- Second fact."):
+            with self.subTest(text=text):
+                self.assertEqual(enforce(Path('/unused'), "Tell me more", dict(content=text, provider="gemini")), text)
+
+    def test_guard_keeps_the_answer_and_removes_only_the_false_claim(self):
+        for claim in ("I've queued a task.", "Started on Claude — job abc123.",
+                      "No server-confirmed job was created by this reply. Send `start a job: <task>` to create a tracked job."):
+            with self.subTest(claim=claim):
+                answer = enforce(Path('/unused'), "Keep replies short", dict(content="Got it — I’ll keep it short.\n\n" + claim, provider="gemini"))
+                self.assertEqual(answer, "Got it — I’ll keep it short.")
 
     def test_identity_and_health_are_derived_from_server_not_model(self):
         with tempfile.TemporaryDirectory() as folder:

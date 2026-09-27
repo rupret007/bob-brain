@@ -686,20 +686,19 @@ class HandbackJobTests(Fixture):
         self.assertEqual(assistant["action_card"]["state"], "queued")
         self.assertIn("webchat-", assistant["action_card"].get("queue_id", ""))
         self.assertEqual(assistant["action_card"].get("goal_text"), "fix the webchat panel")
-        self.assertIn("post the result here", assistant.get("content", ""))
+        self.assertEqual(assistant["content"], "Queued — job " + tasks[0]["id"] + ".")
 
     def test_job_merge_refused_before_queue(self):
         self.chat.submit(self.identifier, "start a job: merge #158", str(uuid.uuid4()))
         self.assertNotIn("pending_job", self.chat.conversations[self.identifier])
 
-    def test_do_more_offers_conductor_job(self):
+    def test_do_more_asks_for_the_task_instead_of_inventing_one(self):
         self.assertIsNotNone(parse_do_more("I need you to do more"))
         self.chat.submit(self.identifier, "I need you to do more", str(uuid.uuid4()))
         pending = self.chat.conversations[self.identifier].get("pending_job")
-        self.assertIsNotNone(pending)
-        self.assertIn("conductor", pending.lower())
+        self.assertIsNone(pending)
         last = self.chat.conversations[self.identifier]["messages"][-1]
-        self.assertIn("not read-only", last.get("content", "").lower())
+        self.assertEqual(last["content"], "What would you like me to work on?")
 
     def test_do_more_does_not_match_negation(self):
         self.assertIsNone(parse_do_more("please do not run it yourself"))

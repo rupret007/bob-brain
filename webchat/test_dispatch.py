@@ -39,7 +39,7 @@ class ChatDispatchTests(Fixture):
         queue.transition(self.root, claim["id"], claim["claim_token"], "running")
         self.chat.reconcile_tasks()
         receipt = self.chat.history(self.identifier)["messages"][-1]
-        self.assertIn("running on gemini", receipt["content"])
+        self.assertEqual(receipt["content"], "Started on Gemini — job " + row["id"] + ".")
         self.assertEqual(receipt["action_card"]["worker"], "gemini")
 
     def test_explicit_file_write_uses_a_tool_worker(self):
@@ -103,6 +103,92 @@ class ChatDispatchTests(Fixture):
         value = self.submit("Max mode: review.\n[minimax] Read services/worker.py.\n[gemini] Analyze supplied evidence.")
         self.assertEqual(value["messages"][-1]["action_card"]["state"], "refused")
         self.assertIn("API-only", value["messages"][-1]["content"])
+        self.assertFalse(queue.tasks(self.root))
+
+    def test_natural_requests_have_short_server_confirmed_receipts(self):
+        for text, prompt, worker in (
+                ("fix X", "fix X", "auto"),
+                ("review PR #161", "review PR #161", "auto"),
+                ("have Claude do Y", "do Y", "claude"),
+                ("Please have Claude review PR #161", "review PR #161", "claude"),
+                ("Okay, can you please fix the login button?", "can you please fix the login button?", "auto")):
+            with self.subTest(text=text):
+                receipt = self.submit(text)["messages"][-1]
+                row = queue.tasks(self.root)[receipt["task_id"]]
+                self.assertEqual((row["prompt"], row["requested_worker"]), (prompt, worker))
+                label = "Queued for Claude" if worker == "claude" else "Queued"
+                self.assertEqual(receipt["content"], label + " — job " + row["id"] + ".")
+        self.assertEqual(len(queue.tasks(self.root)), 5)
+        self.assertFalse(self.fake.calls)
+
+    def offer(self, text):
+        with patch.object(self.fake, "reply", return_value=dict(content=text, provider="gemini", attempts=[])):
+            self.submit("What could you help with next?")
+            self.wait()
+
+    def test_go_resolves_only_the_current_concrete_offer(self):
+        self.offer("I can have Claude review PR #161.")
+        receipt = self.submit("go")["messages"][-1]
+        row = queue.tasks(self.root)[receipt["task_id"]]
+        self.assertEqual((row["prompt"], row["requested_worker"]), ("review PR #161", "claude"))
+        # A new request ID with another "go" must not duplicate the accepted task.
+        answer = self.submit("go")["messages"][-1]
+        self.assertEqual(answer["content"], "What would you like me to work on?")
+        self.assertEqual(len(queue.tasks(self.root)), 1)
+
+    def test_go_recovers_a_saved_proposal_after_chat_reload(self):
+        self.offer("Shall I review PR #161?")
+        replacement = Chat(self.folder, self.root, self.fake)
+        try:
+            value = replacement.submit(self.identifier, "go ahead", str(uuid.uuid4()))
+            self.assertEqual(queue.tasks(self.root)[value["messages"][-1]["task_id"]]["prompt"], "review PR #161")
+        finally:
+            replacement.close()
+
+    def test_go_accepts_an_existing_pending_job(self):
+        conversation = self.chat.conversations[self.identifier]
+        conversation["pending_job"] = "fix the login button"
+        self.chat.save(conversation)
+        receipt = self.submit("go")["messages"][-1]
+        self.assertEqual(queue.tasks(self.root)[receipt["task_id"]]["prompt"], "fix the login button")
+
+    def test_ambiguous_requests_ask_one_question_without_queueing(self):
+        for text in ("go", "go ahead", "do it", "yes please", "fix", "fix it", "have Claude", "have Claude do it", "I need you to do more"):
+            with self.subTest(text=text):
+                receipt = self.submit(text)["messages"][-1]
+                self.assertEqual(receipt["content"], "What would you like me to work on?")
+                self.assertNotIn("task_id", receipt)
+        self.assertFalse(queue.tasks(self.root))
+        self.assertFalse(self.fake.calls)
+
+    def test_go_does_not_choose_between_options_or_use_old_context(self):
+        for offer in ("I can review PR #161 or fix the login button.", "I can fix it.",
+                      "I can review PR #161. I can also fix the login button."):
+            self.offer(offer)
+            self.assertNotIn("task_id", self.submit("go")["messages"][-1])
+        self.offer("I can review PR #161.")
+        self.submit("Thanks!")
+        self.wait()
+        self.assertNotIn("task_id", self.submit("go")["messages"][-1])
+        self.assertFalse(queue.tasks(self.root))
+
+    def test_chat_preferences_and_negated_requests_stay_in_chat(self):
+        for text in ("Keep replies short", "Make your replies shorter and friendlier", "Hi Bob", "Thanks!",
+                     "Don't fix X", "Could you explain what a queue is?", "What does review PR #161 mean?"):
+            with self.subTest(text=text):
+                self.submit(text)
+                self.wait()
+                self.assertEqual(self.chat.history(self.identifier)["messages"][-1]["content"], "A saved reply.")
+        self.assertFalse(queue.tasks(self.root))
+
+    def test_enqueue_failure_has_no_success_receipt_or_job_id(self):
+        with patch.object(queue, "enqueue", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.submit("have Claude review PR #161")
+        message = self.chat.conversations[self.identifier]["messages"][-1]
+        self.assertNotIn("task_id", message)
+        self.assertNotIn("Queued", message["content"])
+        self.assertNotIn("Started", message["content"])
         self.assertFalse(queue.tasks(self.root))
 
     def test_worker_routing_and_grok_rejected(self):
