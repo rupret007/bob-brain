@@ -4,9 +4,18 @@ import re
 from live_status_snapshot import build_live_status_snapshot
 
 QUEUE_CLAIM = re.compile(
-    r"\b(?:i|we)(?:['’]ve| have)?\s+(?:(?:just|already|now)\s+)?(?:queued|scheduled|launched|started|added|submitted)\b"
-    r".{0,160}\b(?:job|task|work|council|inbox|queue)\b|"
-    r"\b(?:job|task|council|work)\b.{0,120}\b(?:queued|builder inbox|picked up|in progress|still running)\b", re.I | re.S)
+    r"\b(?:i|we)(?:['’]ve| have)?\s+(?:(?:just|already|now)\s+)?(?:queued|scheduled|launched|started|added|submitted|assigned|delegated|created|dispatched)\b"
+    r".{0,160}\b(?:job|task|work|review|fix|council|inbox|queue|it|this|that|codex|claude|cursor|gemini|minimax)\b|"
+    r"\b(?:i|we)(?:['’]ve| have)?\s+(?:asked|told|sent|handed)\b.{0,120}\b(?:codex|claude|cursor|gemini|minimax|inbox)\b|"
+    r"^\s*(?:queued|scheduled|launched|started|submitted|assigned)\b|"
+    r"\b(?:the|your|our|this|that|my)\s+(?:job|task|council|work)\b.{0,120}\b(?:created|queued|scheduled|started|launched|builder inbox|picked up|in progress|running)\b|"
+    r"\b(?:job|task)\s+(?:webchat-[a-f0-9]+|[a-f0-9]{6,})\b.{0,60}\b(?:created|queued|started|running)\b|"
+    r"\b(?:codex|claude|cursor|gemini|minimax)(?:['’]s|\s+(?:is|has started))\s+(?:working|running|reviewing|fixing|on it)\b|"
+    r"\b(?:codex|claude|cursor|gemini|minimax)\s+has\s+(?:your|the|this)\s+(?:job|task|work|review)\b", re.I)
+NO_JOB_NOTICE = re.compile(
+    r"\bno (?:server[- ]confirmed )?(?:jobs?|tasks?)\s+(?:(?:was|were|has been|are)\s+)?(?:created|queued|started|running)\b|"
+    r"\b(?:nothing|no work) (?:was |is |has been )?(?:queued|started|running)\b|"
+    r"\b(?:send|say|use)\s+[`\"']?start a job\s*:", re.I)
 STATUS_QUESTION = re.compile(
     r"\b(?:status|resources?|workers? doing|each (?:worker|model)|all (?:workers|models)|"
     r"everything (?:going|running)|how(?:['’]s| is| we)? (?:everything|it going|we doing)|"
@@ -34,8 +43,18 @@ def operational_reply(root, provider):
 
 def enforce(root, text, answer):
     content = answer["content"]
-    if STATUS_QUESTION.search(text) or PROVIDER_CLAIM.search(content):
+    from task_dispatch import CHAT_STYLE, PREAMBLE
+    # A style preference calls for a simple acknowledgement, never a status
+    # report from operational snapshots included in the model context.
+    if CHAT_STYLE.match(PREAMBLE.sub("", text.strip())):
+        return "Got it."
+    if STATUS_QUESTION.search(text):
         content = operational_reply(root, answer["provider"])
-    elif QUEUE_CLAIM.search(content):
-        content = "No server-confirmed job was created by this reply. Send `start a job: <task>` to create a tracked job."
+    else:
+        # Keep the useful answer; remove unsupported effects and boilerplate
+        # without adding a system notice to ordinary chat.
+        sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
+        kept = [part for part in sentences if not any(pattern.search(part) for pattern in (QUEUE_CLAIM, NO_JOB_NOTICE, PROVIDER_CLAIM))]
+        if len(kept) != len(sentences):
+            content = "".join(kept).strip() or "What would you like me to work on?"
     return content

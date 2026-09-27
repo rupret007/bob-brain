@@ -55,6 +55,19 @@ cannot acknowledge queue or inbox effects. Explicit small text writes such as
 `start a job: write hello to /tmp/example.txt` use Codex, Cursor or Claude with file
 tools; success requires the server to verify the changed file and its contents.
 
+Natural requests such as `fix the login button`, `review PR #161`, and
+`have Claude review this design` use that same queue. Receipts stay short:
+`Queued for Claude — job <id>.`, then `Started on Claude — job <id>.` after a
+worker claim. A follow-up like `go` accepts the current concrete proposal;
+missing details, alternative proposals, and stale context get one short question.
+Ordinary replies carry no job footers or special-command instructions.
+
+`python3 webchat/live_clean_proof.py --provider claude` runs six authenticated
+examples using a private temporary data root and an ephemeral localhost port.
+It uses real chat model replies and real queue writes, checks duplicate submissions,
+and leaves a private JSON receipt. It starts no worker runner and does not restart
+or submit tasks to live services. See `reviews/WEBBOB-CLEAN-0927.md` for the results.
+
 Operational replies use the current queue, lane locks and generation health from
 `webchat/sessions/provider-health.json` plus `logs/webchat-failover.log`. The server
 identifies the actual answering provider on each attempt. Old chat errors never

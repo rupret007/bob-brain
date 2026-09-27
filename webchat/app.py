@@ -45,7 +45,7 @@ from drill_fixture import try_bob_state_running_line
 from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
 from ops_panel import conductor_snapshot, draft_head_sha, enrich_live_ops, load_live_ops, maybe_spawn_dashboard_refresh
 from quiet_hours import in_quiet_hours
-from task_dispatch import TaskDispatch, parse_work, task_queue
+from task_dispatch import FOLLOW_UP, PREAMBLE, TaskDispatch, followup_work, needs_task_detail, parse_work, task_queue
 
 HERE = Path(os.environ.get("BOB_WEBCHAT_DIR", Path(__file__).resolve().parent)).resolve()
 ROOT = Path(os.environ.get("BOB_ROOT", HERE.parent.parent)).resolve()
@@ -327,12 +327,28 @@ class Chat(TaskDispatch):
                 inbox_work, inbox_route = parse_work(inbox_task)
                 if parse_start(inbox_task) or inbox_work:
                     work, route = parse_start(inbox_task) or inbox_work, inbox_route
-            if started or work or worker is not None:
+            followup = FOLLOW_UP.fullmatch(text) or FOLLOW_UP.fullmatch(PREAMBLE.sub("", text)) or parse_do_more(text)
+            if followup:
+                work, route = followup_work(conversation)
+            task = started or work or (text if worker is not None and not followup else None)
+            if route != "max":
+                try:
+                    task_queue.worker_name(worker or route)
+                except ValueError:
+                    return self.submit_task(conversation, task or text, request_id, worker or route)
+            if ((followup and not task) or (route != "auto" and not task)
+                    or (task and needs_task_detail(task))):
+                conversation["messages"][-1].update(status="done", provider="dispatcher",
+                    content="What would you like me to work on?")
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                return self.public(conversation)
+            if task:
                 conversation.pop("pending_job", None)
                 conversation.pop("pending_job_id", None)
                 if route == "max":
-                    return self.submit_max_task(conversation, started or work or text, request_id)
-                return self.submit_task(conversation, started or work or text, request_id, worker or route)
+                    return self.submit_max_task(conversation, task, request_id)
+                return self.submit_task(conversation, task, request_id, worker or route)
             pending = conversation.get("pending_job")
             pending_council = conversation.get("pending_council")
             council_confirm, council_proposal = parse_council_confirm_proposal(text)
@@ -442,35 +458,6 @@ class Chat(TaskDispatch):
                     content="I can queue a **draft** council critique on the mini (Gemini + MiniMax + Claude; no Grok). Reply `yes, run council` to confirm.",
                     action_card={"id": request_id, "proposal_id": request_id, "state": "confirm", "executable": True,
                                  "reason": "Council: " + council_text[:120]})
-                self.save(conversation)
-                self.conversations[identifier] = conversation
-                return self.public(conversation)
-            started = parse_start(text)
-            do_more_goal = parse_do_more(text) if not started else None
-            job_text = started or do_more_goal
-            do_more = bool(do_more_goal)
-            if job_text:
-                if hard_rule_refusal(job_text):
-                    refusal = hard_rule_refusal(job_text)
-                    conversation["messages"][-1].update(status="done", content=refusal,
-                        action_card={"id": request_id, "state": "refused", "executable": False, "reason": "Standing rule: drafts only"})
-                    self.save(conversation)
-                    self.conversations[identifier] = conversation
-                    self.record_turn(ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
-                                refusals=[refusal], open_items=[])
-                    return self.public(conversation)
-                conversation["pending_job"] = job_text
-                conversation["pending_job_id"] = request_id
-                confirm_body = (
-                    "I can queue a **draft** screen job for the conductor scheduler — I am not read-only here. "
-                    "Reply `yes, start job` to confirm, or say `start a job: …` with your exact goal."
-                    if do_more
-                    else "I can queue a **draft** screen job for the conductor scheduler. Reply `yes, start job` to confirm, or edit your request."
-                )
-                conversation["messages"][-1].update(status="done",
-                    content=confirm_body,
-                    action_card={"id": request_id, "proposal_id": request_id, "state": "confirm", "executable": True,
-                                 "reason": "Queue job: " + job_text[:120]})
                 self.save(conversation)
                 self.conversations[identifier] = conversation
                 return self.public(conversation)

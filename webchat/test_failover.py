@@ -342,7 +342,10 @@ class QueueTests(Fixture):
         self.assertFalse(result["messages"][-1]["action_card"]["executable"])
 
     def test_confirmation_receipt_survives_failed_conversation_save(self):
-        self.submit("do it")
+        # A persisted proposal from an earlier server version remains valid.
+        self.chat.conversations[self.identifier]["pending_job"] = "review PR #161"
+        self.chat.conversations[self.identifier]["pending_job_id"] = str(uuid.uuid4())
+        self.chat.save(self.chat.conversations[self.identifier])
         request_id = str(uuid.uuid4())
         from task_dispatch import task_queue
         original_save = self.chat.save

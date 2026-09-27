@@ -12,21 +12,63 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
 import task_queue
 import max_mode
 
+POLITE = r"(?:(?:please|bob)[,:]?\s+|(?:can|could|would|will) you\s+|i (?:want|need) (?:you )?to\s+|let['’]s\s+)*"
 WORK = re.compile(
-    r"^(?:(?:please|bob)[,:]?\s+)*(?:(?:can|could|would|will) you\s+|i (?:want|need) (?:you )?to\s+|let['’]s\s+)?"
+    r"^" + POLITE +
     r"(?:review|analy[sz]e|audit|research|investigate|inspect|check|compare|summari[sz]e|calculate|"
     r"write|draft|create|build|implement|fix|repair|debug|test|trace|update|refactor|add|remove|"
-    r"diagnose|figure out|find out|look into|work on|improve|make)\b.+", re.I | re.S)
+    r"diagnose|figure out|find out|look into|work on|improve|make)\b.*", re.I | re.S)
 PREAMBLE = re.compile(r"^(?:(?:ok(?:ay)?|yes|yeah|sure|great|thanks)[,.!]?\s+)+", re.I)
-ROUTED = re.compile(r"^(?:(?:please|bob)[,:]?\s+)*(?:ask|use|assign(?:\s+to)?|delegate(?:\s+to)?)\s+"
-                    r"(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\b\s*(?:to\b|[:,])?\s*(.+)$", re.I | re.S)
+ROUTED = re.compile(r"^" + POLITE + r"(?:have|get|ask|use|assign(?:\s+to)?|delegate(?:\s+to)?)\s+"
+                    r"(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\b\s*(?:to\b|[:,])?\s*(.*)$", re.I | re.S)
 PREFIX = re.compile(r"^(?:worker\s*[:=]\s*)?(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\s*:\s*(.+)$", re.I | re.S)
 CODING = re.compile(r"\b(?:fix|repair|implement|refactor|debug|build|run|execute|install|edit|change|modify)\b|"
                     r"\b(?:write|add|create|update|remove)\b.{0,60}\b(?:code|file|test|function|service|script|app|feature)\b", re.I | re.S)
+FOLLOW_UP = re.compile(r"^" + POLITE + r"(?:go(?: ahead)?|do it|handle it|yes(?: please)?|let['’]s do it)[.!?]*$", re.I)
+CHAT_STYLE = re.compile(r"^" + POLITE + r"(?:keep|make)\s+(?:your\s+)?(?:replies|answers|responses)\s+"
+                        r"(?:short(?:er)?|brief(?:er)?|concise|friendly|friendlier|plain(?:er)?|natural)\b", re.I)
+PROPOSAL = re.compile(r"^(?:I (?:can|could)|(?:Can|Could|May|Shall|Should) I|Happy to|Want me to|Would you like me to)\s+(.+?)[.!?]*$", re.I)
+
+
+def needs_task_detail(prompt):
+    """A verb or a bare reference is not enough to start work."""
+    prompt = PREAMBLE.sub("", prompt.strip()).strip(" .!?:")
+    prompt = re.sub(r"^" + POLITE, "", prompt, flags=re.I)
+    prompt = re.sub(r"^(?:figure out|find out|look into|work on|\w+)\b\s*", "", prompt, count=1, flags=re.I)
+    return not prompt or bool(re.fullmatch(r"(?:(?:on|to|do)\s+)?(?:it|this|that|something|anything|the task|the job)", prompt, re.I))
+
+
+def followup_work(conversation):
+    """Resolve only a current saved proposal, never an old or completed task."""
+    if conversation.get("pending_job"):
+        prompt = conversation["pending_job"]
+        work, worker = parse_work(prompt)
+        return work or prompt, worker
+    # submit() has already appended the new user turn and its reply placeholder.
+    previous = conversation["messages"][:-2]
+    if not previous:
+        return None, "auto"
+    last = previous[-1]
+    if last.get("role") != "assistant" or last.get("status") != "done" or last.get("action_card") or last.get("task_id"):
+        return None, "auto"
+    text = PREAMBLE.sub("", last.get("content", "").strip())
+    text = re.sub(r"\s+if (?:you want|you['’]d like)(?:\s*[—–,;-]\s*(?:just )?say go)?[.!?]*$", "", text, flags=re.I)
+    text = re.sub(r"\s*[—–]\s*(?:just )?say go[.!?]*$", "", text, flags=re.I)
+    text = re.sub(r"\s+(?:whenever you want(?: me to (?:dig in|start))?|when(?:ever)? you['’]re ready)[.!?]*$", "", text, flags=re.I)
+    text = re.sub(r"\s*[—–]\s*(?:just )?need your (?:yes|go-ahead|okay)(?: before I (?:dig in|start|begin))?[.!?]*$", "", text, flags=re.I)
+    text = re.sub(r"\s*(?:[.!]|[—–])\s*(?:want me to|shall I|should I)(?:\s+(?:go ahead|start|do (?:it|that)|prep a review job for it))?\?\s*$", "", text, flags=re.I)
+    proposal = PROPOSAL.fullmatch(text)
+    if not proposal or re.search(r"\b(?:or|if|once|after|before|when|provided)\b|\n|[.!?]\s", proposal[1], re.I):
+        return None, "auto"
+    prompt = re.sub(r"^(?:offer to|help(?: you)?(?: to)?)\s+", "", proposal[1], flags=re.I)
+    prompt = re.sub(r"^take a look at\b", "review", prompt, flags=re.I)
+    return parse_work(prompt)
 
 
 def parse_work(text):
     text = PREAMBLE.sub("", text.strip())
+    if CHAT_STYLE.match(text):
+        return None, "auto"
     if max_mode.MAX_MODE.search(text):
         return text.strip(), "max"
     lane = re.fullmatch(r"(?:start|run)\s+(?:a\s+)?lane\s+(codex|cursor-agent|cursor|claude|gemini|minimax|grok)\s*:\s*(.+)", text.strip(), re.I | re.S)
@@ -38,6 +80,16 @@ def parse_work(text):
     if WORK.match(text.strip()):
         return text.strip(), "auto"
     return None, "auto"
+
+
+def task_receipt(row):
+    names = {"codex": "Codex", "claude": "Claude", "cursor": "Cursor", "gemini": "Gemini", "minimax": "MiniMax", "mini": "mini"}
+    if row["status"] in task_queue.ACTIVE:
+        label = "Started on " + names[row["worker"]]
+    else:
+        worker = row["requested_worker"]
+        label = "Queued" + (" for " + names[worker] if worker != "auto" else "")
+    return label + " — job " + row["id"] + "."
 
 
 def task_kind(prompt):
@@ -111,8 +163,7 @@ class TaskDispatch:
                         rows = max_mode.enqueue(self.root, identifier, intent)
                         group = rows[0]["group_id"]
                         message.update(group_id=group, task_ids=[row["id"] for row in rows], status="done", provider="dispatcher",
-                                       content="Max mode queued " + str(len(rows)) + " independent subtasks across " +
-                                       ", ".join(dict.fromkeys(row["requested_worker"] for row in rows)) + ". I’ll combine the results here.",
+                                       content="Queued " + str(len(rows)) + " tasks — group " + group + ".",
                                        action_card={"id": message["request_id"], "state": "queued", "executable": False,
                                                     "group_id": group, "queue_id": group, "goal_text": intent["goal"][:160]})
                         changed = True
@@ -120,8 +171,7 @@ class TaskDispatch:
                     row = task_queue.enqueue(self.root, identifier, intent["request_id"], intent["prompt"],
                                              worker=intent["worker"], kind=intent["kind"])
                     message.update(task_id=row["id"], status="done", provider="dispatcher",
-                                   content="Queued job `" + row["id"] + "` for " + (row["requested_worker"] if row["requested_worker"] != "auto" else "an available worker") +
-                                   ". I’ll post the result here when it finishes.",
+                                   content=task_receipt(row),
                                    action_card={"id": message["request_id"], "state": "queued", "executable": False,
                                                 "queue_id": row["id"], "task_id": row["id"], "goal_text": row["prompt"][:160]})
                     changed = True
@@ -142,7 +192,7 @@ class TaskDispatch:
                             card = message["action_card"]
                             if (card.get("state"), card.get("worker")) != (row["status"], row["worker"]):
                                 card.update(state=row["status"], worker=row["worker"])
-                                message.update(content="Job `" + row["id"] + "` " + row["status"] + " on " + row["worker"] + ". I’ll post the result here.")
+                                message.update(content=task_receipt(row))
                                 changed = True
                     if changed:
                         self.save(value)
