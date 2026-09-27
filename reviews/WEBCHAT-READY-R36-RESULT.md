@@ -120,7 +120,7 @@ lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
 | R35 final (baseline) | `d025af6` |
 | Pre-R36 HEAD | `9aff087` |
 | **R36 (code)** | `2dd1a8b` |
-| **Final SHA (this round)** | `2dd1a8b` (`draft/webchat-failover-20260927`) |
+| **Final SHA (this round)** | `848a40a` (`draft/webchat-failover-20260927`; code `2dd1a8b`) |
 
 ## Remaining risks
 
