@@ -1,7 +1,7 @@
 # Web Bob READY-FOR-PHONE — Round 6 result (Cursor lane)
 
 **Branch:** `draft/webchat-failover-20260927`  
-**Round 5 base:** `d9b8ddc0` · **Round 6 prior:** `d8f22d1` · **Round 6 final commit:** _(see git log after this doc)_  
+**Round 5 base:** `d9b8ddc0` · **Round 6 prior:** `d8f22d1` · **Round 6 final commit:** `0041985e64b1940b3c4e45546cc232239ff5f543`  
 **Design note:** `conductor/reviews/WEBCHAT-READY-R6-DESIGN.md` (research-first; sources in table)  
 **Council (no Grok):**  
 - `conductor/reviews/webchat-ready-r6-council/20260927-021437-917612.md` (R6 build vote: stale dashboard → honest `live_ops_meta` + inline snapshot when &gt;120s)  
