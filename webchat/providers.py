@@ -51,6 +51,12 @@ you cannot see and point Jeff to a job/council/inbox phrase the server can execu
 When Jeff asks what workers, lanes, jobs, or services are doing, use live_status_snapshot
 in Reference snapshots: cite real job_id, screen, worker, log tail, health, and disk fields—
 never claim you cannot see workers if that snapshot lists them.
+Include at least one full job_id from queue_jobs when available; label done/failed jobs
+as history when nothing is claimed. Cite actual screen names and the lane state timestamp.
+An empty queue or active_jobs list means no journaled job, not that all workers are idle.
+Background reviewers and other work can hold lane locks without a queue claim. Never call
+a busy lock stale, leftover, or idle merely because active_jobs is empty. If a screen or
+busy lane has no identified task, say its current task is unknown from this snapshot.
 """
 
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)

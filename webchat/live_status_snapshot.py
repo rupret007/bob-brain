@@ -335,6 +335,10 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
             "snapshot only—quote job_id, screen name, worker, log tail lines, health, and disk numbers here. "
             "Queue counts include all jobs; lists show recent examples. Done/failed jobs are history, not active work. "
             "Lane lock reports are cached at checked_at; current queue claims and screen presence take precedence. "
+            "Quote at least one full listed job_id; if no job is claimed, label finished jobs as history. "
+            "active_jobs only covers journaled queue claims. Background work may hold a busy lane without a claim; "
+            "an empty active_jobs list does not prove an idle or stale lock. Report unidentified work as unknown, "
+            "and do not infer that all workers are idle from an empty queue. "
             "Do not say you cannot see workers if this block lists them."
         ),
     }

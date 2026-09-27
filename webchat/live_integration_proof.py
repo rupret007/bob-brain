@@ -102,14 +102,16 @@ class Proof:
                       "chat answer saved 15:26:49.507. Calculate queue wait, execution time, delivery delay, "
                       "and end-to-end time in seconds to three decimals. Identify which stage dominates. "
                       "Return a compact table and one conclusion under 140 words.")
-        request_id = str(uuid.uuid4())
-        case = dict(request=prompt, request_id=request_id, submitted_at=stamp())
-        entry["task"] = case
-        self.save()
-        accepted = self.call("/api/messages", dict(conversation_id=entry["conversation_id"], message=prompt,
-                                                   request_id=request_id, provider=entry["provider"], worker=entry["provider"]))
-        case["task_id"] = accepted["messages"][-1].get("task_id")
-        self.save()
+        case = entry.get("task")
+        if not case:
+            case = dict(request=prompt, request_id=str(uuid.uuid4()), submitted_at=stamp())
+            entry["task"] = case
+            self.save()
+        if not case.get("task_id"):
+            accepted = self.call("/api/messages", dict(conversation_id=entry["conversation_id"], message=case["request"],
+                                                       request_id=case["request_id"], provider=entry["provider"], worker=entry["provider"]))
+            case["task_id"] = accepted["messages"][-1].get("task_id")
+            self.save()
         assert case["task_id"], "Chat did not return a durable task ID"
         print(stamp(), "Task queued", entry["provider"], case["task_id"], flush=True)
         deadline, seen = time.monotonic() + 600, None
@@ -122,6 +124,9 @@ class Proof:
             results = [m for m in self.history(entry)["messages"] if m.get("task_id") == row["id"] and m.get("task_status")]
             if results:
                 assert len(results) == 1, "Duplicate terminal answer"
+                # Delivery can finish between the journal read and HTTP poll.
+                # Refresh the durable record before using terminal timestamps.
+                row = task_queue.tasks(self.root)[case["task_id"]]
                 answer = results[0]
                 case.update(status=row["status"], actual_worker=row["worker"], attempts=row["attempts"],
                             queued_at=stamp(row["created_at"]), claimed_at=stamp(row["claimed_at"]),
@@ -155,6 +160,17 @@ class Proof:
         entry["completed_at"] = stamp()
         self.save()
 
+    def resume(self, provider):
+        entry = next((e for e in reversed(self.data["providers"]) if e["provider"] == provider), None)
+        if entry and entry.get("completed_at"):
+            print("Already completed", provider, flush=True)
+        elif entry and entry.get("task"):
+            self.task(entry)
+            entry["completed_at"] = stamp()
+            self.save()
+        else:
+            self.run(provider)
+
     def verify(self):
         for entry in self.data["providers"]:
             history = self.history(entry)
@@ -173,7 +189,7 @@ class Proof:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("run", "verify"))
+    parser.add_argument("mode", choices=("run", "resume", "verify"))
     parser.add_argument("--provider", choices=PROVIDERS)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--url", default="http://127.0.0.1:8787")
@@ -183,7 +199,7 @@ def main():
         proof.verify()
     else:
         for provider in (args.provider,) if args.provider else PROVIDERS:
-            proof.run(provider)
+            (proof.resume if args.mode == "resume" else proof.run)(provider)
 
 
 if __name__ == "__main__":
