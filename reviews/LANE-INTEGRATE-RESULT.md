@@ -1,0 +1,128 @@
+# Lane integration result — 2026-09-27
+
+**Overall: PASS.** Local branch `draft/integrate-lanes-0927`.
+Recorded 2026-09-27 08:57:34 CDT. Tested implementation: `7e986c393197f992415d9f80fa90dc9b95120031`.
+
+## Branches and local SHAs
+
+| Item | SHA | Result |
+| --- | --- | --- |
+| Base: `draft/webchat-failover-20260927` | `9aff08750489ccd16cb387e04d2d8362293e7040` | PASS |
+| Scheduler input: `draft/lane-scheduler-0927` | `7264c54d5f790f899ce799d70366a01638abc56d` | PASS |
+| Tools input: `draft/lane-tools-0927` | `1cfa35a5aa77c23ffea37310d7870d082c2004cc` | PASS |
+| Scheduler merge | `96eabe668041c81d3c8511cfa56906f41ba46386` | PASS |
+| Tools merge | `2723748572070150e9d8fc866ba45d28b908f648` | PASS |
+| Integration implementation and regression tests | `7e986c393197f992415d9f80fa90dc9b95120031` | PASS |
+
+Both specified input commits are ancestors of the integration branch. Both merges
+used `--no-ff` and retained their histories. Git reported no textual conflicts;
+`services/test_services.py` and `webchat/app.py` merged automatically and were
+reviewed with the resulting behavior. The implementation SHA above is the code
+validated below; the subsequent local commit contains this report and evidence.
+
+The original checkout had substantial pre-existing uncommitted work. Integration
+was performed in `/Users/jeffstory/Documents/bob-overnight-inject/wt-integrate-lanes-0927` using a new local worktree from the committed base.
+The original checkout remains on its original branch. Its existing changes were
+preserved; only copies of this requested report and its evidence are added there.
+The committed report and implementation live on the integration branch.
+
+## Integration fixes
+
+- Web Bob producers now append directly to `conductor/state/queue.jsonl` using the
+  scheduler's locked, fsynced store. INDEX.md remains a compatibility mirror;
+  matching ids prevent the legacy importer from duplicating requests.
+- Priority, pause, cancel and undo update the journal and mirror while holding the
+  scheduler lock. Pending-queue edits cannot claim to stop an assigned worker.
+- The exact message `I need you to do more` now uses the allowlisted handlers to
+  queue one read-only draft assessment of current conductor work and request its
+  immediate dispatch. It returns a queued job and observed lane start in the same
+  reply. Busy/paused/unconfirmed starts remain honest queued/blocked results.
+- The scheduler chooses the lane. The targeted tick does not launch other queued
+  requests. A start receipt requires a fresh heartbeat, execution token, worker PID
+  and observed screen after workspace setup, or a verified completed worker.
+- Once-only action receipts and saved chat request ids prevent duplicate enqueue
+  and dispatch, including replay after constructing a fresh Chat instance.
+- Repaired incomplete committed-base contracts exposed by the full suite:
+  `parse_do_more` was missing; the tested job-card helper was untracked in the
+  original checkout and is now included; provider overlay pins were missing;
+  the 24-case parity contract lacked its do-more and refrain cases. The parity
+  regression now supplies local fixture status instead of depending on live state.
+  Module imports resolve this worktree's ledger/tool code.
+
+## Final full suite
+
+All checks below ran against implementation `7e986c393197f992415d9f80fa90dc9b95120031`.
+No failures or skips remain in either Python discovery suite or the Node test.
+
+| Command / check | Result | Evidence |
+| --- | --- | --- |
+| `python3 -m unittest discover -s services -p 'test_*.py' -v` | **PASS — 98 tests**, 11.221s | [service log](lane-integrate-evidence/services-tests.txt) |
+| `python3 -m unittest discover -s webchat -p 'test_*.py' -v` | **PASS — 164 tests**, 15.598s | [webchat log](lane-integrate-evidence/webchat-tests.txt) |
+| `node --test webchat/test_quiet_hours_js.mjs` | **PASS — 1 test** | [JavaScript log](lane-integrate-evidence/javascript-tests.txt) |
+| `python3 bootstrap.py check` | **PASS** | [syntax log](lane-integrate-evidence/syntax.txt) |
+| `python3 -m compileall -q webchat state` | **PASS** | [syntax log](lane-integrate-evidence/syntax.txt) |
+| `git diff --check` | **PASS** | No whitespace errors |
+| Ancestor checks for `7264c54` and `1cfa35a` | **PASS** | Both `git merge-base --is-ancestor` calls exited 0 |
+
+Total: **262 Python tests + 1 standalone JavaScript test passed**. The Python
+webchat suite also invokes the JavaScript harness. Initial webchat discovery was
+**FAIL** on missing `parse_do_more`; intermediate runs exposed the overlay-pin
+and parity inconsistencies described above. Those failures were fixed, and the
+final complete suites shown here passed without excluding tests.
+
+## Proof 1: three queued jobs assigned through state/queue.jsonl
+
+**PASS.** After the full suites, ran:
+
+```sh
+python3 services/lane_integration_smoke.py --evidence reviews/lane-integrate-evidence/proof.md
+```
+
+Three `queue_add` calls first produced exactly three `queued` journal entries.
+The harness removed INDEX.md before calling the real scheduler tick. Each request
+then acquired a distinct lane, named screen, worker PID and fresh heartbeat.
+INDEX.md remained absent throughout this assignment.
+
+| Durable queue id | Assigned lane | Worker PID | Result |
+| --- | --- | --- | --- |
+| `queue-webchat-20260927-0856-d0a187dd` | `gemini` | `86192` | PASS |
+| `queue-webchat-20260927-0856-17ebb82d` | `minimax` | `86193` | PASS |
+| `queue-webchat-20260927-0856-0455a003` | `codex` | `86194` | PASS |
+
+The exact queued rows, journal contents at assignment, execution ids, heartbeat
+values and separate draft worktrees are in [the proof](lane-integrate-evidence/proof.md).
+
+## Proof 2: Web Bob same-reply replay
+
+**PASS.** A real `Chat.submit()` received exactly `I need you to do more` and
+returned `status=done`, `provider=tools`, `action_card.state=started`:
+
+> Queued draft job `webchat-20260927-0856-6612dde3.md`. Started lane `cursor` for `queue-webchat-20260927-0856-6612dde3` (worker `cursor-queue-webchat-20260927-0856-6612dde3-71ea9c9c`).
+
+The reply's queue id is `queue-webchat-20260927-0856-6612dde3`. Its `cursor` worker PID
+is `86236`, and the receipt recorded `screen_observed=true`.
+The journal contains both its initial queued row and its assigned running row.
+The production Web Bob dispatch client and a real scheduler subprocess carried
+the JSON receipt back before this reply returned. There were **0 chat-provider
+calls** and **1 scheduler-subprocess call**. Replaying the same request twice,
+including after chat restart, left exactly **4 requests and 4 executions** total
+(the three scheduler-proof jobs plus the one chat job).
+
+[Full proof](lane-integrate-evidence/proof.md) · [standalone run output](lane-integrate-evidence/proof-run.txt)
+
+## Boundaries and remaining limitations
+
+**PASS — local integration only.** No repository branch was pushed; no PR was
+opened; no `svc-webchat` restart or deployment was performed. The original
+`60680.svc-webchat` screen and `59555.svc-webchat-ready-r20` screen were unchanged
+across final validation. Temporary proof screens and worktrees were removed.
+See [boundary evidence](lane-integrate-evidence/boundaries.txt).
+
+The proofs use real queue writes, scheduler assignment, subprocess transport,
+screen workers, Git worktrees and heartbeat receipts. Provider availability and
+model responses use explicitly labeled fixture adapters; this does not claim
+live-provider quality, production rollout, or a completed production job. The
+proof performs no push at all. Inherited Git regression tests exercise pushes
+only against temporary local bare repositories; PR calls in those tests are mocked.
+Name-only lane start/stop tools remain logged requests; immediate verified start
+requires a durable queue id with `lane=auto`.

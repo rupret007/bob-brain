@@ -1,0 +1,209 @@
+test_all_members_propose_cross_critique_then_synthesize (test_council.CouncilTest) ... 2026-09-27T13:55:26+00:00 council propose codex ok
+2026-09-27T13:55:26+00:00 council propose cursor ok
+2026-09-27T13:55:26+00:00 council propose minimax ok
+2026-09-27T13:55:26+00:00 council propose gemini ok
+2026-09-27T13:55:26+00:00 council critique codex ok
+2026-09-27T13:55:26+00:00 council critique cursor ok
+2026-09-27T13:55:26+00:00 council critique minimax ok
+2026-09-27T13:55:26+00:00 council critique gemini ok
+2026-09-27T13:55:26+00:00 council critique claude ok
+2026-09-27T13:55:26+00:00 council synthesize cursor ok
+ok
+test_api_members_use_shared_metered_lanes (test_council.CouncilTest) ... ok
+test_completed_answers_survive_interrupted_later_phase (test_council.CouncilTest) ... 2026-09-27T13:55:26+00:00 council propose codex ok
+2026-09-27T13:55:26+00:00 council propose cursor ok
+2026-09-27T13:55:26+00:00 council propose minimax ok
+2026-09-27T13:55:26+00:00 council propose gemini ok
+ok
+test_context_is_complete_or_fails_visibly_before_any_call (test_council.CouncilTest) ... ok
+test_failed_critique_quorum_does_not_synthesize (test_council.CouncilTest) ... 2026-09-27T13:55:26+00:00 council propose codex ok
+2026-09-27T13:55:26+00:00 council propose cursor ok
+2026-09-27T13:55:26+00:00 council propose minimax ok
+2026-09-27T13:55:26+00:00 council propose gemini ok
+2026-09-27T13:55:26+00:00 council critique codex FAILED: critique transport failed
+2026-09-27T13:55:26+00:00 council critique cursor FAILED: critique transport failed
+2026-09-27T13:55:26+00:00 council critique minimax FAILED: critique transport failed
+2026-09-27T13:55:26+00:00 council critique gemini FAILED: critique transport failed
+2026-09-27T13:55:26+00:00 council critique claude FAILED: critique transport failed
+ok
+test_one_member_is_not_a_council (test_council.CouncilTest) ... 2026-09-27T13:55:26+00:00 council propose codex ok
+2026-09-27T13:55:26+00:00 council propose cursor FAILED: provider unavailable
+2026-09-27T13:55:26+00:00 council propose minimax FAILED: provider unavailable
+2026-09-27T13:55:26+00:00 council propose gemini FAILED: provider unavailable
+ok
+test_question_evidence_answers_and_errors_are_redacted (test_council.CouncilTest) ... 2026-09-27T13:55:26+00:00 council propose codex ok
+2026-09-27T13:55:26+00:00 council propose cursor ok
+2026-09-27T13:55:26+00:00 council propose minimax ok
+2026-09-27T13:55:26+00:00 council propose gemini FAILED: failure [REDACTED]
+2026-09-27T13:55:26+00:00 council critique codex ok
+2026-09-27T13:55:26+00:00 council critique cursor ok
+2026-09-27T13:55:26+00:00 council critique minimax ok
+2026-09-27T13:55:26+00:00 council critique claude ok
+2026-09-27T13:55:26+00:00 council synthesize cursor ok
+ok
+test_synthesizer_fallback_is_recorded (test_council.CouncilTest) ... 2026-09-27T13:55:26+00:00 council propose codex ok
+2026-09-27T13:55:26+00:00 council propose cursor ok
+2026-09-27T13:55:26+00:00 council propose minimax ok
+2026-09-27T13:55:26+00:00 council propose gemini ok
+2026-09-27T13:55:26+00:00 council critique codex ok
+2026-09-27T13:55:26+00:00 council critique cursor ok
+2026-09-27T13:55:26+00:00 council critique minimax ok
+2026-09-27T13:55:26+00:00 council critique gemini ok
+2026-09-27T13:55:26+00:00 council critique claude ok
+2026-09-27T13:55:26+00:00 council synthesize cursor FAILED: synthesizer unavailable
+2026-09-27T13:55:26+00:00 council synthesize codex ok
+ok
+test_agent_cannot_disable_baseline_tests (test_council.DraftTest) ... ok
+test_check_failure_or_unavailable_sandbox_is_never_verified (test_council.DraftTest) ... ok
+test_deletions_are_in_diff_and_symlinks_are_rejected (test_council.DraftTest) ... ok
+test_invalid_draft_cannot_touch_live_services_or_erase_concurrent_edit (test_council.DraftTest) ... ok
+test_passing_checks_produce_verified_draft_never_live_apply (test_council.DraftTest) ... ok
+test_scheduled_assessment_uses_draft_evidence_and_never_claims_application (test_council.DraftTest) ... 2026-09-27T13:55:26+00:00 assessment complete: synthesized
+ok
+test_three_durable_jobs_and_same_reply_started_lane (test_lane_integration.LaneIntegrationTests) ... 2026-09-27T13:55:26+00:00 scheduler: 3 reserved workers across 6 lanes
+ok
+test_branch_changed_after_tests_cannot_reuse_old_review_receipts (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:27+00:00 scheduler: 1 reserved workers across 6 lanes
+2026-09-27T13:55:28+00:00 scheduler: 1 reserved workers across 6 lanes
+2026-09-27T13:55:28+00:00 scheduler: 2 reserved workers across 6 lanes
+ok
+test_build_runs_real_tests_and_records_exact_sha (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:28+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_busy_lane_and_paused_scheduler_keep_request_queued (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:28+00:00 scheduler: 0 reserved workers across 6 lanes
+ok
+test_concurrent_enqueue_is_durable_and_idempotent (test_scheduler.SchedulerTest) ... ok
+test_disjoint_siblings_pass_conflict_gate_and_keep_separate_branches (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:28+00:00 scheduler: 2 reserved workers across 6 lanes
+ok
+test_explicit_rejection_is_preserved_without_retrying_for_an_approval (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:30+00:00 scheduler: 1 reserved workers across 6 lanes
+2026-09-27T13:55:30+00:00 scheduler: 1 reserved workers across 6 lanes
+2026-09-27T13:55:30+00:00 scheduler: 0 reserved workers across 6 lanes
+ok
+test_failed_tests_and_out_of_scope_changes_cannot_promote (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:30+00:00 scheduler: 2 reserved workers across 6 lanes
+ok
+test_interrupted_queue_tail_recovered_middle_corruption_rejected (test_scheduler.SchedulerTest) ... ok
+test_lane_contention_does_not_consume_an_attempt (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:31+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_launch_intent_is_not_a_started_worker_receipt (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:31+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_launch_reservation_survives_screen_visibility_delay (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:31+00:00 scheduler: 1 reserved workers across 6 lanes
+2026-09-27T13:55:31+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_launch_return_cannot_overwrite_a_fast_worker_blocker (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:31+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_legacy_queued_job_without_ready_index_row_is_adopted (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:31+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_legacy_webbob_index_is_imported_without_known_project (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:31+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_legacy_webjam_unknown_scope_remains_exclusive (test_scheduler.SchedulerTest) ... ok
+test_live_worker_lease_prevents_orphan_retry_even_without_screen (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:31+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_malformed_parts_are_rejected_before_any_journal_write (test_scheduler.SchedulerTest) ... ok
+test_mini_lane_executes_tests_without_a_model (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:31+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_missing_tests_blocks_before_spending_model_call (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:32+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_old_attempt_token_cannot_execute_or_overwrite_current_job (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:32+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_one_retry_then_fallback_each_lane_has_bounded_attempts (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:32+00:00 scheduler: 1 reserved workers across 6 lanes
+2026-09-27T13:55:32+00:00 scheduler: 1 reserved workers across 6 lanes
+2026-09-27T13:55:32+00:00 scheduler: 1 reserved workers across 6 lanes
+2026-09-27T13:55:32+00:00 scheduler: 1 reserved workers across 6 lanes
+2026-09-27T13:55:32+00:00 scheduler: 0 reserved workers across 6 lanes
+ok
+test_priority_and_overlapping_scopes_serialize_same_repo (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:32+00:00 scheduler: 2 reserved workers across 6 lanes
+ok
+test_producer_roots_do_not_share_journals_or_locks (test_scheduler.SchedulerTest) ... ok
+test_producer_updates_refuse_assigned_jobs (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:32+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_queue_without_index_fills_six_lanes_and_does_not_duplicate (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:32+00:00 scheduler: 6 reserved workers across 6 lanes
+2026-09-27T13:55:32+00:00 scheduler: 6 reserved workers across 6 lanes
+ok
+test_result_promotes_review_then_two_distinct_council_receipts (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:33+00:00 scheduler: 1 reserved workers across 6 lanes
+2026-09-27T13:55:33+00:00 scheduler: 1 reserved workers across 6 lanes
+2026-09-27T13:55:33+00:00 scheduler: 2 reserved workers across 6 lanes
+2026-09-27T13:55:33+00:00 scheduler: 0 reserved workers across 6 lanes
+ok
+test_result_tampering_is_not_harvested (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:33+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_review_missing_or_negative_verdict_never_advances (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:33+00:00 scheduler: 1 reserved workers across 6 lanes
+2026-09-27T13:55:33+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_runner_calls_scheduler_and_status_board_reports_lane_evidence (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:33+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_same_repo_worktree_alias_cannot_bypass_scope (test_scheduler.SchedulerTest) ... ok
+test_scope_validation_and_directory_overlap (test_scheduler.SchedulerTest) ... ok
+test_sibling_conflict_check_uses_real_git_without_merging (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:33+00:00 scheduler: 1 reserved workers across 6 lanes
+2026-09-27T13:55:34+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_single_council_provider_cannot_supply_both_approvals (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:35+00:00 scheduler: 1 reserved workers across 6 lanes
+2026-09-27T13:55:35+00:00 scheduler: 1 reserved workers across 6 lanes
+2026-09-27T13:55:35+00:00 scheduler: 2 reserved workers across 6 lanes
+ok
+test_split_is_idempotent_after_partial_expansion (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:35+00:00 scheduler: 2 reserved workers across 6 lanes
+ok
+test_stale_worker_must_stop_before_reassignment (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:35+00:00 scheduler: 1 reserved workers across 6 lanes
+2026-09-27T13:55:35+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_stop_and_maintenance_prevent_new_launches (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:35+00:00 scheduler paused by MAINTENANCE/STOP-WEBBOB
+2026-09-27T13:55:35+00:00 scheduler paused by MAINTENANCE/STOP-WEBBOB
+ok
+test_targeted_tick_leaves_unrequested_work_queued (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:35+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_unavailable_primary_falls_back_without_using_ineligible_lanes (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:35+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_untracked_implementation_cannot_be_presented_as_tested_commit (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:35+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_worker_pulses_heartbeat_while_model_is_running (test_scheduler.SchedulerTest) ... 2026-09-27T13:55:35+00:00 scheduler: 1 reserved workers across 6 lanes
+ok
+test_alert_only_updates_json (test_services.ServicesTest) ... ok
+test_alignment_collect_events_truncation (test_services.ServicesTest) ... ok
+test_alignment_events_append_and_tail (test_services.ServicesTest) ... ok
+test_alignment_events_paginated_read (test_services.ServicesTest) ... ok
+test_blocker_is_never_harvested_or_closed (test_services.ServicesTest) ... ok
+test_cap_stops_transport (test_services.ServicesTest) ... ok
+test_claude_is_never_selected_for_coding_or_general_jobs (test_services.ServicesTest) ... ok
+test_claude_short_prompt_and_durable_rate_limit_backoff (test_services.ServicesTest) ... ok
+test_codex_has_commit_push_configuration (test_services.ServicesTest) ... ok
+test_coding_boundary_allows_real_commit_and_normal_push (test_services.ServicesTest) ... ok
+test_compact_handback_digest (test_services.ServicesTest) ... ok
+test_concurrent_budget_reservations_cannot_cross_cap (test_services.ServicesTest) ... ok
+test_cursor_login_auto_activation (test_services.ServicesTest) ... ok
+test_devnull_and_core_write_boundary (test_services.ServicesTest) ... ok
+test_external_coder_claim_blocks_new_webjam_work (test_services.ServicesTest) ... ok
+test_git_rollback_before_import_and_chmod (test_services.ServicesTest) ... ok
+test_http_secret_file_and_retry (test_services.ServicesTest) ... 2026-09-27T13:55:36+00:00 HTTP attempt 1/3 failed: HTTP 503 curl_rc=0
+ok
+test_import_spend_once (test_services.ServicesTest) ... ok
+test_incorrect_harvest_is_reopened_and_retry_does_not_move (test_services.ServicesTest) ... ok
+test_journal_tail_repair_preserves_blocked_job (test_services.ServicesTest) ... ok
+test_lane_lease_shared_with_council_and_reviews (test_services.ServicesTest) ... ok
+test_legacy_orphan_is_retained_without_replay (test_services.ServicesTest) ... ok
+test_live_dashboard_snapshot_fields (test_services.ServicesTest) ... ok
+test_live_writer_is_not_harvested (test_services.ServicesTest) ... ok
+test_middle_corruption_is_visible (test_services.ServicesTest) ... ok
+test_progress_cannot_hide_final_blocker (test_services.ServicesTest) ... ok
+test_project_and_ci_priority (test_services.ServicesTest) ... ok
+test_public_live_ops_allowlists_log_tail (test_services.ServicesTest) ... ok
+test_public_live_ops_screen_count_contract (test_services.ServicesTest) ... ok
+test_rebase_replacement_uses_authorized_new_draft_branch (test_services.ServicesTest) ... ok
+test_response_usage_settles_unknown_retains_reservation (test_services.ServicesTest) ... ok
+test_runtime_renders_notes_and_login_state (test_services.ServicesTest) ... ok
+test_scheduler_limits (test_services.ServicesTest) ... ok
+test_scores_table_uses_highest_round_not_mtime (test_services.ServicesTest) ... ok
+test_state_ledger_catchup_and_now (test_services.ServicesTest) ... ok
+test_state_ledger_mutate_under_lock (test_services.ServicesTest) ... ok
+test_terminal_results_cannot_reopen_but_legacy_blockers_can (test_services.ServicesTest) ... ok
+test_three_failures_escalate (test_services.ServicesTest) ... ok
+test_timeout_kills_grandchild (test_services.ServicesTest) ... ok
+test_unverified_result_stays_unfinished (test_services.ServicesTest) ... ok
+test_verified_result_harvest_is_idempotent (test_services.ServicesTest) ... ok
+test_watchdog_caps_restarts (test_services.ServicesTest) ... 2026-09-27T13:55:37+00:00 restarted svc-reviewer verified=True
+2026-09-27T13:55:37+00:00 restarted svc-reviewer verified=True
+2026-09-27T13:55:37+00:00 restarted svc-reviewer verified=True
+2026-09-27T13:55:37+00:00 reviewer restart capped at 3/hour
+ok
+test_worktrees_separate_and_main_push_denied (test_services.ServicesTest) ... ok
+
+----------------------------------------------------------------------
+Ran 98 tests in 11.221s
+
+OK

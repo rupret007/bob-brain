@@ -1,0 +1,15 @@
+{
+  "result": "PASS",
+  "svc_webchat_before": [
+    "59555.svc-webchat-ready-r20\t(Detached)",
+    "60680.svc-webchat\t(Detached)"
+  ],
+  "svc_webchat_after": [
+    "59555.svc-webchat-ready-r20\t(Detached)",
+    "60680.svc-webchat\t(Detached)"
+  ],
+  "fixture_screens_remaining": [],
+  "fixture_directories_removed": true,
+  "integration_branch": "draft/integrate-lanes-0927",
+  "tested_implementation_sha": "7e986c393197f992415d9f80fa90dc9b95120031"
+}
