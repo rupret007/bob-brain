@@ -2,27 +2,27 @@
 
 ```json
 {
-  "timestamp": "2026-09-27T04:28:28+00:00",
-  "commit": "429766f",
+  "timestamp": "2026-09-27T04:31:51+00:00",
+  "commit": "8b2f9c1",
   "services": {
     "job-runner": {
       "healthy": true,
-      "heartbeat_age_seconds": 34.4,
+      "heartbeat_age_seconds": 112.3,
       "session": "45915.svc-job-runner"
     },
     "reviewer": {
       "healthy": true,
-      "heartbeat_age_seconds": 165.2,
+      "heartbeat_age_seconds": 368.2,
       "session": "45974.svc-reviewer"
     },
     "dashboard-updater": {
       "healthy": true,
-      "heartbeat_age_seconds": 226.6,
+      "heartbeat_age_seconds": 128.6,
       "session": "46070.svc-dashboard-updater"
     },
     "watchdog": {
       "healthy": true,
-      "heartbeat_age_seconds": 165.2,
+      "heartbeat_age_seconds": 6.2,
       "session": "46241.svc-watchdog"
     }
   },
@@ -86,6 +86,14 @@
     "committed_usd": 2.235075,
     "calls": 142,
     "cap_usd": 48.0
+  },
+  "regression_tests": 47,
+  "claude_policy": {
+    "role": "short critique/review only",
+    "concurrency": 1,
+    "max_context_characters": 6000,
+    "timeout_seconds": 120,
+    "rate_limit_backoff_seconds": 3600
   }
 }
 ```

@@ -1,9 +1,9 @@
 # HARDEN + CURSOR result
 
-Verified 2026-09-27T04:28:28+00:00 (Mini only). Implementation commit: `429766f` on
+Verified 2026-09-27T04:28:28+00:00 (Mini only). Implementation commit: `8b2f9c1` on
 `draft/harden-cursor`. The local `last-good` tag identifies the checked core.
 All 11 implementation items PASS. All five live lane smoke tests PASS.
-45 regression tests PASS; 15 maintained shell syntax checks PASS;
+47 regression tests PASS; 15 maintained shell syntax checks PASS;
 Python compile checks PASS. Four service screens are running with fresh heartbeats.
 
 | Item | Result | Evidence / resulting behavior |
@@ -23,7 +23,7 @@ Python compile checks PASS. Four service screens are running with fresh heartbea
 | Required live verification | Result |
 | --- | --- |
 | Codex / Claude / Cursor / Gemini / MiniMax short prompt | PASS / PASS / PASS / PASS / PASS — reviews/SMOKE.md |
-| Regression tests | PASS — 45 tests, including actual process death, Git rollback, commit/push boundary, billing races and final-response parsing |
+| Regression tests | PASS — 47 tests, including actual process death, Git rollback, commit/push boundary, billing races and final-response parsing |
 | bash -n | PASS — 15 maintained shells; no GNU timeout dependency |
 | Python compile gate | PASS |
 | start-all.sh | PASS — exit 0, all four screens and lifetime locks verified |
@@ -43,6 +43,8 @@ Live validation also caught progress text hiding a final BLOCKER. The parser now
 uses the last final message, and misclassified managed closeouts were reopened.
 A prepared AdoptIQ rebase needed a new draft target; that path is now authorized
 in its job specification and verified without allowing a force-push.
+
+**23:07 CT Claude update: PASS.** Codex and Cursor own coding/orchestration. Claude is restricted to short council critiques and small reviews (one call, at most 6,000 context characters and 120 seconds), with a durable one-hour rate-limit cooldown. It neither proposes nor synthesizes council plans. Tests verify routing, prompt limits and cooldown refusal. Takeover already prefers Codex.
 
 Project work is ongoing, separate from these infrastructure PASS results. Old
 blocked jobs remain visible. The WebJam test build has an external coding claim;
