@@ -94,6 +94,7 @@ class MediaHTTPTests(fixtures.Fixture):
         self.assertEqual(self.upload(**{'X-CSRF-Token': 'invalid'})[0], 403)
         self.assertEqual(self.upload(name='x.exe')[0], 400)
         self.assertEqual(self.upload(name='not-really.png')[0], 400)
+        self.assertEqual(self.upload(b'ftyp', 'clip.mp4')[0], 400)
         self.assertEqual(self.upload(b'')[0], 413)
         self.assertEqual(self.upload(**{'X-Conversation-Id': str(uuid.uuid4())})[0], 404)
         before = list((self.root / media.UPLOADS).glob('*'))

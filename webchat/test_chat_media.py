@@ -93,7 +93,8 @@ class ChatMediaTests(unittest.TestCase):
             media.load_meta(self.root, stored['media_id'], conversation_id=self.cid)
 
     def test_invalid_inputs_and_size_boundaries(self):
-        for name, data in [('archive.zip', b'x'), ('x.txt', b''), ('bad.png', b'html'), ('clip.mov', b'#EXTM3U\n'), ('x.txt', b'\x00'), ('bad\n.txt', b'x')]:
+        for name, data in [('archive.zip', b'x'), ('x.txt', b''), ('bad.png', b'html'), ('clip.mov', b'#EXTM3U\n'),
+                           ('clip.mp4', b'ftyp'), ('x.txt', b'\x00'), ('bad\n.txt', b'x')]:
             with self.subTest(name=name), self.assertRaises(ValueError):
                 self.store(data, name)
         for name, size, prefix in [('photo.png', media.MAX_IMAGE_BYTES, png_fixture()),
@@ -157,6 +158,23 @@ class ChatMediaTests(unittest.TestCase):
             bundle = self.enrich([video, text])
         self.assertIn('keep this context', bundle['text'])
         self.assertIn('No video frames', bundle['warnings'][0])
+
+    def test_prompt_image_progressive_fallback(self):
+        huge = b'x' * (media.MAX_PROMPT_IMAGE_BYTES + 1)
+        ok = b'\xff\xd8\xff' + b'y' * 100
+        with patch.object(media, '_run_ffmpeg') as ffmpeg:
+            def write_jpeg(args, budget=None):
+                out = Path(args[-1])
+                out.write_bytes(huge if 'image_q6' in str(out) else ok)
+            ffmpeg.side_effect = write_jpeg
+            blob, fmt = media.prompt_image_bytes(Path('photo.png'))
+        self.assertEqual((blob, fmt), (ok, 'jpeg'))
+        self.assertGreaterEqual(ffmpeg.call_count, 2)
+
+    def test_read_text_file_non_pdf_round_trip(self):
+        path = self.root / 'plain.txt'
+        path.write_text('plain text excerpt', encoding='utf-8')
+        self.assertEqual(media.read_text_file(path), 'plain text excerpt')
 
     def test_timeout_missing_tools_and_probe_nonfinite(self):
         budget = media.MediaBudget()

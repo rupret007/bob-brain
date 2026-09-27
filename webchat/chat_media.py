@@ -72,9 +72,9 @@ def _check_signature(data: bytes, suffix: str):
     elif suffix == ".gif":
         valid = data.startswith((b'GIF87a', b'GIF89a'))
     elif suffix == ".webp":
-        valid = data[:4] == b'RIFF' and data[8:12] == b'WEBP'
+        valid = len(data) >= 12 and data[:4] == b'RIFF' and data[8:12] == b'WEBP'
     elif suffix in {".heic", ".heif", ".mp4", ".mov", ".m4v"}:
-        valid = data[4:8] in (b'ftyp', b'moov', b'mdat', b'wide')
+        valid = len(data) >= 8 and data[4:8] in (b'ftyp', b'moov', b'mdat', b'wide')
     elif suffix in {".mkv", ".webm"}:
         valid = data.startswith(b'\x1aE\xdf\xa3')
     elif suffix == ".pdf":
@@ -223,13 +223,16 @@ def prompt_image_bytes(path: Path, budget=None) -> tuple[bytes, str]:
         if path.suffix.lower() in {".heic", ".heif"} and shutil.which("sips"):
             source = Path(tmp) / "decoded.png"
             budget.run(["sips", "-s", "format", "png", str(path), "--out", str(source)])
-        out = Path(tmp) / "image.jpg"
-        _run_ffmpeg(["-i", str(source), "-frames:v", "1", "-vf",
-                     "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease", "-threads", "1",
-                     "-map_metadata", "-1", "-q:v", "6", str(out)], budget)
-        if not out.is_file() or not 0 < out.stat().st_size <= MAX_PROMPT_IMAGE_BYTES:
-            raise ValueError("Image too large or invalid after resizing.")
-        return out.read_bytes(), "jpeg"
+        for quality, scale in ((6, 1280), (4, 960), (2, 640), (1, 480)):
+            out = Path(tmp) / f"image_q{quality}.jpg"
+            _run_ffmpeg(["-i", str(source), "-frames:v", "1", "-vf",
+                         f"scale='min({scale},iw)':'min({scale},ih)':force_original_aspect_ratio=decrease",
+                         "-threads", "1", "-map_metadata", "-1", "-q:v", str(quality), str(out)], budget)
+            if out.is_file() and 0 < out.stat().st_size <= MAX_PROMPT_IMAGE_BYTES:
+                return out.read_bytes(), "jpeg"
+        raise ValueError(
+            f"Image is too complex to reduce below {MAX_PROMPT_IMAGE_BYTES // 1024}KB. "
+            "Try a smaller or simpler image.")
 
 
 def extract_video_frames(path: Path, duration: float | None, budget=None) -> list[dict]:
@@ -246,7 +249,7 @@ def extract_video_frames(path: Path, duration: float | None, budget=None) -> lis
                     "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease", "-threads", "1",
                     "-map_metadata", "-1", "-q:v", "6", str(out)], budget)
             except ValueError:
-                break
+                continue
             if out.is_file() and 0 < out.stat().st_size <= MAX_PROMPT_IMAGE_BYTES:
                 frames.append({"time_s": at, "mime": "image/jpeg", "data_base64": base64.b64encode(out.read_bytes()).decode()})
     return frames

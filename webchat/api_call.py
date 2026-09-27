@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Metered Gemini/MiniMax calls for web chat without conductor lane locks."""
+import base64
 import inspect
 import json
 import os
@@ -38,9 +39,18 @@ def split_transport(raw):
         if not isinstance(prompt, str) or not isinstance(vision, list) or len(vision) > 24:
             raise ValueError()
         for part in vision:
-            if (not isinstance(part, dict) or part.get("mime") not in ("image/jpeg", "image/png", "image/webp")
-                    or not isinstance(part.get("data_base64"), str)):
+            if not isinstance(part, dict):
                 raise ValueError()
+            mime = part.get("mime")
+            if mime not in ("image/jpeg", "image/png", "image/webp"):
+                raise ValueError()
+            raw_b64 = part.get("data_base64")
+            if not isinstance(raw_b64, str):
+                raise ValueError()
+            try:
+                base64.b64decode(raw_b64, validate=True)
+            except ValueError:
+                raise ValueError() from None
         return prompt, vision
     except (ValueError, KeyError, TypeError, AttributeError):
         raise ValueError("Invalid chat transport payload.") from None

@@ -20,7 +20,8 @@ class MediaTransportTests(unittest.TestCase):
         self.assertEqual(split_transport(json.dumps({'prompt': prompt, 'vision': vision})), (prompt, vision))
         self.assertEqual(split_transport(json.dumps({'prompt': prompt, 'vision': []})), (prompt, []))
         for raw in ('text', '[]', '{}', '{"prompt": 4}', '{"prompt":"a", "vision":{}}',
-                    '{"prompt":"a", "vision":[{"mime":"text/html","data_base64":"x"}]}'):
+                    '{"prompt":"a", "vision":[{"mime":"text/html","data_base64":"x"}]}',
+                    '{"prompt":"a", "vision":[{"mime":"image/jpeg","data_base64":"not!valid*base64"}]}'):
             with self.subTest(raw=raw), self.assertRaises(ValueError):
                 split_transport(raw)
 
