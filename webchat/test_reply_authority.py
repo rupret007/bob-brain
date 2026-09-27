@@ -48,3 +48,8 @@ class AuthorityTests(unittest.TestCase):
         answer = enforce(Path('/unused'), "Tell me more", dict(provider="gemini", content=useful +
                          "\n\nNo server-confirmed job was created by this reply. Send `start a job: <task>` to create a tracked job."))
         self.assertEqual(answer, useful)
+
+    def test_casual_chat_does_not_expand_a_model_claim_into_a_status_report(self):
+        answer = enforce(Path('/unused'), "Hi Bob", dict(provider="gemini", content=
+                         "Hi Jeff! Cursor is handling our chat; Gemini and MiniMax are still failing."))
+        self.assertEqual(answer, "Hi Jeff!")

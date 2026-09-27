@@ -41,7 +41,7 @@ def operational_reply(root, provider):
 
 def enforce(root, text, answer):
     content = answer["content"]
-    if STATUS_QUESTION.search(text) or PROVIDER_CLAIM.search(content):
+    if STATUS_QUESTION.search(text):
         content = operational_reply(root, answer["provider"])
     else:
         # Keep the useful answer; remove unsupported effects and boilerplate
@@ -49,7 +49,8 @@ def enforce(root, text, answer):
         # Keep original whitespace so removing a footer doesn't flatten the
         # useful answer's paragraphs, lists, or code formatting.
         sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
-        kept = [part for part in sentences if not QUEUE_CLAIM.search(part) and not NO_JOB_NOTICE.search(part)]
+        kept = [part for part in sentences if not QUEUE_CLAIM.search(part)
+                and not NO_JOB_NOTICE.search(part) and not PROVIDER_CLAIM.search(part)]
         if len(kept) != len(sentences):
             content = "".join(kept).strip() or "What would you like me to work on?"
     return content
