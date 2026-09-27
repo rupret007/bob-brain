@@ -774,9 +774,11 @@ class Chat:
         healthy = bool(files_ok and (launchd_loaded is True or recent_ok))
         if schedule_hint:
             summary = schedule_hint + " " + summary
+        bootstrap = root / "conductor/webchat/bootstrap_self_improve_launchd.sh"
         return {
             "launchd_plist": plist.exists(),
             "tick_script": tick.exists(),
+            "bootstrap_script": str(bootstrap.relative_to(root)) if bootstrap.exists() else None,
             "launchd_files_ok": files_ok,
             "launchd_loaded": launchd_loaded,
             "healthy": healthy,

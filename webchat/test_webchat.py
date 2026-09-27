@@ -771,6 +771,46 @@ class HandbackJobTests(Fixture):
         self.assertIn("bridge", (try_music_coach_reply("help with song structure and bridge") or "").lower())
         self.assertIn("bpm", (try_music_coach_reply("what tempo bpm should I use") or "").lower())
         self.assertIn("4/4", (try_music_coach_reply("what time signature 4/4") or "").lower())
+        self.assertIn("modulation", (try_music_coach_reply("help with modulation key change") or "").lower())
+        self.assertIn("outro", (try_music_coach_reply("write an outro fade ending") or "").lower())
+        self.assertIn("modulation", (try_music_coach_reply("key change for the last chorus") or "").lower())
+        self.assertIn("pre-chorus", (try_music_coach_reply("help with pre-chorus lift") or "").lower())
+        self.assertIn("capo", (try_music_coach_reply("what capo fret for G shapes") or "").lower())
+        self.assertIn("intro", (try_music_coach_reply("write an intro riff for my song") or "").lower())
+        self.assertIsNone(try_music_coach_reply("write an intro for my presentation"))
+        self.assertIn("modulation", (try_music_coach_reply("intro key change on the chorus") or "").lower())
+        outro_chorus = (try_music_coach_reply("outro chorus tag line") or "").lower()
+        self.assertIn("outro", outro_chorus)
+        self.assertNotIn("chorus tip", outro_chorus)
+
+    def test_self_improve_schedule_hint_from_plist(self):
+        plist = self.root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist"
+        plist.parent.mkdir(parents=True, exist_ok=True)
+        plist.write_text(
+            "<plist><dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>30</integer></dict></plist>"
+        )
+        hint = self.chat._self_improve_schedule_hint(plist)
+        self.assertIn("04:30", hint or "")
+        status = self.chat.self_improve_status()
+        self.assertEqual(status.get("schedule_hint"), hint)
+
+    def test_job_card_view_from_events(self):
+        from job_card_view import job_card_headline, job_card_log_lines, job_card_stall_state
+
+        job = {
+            "plain_now": "fallback",
+            "stall_state": "running",
+            "events": [
+                {"kind": "status", "text": "Running tests on Web Bob"},
+                {"kind": "log", "text": "PASS 67 tests"},
+                {"kind": "log", "text": "handback drill OK"},
+                {"kind": "commit", "sha": "abc1234", "message": "fix panel"},
+                {"kind": "stall", "state": "stalled"},
+            ],
+        }
+        self.assertEqual(job_card_headline(job), "Running tests on Web Bob")
+        self.assertEqual(job_card_log_lines(job), ["PASS 67 tests", "handback drill OK"])
+        self.assertEqual(job_card_stall_state(job), "stalled")
 
     def test_self_improve_healthy_flag(self):
         (self.root / "conductor/launchd").mkdir(parents=True, exist_ok=True)

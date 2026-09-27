@@ -320,6 +320,21 @@ class ServicesTest(unittest.TestCase):
         page = alignment_events.read_events_since_paginated(self.root, since_seq=0, page_size=40, max_pages=3)
         self.assertEqual(len(page), 94)
 
+    def test_alignment_collect_events_truncation(self):
+        ledger_dir = str(HERE.parent / "state")
+        if ledger_dir not in sys.path:
+            sys.path.insert(0, ledger_dir)
+        import alignment_events
+
+        for index in range(1, 250):
+            alignment_events.append_event(self.root, actor="test", kind="chat-turn", summary=f"msg {index}")
+        batch = alignment_events.collect_events_since(self.root, since_seq=0, page_size=40, max_pages=6)
+        self.assertEqual(len(batch["events"]), 240)
+        self.assertTrue(batch["truncated"])
+        rest = alignment_events.collect_events_since(self.root, since_seq=batch["high_seq"], page_size=40, max_pages=6)
+        self.assertGreaterEqual(len(rest["events"]), 9)
+        self.assertFalse(rest["truncated"])
+
     def test_public_live_ops_allowlists_log_tail(self):
         import live_dashboard
         payload = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())

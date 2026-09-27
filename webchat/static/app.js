@@ -514,6 +514,30 @@ if ($("login-form")) {
     catch (error) { $("notice").textContent = error.message; }
   });
   let callSession = null;
+  async function drainCallQueue(session) {
+    if (!session || session.drainRunning || callSession !== session) return;
+    session.drainRunning = true;
+    try {
+      while (callSession === session && session.queue.length) {
+        const { transcript, heardAt } = session.queue.shift();
+        if (heardAt !== session.lastHeardAt) continue;
+        await handleCallUtterance(transcript, session.id);
+      }
+    } finally {
+      if (session === callSession) session.drainRunning = false;
+    }
+  }
+  function enqueueCallUtterance(transcript, session) {
+    if (!session || callSession !== session) return;
+    const norm = transcript.trim().toLowerCase();
+    if (norm.length < 3) return;
+    const last = session.queue.at(-1);
+    if (last && last.transcript.trim().toLowerCase() === norm) return;
+    const heardAt = Date.now();
+    session.lastHeardAt = heardAt;
+    session.queue.push({ transcript: transcript.trim(), heardAt });
+    drainCallQueue(session);
+  }
   function appendCallLine(role, text) {
     const host = $("call-transcript");
     if (!host || !text) return;
@@ -547,9 +571,10 @@ if ($("login-form")) {
     $("call-status").textContent = "";
     $("call-transcript").replaceChildren();
   }
-  async function handleCallUtterance(transcript) {
-    if (!callSession || !transcript.trim()) return;
-    const sessionId = callSession.id;
+  async function handleCallUtterance(transcript, sessionId) {
+    if (!callSession || callSession.id !== sessionId || !transcript.trim()) return;
+    if (callSession.busy) return;
+    callSession.busy = true;
     appendCallLine("you", transcript);
     $("call-status").textContent = "Bob is thinking…";
     speechSynthesis.cancel();
@@ -571,6 +596,8 @@ if ($("login-form")) {
       await speakCallReply(body);
     } catch (error) {
       $("call-status").textContent = error.message || "Call error";
+    } finally {
+      if (callSession?.id === sessionId) callSession.busy = false;
     }
   }
   $("live-call")?.addEventListener("click", () => {
@@ -581,7 +608,16 @@ if ($("login-form")) {
       return;
     }
     const rec = new Speech();
-    callSession = { id: crypto.randomUUID(), recognition: rec, speaking: null, resultIndex: 0, busy: false };
+    callSession = {
+      id: crypto.randomUUID(),
+      recognition: rec,
+      speaking: null,
+      resultIndex: 0,
+      busy: false,
+      queue: [],
+      drainRunning: false,
+      lastHeardAt: 0,
+    };
     $("call-dialog")?.showModal();
     $("call-transcript").replaceChildren();
     $("call-status").textContent = "Listening… speak naturally. Bob will answer out loud.";
@@ -600,12 +636,7 @@ if ($("login-form")) {
         if (!row.isFinal) continue;
         callSession.resultIndex = index + 1;
         const said = (row[0]?.transcript || "").trim();
-        if (said.length > 2 && !callSession.busy) {
-          callSession.busy = true;
-          handleCallUtterance(said).finally(() => {
-            if (callSession) callSession.busy = false;
-          });
-        }
+        if (said.length > 2) enqueueCallUtterance(said, callSession);
       }
     };
     rec.onerror = (event) => {
@@ -773,6 +804,36 @@ if ($("login-form")) {
     } catch (error) { $("song-notice").textContent = error.message; }
     event.target.value = "";
   });
+  function renderOpsDetail(ops) {
+    const host = $("ops-detail");
+    if (!host) return;
+    if (!ops || !Object.keys(ops).length) {
+      host.hidden = true;
+      return;
+    }
+    host.hidden = false;
+    const spend = ops.minimax_spend || {};
+    const roles = ops.roles || {};
+    const jobs = (ops.running_jobs || []).filter((j) => j.live_screen);
+    const rows = [
+      ["Now", ops.now_line || "—"],
+      ["Dashboard", ops.dashboard_freshness_seconds == null ? "unknown" : `${ops.dashboard_freshness_seconds}s ago`],
+      ["Round", ops.webchat_round != null ? String(ops.webchat_round) : "—"],
+      ["Builder", roles.building || "idle"],
+      ["Reviews", roles.reviewing || "idle"],
+      ["MiniMax", spend.committed_usd == null ? "unknown" : `$${Number(spend.committed_usd).toFixed(2)} / $${minimaxCapUsd(spend)}`],
+      ["Live jobs", jobs.length ? `${jobs.length} on screen` : "none on screen"],
+    ];
+    const dl = document.createElement("dl");
+    rows.forEach(([label, value]) => {
+      const dt = document.createElement("dt");
+      dt.textContent = label;
+      const dd = document.createElement("dd");
+      dd.textContent = value;
+      dl.append(dt, dd);
+    });
+    host.replaceChildren(dl);
+  }
   function renderScoresTable(scores) {
     const host = $("scores-table");
     if (!host) return;
@@ -810,15 +871,19 @@ if ($("login-form")) {
       const title = document.createElement("strong");
       title.textContent = plainJobTitle(job);
       const stall = document.createElement("span");
-      stall.className = `stall ${job.stall_state === "stalled" ? "stalled" : "running"}`;
-      stall.textContent = job.stall_state || "unknown";
+      stall.className = "stall";
       const elapsed = document.createElement("span");
       const mins = Math.round((job.elapsed_seconds || 0) / 60);
       const roundNote = job.round ? ` · round ${job.round}` : "";
       elapsed.textContent = `${mins}m elapsed${roundNote}${job.started_at ? " · " + job.started_at.replace("T", " ").slice(0, 16) : ""}`;
       header.append(title, stall, elapsed);
       const now = document.createElement("p");
-      const events = (job.events || []).filter((e) => e && (e.text || e.sha));
+      const events = (job.events || []).filter((e) => e && (e.text || e.sha || e.state));
+      const stallEvent = events.find((e) => e.kind === "stall");
+      const resolvedStall = stallEvent?.state || job.stall_state || "unknown";
+      stall.textContent = resolvedStall;
+      stall.classList.toggle("stalled", resolvedStall === "stalled");
+      stall.classList.toggle("running", resolvedStall !== "stalled");
       if (events.length) {
         now.textContent = events.find((e) => e.kind === "status")?.text || job.plain_now || "Working…";
       } else {
@@ -899,7 +964,10 @@ if ($("login-form")) {
       renderLiveJobs(jobs);
       lastPanelScores = ops.scores;
       lastPanelOps = ops;
-      if (activeBottomTab === "lanes") renderScoresTable(ops.scores);
+      if (activeBottomTab === "lanes") {
+        renderOpsDetail(ops);
+        renderScoresTable(ops.scores);
+      }
       const c = data.conductor || {};
       $("conductor-summary").textContent = `Draft work on ${c.draft_branch || "unknown branch"}`;
       const autopilot = liveCards.length
@@ -930,8 +998,9 @@ if ($("login-form")) {
       const health = si.healthy === true ? "Loop healthy"
         : (si.healthy === false && si.launchd_files_ok ? "Needs a successful tick — check mini bootstrap"
           : (si.launchd_files_ok ? "Status unknown — refresh Jobs tab" : "Install tick + plist — see mini setup"));
-      const schedule = si.schedule_hint ? si.schedule_hint.replace(/\.$/, "") : "";
-      $("self-improve-status").textContent = [health, loaded, schedule, logFresh, si.summary || ""].filter(Boolean).join(" · ");
+      const schedule = si.schedule_hint ? `Schedule: ${si.schedule_hint.replace(/\.$/, "")}` : "";
+      const bootstrap = si.bootstrap_script ? `One-time on mini: bash ${si.bootstrap_script}` : "";
+      $("self-improve-status").textContent = [health, loaded, schedule, bootstrap, logFresh, si.summary || ""].filter(Boolean).join(" · ");
       const cl = data.round_changelog || {};
       const clHost = $("changelog-line");
       if (clHost) {
@@ -948,8 +1017,9 @@ if ($("login-form")) {
   let lastPanelMeta = { stale: false };
   async function refreshLanes() {
     try {
-      renderScoresTable(lastPanelScores);
       const ops = lastPanelOps || {};
+      renderOpsDetail(ops);
+      renderScoresTable(lastPanelScores);
       const spend = ops.minimax_spend || {};
       const roles = ops.roles || {};
       const dashAge = ops.dashboard_freshness_seconds;
@@ -984,8 +1054,10 @@ if ($("login-form")) {
         const detail = document.createElement("p");
         detail.className = "lane-detail muted";
         const spend = lane.spend;
+        const capUsd = name === "minimax" ? minimaxCapUsd(spend) : spend.cap_usd;
+        const capPart = spend.cap_usd != null ? ` / $${capUsd} cap` : "";
         const cost = spend.committed_usd !== undefined && ["gemini", "minimax"].includes(name)
-          ? `$${spend.committed_usd.toFixed(2)}${spend.cap_usd ? ` / $${spend.cap_usd} cap` : ""}`
+          ? `$${spend.committed_usd.toFixed(2)}${capPart}`
           : spend.billing;
         detail.textContent = [lane.detail, cost, lane.retry_at > Date.now() / 1000 ? `Retry ${new Date(lane.retry_at * 1000).toLocaleTimeString()}` : ""].filter(Boolean).join(" · ");
         card.append(dot, title, state, detail);

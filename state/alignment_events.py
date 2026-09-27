@@ -106,19 +106,20 @@ def read_events(root: Path, *, since_seq: int = 0, limit: int = 80) -> list[dict
     return rows[-limit:]
 
 
-def read_events_since_paginated(
+def read_events_page(
     root: Path,
     *,
     since_seq: int = 0,
     page_size: int = 80,
-    max_pages: int = 8,
-) -> list[dict]:
-    """Read events after since_seq oldest-first, up to page_size * max_pages."""
+) -> dict:
+    """One oldest-first page after since_seq. Returns events, has_more, high_seq."""
     path = _folder(root) / EVENTS_FILE
     if not path.is_file():
-        return []
-    cap = max(1, page_size) * max(1, max_pages)
+        return {"events": [], "has_more": False, "high_seq": since_seq}
+    limit = max(1, page_size)
     rows: list[dict] = []
+    high_seq = since_seq
+    has_more = False
     with path.open("r", errors="replace") as handle:
         for line in handle:
             line = line.strip()
@@ -128,12 +129,71 @@ def read_events_since_paginated(
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if int(row.get("seq") or 0) <= since_seq:
+            seq = int(row.get("seq") or 0)
+            if seq <= since_seq:
                 continue
-            rows.append(row)
-            if len(rows) >= cap:
+            if len(rows) >= limit:
+                has_more = True
                 break
-    return rows
+            rows.append(row)
+            high_seq = max(high_seq, seq)
+        else:
+            has_more = False
+    if len(rows) >= limit:
+        # Confirm trailing events exist beyond this page.
+        trailing = False
+        with path.open("r", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                seq = int(row.get("seq") or 0)
+                if seq <= high_seq:
+                    continue
+                trailing = True
+                break
+        has_more = trailing
+    return {"events": rows, "has_more": has_more, "high_seq": high_seq}
+
+
+def collect_events_since(
+    root: Path,
+    *,
+    since_seq: int = 0,
+    page_size: int = 40,
+    max_pages: int = 6,
+) -> dict:
+    """Read events after since_seq across up to max_pages pages."""
+    cursor = since_seq
+    collected: list[dict] = []
+    batch: dict = {"events": [], "has_more": False, "high_seq": since_seq}
+    for _ in range(max(1, max_pages)):
+        batch = read_events_page(root, since_seq=cursor, page_size=page_size)
+        if not batch["events"]:
+            break
+        collected.extend(batch["events"])
+        cursor = int(batch["high_seq"])
+        if not batch["has_more"]:
+            return {"events": collected, "truncated": False, "high_seq": cursor}
+    truncated = bool(batch.get("has_more"))
+    return {"events": collected, "truncated": truncated, "high_seq": cursor}
+
+
+def read_events_since_paginated(
+    root: Path,
+    *,
+    since_seq: int = 0,
+    page_size: int = 80,
+    max_pages: int = 8,
+) -> list[dict]:
+    """Read events after since_seq oldest-first, up to page_size * max_pages (single scan)."""
+    cap = max(1, page_size) * max(1, max_pages)
+    batch = read_events_page(root, since_seq=since_seq, page_size=cap)
+    return batch["events"]
 
 
 def latest_seq(root: Path) -> int:

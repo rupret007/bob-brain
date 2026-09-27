@@ -1,0 +1,462 @@
+### FILE /tmp/webchat-r13.diff
+diff --git a/conductor/reviews/WEBCHAT-READY-R11-RESULT.md b/conductor/reviews/WEBCHAT-READY-R11-RESULT.md
+index c2813af..a19d1fa 100644
+--- a/conductor/reviews/WEBCHAT-READY-R11-RESULT.md
++++ b/conductor/reviews/WEBCHAT-READY-R11-RESULT.md
+@@ -117,7 +117,7 @@ lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
+ | Pre-R11 HEAD | `3ceb09830b68a56365796e0b9ce7c3e15d006adc` |
+ | R11 primary (prior) | `33e666f5879c4f9779761c8463648bd8a5aa93c4` |
+ | **R11 primary (code)** | `f4996b68a3659580e114186b806ef88127815144` |
+-| **Final SHA (this round)** | `7012503b93912edb22fb740259b7a76f51f5ce0f` |
++| **Final SHA (this round)** | `1640db01b75d713337967546e61b48b2997c6cd0` |
+ 
+ ## Remaining risks
+ 
+diff --git a/conductor/webchat/evidence/handback-drill.json b/conductor/webchat/evidence/handback-drill.json
+index 61190e2..fa7a1be 100644
+--- a/conductor/webchat/evidence/handback-drill.json
++++ b/conductor/webchat/evidence/handback-drill.json
+@@ -1,46 +1,46 @@
+ {
+-  "started_at": 1790500074.371573,
++  "started_at": 1790500261.609289,
+   "rounds": [
+     {
+       "ledger": {
+-        "tag": "r10-1",
+-        "fixture_id": "8c0a56e9-b285-46b1-a694-0b5d55205237",
++        "tag": "r13-1",
++        "fixture_id": "5391ee4e-1c40-4fe7-a013-6f6d015fba5e",
+         "ledger_ok": true,
+         "bob_pickup_ok": true,
+         "summary_chars": 967
+       },
+       "live": {
+-        "tag": "r10-1",
++        "tag": "r13-1",
+         "status": "done",
+         "provider": "state",
+-        "elapsed_seconds": 0.052,
++        "elapsed_seconds": 0.056,
+         "mentions_running": true,
+-        "snippet": "Running: handback drill screen `drill-r10-1`",
++        "snippet": "Running: handback drill screen `drill-r13-1`",
+         "live_ok": true
+       },
+-      "fixture_id": "8c0a56e9-b285-46b1-a694-0b5d55205237",
++      "fixture_id": "5391ee4e-1c40-4fe7-a013-6f6d015fba5e",
+       "reverse_handback_ok": true,
+       "events_ok": true,
+       "pass": true
+     },
+     {
+       "ledger": {
+-        "tag": "r10-2",
+-        "fixture_id": "32501863-0376-476f-ae87-108d9245ddc6",
++        "tag": "r13-2",
++        "fixture_id": "b5e78e3c-c58e-4183-afce-8e48a6f0a9db",
+         "ledger_ok": true,
+         "bob_pickup_ok": true,
+         "summary_chars": 967
+       },
+       "live": {
+-        "tag": "r10-2",
++        "tag": "r13-2",
+         "status": "done",
+         "provider": "state",
+-        "elapsed_seconds": 0.051,
++        "elapsed_seconds": 0.057,
+         "mentions_running": true,
+-        "snippet": "Running: handback drill screen `drill-r10-2`",
++        "snippet": "Running: handback drill screen `drill-r13-2`",
+         "live_ok": true
+       },
+-      "fixture_id": "32501863-0376-476f-ae87-108d9245ddc6",
++      "fixture_id": "b5e78e3c-c58e-4183-afce-8e48a6f0a9db",
+       "reverse_handback_ok": true,
+       "events_ok": true,
+       "pass": true
+@@ -48,7 +48,7 @@
+   ],
+   "isolated": true,
+   "prod_unchanged": true,
+-  "finished_at": 1790500074.735865,
++  "finished_at": 1790500261.979452,
+   "result": "PASS",
+   "drill_commit_marker": "drill0001"
+ }
+diff --git a/conductor/webchat/evidence/ready-drill.json b/conductor/webchat/evidence/ready-drill.json
+index 344c2e2..52febb4 100644
+--- a/conductor/webchat/evidence/ready-drill.json
++++ b/conductor/webchat/evidence/ready-drill.json
+@@ -7,7 +7,7 @@
+       "text": "Reply with exactly: drill A1",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 0.953,
++      "elapsed_seconds": 1.096,
+       "busy_in_attempts": false
+     },
+     {
+@@ -15,7 +15,7 @@
+       "text": "Reply with exactly: drill B1",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 0.975,
++      "elapsed_seconds": 0.948,
+       "busy_in_attempts": false
+     },
+     {
+@@ -23,7 +23,7 @@
+       "text": "Reply with exactly: drill A2",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 0.968,
++      "elapsed_seconds": 0.661,
+       "busy_in_attempts": false
+     },
+     {
+@@ -31,7 +31,7 @@
+       "text": "Reply with exactly: drill B2",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 0.983,
++      "elapsed_seconds": 0.948,
+       "busy_in_attempts": false
+     },
+     {
+@@ -39,7 +39,7 @@
+       "text": "Reply with exactly: drill A3",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 0.971,
++      "elapsed_seconds": 0.972,
+       "busy_in_attempts": false
+     },
+     {
+@@ -47,7 +47,7 @@
+       "text": "Reply with exactly: drill B3",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 0.973,
++      "elapsed_seconds": 0.98,
+       "busy_in_attempts": false
+     },
+     {
+@@ -55,7 +55,7 @@
+       "text": "Reply with exactly: drill A4",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 0.946,
++      "elapsed_seconds": 0.965,
+       "busy_in_attempts": false
+     },
+     {
+@@ -63,7 +63,7 @@
+       "text": "Reply with exactly: drill B4",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 0.975,
++      "elapsed_seconds": 0.984,
+       "busy_in_attempts": false
+     },
+     {
+@@ -71,7 +71,7 @@
+       "text": "Reply with exactly: drill A5",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 0.972,
++      "elapsed_seconds": 0.979,
+       "busy_in_attempts": false
+     },
+     {
+@@ -79,18 +79,18 @@
+       "text": "Reply with exactly: drill B5",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 0.956,
++      "elapsed_seconds": 0.99,
+       "busy_in_attempts": false
+     }
+   ],
+-  "started_at": 1790500064.644623,
++  "started_at": 1790500251.532458,
+   "locks": [
+     "codex: drill holds background lock",
+     "cursor: background job holds lock",
+     "gemini: drill holds background lock",
+-    "minimax: background job holds lock"
++    "minimax: drill holds background lock"
+   ],
+-  "p50_seconds": 0.972,
+-  "finished_at": 1790500074.316929,
++  "p50_seconds": 0.975,
++  "finished_at": 1790500261.056292,
+   "result": "PASS"
+ }
+diff --git a/conductor/webchat/music_notebook.py b/conductor/webchat/music_notebook.py
+index 3f67a10..fa2b55b 100644
+--- a/conductor/webchat/music_notebook.py
++++ b/conductor/webchat/music_notebook.py
+@@ -115,7 +115,7 @@ def snapshot_for_prompt(root: Path, limit: int = 6000) -> str:
+ 
+ 
+ _MUSIC_COACH_RE = re.compile(
+-    r"\b(?:(?:my |a )?song|lyrics|chorus|verse|bridge|hook|chords?|progression|melody|arrange|rhyme|meter|tempo|bpm|structure|time signature|4/4|3/4|6/8|modulation|key change|outro|fade|ending)\b",
++    r"\b(?:(?:my |a )?song|lyrics|chorus|verse|bridge|hook|chords?|progression|melody|arrange|rhyme|meter|tempo|bpm|structure|time signature|4/4|3/4|6/8|modulation|key change|outro|fade|ending|intro|pre-?chorus|capo|riff|vamp)\b",
+     re.I,
+ )
+ 
+@@ -126,6 +126,30 @@ def try_music_coach_reply(text: str) -> str | None:
+     if not stripped or len(stripped) > 280 or not _MUSIC_COACH_RE.search(stripped):
+         return None
+     lower = stripped.lower()
++    if "intro" in lower and "modulation" not in lower:
++        return (
++            "Intro: one riff or motif that foreshadows the chorus hook — keep it 4–8 bars, no lyrics required. "
++            "Drop the energy after bar 4 so verse 1 feels like a breath. "
++            "Note the intro idea in Songs → notes; Logic markers are confirm-first."
++        )
++    if "pre-chorus" in lower or "prechorus" in lower or "pre chorus" in lower:
++        return (
++            "Pre-chorus: build tension with rising chords (e.g. vi–IV–V) and a shorter melodic line than the verse. "
++            "Land on the dominant (V) right before the chorus downbeat. "
++            "Save lyric tweaks as a new Songs version so Bob sees the lift."
++        )
++    if "capo" in lower:
++        return (
++            "Capo: match the singer’s comfortable range — write shapes in friendly keys (G, C, D) and note capo fret in Songs → chords. "
++            "Same chord names on paper; the sounding key shifts up. "
++            "Record which fret you used in notes for the handback."
++        )
++    if "riff" in lower or "vamp" in lower:
++        return (
++            "Riff/vamp: repeat a 1–2 bar figure; change one note on the 4th repeat for motion. "
++            "Use it under the chorus tag or as an outro fade. "
++            "Hum it into Songs audio upload if you want a reference take ($0 local sketch later)."
++        )
+     if "modulation" in lower or "key change" in lower:
+         return (
+             "Modulation: move up a half-step or whole-step for the final chorus lift (common in pop). "
+diff --git a/conductor/webchat/static/app.js b/conductor/webchat/static/app.js
+index 32a9bfd..b149ebe 100644
+--- a/conductor/webchat/static/app.js
++++ b/conductor/webchat/static/app.js
+@@ -514,6 +514,28 @@ if ($("login-form")) {
+     catch (error) { $("notice").textContent = error.message; }
+   });
+   let callSession = null;
++  const callUtteranceQueue = [];
++  let callDrainRunning = false;
++  async function drainCallQueue() {
++    if (callDrainRunning || !callSession) return;
++    callDrainRunning = true;
++    while (callSession && callUtteranceQueue.length) {
++      const { transcript, sessionId } = callUtteranceQueue.shift();
++      if (!callSession || callSession.id !== sessionId) continue;
++      await handleCallUtterance(transcript, sessionId);
++    }
++    callDrainRunning = false;
++  }
++  function enqueueCallUtterance(transcript, sessionId) {
++    const norm = transcript.trim().toLowerCase();
++    if (norm.length < 3) return;
++    const last = callUtteranceQueue.at(-1);
++    if (last && last.transcript.trim().toLowerCase() === norm) return;
++    if (callSession?.lastHeard === norm) return;
++    callSession.lastHeard = norm;
++    callUtteranceQueue.push({ transcript: transcript.trim(), sessionId });
++    drainCallQueue();
++  }
+   function appendCallLine(role, text) {
+     const host = $("call-transcript");
+     if (!host || !text) return;
+@@ -547,9 +569,10 @@ if ($("login-form")) {
+     $("call-status").textContent = "";
+     $("call-transcript").replaceChildren();
+   }
+-  async function handleCallUtterance(transcript) {
+-    if (!callSession || !transcript.trim()) return;
+-    const sessionId = callSession.id;
++  async function handleCallUtterance(transcript, sessionId) {
++    if (!callSession || callSession.id !== sessionId || !transcript.trim()) return;
++    if (callSession.busy) return;
++    callSession.busy = true;
+     appendCallLine("you", transcript);
+     $("call-status").textContent = "Bob is thinking…";
+     speechSynthesis.cancel();
+@@ -571,6 +594,8 @@ if ($("login-form")) {
+       await speakCallReply(body);
+     } catch (error) {
+       $("call-status").textContent = error.message || "Call error";
++    } finally {
++      if (callSession?.id === sessionId) callSession.busy = false;
+     }
+   }
+   $("live-call")?.addEventListener("click", () => {
+@@ -581,7 +606,9 @@ if ($("login-form")) {
+       return;
+     }
+     const rec = new Speech();
+-    callSession = { id: crypto.randomUUID(), recognition: rec, speaking: null, resultIndex: 0, busy: false };
++    callUtteranceQueue.length = 0;
++    callDrainRunning = false;
++    callSession = { id: crypto.randomUUID(), recognition: rec, speaking: null, resultIndex: 0, busy: false, lastHeard: "" };
+     $("call-dialog")?.showModal();
+     $("call-transcript").replaceChildren();
+     $("call-status").textContent = "Listening… speak naturally. Bob will answer out loud.";
+@@ -600,12 +627,7 @@ if ($("login-form")) {
+         if (!row.isFinal) continue;
+         callSession.resultIndex = index + 1;
+         const said = (row[0]?.transcript || "").trim();
+-        if (said.length > 2 && !callSession.busy) {
+-          callSession.busy = true;
+-          handleCallUtterance(said).finally(() => {
+-            if (callSession) callSession.busy = false;
+-          });
+-        }
++        if (said.length > 2) enqueueCallUtterance(said, callSession.id);
+       }
+     };
+     rec.onerror = (event) => {
+@@ -773,6 +795,36 @@ if ($("login-form")) {
+     } catch (error) { $("song-notice").textContent = error.message; }
+     event.target.value = "";
+   });
++  function renderOpsDetail(ops) {
++    const host = $("ops-detail");
++    if (!host) return;
++    if (!ops || !Object.keys(ops).length) {
++      host.hidden = true;
++      return;
++    }
++    host.hidden = false;
++    const spend = ops.minimax_spend || {};
++    const roles = ops.roles || {};
++    const jobs = (ops.running_jobs || []).filter((j) => j.live_screen);
++    const rows = [
++      ["Now", ops.now_line || "—"],
++      ["Dashboard", ops.dashboard_freshness_seconds == null ? "unknown" : `${ops.dashboard_freshness_seconds}s ago`],
++      ["Round", ops.webchat_round != null ? String(ops.webchat_round) : "—"],
++      ["Builder", roles.building || "idle"],
++      ["Reviews", roles.reviewing || "idle"],
++      ["MiniMax", spend.committed_usd == null ? "unknown" : `$${Number(spend.committed_usd).toFixed(2)} / $${minimaxCapUsd(spend)}`],
++      ["Live jobs", jobs.length ? `${jobs.length} on screen` : "none on screen"],
++    ];
++    const dl = document.createElement("dl");
++    rows.forEach(([label, value]) => {
++      const dt = document.createElement("dt");
++      dt.textContent = label;
++      const dd = document.createElement("dd");
++      dd.textContent = value;
++      dl.append(dt, dd);
++    });
++    host.replaceChildren(dl);
++  }
+   function renderScoresTable(scores) {
+     const host = $("scores-table");
+     if (!host) return;
+@@ -903,7 +955,10 @@ if ($("login-form")) {
+       renderLiveJobs(jobs);
+       lastPanelScores = ops.scores;
+       lastPanelOps = ops;
+-      if (activeBottomTab === "lanes") renderScoresTable(ops.scores);
++      if (activeBottomTab === "lanes") {
++        renderOpsDetail(ops);
++        renderScoresTable(ops.scores);
++      }
+       const c = data.conductor || {};
+       $("conductor-summary").textContent = `Draft work on ${c.draft_branch || "unknown branch"}`;
+       const autopilot = liveCards.length
+@@ -935,7 +990,8 @@ if ($("login-form")) {
+         : (si.healthy === false && si.launchd_files_ok ? "Needs a successful tick — check mini bootstrap"
+           : (si.launchd_files_ok ? "Status unknown — refresh Jobs tab" : "Install tick + plist — see mini setup"));
+       const schedule = si.schedule_hint ? `Schedule: ${si.schedule_hint.replace(/\.$/, "")}` : "";
+-      $("self-improve-status").textContent = [health, loaded, schedule, logFresh, si.summary || ""].filter(Boolean).join(" · ");
++      const bootstrap = si.bootstrap_script ? `One-time on mini: bash ${si.bootstrap_script}` : "";
++      $("self-improve-status").textContent = [health, loaded, schedule, bootstrap, logFresh, si.summary || ""].filter(Boolean).join(" · ");
+       const cl = data.round_changelog || {};
+       const clHost = $("changelog-line");
+       if (clHost) {
+@@ -952,8 +1008,9 @@ if ($("login-form")) {
+   let lastPanelMeta = { stale: false };
+   async function refreshLanes() {
+     try {
+-      renderScoresTable(lastPanelScores);
+       const ops = lastPanelOps || {};
++      renderOpsDetail(ops);
++      renderScoresTable(lastPanelScores);
+       const spend = ops.minimax_spend || {};
+       const roles = ops.roles || {};
+       const dashAge = ops.dashboard_freshness_seconds;
+diff --git a/conductor/webchat/static/index.html b/conductor/webchat/static/index.html
+index 883efae..9e283b9 100644
+--- a/conductor/webchat/static/index.html
++++ b/conductor/webchat/static/index.html
+@@ -85,6 +85,7 @@
+       <div class="view-scroll">
+         <h2 class="view-title">Models</h2>
+         <p id="lanes-summary" class="view-lead muted"></p>
++        <div id="ops-detail" class="ops-detail" aria-label="Live dashboard detail" hidden></div>
+         <div id="scores-table" class="scores-grid" aria-label="Latest Web Bob scores"></div>
+         <div id="lanes" class="lane-cards" aria-live="polite"></div>
+       </div>
+diff --git a/conductor/webchat/static/style.css b/conductor/webchat/static/style.css
+index 7f2e8ae..25ea634 100644
+--- a/conductor/webchat/static/style.css
++++ b/conductor/webchat/static/style.css
+@@ -126,6 +126,20 @@ h1 { font-size: 18px; letter-spacing: -.35px; }
+ .view-subtitle { font-size: 15px; font-weight: 600; margin: 16px 0 6px; }
+ .view-lead { font-size: 14px; line-height: 1.45; margin-bottom: 10px; }
+ .now-line { font-size: 15px; line-height: 1.4; font-weight: 500; margin: 0 0 8px; color: var(--text); }
++.ops-detail {
++  display: grid;
++  gap: 8px;
++  margin: 0 0 14px;
++  padding: 12px;
++  border-radius: 12px;
++  background: var(--surface-2);
++  border: 1px solid var(--line);
++  font-size: 13px;
++  line-height: 1.45;
++}
++.ops-detail dl { margin: 0; display: grid; grid-template-columns: minmax(88px, 34%) 1fr; gap: 4px 10px; }
++.ops-detail dt { color: var(--muted); font-weight: 500; }
++.ops-detail dd { margin: 0; }
+ .song-versions { list-style: none; padding: 0; margin: 8px 0 12px; font-size: 13px; }
+ .song-versions li { padding: 6px 0; border-bottom: 1px solid var(--border); }
+ .view-hint { font-size: 12px; line-height: 1.45; margin-top: 12px; }
+diff --git a/conductor/webchat/test_webchat.py b/conductor/webchat/test_webchat.py
+index b50659f..41a95a1 100644
+--- a/conductor/webchat/test_webchat.py
++++ b/conductor/webchat/test_webchat.py
+@@ -774,6 +774,9 @@ class HandbackJobTests(Fixture):
+         self.assertIn("modulation", (try_music_coach_reply("help with modulation key change") or "").lower())
+         self.assertIn("outro", (try_music_coach_reply("write an outro fade ending") or "").lower())
+         self.assertIn("modulation", (try_music_coach_reply("key change for the last chorus") or "").lower())
++        self.assertIn("pre-chorus", (try_music_coach_reply("help with pre-chorus lift") or "").lower())
++        self.assertIn("capo", (try_music_coach_reply("what capo fret for G shapes") or "").lower())
++        self.assertIn("intro", (try_music_coach_reply("write an intro riff") or "").lower())
+         outro_chorus = (try_music_coach_reply("outro chorus tag line") or "").lower()
+         self.assertIn("outro", outro_chorus)
+         self.assertNotIn("chorus tip", outro_chorus)
+
+
+### FILE conductor/reviews/WEBCHAT-READY-R13-DESIGN.md
+# Web Bob Round 13 — design note (research-first)
+
+**Borrow**
+- Apple HIG tab bar + grouped Settings lists (iOS-native ops detail on Models tab).
+- ALIGNMENT-DESIGN `events.jsonl` + paginated catch-up with explicit `truncated` / `has_more` (Codex R12 council).
+- Grok Bot chat bar order (mic in pill, waveform call) — unchanged; R13 hardens call utterance queue.
+
+**Reject**
+- MiniMax music API / new signups (Jeff 02:00).
+- Grok as worker.
+- Restarting webchat mid-reply per deploy (03:40) — still defer batch restart policy; single safe restart this round only.
+
+**Why**
+- Lowest R12 scores: self-improve clarity, voice serialization, music coach breadth, catch-up loss at >240 events.
+- Detailed live dashboard belongs on Models tab as a dl grid (plain English), not above chat.
+
+**Sources:** `conductor/reviews/ALIGNMENT-DESIGN.md`, `WEBCHAT-READY-R12-RESULT.md`, Apple HIG Tab Bars, MDN Web Speech API.

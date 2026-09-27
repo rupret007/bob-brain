@@ -126,6 +126,20 @@ h1 { font-size: 18px; letter-spacing: -.35px; }
 .view-subtitle { font-size: 15px; font-weight: 600; margin: 16px 0 6px; }
 .view-lead { font-size: 14px; line-height: 1.45; margin-bottom: 10px; }
 .now-line { font-size: 15px; line-height: 1.4; font-weight: 500; margin: 0 0 8px; color: var(--text); }
+.ops-detail {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.ops-detail dl { margin: 0; display: grid; grid-template-columns: minmax(88px, 34%) 1fr; gap: 4px 10px; }
+.ops-detail dt { color: var(--muted); font-weight: 500; }
+.ops-detail dd { margin: 0; }
 .song-versions { list-style: none; padding: 0; margin: 8px 0 12px; font-size: 13px; }
 .song-versions li { padding: 6px 0; border-bottom: 1px solid var(--border); }
 .view-hint { font-size: 12px; line-height: 1.45; margin-top: 12px; }
@@ -238,14 +252,46 @@ select option { background: var(--surface-2); color: var(--text); }
 .composer {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-bottom: 0;
+  padding: 0 2px;
+}
+.composer-plus {
+  flex-shrink: 0;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  font-size: 22px;
+  font-weight: 300;
+  line-height: 1;
+  opacity: 0.45;
+}
+.composer-pill {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 22px;
-  padding: 6px;
-  flex-shrink: 0;
-  margin-bottom: 0;
-  box-shadow: 0 -4px 24px color-mix(in srgb, var(--bg) 70%, transparent);
+  padding: 4px 8px 4px 4px;
+  box-shadow: 0 -2px 16px color-mix(in srgb, var(--bg) 55%, transparent);
+}
+.composer-mic {
+  min-width: 40px;
+  width: 40px;
+  padding: 0;
+  font-size: 18px;
+  opacity: 0.85;
+}
+.composer-speak {
+  display: none;
+}
+@media (min-width: 420px) {
+  .composer-speak { display: flex; }
 }
 .bottom-tabs {
   display: flex;

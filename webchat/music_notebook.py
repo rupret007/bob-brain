@@ -115,7 +115,7 @@ def snapshot_for_prompt(root: Path, limit: int = 6000) -> str:
 
 
 _MUSIC_COACH_RE = re.compile(
-    r"\b(?:(?:my |a )?song|lyrics|chorus|verse|bridge|hook|chords?|progression|melody|arrange|rhyme|meter|tempo|bpm|structure|time signature|4/4|3/4|6/8)\b",
+    r"\b(?:(?:my |a )?song|lyrics|chorus|verse|bridge|hook|chords?|progression|melody|arrange|rhyme|meter|tempo|bpm|structure|time signature|4/4|3/4|6/8|modulation|key change|outro|fade|ending|pre[- ]?chorus|capo|riffs?|vamp)\b",
     re.I,
 )
 
@@ -126,6 +126,46 @@ def try_music_coach_reply(text: str) -> str | None:
     if not stripped or len(stripped) > 280 or not _MUSIC_COACH_RE.search(stripped):
         return None
     lower = stripped.lower()
+    if "modulation" in lower or "key change" in lower:
+        return (
+            "Modulation: move up a half-step or whole-step for the final chorus lift (common in pop). "
+            "Set up with a dominant chord (V) of the new key one bar before the change — e.g. G7 before C major. "
+            "Note old and new keys in Songs → notes so versions and Bob stay aligned."
+        )
+    music_ctx = re.search(
+        r"\b(song|lyrics|chorus|verse|guitar|track|riff|hook|arrange)\b",
+        lower,
+    )
+    if re.search(r"\bintro\b", lower) and music_ctx:
+        return (
+            "Intro: one riff or motif that foreshadows the chorus hook — keep it 4–8 bars, no lyrics required. "
+            "Drop the energy after bar 4 so verse 1 feels like a breath. "
+            "Note the intro idea in Songs → notes; Logic markers are confirm-first."
+        )
+    if "pre-chorus" in lower or "prechorus" in lower or "pre chorus" in lower:
+        return (
+            "Pre-chorus: build tension with rising chords (e.g. vi–IV–V) and a shorter melodic line than the verse. "
+            "Land on the dominant (V) right before the chorus downbeat. "
+            "Save lyric tweaks as a new Songs version so Bob sees the lift."
+        )
+    if "capo" in lower:
+        return (
+            "Capo: match the singer’s comfortable range — write shapes in friendly keys (G, C, D) and note capo fret in Songs → chords. "
+            "Same chord names on paper; the sounding key shifts up. "
+            "Record which fret you used in notes for the handback."
+        )
+    if "riff" in lower or "vamp" in lower:
+        return (
+            "Riff/vamp: repeat a 1–2 bar figure; change one note on the 4th repeat for motion. "
+            "Use it under the chorus tag or as an outro fade. "
+            "Hum it into Songs audio upload if you want a reference take ($0 local sketch later)."
+        )
+    if "outro" in lower or "ending" in lower or "fade" in lower:
+        return (
+            "Outro: repeat the chorus hook once, strip instruments for the last line, or tag a new lyric over the vamp. "
+            "A fade works on sketch demos; in Logic, mark the outro region confirm-first before bounce. "
+            "Save the lyric tweak as a new Songs version."
+        )
     if "chord" in lower or "progression" in lower:
         return (
             "For chords, try a simple loop (verse: I–V–vi–IV, chorus lift to IV or vi). "
@@ -162,7 +202,7 @@ def try_music_coach_reply(text: str) -> str | None:
             "Keep the lyric syllables per bar consistent once you pick one. "
             "Note the choice in Songs → notes so Bob and versions stay aligned."
         )
-    if "tempo" in lower or "bpm" in lower or "key" in lower:
+    if "tempo" in lower or "bpm" in lower or ("key" in lower and "change" not in lower):
         return (
             "Tempo/key: pick BPM in Songs notes (e.g. 92 BPM, key of G). "
             "Match chord voicings to the singer’s comfortable range; capo is fine. "

@@ -335,8 +335,13 @@ def _write_catchup_body(root: Path, state: dict) -> None:
     try:
         import alignment_events  # noqa: WPS433
 
-        pending_events = alignment_events.read_events_since_paginated(root, since_seq=ack, page_size=40, max_pages=6)
-        overflow = len(pending_events) > 20
+        collected = alignment_events.collect_events_since(root, since_seq=ack, page_size=40, max_pages=6)
+        pending_events = collected["events"]
+        overflow = collected.get("truncated") or len(pending_events) > 20
+        if collected.get("truncated"):
+            state["catchup_events_has_more"] = True
+        else:
+            state.pop("catchup_events_has_more", None)
         for ev in pending_events:
             kind = ev.get("kind") or "note"
             if kind not in ("chat-turn", "handback-turn", "inbox", "decision", "tick", "blocker"):
@@ -345,7 +350,10 @@ def _write_catchup_body(root: Path, state: dict) -> None:
                 f"Event {ev.get('seq')}: {kind} — {(ev.get('summary') or '')[:100]}"
             )
         if overflow:
-            blockers.insert(0, f"+{len(pending_events) - 20} more alignment events since ack seq {ack} (paginated)")
+            if collected.get("truncated"):
+                blockers.insert(0, "More alignment events remain — Bob should read catch-up again after ack.")
+            elif len(pending_events) > 20:
+                blockers.insert(0, f"+{len(pending_events) - 20} more alignment events since ack seq {ack}")
     except (ImportError, OSError):
         pending_events = []
     delivered_seq = ack
