@@ -62,4 +62,4 @@ Today, Web Bob's only *deterministic* action layer is the pre-LLM regex parser i
 
 ## Push
 
-Committed to `draft/lane-tools-0927` (`d3f4bc7`) and pushed. Not merged — draft only, per standing rules.
+Committed to `draft/lane-tools-0927`. `git push` fails here with `fatal: No configured push destination` — this repo has no remote configured (`git remote -v` is empty), and none of the sibling `draft/*` branches (`lane-scheduler-0927`, `self-improve-r2/r3`, `webchat-failover-20260927`, `harden-cursor`) have upstreams either. All worktrees share the same underlying `.git` (`conductor/.git/worktrees/*`), so this branch's commits are already visible to every other worktree/session without a push. Not merged — draft only, per standing rules.
