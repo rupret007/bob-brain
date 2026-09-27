@@ -45,8 +45,10 @@ def main():
         if re.search(r"\b\d+\.svc-webchat\s+\(", result.stdout):
             print("svc-webchat still present after quit; inspect logs/webchat-server.log.")
             return 1
+        env = os.environ.copy()
+        env.setdefault("BOB_WEBCHAT_DRILLS", "1")
         subprocess.run(["/usr/bin/screen", "-dmS", "svc-webchat", "/bin/bash", str(HERE / "run.sh")],
-                       stdin=subprocess.DEVNULL, check=True, timeout=10, env=os.environ.copy())
+                       stdin=subprocess.DEVNULL, check=True, timeout=10, env=env)
         for _ in range(40):
             if healthy():
                 print("Started svc-webchat at " + URL)

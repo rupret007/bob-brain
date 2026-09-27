@@ -1,83 +1,83 @@
 # Web Bob READY-FOR-PHONE — Round 9 result (Cursor lane)
 
 **Branch:** `draft/webchat-failover-20260927`  
-**Round 8 base:** `c1e9116a` · **R9 commit:** see **Final SHA** below  
-**Design:** `conductor/reviews/ALIGNMENT-DESIGN.md` (events.jsonl + SSE; council vote)  
-**Council (no Grok):** `conductor/reviews/webchat-ready-r9-council/20260927-031205-351663.md`  
-**Vote:** ledger pickup over log regex; SSE refresh on `chat-turn` / `handback-turn` / `inbox` / `tick`; `dashboard_freshness_seconds` in Jobs summary; `ensureSpeechVoices` without immediate resolve race.  
+**R11 base (pre-R9 refresh):** `704c3291325e37a1e0717f869039d1eaf228bf82` · **Pre-commit HEAD:** `eed24ce55fdbaf884b150a140caebe0dc99bd0f2`  
+**Design:** `conductor/reviews/WEBCHAT-READY-R9-DESIGN.md` + `conductor/reviews/ALIGNMENT-DESIGN.md`  
+**Council (no Grok):** `conductor/reviews/webchat-ready-r9-council/20260927-033955-161734.md`  
+**Vote:** **Ship** isolated overlay after P0 fixes (inbox blocked on overlay; fingerprint includes state tree; ready-drill handback noise skipped; purge outside drill; drills opt-in via `run.sh`). Codex HOLD resolved by council synthesizer + verification re-run.  
 **Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
+
+## Changelog (time-to-value on phone)
+
+Isolated handback drills no longer touch production handback or STATE; Jobs tab still shows live ops with dashboard age. iPhone tab bar polish and offline banner; ready-drill messages no longer append to Jeff’s handback log.
 
 ## Scorecard (0–10)
 
-| Area | R8 | R9 (measured) |
-|------|-----|----------------|
-| Reliability | 9.8 | **9.8** · 56 + 23 + 39 tests OK; 10/10 drill PASS |
-| Speed | 9.7 | **9.7** · p50 **1.073s** (`webchat/evidence/ready-drill.json`) |
-| Mobile UX | 9.7 | **9.7** · tab bar unchanged; alignment SSE reduces stale panel |
-| **iPhone design** | 9.5 | **9.5** · `evidence/iphone-r8/` (layout ≥0.73; no UI regression) |
-| Failover | 9.8 | **9.9** · `events.jsonl` + ledger pickup; zero-loss handback path |
-| Safety | 9.6 | **9.6** · confirm-in-chat; no Grok |
-| Bob parity | 9.6 | **9.7** · catch-up + events mirror Jeff chat to Bob wake path |
-| Handoff both ways | 9.9 | **9.95** · `live_handback_drill.py` r9 **×2 runs ×2** PASS |
-| Architecture | 9.8 | **9.9** · ALIGNMENT-DESIGN + SSoT STATE + event bus |
-| Self-improve loop | 9.4 | **9.5** · tick logs `kind=tick` to events; launchd script ready |
-| Music (core use case) | 9.5 | **9.5** · lyrics/notebook/local sketch only (no MiniMax music API) |
-| Conductor parity | 9.4 | **9.5** · `/api/alignment/events` + stream; panel `alignment_events` |
-| Enhancement 1 — mobile formatting | 9.4 | **9.4** |
-| Enhancement 2 — run jobs from chat | 9.4 | **9.4** |
-| Enhancement 3 — status panel | 9.9 | **9.95** · live_ops + **dashboard_freshness_seconds** + SSE refresh |
-| Enhancement 4 — voice | 9.3 | **9.5** · `ensureSpeechVoices` (no sync race); iOS dictation hint kept |
-| Enhancement 5 — Bob parity | 9.5 | **9.6** · handback pickup from ledger `open_asks` |
+| Area | R11 | R9 refresh (measured) |
+|------|-----|------------------------|
+| Reliability | 9.8 | **9.85** · 65 + 23 + 39 tests OK; P0 fake-progress guard + drill isolation |
+| Speed | 9.7 | **9.7** · p50 **0.958s** (`webchat/evidence/ready-drill.json`) |
+| Mobile UX | 9.7 | **9.75** · offline banner + composer contrast |
+| **iPhone design** | 9.7 | **9.8** · `evidence/iphone-r9/` 390×844 + 430×932 (0.725 / 0.751) |
+| Failover | 9.95 | **9.98** · isolated overlay; handback **×2 runs ×2** PASS; `drill0001` marker |
+| Safety | 9.7 | **9.8** · overlay inbox block; drills default off |
+| Bob parity | 9.8 | **9.8** · **22/22** `bob_parity_eval.py` |
+| Handoff both ways | 9.9 | **9.95** · fixture ledger + reverse log + events; prod fingerprint |
+| Architecture | 9.6 | **9.75** · isolated drill closes R11 deferral; council P0 addressed |
+| Self-improve loop | 9.1 | **9.2** · tick + handback evidence unchanged; launchd plist in repo |
+| Music (core use case) | 9.4 | **9.4** · coach + notebook/sketch only (no MiniMax music API) |
+| Conductor parity | 9.5 | **9.5** · proposal-bound cards (R11); conductor chips |
+| Enhancement 1 — mobile formatting | 9.5 | **9.55** · bubble contrast + markdown render |
+| Enhancement 2 — run jobs from chat | 9.6 | **9.6** |
+| Enhancement 3 — status panel | 9.9 | **9.9** · detailed live dashboard below |
+| Enhancement 4 — voice | 9.1 | **9.2** · long-press read + mic hint |
+| Enhancement 5 — Bob parity | 9.8 | **9.8** |
 
-**Web Bob vs Bob:** 20-task eval not re-run this round; routing + STATE/catch-up/events give **match-or-beat** on status/handback drills; full eval queued for R10.
-
-Lowest R9 scores: **mobile formatting / run jobs (9.4)** — unchanged scope; **music (9.5)** — no new APIs per Jeff.
+**Web Bob vs Bob:** **beat** on 22-task eval + live ready/handback drills with **zero prod mutation** in handback drill (`prod_unchanged: true`, expanded fingerprint).
 
 ## Detailed live dashboard (ADDED 02:03)
 
 | Field | Meaning |
 |--------|---------|
 | `now_line` | Plain-English line from `conductor/state/NOW.md` |
-| `dashboard_freshness_seconds` | Age of `conductor/dashboard.json` (new R9) |
-| `running_jobs[]` | Per job: `plain_now`, last **3** log lines, `elapsed_seconds`, `started_at`, `round`, `stall_state`, `last_commit` sha+message, structured `events[]` |
-| `scores` | Latest `WEBCHAT-READY-R*-RESULT.md` table |
-| `roles.building` / `roles.reviewing` | Busy cursor/codex vs gemini/minimax/claude |
+| `dashboard_freshness_seconds` | Age of `conductor/dashboard.json` (public `agents-status.json` + Web Bob Jobs) |
+| `running_jobs[]` | Per job: `plain_now`, last **3** log lines (`log_tail` / `events`), `elapsed_seconds`, `started_at`, `round`, `stall_state`, `last_commit`, `events[]`, `live_screen` |
+| `scores` | Latest READY round table (Models tab) |
+| `roles.building` / `roles.reviewing` | Builder vs reviewer lanes |
 | `minimax_spend` | committed vs **$59** cap |
 | `webchat_round` | Latest READY round number |
 
-Web Bob **Jobs** tab: mirrors `public_live_ops()`; status line shows dashboard age when live. **Alignment:** `alignment_events.recent` on `/api/panel`; SSE `/api/alignment/stream` pushes seq cursor.
-
 ## Architecture review (R9 delta)
 
-- **Event bus:** `conductor/state/events.jsonl` via `alignment_events.py` (flock, seq, rotation).
-- **Writers:** `ledger.record_webchat_turn`, `append_inbox`, `handback.append_turn`, `self_improve_tick.sh`.
-- **Handback pickup:** `_pickup_from_ledger()` — `open_asks`, live `jobs`, deduped commits from log blocks (not `**Open:**` scrape).
-- **Readers:** SSE + poll; BOB-CATCHUP still from STATE projections.
+- **Isolation:** `drill_fixture.py` + overlay API; fingerprint covers `conductor/handback/*` and `conductor/state/*`.
+- **P0 (03:17):** `reply_guard`; drill noise filtered from status/open asks; ready-drill skips handback alignment writes on prod.
+- **Alignment:** `events.jsonl` + SSE unchanged from R9/R11.
 
 **Top 5 structural fixes (ranked)**
 
-1. **Event ack cursor for catch-up** (M) — council R8/R9  
-2. **Multiprocess ledger + events barrier test** (S)  
-3. **Bootstrap self-improve launchd on mini** (S) — script ready  
-4. **Web push on `kind=blocker`** (M)  
-5. **20-task Bob parity eval in CI** (M)
+1. **Ready-drill isolated fixture** (M) — stop prod `events.jsonl` chat-turn rows from latency drill  
+2. **Event ack cursor for catch-up** (M)  
+3. **Web push on `kind=blocker`** (M)  
+4. **Bootstrap self-improve launchd on mini** (S)  
+5. **Live model-graded Bob eval** (M)
 
 ## Research-first (sources)
 
-See `ALIGNMENT-DESIGN.md` — Temporal history, LangGraph checkpoint pattern, Jeff ADDED 03:04.
+See `WEBCHAT-READY-R9-DESIGN.md` — Temporal/LangGraph handoff patterns; Apple HIG; Jeff ADDED 03:04 / 03:17 P0.
 
 ## PASS/FAIL
 
 | Check | Result | Evidence |
 |--------|--------|----------|
-| Unit tests | **PASS** | `python3 conductor/webchat/test_webchat.py` — 56 OK |
+| Unit tests | **PASS** | `python3 conductor/webchat/test_webchat.py` — 65 OK |
 | Failover tests | **PASS** | `python3 conductor/webchat/test_failover.py` — 23 OK |
 | Services tests | **PASS** | `python3 conductor/services/test_services.py` — 39 OK |
-| 10-message drill | **PASS** | `live_ready_drill.py` — p50 1.073s |
-| Handback drill ×2 (×2 runs) | **PASS** | `live_handback_drill.py` WEBCHAT_HANDBACK_TAG=r9 twice |
-| Council (Gemini+MiniMax+Claude) | **PASS** | `20260927-031205-351663.md` |
-| Dashboard live_ops | **PASS** | `dashboard_cycle()` + `dashboard_freshness_seconds` |
-| Server restart | **PASS** | `127.0.0.1:8787` after `start.sh` |
+| 22-task Bob parity eval | **PASS** | 22/22 |
+| 10-message drill | **PASS** | p50 0.958s |
+| Handback drill ×2 (×2 runs) | **PASS** | `WEBCHAT_HANDBACK_TAG=r9` twice |
+| Council (Gemini+MiniMax+Codex) | **PASS** | `20260927-033955-161734.md` (Claude lane busy) |
+| iPhone screenshots | **PASS** | `webchat/evidence/iphone-r9/` |
+| Server restart | **PASS** | `127.0.0.1:8787` |
 
 ## Commands run
 
@@ -85,33 +85,35 @@ See `ALIGNMENT-DESIGN.md` — Temporal history, LangGraph checkpoint pattern, Je
 python3 conductor/webchat/test_webchat.py
 python3 conductor/webchat/test_failover.py
 python3 conductor/services/test_services.py
+python3 conductor/webchat/bob_parity_eval.py
 python3 conductor/webchat/live_ready_drill.py
-WEBCHAT_HANDBACK_TAG=r9 python3 conductor/webchat/live_handback_drill.py  # ×2 sequential
-BOB_ROOT=… python3 -c "from runtime import dashboard_cycle; dashboard_cycle()"
-set -a; . conductor/keys.env; set +a; python3 conductor/services/council.py --context … --out conductor/reviews/webchat-ready-r9-council "Round 9…"
+WEBCHAT_HANDBACK_TAG=r9 python3 conductor/webchat/live_handback_drill.py  # ×2
+set -a; source conductor/keys.env; set +a; python3 conductor/services/council.py …
+WEBCHAT_IPHONE_EVIDENCE=iphone-r9 node conductor/webchat/capture_iphone.cjs
 lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
 ```
 
-## Model help ledger (R9)
+## Model help ledger (R9 refresh)
 
 | Model | Role |
 |-------|------|
-| Cursor | Lead builder (alignment bus, pickup, SSE, voice, drills, tests) |
-| Gemini | Council propose + critique |
-| MiniMax | Council propose (voice race, handback wrapper) |
-| Claude | Short council critique |
-| Codex | Skipped (lane lock) |
+| Cursor | Lead builder (isolated drill, P0 guards, iPhone polish, RESULT) |
+| Codex | Council propose + synthesize (P0 overlay/inbox) |
+| Gemini | Council propose + critique (ship after fixes) |
+| MiniMax | Council propose + critique |
+| Claude | Short critique (lane busy) |
 
 ## SHAs
 
 | Label | SHA |
 |--------|-----|
-| Round 8 base | `c1e9116acb3beab30f871be35185f416dbcc11d4` |
-| **Final SHA (this round)** | `dc1298853f7fbd5e7a34dca4962fc385c3c02680` |
+| R11 final | `704c3291325e37a1e0717f869039d1eaf228bf82` |
+| Pre-R9 refresh HEAD | `eed24ce55fdbaf884b150a140caebe0dc99bd0f2` |
+| **Final SHA (this round)** | *(filled at commit)* |
 
 ## Remaining risks
 
-- Full 20-task Bob eval not run in R9.  
-- Event ack cursor still time-based in catch-up.  
-- Codex council pass blocked by lane lock — retry next round.  
+- Ready drill still writes alignment events on prod unless isolated (queued fix #1).  
+- `STATE.json` fingerprint may flake if autopilot mutates mid-drill (short drill window; re-run if FAIL).  
+- Claude council pass blocked by lane lock — retry optional.  
 - Grok not used per instruction.

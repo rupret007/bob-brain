@@ -17,7 +17,7 @@
 
 1. **iPhone UI:** SVG tab icons, reconnect banner, stronger assistant bubble contrast, long-press Copy/Read on messages (`evidence/iphone-r8/`, ratio ≥0.72).
 2. **Isolated handback drill:** `drill_fixture.py` + `/api/drill/overlay`; production handback fingerprint + no drill open asks; live drill ×2 PASS.
-3. **Purge:** `purge_drill_open_asks()` removes stale drill rows from `STATE.json`.
+3. **Purge:** `purge_drill_open_asks()` marks matching drill/test rows `dropped` in `STATE.json` (idempotent maintenance; not part of the isolation drill).
 4. **Voice UX:** long-press Read aloud + existing mic/TTS priming (Safari limits remain).
 5. **Live dashboard:** unchanged R11 fields (`dashboard_freshness_seconds`, roles, log tail) — Jobs tab mirrors `public_live_ops()`.
 

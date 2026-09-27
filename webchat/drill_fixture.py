@@ -15,19 +15,21 @@ ROOT = HERE.parents[1]
 FIXTURES = HERE / "drill-fixtures"
 
 HANDBACK_FILES = ("BOB-STATE.md", "HANDBACK-LOG.md", "HANDBACK-SUMMARY.md", ".bob-last-seen")
-STATE_FILES = ("STATE.json", "BOB-CATCHUP.md", "NOW.md", "events.jsonl")
+STATE_FILES = ("STATE.json", "BOB-CATCHUP.md", "NOW.md", "events.jsonl", "INBOX.md")
 DRILL_COMMIT_SHA = "drill0001"
 SYNTHETIC_COMMIT_LABEL = f"synthetic:{DRILL_COMMIT_SHA}"
 
 
 def prod_fingerprint(root: Path) -> dict[str, str]:
-    """SHA256 of production handback files (autopilot may mutate STATE.json concurrently)."""
+    """SHA256 of production handback + state files (detect drill leakage into prod)."""
     out: dict[str, str] = {}
-    base = root / "conductor/handback"
-    for name in HANDBACK_FILES:
-        path = base / name
+    for rel in (
+        *(f"conductor/handback/{name}" for name in HANDBACK_FILES),
+        *(f"conductor/state/{name}" for name in STATE_FILES),
+    ):
+        path = root / rel
         if path.is_file():
-            out[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
+            out[rel] = hashlib.sha256(path.read_bytes()).hexdigest()
     return out
 
 

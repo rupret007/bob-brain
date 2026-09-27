@@ -173,6 +173,9 @@ class Chat:
     def record_turn(self, conversation_id=None, **data):
         # The optional handback ledger cannot turn a completed provider reply or
         # a persisted action receipt into a failed/replayed request.
+        ask = (data.get("ask") or "").strip()
+        if self.ledger_root(conversation_id) == self.root and state_ledger._DRILL_NOISE_RE.search(ask):
+            return
         try:
             append_turn(self.ledger_root(conversation_id), **data)
         except OSError:
@@ -459,7 +462,17 @@ class Chat:
                             refusals=[refusal], open_items=[])
                 return self.public(conversation)
             inbox_body = state_ledger.parse_inbox_message(text)
+            ledger = self.ledger_root(identifier)
             if inbox_body:
+                if ledger != self.root:
+                    conversation["messages"][-1].update(
+                        status="done",
+                        content="Builder inbox is disabled during a drill overlay — use a normal chat to reach the mini.",
+                        provider="state",
+                    )
+                    self.save(conversation)
+                    self.conversations[identifier] = conversation
+                    return self.public(conversation)
                 state_ledger.append_inbox(self.root, inbox_body, source="web-bob", request_id=request_id)
                 reply = (
                     "Got it — I added that to the builder inbox on the mini. "
@@ -468,12 +481,12 @@ class Chat:
                 conversation["messages"][-1].update(status="done", content=reply, provider="inbox")
                 self.save(conversation)
                 self.conversations[identifier] = conversation
-                self.record_turn(ask=text, provider="inbox", jobs=[], files=["conductor/state/INBOX.md"],
+                self.record_turn(conversation_id=identifier, ask=text, provider="inbox", jobs=[], files=["conductor/state/INBOX.md"],
                             commits=[], confirmations=[], refusals=[], open_items=[inbox_body[:200]],
                             request_id=request_id)
-                state_ledger.record_webchat_turn(self.root, ask=text, provider="inbox", request_id=request_id)
+                if not state_ledger._DRILL_NOISE_RE.search(text):
+                    state_ledger.record_webchat_turn(ledger, ask=text, provider="inbox", request_id=request_id)
                 return self.public(conversation)
-            ledger = self.ledger_root(identifier)
             if ledger == self.root:
                 try:
                     state_ledger.sync_from_live_ops(
@@ -556,9 +569,11 @@ class Chat:
                             open_items=[user[:200]] if user else [],
                             request_id=user_msg.get("request_id"))
                 try:
-                    state_ledger.record_webchat_turn(
-                        self.ledger_root(identifier), ask=user, provider=answer.get("provider"), request_id=user_msg.get("request_id"),
-                    )
+                    ledger = self.ledger_root(identifier)
+                    if not (ledger == self.root and state_ledger._DRILL_NOISE_RE.search(user or "")):
+                        state_ledger.record_webchat_turn(
+                            ledger, ask=user, provider=answer.get("provider"), request_id=user_msg.get("request_id"),
+                        )
                 except OSError:
                     pass
         except AllDown as exc:
