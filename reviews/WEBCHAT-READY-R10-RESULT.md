@@ -108,7 +108,7 @@ lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
 |--------|-----|
 | Round 9 base | `dc1298853f7fbd5e7a34dca4962fc385c3c02680` |
 | **R10 primary** | `213b1c80e0dbb3a18ac6395d34df129e36c2718b` |
-| **Final SHA (this round)** | `3038e684d0beeef40601726e7b2e131f3b1d7a29` |
+| **Final SHA (this round)** | `666945cab525b774720dbd7cab9bd7bed394a5c9` |
 
 ## Remaining risks
 
