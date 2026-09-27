@@ -126,7 +126,7 @@ class ServicesTest(unittest.TestCase):
         active=[dict(coder,engine='codex')]
         self.assertFalse(jobs.can_assign(coder,'cursor',active,health));self.assertFalse(jobs.can_assign(coder,'gemini',[],health))
         self.assertTrue(jobs.can_assign(dict(coder,kind='non-coding'),'gemini',active,health))
-        self.assertFalse(jobs.can_assign(coder,'cursor',[{'engine':str(i)} for i in range(5)],health))
+        self.assertFalse(jobs.can_assign(coder,'cursor',[{'engine':str(i)} for i in range(6)],health))
     def test_project_and_ci_priority(self):
         p=self.core/'services';p.mkdir();state.write_json(p/'backlog.json',[{'id':'feature','project':'WebJam','priority':20},{'id':'sb','project':'StoryBoard','priority':0},{'id':'ci','project':'WebJam','priority':0}])
         self.assertEqual([r['id'] for r in jobs.queue_specs()],['ci','feature','sb'])

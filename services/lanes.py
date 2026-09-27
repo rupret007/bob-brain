@@ -16,9 +16,11 @@ from state import CONDUCTOR, alert, append_event, atomic_write, jobs, lock, read
 from workspaces import analysis_workspace, sandbox_command
 
 LANES = budget.LANES
+SCHEDULER_LANES = (*LANES, "mini")
 CURSOR = Path.home() / ".local/bin/cursor-agent"
 RULES = ("HARD RULES: drafts only; never merge, undraft, force-push, send texts/emails, buy credits, "
-         "change logins, use Cursor Cloud agents, or launch other workers. Only one WebJam coder. "
+         "change logins, use Cursor Cloud agents, or launch other workers. "
+         "Edit only the scheduler-assigned file/area scope. Other coders may share the repo in separate worktrees. "
          "Work ONLY in the assigned Git worktree on its draft/ branch. Never reset, stash, or overwrite "
          "preexisting work. Never modify the live conductor, services, bin, queue, handoff, or STATUS.md. "
          "Write proposals in the worktree, never apply changes to the orchestrator. "
@@ -38,7 +40,7 @@ def refresh():
     previous = read_json(CONDUCTOR / "lanes.json", {})
     cooldowns = read_json(CONDUCTOR / "lane-cooldowns.json", {})
     data = {}
-    for lane in LANES:
+    for lane in SCHEDULER_LANES:
         state, detail = "ready", "available"
         if lane == "cursor":
             if not CURSOR.is_file():

@@ -209,16 +209,17 @@ def schedule_pass():
 
 
 def runner_cycle():
-    result = run(["/bin/bash", str(CONDUCTOR / "run-tick.sh")], timeout=600)
-    if result.returncode not in (0, 2):
-        raise RuntimeError("run-tick failed rc=" + str(result.returncode))
-    schedule_pass()
+    from jobs import tick
+    from scheduler import paused
+    tick()
+    if not paused():
+        schedule_pass()
     status_report()
 
 
 def reviewer_cycle():
     from api import critique
-    candidates = [r for r in jobs().values() if r["state"] == "harvested" and r.get("result_path")]
+    candidates = [r for r in jobs().values() if r["state"] == "harvested" and r.get("result_path") and not r.get("queue_id")]
     # Newest unreviewed result first on migration; one result per cycle bounds cost/time.
     candidates.sort(key=lambda r: (r.get("review_attempt_at", 0), -r.get("launched_at", 0)))
     for record in candidates:
@@ -241,6 +242,7 @@ def reviewer_cycle():
 
 def snapshot():
     from live_dashboard import build_live_ops
+    from scheduler import lane_board
 
     records = list(jobs().values())
     runs = [r for r in journal_rows("model-runs") if r.get("timestamp", 0) > time.time() - 86400]
@@ -266,7 +268,7 @@ def snapshot():
             live_ops["now_line"] = refreshed
     except Exception:
         pass
-    return {"generated_at": stamp(), "live_ops": live_ops, "services": health(sessions=sessions),
+    return {"generated_at": stamp(), "live_ops": live_ops, "lane_board": lane_board(), "services": health(sessions=sessions),
             "jobs": {"total": len(records), "launched": sum(r["state"] == "launched" for r in records),
                      "running": sum(r["state"] == "running" for r in records),
                      "harvested": sum(r["state"] == "harvested" for r in records),
@@ -369,6 +371,16 @@ def status_report():
              "CONDUCTOR: single scheduler; two-hour council assessment only; live core read-only.",
              "LANES: " + "; ".join(n + "=" + v["state"] for n, v in data["lanes"].items()),
              "MINIMAX: $%.4f spent + $%.4f reserved / $48 hard cap." % (data["spend"]["minimax"]["spent_usd"], data["spend"]["minimax"]["reserved_usd"])]
+    from datetime import datetime, timezone
+    def cell(value):
+        return str(value if value is not None else "—").replace("|", "\\|").replace("\n", " ")
+    def when(value):
+        return datetime.fromtimestamp(value, timezone.utc).isoformat(timespec="seconds") if value else "—"
+    lines += ["", "## Lane board", "", "| Lane | State | Job | Started (UTC) | Heartbeat (UTC) | Result / stage |",
+              "| --- | --- | --- | --- | --- | --- |"]
+    for row in data["lane_board"]:
+        lines.append("| " + " | ".join(cell(v) for v in (row["lane"], row["state"], row["job"],
+                     when(row["started"]), when(row["heartbeat"]), row["result"] + (" — " + row["result_path"] if row["result_path"] else ""))) + " |")
     for note in sorted((CONDUCTOR / "status").glob("notes-*.md")):
         lines.append(note.stem + ": " + " ".join(note.read_text(errors="replace").split())[:1500])
     with lock("status"):
