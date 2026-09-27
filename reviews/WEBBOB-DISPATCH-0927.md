@@ -1,6 +1,6 @@
 # Web Bob dispatch proof — 2026-09-27
 
-Live endpoint: `http://127.0.0.1:8787`. Local branch: `draft/webbob-dispatch-0927`. All timestamps below are UTC (Chicago is UTC−05:00 on this date).
+Live endpoint: `http://127.0.0.1:8787`. Local branch: `draft/webbob-dispatch-0927`. Code commit: `1f6c042`. All timestamps below are UTC (Chicago is UTC−05:00 on this date).
 
 ## Verified outcome
 
@@ -8,20 +8,20 @@ Authenticated requests sent through `POST /api/messages` were claimed by **Codex
 
 | Worker | Queued | Claimed | Execution started | Finished | Answer saved in chat | Attempts |
 |---|---|---|---|---|---|---|
-| codex | 2026-09-27T14:59:27.210+00:00 | 2026-09-27T14:59:32.430+00:00 | 2026-09-27T14:59:32.496+00:00 | 2026-09-27T14:59:44.931+00:00 | 2026-09-27T14:59:45.209+00:00 | 1 |
-| gemini | 2026-09-27T15:00:42.359+00:00 | 2026-09-27T15:00:48.311+00:00 | 2026-09-27T15:00:48.380+00:00 | 2026-09-27T15:00:49.585+00:00 | 2026-09-27T15:00:50.079+00:00 | 1 |
-| minimax | 2026-09-27T15:03:04.810+00:00 | 2026-09-27T15:03:08.937+00:00 | 2026-09-27T15:03:09.039+00:00 | 2026-09-27T15:03:39.050+00:00 | 2026-09-27T15:03:39.180+00:00 | 1 |
+| codex | 2026-09-27T15:26:31.279+00:00 | 2026-09-27T15:26:32.215+00:00 | 2026-09-27T15:26:32.324+00:00 | 2026-09-27T15:26:49.414+00:00 | 2026-09-27T15:26:49.507+00:00 | 1 |
+| gemini | 2026-09-27T15:27:19.937+00:00 | 2026-09-27T15:27:25.707+00:00 | 2026-09-27T15:27:25.773+00:00 | 2026-09-27T15:27:26.780+00:00 | 2026-09-27T15:27:27.713+00:00 | 1 |
+| minimax | 2026-09-27T15:28:47.441+00:00 | 2026-09-27T15:28:50.808+00:00 | 2026-09-27T15:28:50.871+00:00 | 2026-09-27T15:29:08.178+00:00 | 2026-09-27T15:29:09.015+00:00 | 1 |
 
 ## Requests and returned answers
 
 ### codex
 
-- Task: `webchat-c970316bc444501d8ec69fe7bbaaea34`
-- Conversation: `4cddbfe5-64cc-496a-bea8-228483f13c72`
-- Request: `64de457a-a42c-4f5b-83d3-0b3d1c74dec3`
-- Result message: `2fe567e9-132a-5401-8762-22b1c19a2264`
-- Result SHA-256: `aa741d4f6bd25b47fa6ab7b4f23ba394a2d2e15d5316be335e4cea541eeb4427`
-- Observed queue wait: `5.220 s`; result-to-chat delay: `0.277 s`.
+- Task: `webchat-c96d2c7fba4452dc8ad2cbb5fc65e875`
+- Conversation: `494e5739-898f-4e8b-81b7-939ba8a9d3d0`
+- Request: `04da57e8-29ac-4511-b417-c7e46e1f3054`
+- Result message: `faa8e699-a802-52be-87b5-f32d3cce4401`
+- Result SHA-256: `f90cc08c248a8801711b6fac5c291b17d63a3ddf658aba52d74b6670f3609761`
+- Observed queue wait: `0.936 s`; result-to-chat delay: `0.093 s`.
 
 Request:
 
@@ -31,9 +31,9 @@ Actual assistant response:
 
 codex finished:
 
-`run()` starts the child in a new session, creating a separate process group. At [services/command.py:45](services/command.py:45), `communicate()` enforces the timeout; an exception triggers group cleanup, closes captured pipes, and is re-raised.
+`run()` starts each child in a new session, giving it a separate process group. On timeout, `communicate()` raises; the exception handler kills the group, closes captured pipes, and re-raises ([line 45](/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webchat-c96d2c7fba4452dc8ad2cbb5fc65e875/services/command.py:45)).
 
-SIGTERM, SIGINT, and SIGHUP handlers invoke the same cleanup, then raise `SystemExit(128 + signum)`. At [services/command.py:14](services/command.py:14), `kill_group()` signals the entire group: SIGTERM first, waits up to 0.5 seconds for the direct child, then sends SIGKILL if the group still exists and reaps the child.
+On SIGTERM, the installed handler calls `kill_group()` and exits with status 143 ([line 38](/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webchat-c96d2c7fba4452dc8ad2cbb5fc65e875/services/command.py:38)). Cleanup sends SIGTERM to the entire group, waits up to 0.5 seconds for the direct child, then sends SIGKILL if the group still exists and waits for the child.
 
 One limit: descendants that create a new session or leave the original process group escape this group-based cleanup.
 
@@ -41,12 +41,12 @@ No files were modified.
 
 ### gemini
 
-- Task: `webchat-24159ec0a957569cb19a656a81be2dae`
-- Conversation: `1943f942-eef7-4586-ab4c-1bc6e7f69100`
-- Request: `ec32da45-9ef1-4dd6-888d-60121abc6cae`
-- Result message: `e1272a5c-14a9-50fc-a360-ec8fd9712e45`
-- Result SHA-256: `4f9de06946da9a7ba5445cbe75e9500703b9cc0edd80e212547d88cd3b2e711f`
-- Observed queue wait: `5.953 s`; result-to-chat delay: `0.494 s`.
+- Task: `webchat-2acc32a044d75285b1261d348a2e00dc`
+- Conversation: `7b80ddd2-bc63-498f-ac6c-41858ad28b78`
+- Request: `5fadcf41-8ba6-45b8-a6ef-61b859007526`
+- Result message: `5deb450b-aac9-5581-b44b-3c8d8a2cb8a2`
+- Result SHA-256: `21f43024070c076c9eb658c0ff975e4b28a729b51b97680788ce79e978ed1f2d`
+- Observed queue wait: `5.770 s`; result-to-chat delay: `0.933 s`.
 
 Request:
 
@@ -58,7 +58,7 @@ gemini finished:
 
 The job was queued at 15:02:03.250 UTC and claimed at 15:02:07.750 UTC.
 
-Pickup delay = Claimed time - Queued time
+Pickup delay = Claim time - Queue time
 Pickup delay = 15:02:07.750 - 15:02:03.250
 Pickup delay = 4.500 seconds
 
@@ -66,12 +66,12 @@ The pickup delay is 4.500 seconds. This meets the five-second pickup objective.
 
 ### minimax
 
-- Task: `webchat-988ce808940f5f529a7da4242878f1e8`
-- Conversation: `515e92e1-08c0-476e-88cf-d328ff2e962b`
-- Request: `a3ff096d-89f8-48cd-ba67-bf0e04371cca`
-- Result message: `878cdf8d-9371-5ae2-90b6-2bf4e13e7c93`
-- Result SHA-256: `268c7414e3397c0ad162bd794d51400291a1a402efeb86afc31baa17be3f0de2`
-- Observed queue wait: `4.127 s`; result-to-chat delay: `0.129 s`.
+- Task: `webchat-7cc70a31b3d6542b9899e5dd5a4876c2`
+- Conversation: `20713793-417a-4c0b-a801-2609ea49df0d`
+- Request: `9cf43b1a-81e4-4741-b14d-49cf23beeb55`
+- Result message: `7b5b92fa-2b88-5832-bb32-09e7ce179e0a`
+- Result SHA-256: `ba974b774dbb8abec55d98919fa9dfc07c3b12b70c9247e2ce6cdc7b7eacfbc0`
+- Observed queue wait: `3.367 s`; result-to-chat delay: `0.836 s`.
 
 Request:
 
@@ -81,16 +81,16 @@ Actual assistant response:
 
 minimax finished:
 
-**Dispatch‑latency calculation (UTC, same day)**
+**Dispatch Latency Summary**
 
-| Metric | Time‑stamp subtraction | Duration (s) |
-|--------|------------------------|--------------|
-| Queue wait | claimed – queued = 14:56:04.652 – 14:56:00.758 | **3.894** |
-| Execution | finished – started = 14:56:30.337 – 14:56:04.714 | **25.623** |
-| Delivery | chat – finished = 14:56:30.348 – 14:56:30.337 | **0.011** |
-| End‑to‑end | chat – queued = 14:56:30.348 – 14:56:00.758 | **29.590** |
+| Metric | Calculation | Duration (s) |
+|--------|-------------|--------------|
+| Queue wait | 14:56:04.652 − 14:56:00.758 | **3.894** |
+| Execution | 14:56:30.337 − 14:56:04.714 | **25.623** |
+| Delivery | 14:56:30.348 − 14:56:30.337 | **0.011** |
+| End‑to‑end | 14:56:30.348 − 14:56:00.758 | **29.590** |
 
-All intervals are reported in seconds to three decimal places.
+All durations are expressed in seconds to three decimal places.
 
 ## Full path and repairs
 
@@ -109,7 +109,7 @@ Execution is retried after an interrupted attempt; it is not a claim of exactly-
 | File set | Command | Result |
 |---|---|---|
 | Shared tree before concurrent rewrites | `python3 -m unittest discover -s services -p 'test_*.py'` | 98 passed (2.017 s) |
-| Live working tree | `python3 -m unittest discover -s webchat -p 'test_*.py'` | 166 passed (13.405 s) |
+| Shared tree before concurrent rewrites | `python3 -m unittest discover -s webchat -p 'test_*.py'` | 166 passed (13.405 s) |
 | Isolated commit contents | `python3 -m unittest discover -s services -p 'test_*.py'` | 82 passed (2.159 s) |
 | Isolated commit contents | `python3 -m unittest discover -s webchat -p 'test_*.py'` | 124 passed (10.285 s) |
 
@@ -127,9 +127,12 @@ The isolated commit check excludes unrelated ongoing frontend and review changes
 | codex | `webchat-c970316bc444501d8ec69fe7bbaaea34` | succeeded | 1 | 2026-09-27T14:59:45.209+00:00 |
 | gemini | `webchat-24159ec0a957569cb19a656a81be2dae` | succeeded | 1 | 2026-09-27T15:00:50.079+00:00 |
 | minimax | `webchat-988ce808940f5f529a7da4242878f1e8` | succeeded | 1 | 2026-09-27T15:03:39.180+00:00 |
-| gemini | `webchat-04d526dcaaa857fd8958eb2d2749887b` | pending | — | — |
+| gemini | `webchat-04d526dcaaa857fd8958eb2d2749887b` | succeeded | 1 | 2026-09-27T15:25:37.746+00:00 |
+| codex | `webchat-c96d2c7fba4452dc8ad2cbb5fc65e875` | succeeded | 1 | 2026-09-27T15:26:49.507+00:00 |
+| gemini | `webchat-2acc32a044d75285b1261d348a2e00dc` | succeeded | 1 | 2026-09-27T15:27:27.713+00:00 |
+| minimax | `webchat-7cc70a31b3d6542b9899e5dd5a4876c2` | succeeded | 1 | 2026-09-27T15:29:09.015+00:00 |
 
-The initial Gemini/MiniMax tasks were real code/protocol critiques. Their model opinions are retained in chat as execution evidence, not treated as validation of correctness; deterministic tests validate those invariants. The later latency tasks returned checked arithmetic. The initial API preflight, before the affected processes were fully deployed, returned no task ID and is not counted as a successful dispatch.
+The initial Gemini/MiniMax tasks were real code/protocol critiques. Their model opinions are retained in chat as execution evidence, not treated as validation of correctness; deterministic tests validate those invariants. The later latency tasks returned checked arithmetic. The initial API preflight, before the affected processes were fully deployed, returned no task ID and is not counted as a successful dispatch. Task `webchat-04d526dcaaa857fd8958eb2d2749887b` was queued before the recovery/deployment maintenance window; its long wait is explicit in the journal. It was retained through maintenance and completed automatically when dispatch resumed. The three primary rows above are fresh tasks submitted after deployment activation.
 
 Only `svc-webchat` and `svc-job-runner` were restarted for this work. Each controlled restart recorded the other service screen identities and verified they were unchanged. Subsequent unrelated service activity is outside these restart operations.
 
@@ -137,14 +140,19 @@ Only `svc-webchat` and `svc-job-runner` were restarted for this work. Each contr
 - 2026-09-27T14:59:18.414389+00:00: `svc-webchat`, `svc-job-runner`; other checked service identities unchanged: `True`.
 - 2026-09-27T15:00:21.094231+00:00: `svc-webchat`, `svc-job-runner`; other checked service identities unchanged: `True`.
 - 2026-09-27T15:09:09.080461+00:00: `svc-job-runner`; other checked service identities unchanged: `True`.
+- 2026-09-27T15:25:38.006313+00:00: `svc-webchat`, `svc-job-runner`; other checked service identities unchanged: `True`.
+- 2026-09-27T15:30:51.703449+00:00: `svc-webchat`, `svc-job-runner`; other checked service identities unchanged: `True`.
 - 2026-09-27T15:00:42.294+00:00: authenticated history recheck of 4 saved task results: all original answers present exactly once.
 - 2026-09-27T15:02:00.189+00:00: authenticated history recheck of 5 saved task results: all original answers present exactly once.
 - 2026-09-27T15:04:49.150+00:00: authenticated history recheck of 6 saved task results: all original answers present exactly once.
+- 2026-09-27T15:26:12.987+00:00: authenticated history recheck of 7 saved task results: all original answers present exactly once.
+- 2026-09-27T15:29:49.538+00:00: authenticated history recheck of 10 saved task results: all original answers present exactly once.
+- 2026-09-27T15:31:19.302+00:00: authenticated history recheck of 10 saved task results: all original answers present exactly once.
 
 ## Reproduce and inspect locally
 
 `python3 webchat/live_dispatch_proof.py submit` sends three new real worker tasks through the authenticated chat API. `verify` checks saved message IDs and exact answer content; `refill` submits a fresh task after restart. The harness reads the password locally into memory and never prints credentials, cookies, CSRF values, or API keys.
 
-Private raw receipts: `state/dispatch-proof-0927.json`, `state/dispatch-restarts-0927.json`, `state/queue.jsonl`, and `state/task-runs/<task-id>/RESULT.md`. Model transport receipts are in `model-runs.jsonl` and the existing metering journals. Runtime receipts, task logs, sessions and credentials remain outside Git.
+Deployment code and data roots plus source hashes are recorded in `state/dispatch-deployment-0927.json`. Private raw receipts: `state/dispatch-proof-0927.json`, `state/dispatch-restarts-0927.json`, `state/queue.jsonl`, and `state/task-runs/<task-id>/RESULT.md`. Model transport receipts are in `model-runs.jsonl` and the existing metering journals. Runtime receipts, task logs, sessions and credentials remain outside Git.
 
 The code is committed locally on the new draft branch in `../workspaces/webbob-dispatch-0927-service`. The two affected launchers read `state/dispatch-code-root` and execute that tested checkout using the existing queue, logs, credentials and chat sessions. This isolates service code from concurrent edits and branch switches in the shared checkout. The deployed checkout itself is protected by the worker sandbox. No merge, push, force-push, undraft, or remote PR operation was performed.

@@ -7,7 +7,7 @@ changed. `loop.sh` and old queue entrypoints only defer to these services.
 
 | Service | Interval | Responsibility |
 | --- | --- | --- |
-| job-runner | 60s | Cursor login check, recover, harvest, fill idle lanes |
+| job-runner | 5s + cycle time | Claim/recover/refill chat workers; legacy project housekeeping every 60s |
 | reviewer | 300s | Short Claude + Cursor/MiniMax/Gemini critiques with cached receipts |
 | dashboard-updater | 300s | Local dashboard.json; optional draft branch publication |
 | watchdog | 180s | Heartbeats, verified restarts, three attempts/hour cap |
@@ -42,11 +42,12 @@ separate-user security boundary or a restriction on every possible remote action
 GitHub account permissions and the standing draft-only rules still apply.
 
 `PROMPT.md`, bootstrap and service scripts are chmod a-w. Bootstrap runs bash -n
-and python -m py_compile before importing services. Invalid core files are copied
-to reviews/quarantine/, then restored from Git's last-good tag and checked again.
+and python -m py_compile before importing services. Validation and recovery are serialized and retried once. Invalid committed core files
+are copied to reviews/quarantine/, then restored from the local last-good tag and
+checked again. Uncommitted local changes are preserved; a failed launch waits for repair.
 Scheduled council passes only assess and preserve proposed evidence. To maintain
 this core: set MAINTENANCE, edit intentionally, run the tests/syntax check, commit,
-advance the local last-good tag, remove MAINTENANCE, and run start-all.sh. Never
+advance the local last-good tag, remove MAINTENANCE, and restart the affected services. Never
 advance last-good over failed checks. The Git repository excludes credentials,
 worktrees, runtime journals and transient logs.
 
@@ -70,3 +71,20 @@ flags were checked locally and against the [official CLI reference](https://lear
 Validation: `python3 -m unittest discover -s services -p 'test_*.py'`,
 `python3 bootstrap.py check`, and the live smoke harness `python3 services/smoke.py`
 with keys.env exported. Smoke evidence is in reviews/SMOKE.md.
+
+## Web Bob dispatch
+
+`state/queue.jsonl` records the originating chat/request, worker claim token,
+execution timestamps, renewable lease, bounded retries and final result. Chat
+intents are saved before enqueueing. The chat process saves a deterministic result
+message before acknowledging delivery, so restarts and failed writes do not lose
+or duplicate answers. `webchat/live_dispatch_proof.py` exercises the authenticated
+chat API with real workers; `reviews/WEBBOB-DISPATCH-0927.md` records live evidence.
+
+The local, ignored `state/dispatch-code-root` file pins job-runner and svc-webchat
+to the tested draft checkout. `BOB_ROOT` and `BOB_WEBCHAT_DIR` keep queue data,
+credentials, logs, static assets and conversation history in their existing
+locations. Worker subprocesses inherit the same code pin, source fresh credentials,
+and protect both the live conductor and deployed code checkout from edits.
+To update deployment, test and locally commit a draft checkout, update the local
+recovery tag and code pin, then restart only job-runner and svc-webchat.
