@@ -1,7 +1,7 @@
 # Web Bob READY-FOR-PHONE — Round 6 result (Cursor lane, iPhone-first)
 
 **Branch:** `draft/webchat-failover-20260927`  
-**Round 7 base (prior):** `6b31d10c` · **Round 6 commit:** _(see git log after commit)_  
+**Round 7 base (prior):** `6b31d10c` · **Round 6 commit:** `c331ea49c26c4871b11dc3c76d15b638a0916ee7`  
 **Design note:** `conductor/reviews/WEBCHAT-READY-R6-DESIGN.md` (research-first; sources in table)  
 **Council (no Grok):** `conductor/reviews/webchat-ready-r6-council/20260927-023952-816626.md` (Gemini, MiniMax, Claude, Codex synthesize; Cursor lane busy on propose). **Votes:** inline tabs over sheet; handback tag `r6-*` via `WEBCHAT_HANDBACK_TAG`; tighten layout gate to ≥0.70; fix `self_improve` log parsing + test.  
 **Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
@@ -59,7 +59,7 @@ Lowest R6 scores: **voice (9.2)** — Web Speech API limits on iOS; **self-impro
 
 | Check | Result | Evidence |
 |--------|--------|----------|
-| Unit tests | **PASS** | `python3 conductor/webchat/test_webchat.py` — 52 OK |
+| Unit tests | **PASS** | `python3 conductor/webchat/test_webchat.py` — 52 OK (incl. self_improve) |
 | Failover tests | **PASS** | `python3 conductor/webchat/test_failover.py` — 23 OK |
 | Services tests | **PASS** | `python3 conductor/services/test_services.py` — 36 OK |
 | 10-message drill | **PASS** | `live_ready_drill.py` — p50 1.026s |
