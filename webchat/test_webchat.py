@@ -526,6 +526,14 @@ class HandbackJobTests(Fixture):
         self.assertIn("status?", summary)
         self.assertIn("Running: test job", summary)
 
+    def test_handback_idempotent_request_id(self):
+        rid = str(uuid.uuid4())
+        kwargs = dict(ask="ping", provider="gemini", jobs=[], files=[], commits=[], confirmations=[], refusals=[], open_items=[])
+        self.assertTrue(append_turn(self.root, request_id=rid, **kwargs))
+        self.assertFalse(append_turn(self.root, request_id=rid, **kwargs))
+        log = (self.root / "conductor/handback/HANDBACK-LOG.md").read_text()
+        self.assertEqual(log.count(f"**Request:** {rid}"), 1)
+
     def test_music_demo_receipt_stable(self):
         from music_demo import demo_receipt
         self.assertEqual(demo_receipt("a", "b"), demo_receipt("a", "b"))

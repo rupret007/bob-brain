@@ -43,7 +43,7 @@ def main():
             print("svc-webchat exists but HTTP is not ready; inspect logs/webchat-server.log. No process was replaced.")
             return 1
         subprocess.run(["/usr/bin/screen", "-dmS", "svc-webchat", "/bin/bash", str(HERE / "run.sh")],
-                       stdin=subprocess.DEVNULL, check=True, timeout=10)
+                       stdin=subprocess.DEVNULL, check=True, timeout=10, env=os.environ.copy())
         for _ in range(40):
             if healthy():
                 print("Started svc-webchat at " + URL)

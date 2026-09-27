@@ -80,7 +80,12 @@
         <h2 class="sheet-title">Conductor</h2>
         <p id="conductor-summary" class="sheet-lead muted"></p>
         <div id="conductor-body" class="status-body"></div>
-        <p class="sheet-hint muted">From chat: <code>run council on: …</code> then <code>yes, run council</code> · <code>start a job: …</code> then <code>yes, start job</code></p>
+        <div class="conductor-actions" role="toolbar" aria-label="Conductor actions">
+          <button type="button" class="chip" data-conductor="round">Start round</button>
+          <button type="button" class="chip" data-conductor="council">Ask council</button>
+          <button type="button" class="chip" data-conductor="status">Status</button>
+        </div>
+        <p class="sheet-hint muted">Draft-only. Risky actions still need your yes in chat.</p>
       </section>
       <section id="sheet-song" class="sheet-panel" data-panel="song" hidden>
         <h2 class="sheet-title">Song notebook</h2>

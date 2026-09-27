@@ -79,9 +79,32 @@ if ($("login-form")) {
   $("close-sheet")?.addEventListener("click", () => setSheetOpen(false));
   $("sheet-backdrop")?.addEventListener("click", () => setSheetOpen(false));
   for (const tab of document.querySelectorAll(".sheet-tab")) {
-    tab.addEventListener("click", () => showSheetTab(tab.dataset.sheet));
+    tab.addEventListener("click", () => {
+      const sheet = tab.dataset.sheet;
+      showSheetTab(sheet);
+      const bottomMap = { ops: "ops", conductor: "ops", song: "song", settings: "settings", lanes: "lanes" };
+      if (bottomMap[sheet]) setBottomTab(bottomMap[sheet]);
+    });
   }
+  const conductorPrompts = {
+    round: "start a job: Web Bob ready round (draft only, no merge)",
+    council: "run council on: score Web Bob failover and mobile UX after R7 fixes",
+    status: "From BOB-STATE and handback: what's running and what needs my yes?",
+  };
+  $("tools-sheet")?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-conductor]");
+    if (!btn) return;
+    const text = conductorPrompts[btn.dataset.conductor];
+    if (!text) return;
+    setBottomTab("chat");
+    const field = $("message");
+    field.value = text;
+    field.focus();
+    field.dispatchEvent(new Event("input"));
+  });
+  let activeBottomTab = "chat";
   function setBottomTab(name) {
+    activeBottomTab = name;
     for (const btn of document.querySelectorAll(".bottom-tab")) {
       const on = btn.dataset.bottom === name;
       btn.classList.toggle("active", on);
@@ -430,10 +453,17 @@ if ($("login-form")) {
       elapsed.textContent = `${mins}m elapsed${job.started_at ? " · " + job.started_at.replace("T", " ").slice(0, 16) : ""}`;
       header.append(title, stall, elapsed);
       const now = document.createElement("p");
-      now.textContent = job.plain_now || "Working…";
+      const events = (job.events || []).filter((e) => e && (e.text || e.sha));
+      if (events.length) {
+        now.textContent = events.find((e) => e.kind === "status")?.text || job.plain_now || "Working…";
+      } else {
+        now.textContent = job.plain_now || "Working…";
+      }
       const tail = document.createElement("pre");
       tail.className = "log-tail";
-      const lines = (job.log_tail || []).slice(-3);
+      const lines = events.length
+        ? events.filter((e) => e.kind === "log").map((e) => e.text).slice(-3)
+        : (job.log_tail || []).slice(-3);
       tail.textContent = lines.length ? lines.join("\n") : "";
       const commit = document.createElement("p");
       if (job.last_commit?.sha) {
@@ -468,23 +498,29 @@ if ($("login-form")) {
       const freshness = meta.stale ? "Last known snapshot (refreshing)" : "Live";
       $("status-summary").textContent = `${freshness} · round ${ops.webchat_round || "?"} · MiniMax ${spendText}`;
       const scoreLines = (ops.scores || []).slice(0, 8).map((row) => `${row.area} ${row.score}`).join(" · ");
-      const summaryPlain = (data.handback?.summary?.text || "").split("\n").filter((l) => l.trim() && !l.startsWith("#")).slice(0, 6).join("\n");
+      const liveCards = jobs.filter((j) => j.live_screen && j.stall_state === "running");
+      const summaryPlain = (data.handback?.summary?.text || "").split("\n").filter((l) => l.trim() && !l.startsWith("#")).slice(0, 4).join("\n");
       const lines = [
         `Building with ${roles.building || "nobody right now"} · reviews via ${roles.reviewing || "idle"}`,
-        jobs.length ? `${jobs.length} screen job${jobs.length === 1 ? "" : "s"} running` : "No screen jobs right now",
-        scoreLines ? `Latest scores: ${scoreLines}` : "Scores will appear after the next dashboard refresh",
-        summaryPlain ? `Handback:\n${summaryPlain}` : "",
+        liveCards.length ? `${liveCards.length} live screen job${liveCards.length === 1 ? "" : "s"}` : (jobs.length ? `${jobs.length} tracked job(s) (no live screen)` : "No screen jobs right now"),
+        scoreLines ? `Scores: ${scoreLines}` : "Scores refresh with the dashboard",
+        summaryPlain ? `Handback snapshot:\n${summaryPlain}` : "",
       ].filter(Boolean);
       $("status-body").textContent = lines.join("\n\n");
       renderLiveJobs(jobs);
       const c = data.conductor || {};
       $("conductor-summary").textContent = `${c.draft_branch || "?"} @ ${(c.head_sha || "").slice(0, 7)}`;
       const headShort = (c.head_sha || "").slice(0, 7);
+      const autopilot = liveCards.length
+        ? `Autopilot busy — ${liveCards.length} job(s) on screen`
+        : (c.pass_schedule?.state
+          ? `Autopilot ${c.pass_schedule.state}${c.pass_schedule.next_due ? " · next " + new Date(c.pass_schedule.next_due * 1000).toLocaleString() : ""}`
+          : "Autopilot idle");
       $("conductor-body").textContent = [
         `Draft branch ${c.draft_branch || "?"} at ${headShort}`,
         c.maintenance ? "Scheduling paused on the mini" : "Scheduler accepting draft jobs",
         c.latest_result ? `Last ready round saved` : "",
-        c.pass_schedule?.state ? `Autopilot ${c.pass_schedule.state}${c.pass_schedule.next_due ? " · next " + new Date(c.pass_schedule.next_due * 1000).toLocaleString() : ""}` : "",
+        autopilot,
         c.safety || "Drafts only · confirm before merge, send, or spend",
       ].filter(Boolean).join("\n");
     } catch (_) {

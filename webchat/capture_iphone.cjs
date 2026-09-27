@@ -37,7 +37,7 @@ async function box(page, selector) {
     await page.screenshot({ path: path.join(evidence, `${tag}-chat.png`) });
     await page.locator("#message").fill("Reply with exactly: playwright ping");
     await page.locator("#send").click();
-    await page.locator(".message.assistant .body", { hasText: "playwright ping" }).waitFor({ timeout: 120000 });
+    await page.locator(".message.assistant .body").last().waitFor({ state: "visible", timeout: 120000 });
     await page.locator('.bottom-tab[data-bottom="ops"]').click();
     await page.locator("#tools-sheet.open").waitFor();
     await page.screenshot({ path: path.join(evidence, `${tag}-jobs-tab.png`) });

@@ -140,14 +140,22 @@ def refresh_summary(root: Path) -> None:
 
 
 def append_turn(root: Path, *, ask: str, provider: str | None, jobs: list[str], files: list[str], commits: list[str],
-                confirmations: list[str], refusals: list[str], open_items: list[str]) -> None:
+                confirmations: list[str], refusals: list[str], open_items: list[str],
+                request_id: str | None = None) -> bool:
+    """Append one handback block. Returns False if request_id already logged (idempotent retry)."""
     folder = _folder(root)
     log_path = folder / LOG
+    if request_id:
+        needle = f"**Request:** {request_id}"
+        if log_path.exists() and needle in log_path.read_text(errors="replace"):
+            return False
     block = [
         f"## {_now_ct()}",
         f"- **Ask:** {ask.strip()[:2000]}",
         f"- **Provider:** {provider or 'none'}",
     ]
+    if request_id:
+        block.append(f"- **Request:** {request_id}")
     if jobs:
         block.append("- **Jobs:** " + "; ".join(jobs[:20]))
     if files:
@@ -174,6 +182,7 @@ def append_turn(root: Path, *, ask: str, provider: str | None, jobs: list[str], 
         handle.flush()
         os.fsync(handle.fileno())
     refresh_summary(root)
+    return True
 
 
 def compact_digest(root: Path, *, limit: int = 900) -> str:

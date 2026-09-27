@@ -419,12 +419,14 @@ class Chat:
                 value["messages"][-1].update(answer, status="done")
                 value["messages"][-1].pop("retry_at", None)
                 self.save(value)
-                user = next((m["content"] for m in reversed(value["messages"]) if m["role"] == "user"), "")
+                user_msg = next((m for m in reversed(value["messages"]) if m["role"] == "user"), {})
+                user = user_msg.get("content", "")
                 head = draft_head_sha(self.root)
                 commits = [head] if head else []
                 self.record_turn(ask=user, provider=answer.get("provider"),
                             jobs=[], files=[], commits=commits, confirmations=[], refusals=[],
-                            open_items=[user[:200]] if user else [])
+                            open_items=[user[:200]] if user else [],
+                            request_id=user_msg.get("request_id"))
         except AllDown as exc:
             with self.lock:
                 value = self.get(identifier)
