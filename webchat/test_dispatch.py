@@ -75,6 +75,16 @@ class ChatDispatchTests(Fixture):
             self.assertIsNone(queue.claim(self.root, worker))
         self.assertIsNotNone(queue.claim(self.root, "cursor"))
 
+    def test_polite_file_requests_keep_the_required_worker_capabilities(self):
+        for prompt in ("Can you please review services/dispatch_worker.py", "Okay, could you inspect services/dispatch_worker.py?"):
+            with self.subTest(prompt=prompt):
+                value = self.submit(prompt)
+                row = queue.tasks(self.root)[value["messages"][-1]["task_id"]]
+                self.assertEqual(row["kind"], "inspection")
+                value = self.submit(prompt, worker="minimax")
+                self.assertEqual(value["messages"][-1]["action_card"]["state"], "refused")
+                self.assertNotIn("dispatch_intent", value["messages"][-1])
+
     def test_answer_rejection_delivers_one_failed_result_after_restart(self):
         self.submit(worker="minimax")
         row = queue.claim(self.root, "minimax")

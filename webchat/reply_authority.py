@@ -4,11 +4,13 @@ import re
 from live_status_snapshot import build_live_status_snapshot
 
 QUEUE_CLAIM = re.compile(
-    r"\b(?:i|we)(?:['’]ve| have)?\s+(?:(?:just|already|now)\s+)?(?:queued|scheduled|launched|started|added|submitted|assigned|delegated|asked)\b"
-    r".{0,160}\b(?:job|task|work|council|inbox|queue|it|this|that|codex|claude|cursor|gemini|minimax)\b|"
+    r"\b(?:i|we)(?:['’]ve| have)?\s+(?:(?:just|already|now)\s+)?(?:queued|scheduled|launched|started|created|dispatched|added|submitted|assigned|delegated|asked|kicked off)\b"
+    r".{0,160}\b(?:job|task|work|review|fix|council|inbox|queue|it|this|that|codex|claude|cursor|gemini|minimax)\b|"
     r"^\s*(?:queued|scheduled|launched|started|submitted|assigned)\b|"
-    r"\b(?:job|task|council|work)\b.{0,120}\b(?:queued|builder inbox|picked up|in progress|still running)\b|"
-    r"\b(?:codex|claude|cursor|gemini|minimax)\s+(?:is|has started)\s+(?:working|running|reviewing|fixing)\b", re.I)
+    r"\b(?:job|task|council|work)\b.{0,120}\b(?:created|queued|scheduled|launched|started|assigned|builder inbox|picked up|in progress|running)\b"
+    r"(?!\s+(?:when|if|until)\b)|"
+    r"\b(?:codex|claude|cursor|gemini|minimax)(?:['’]s|\s+(?:is|has started))\s+(?:working|running|reviewing|fixing|on it)\b|"
+    r"\b(?:codex|claude|cursor|gemini|minimax)\s+has\s+(?:your|the|this)\s+(?:job|task|work|review)\b", re.I)
 NO_JOB_NOTICE = re.compile(
     r"\bno (?:server[- ]confirmed )?(?:job|task) (?:was|has been) (?:created|queued|started)\b|"
     r"\b(?:send|say|use)\s+[`\"']?start a job\s*:", re.I)
@@ -44,8 +46,10 @@ def enforce(root, text, answer):
     else:
         # Keep the useful answer; remove unsupported effects and boilerplate
         # without adding a system notice to ordinary chat.
-        sentences = re.split(r"(?<=[.!?])\s+|\n+", content)
+        # Keep original whitespace so removing a footer doesn't flatten the
+        # useful answer's paragraphs, lists, or code formatting.
+        sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
         kept = [part for part in sentences if not QUEUE_CLAIM.search(part) and not NO_JOB_NOTICE.search(part)]
         if len(kept) != len(sentences):
-            content = "\n".join(kept).strip() or "What would you like me to work on?"
+            content = "".join(kept).strip() or "What would you like me to work on?"
     return content

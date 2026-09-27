@@ -85,6 +85,8 @@ def task_receipt(row):
 
 
 def task_kind(prompt):
+    # Politeness doesn't change whether the requested work needs file tools.
+    prompt = re.sub(r"^" + POLITE, "", PREAMBLE.sub("", prompt.strip()), flags=re.I)
     if task_queue.file_request(prompt):
         return "artifact"
     # Required output literals (for example a verification marker containing
