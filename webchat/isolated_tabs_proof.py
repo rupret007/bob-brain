@@ -16,7 +16,10 @@ from providers import Providers
 
 
 class NoGeneration(Providers):
+    calls = 0
+
     def reply(self, *args, **kwargs):
+        self.calls += 1
         raise AssertionError("The tab proof must not call a model")
 
 
@@ -26,10 +29,12 @@ def main():
     args = parser.parse_args()
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    started_at = datetime.now(timezone.utc).isoformat()
     before = dict(listener=live_listener(), services=service_screens())
     with tempfile.TemporaryDirectory(prefix="webbob-tabs-") as temporary:
         root = Path(temporary)
-        chat = Chat(root / "conductor/webchat", root, NoGeneration(root, lambda text: text))
+        provider = NoGeneration(root, lambda text: text)
+        chat = Chat(root / "conductor/webchat", root, provider)
         server = Server(("127.0.0.1", 0), chat)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -40,6 +45,8 @@ def main():
                                     env=env, timeout=180, check=False)
             if result.returncode:
                 raise SystemExit(result.returncode)
+            assert provider.calls == 0, "The proof called a model"
+            assert not (root / "conductor/state/queue.jsonl").exists(), "The proof created a job"
         finally:
             server.shutdown()
             server.server_close()
@@ -48,8 +55,9 @@ def main():
     after = dict(listener=live_listener(), services=service_screens())
     evidence = output / "WEBBOB-CLEAN-0927.tabs-evidence.json"
     value = json.loads(evidence.read_text())
-    value.update(live_before=before, live_after=after, finished_at=datetime.now(timezone.utc).isoformat(),
+    value.update(live_before=before, live_after=after, started_at=started_at, finished_at=datetime.now(timezone.utc).isoformat(),
                  live_services_unchanged=before == after,
+                 provider_calls=provider.calls, jobs_created=0,
                  isolation="Temporary data root and ephemeral loopback listener; no model calls, probes or workers started.")
     code = Path(__file__).resolve().parents[1]
     value["source_sha256"] = {name: hashlib.sha256((code / name).read_bytes()).hexdigest() for name in (

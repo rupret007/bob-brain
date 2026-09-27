@@ -282,6 +282,23 @@ connection check; it expects `evidence/live-chat.json` from the initial two-turn
 check. Set `BOB_PLAYWRIGHT_MODULE` / `BOB_CHROMIUM_PATH` if using a cached runtime.
 The initial verification record is `conductor/reviews/WEBCHAT-RESULT.md`.
 
+For the five phone tabs, use the isolated proof from the repository checkout:
+
+```sh
+python3 webchat/isolated_tabs_proof.py --output-dir reviews
+```
+
+It starts an ephemeral loopback listener with private chats, songs, credentials
+and storage. Headless Chromium captures `webbob-tab-<name>-0927.png` for Chat,
+Jobs, Songs, Models and Settings, plus the song editor, and tests phone layouts,
+stale/unavailable status, duplicate rows, song persistence and logout. Screenshots
+use actual responses from that isolated instance, including read-only host
+activity; regression fixtures run afterward. It launches no model or worker and
+does not restart the live service. Set `BOB_PLAYWRIGHT_MODULE` and
+`BOB_CHROMIUM_PATH` when using an existing runtime outside the default paths.
+The review and raw evidence are in `reviews/WEBBOB-CLEAN-0927.md` and
+`reviews/WEBBOB-CLEAN-0927.tabs-evidence.json`.
+
 ## Repeat the live failover drills
 
 Deliberately restart only the webchat server with `BOB_WEBCHAT_DRILLS=1` in the

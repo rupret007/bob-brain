@@ -152,13 +152,14 @@ h1 { font-size: 18px; letter-spacing: -.35px; }
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 4px 2px 16px;
+  padding: 18px 2px 28px;
 }
 .view-title-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-height: 44px;
   margin-bottom: 8px;
 }
 .view-title-row .view-title { margin-bottom: 0; flex: 1; min-width: 0; }
@@ -560,7 +561,6 @@ code { overflow-wrap: anywhere; font-size: 11px; }
   .app { border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
 }
 
-.jobs-scroll { padding: 18px 2px 28px; }
 .jobs-section { margin-bottom: 28px; }
 .jobs-section h2 { font-size: 20px; font-weight: 600; letter-spacing: -.4px; }
 .jobs-heading { display: flex; align-items: center; gap: 10px; }

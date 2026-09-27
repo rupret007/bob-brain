@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from live_status_snapshot import observe_work
-from jobs_view import is_drill
+from jobs_view import is_drill, labels
 
 
 def recorded_usage(root: Path, name: str, *, now: float) -> dict:
@@ -55,11 +55,13 @@ def overview(chat, conversation_id=None) -> dict:
     except Exception:
         health = {}
     now = time.time()
+    work = [row for row in observed["work"] if not is_drill(row)]
+    active_models = {row.get("worker") for row in work if row.get("state") == "running"}
     models = {}
     for name in ("codex", "cursor", "claude", "gemini", "minimax"):
-        if name not in health:
+        if name not in health and name not in active_models:
             continue
-        row = health[name]
+        row = health.get(name) or {}
         # Cached lane budgets and text are deliberately not part of this view.
         models[name] = {key: row.get(key) for key in ("state", "reason", "retry_at", "last_success")}
         models[name]["usage"] = recorded_usage(chat.root, name, now=now)
@@ -71,7 +73,8 @@ def overview(chat, conversation_id=None) -> dict:
     return dict(
         captured_at=captured_at,
         inspection=observed["inspection"],
-        work=[row for row in observed["work"] if not is_drill(row)],
+        work=[{**row, "title": labels(observed["records"].get(row.get("job_id"), {}), row)["task"]}
+              for row in work],
         queued=[row for row in observed["queue"]["queued"] if not is_drill(row)],
         models=models,
         automation=automation,

@@ -244,15 +244,15 @@ python3 webchat/isolated_jobs_proof.py --live-root /path/to/bob-overnight-inject
 
 ## Follow-up 5: all five tabs, phone first
 
-PASS. Chat, Jobs, Songs, Models and Settings now use the same spacing, readable text, touch targets and collapsed details. This follow-up builds on the finished Jobs redesign and source-error fixes (`fd2967a`), preserving grouped work cards, the five most recent results, safe result/PR links and the saved-result viewer.
+PASS. Chat, Jobs, Songs, Models and Settings now use the same spacing, readable text, touch targets and collapsed details. This follow-up builds on the finished Jobs redesign and source-error fixes (`fd2967a`), preserving grouped work cards, the five most recent results, safe result/PR links and the saved-result viewer. The final review was completed in a separate checkout and rebased onto the concurrent tab commit `751261d`; both sets of work are retained.
 
 | Tab | Cleanup and resulting behavior | Phone screenshot |
 | --- | --- | --- |
-| Chat | Removed unfinished attachments and canned round/council requests. View jobs opens current work without sending a message. One conversation picker, compact reply tools, collapsed/deduplicated retry details in plain words, and an honest empty conversation. Unsupported voice controls are hidden. | [Chat](webbob-tab-chat-0927.png) |
-| Jobs | Current project/task/model/time remains first. Added Refresh, omitted unreported metadata, removed duplicated model/cost rows, and kept queue/check details collapsed. Failed or expired refreshes clear working and finished cards. A service name is not used as a task description. | [Jobs](webbob-tab-jobs-0927.png) |
+| Chat | Removed unfinished attachments and canned round/council requests. View jobs opens current work without sending a message. One conversation picker, compact reply tools, collapsed/deduplicated retry details from actual server reason codes, and an honest empty conversation. Unsupported voice controls are hidden. | [Chat](webbob-tab-chat-0927.png) |
+| Jobs | Current project/task/model/time remains first. Added Refresh, omitted unreported metadata, removed duplicated model/cost rows, and kept queue/check details collapsed. Failed or expired refreshes clear working and finished cards. An unreadable queue hides unverified finished results and cannot claim zero waiting work. A service name is not used as a task description. | [Jobs](webbob-tab-jobs-0927.png) |
 | Songs | A real empty library leads to New song. Lyrics and Save come first; chords, notes, audio and saved versions are collapsed. Actual saved timestamps replace vague status text. New/switch clears prior audio and versions. Save failures retain edits and never claim they were saved. Audio's temporary association with the editor is stated plainly. | [Songs](webbob-tab-songs-0927.png), [empty editor](webbob-tab-songs-editor-0927.png) |
-| Models | One card per model, showing current activity and reply availability. Removed dashboard, score, round and builder rows. Measured costs, plan use, retry times and dated last replies appear only when present, inside Details. Live workers override a cached ready label. | [Models](webbob-tab-models-0927.png) |
-| Settings | Reply selection is first and persists on the device. All supported model choices say “first,” with fallback explained. Voice and actual scheduling status are collapsed. Removed repeated chats, old changelog, setup commands and internal loop/tick language. | [Settings](webbob-tab-settings-0927.png) |
+| Models | One card per model, showing current activity and reply availability. Removed dashboard, score, round and builder rows. Measured costs, plan use, retry times and dated last replies appear only when present, inside Details. Live workers override a cached ready label and stay visible if reply-health data fails. Task labels use plain words. | [Models](webbob-tab-models-0927.png) |
+| Settings | Reply selection is first and persists on the device. All supported model choices say “first,” with fallback explained. Voice and actual scheduling status are collapsed. Removed repeated chats, old changelog, setup commands and internal loop/tick language. Logout failures appear here; successful logout invalidates the session. | [Settings](webbob-tab-settings-0927.png) |
 
 Models and Settings read the authenticated, redacted, read-only `/api/overview`; Jobs keeps `/api/jobs/activity` and its existing result endpoint. These tab reads do not use or refresh the old dashboard or handback ledger. Usage comes directly from saved measurements: a missing, damaged or unknown ledger does not become $0, no budget ceiling is invented, and expired or day-old plan observations are omitted. Jobs and Models discard responses older than 30 seconds and clear old values when checks fail. Missing checks remain distinct from confirmed empty state. Open details survive polling.
 
@@ -260,15 +260,24 @@ Models and Settings read the authenticated, redacted, read-only `/api/overview`;
 
 | Check | Result |
 | --- | --- |
-| `python3 -m unittest discover -s webchat -p 'test_*.py'` | **235 passed**, 14.436 s |
-| `python3 -m unittest discover -s services -p 'test_*.py'` | **111 passed**, 2.697 s |
+| `python3 -m unittest discover -s webchat -p 'test_*.py'` | **236 passed**, 13.616 s |
+| `python3 -m unittest discover -s services -p 'test_*.py'` | **111 passed**, 2.544 s |
 | `node --test webchat/test_quiet_hours_js.mjs` | **1 passed** |
 | `python3 bootstrap.py check` | **syntax: PASS** |
 | JavaScript syntax and `git diff --check` | **Passed** |
-| All-tab headless Chromium proof | **23 layout checks passed**: all five tabs at 320/390/430 px, all five in light mode at 390 px, and the song editor at all three phone widths |
+| All-tab headless Chromium proof | **23 layout checks and 11 behavior groups passed**: all five tabs at 320/390/430 px, all five in light mode at 390 px, and the song editor at all three phone widths |
 | Existing Jobs browser proof after integration | **Passed**: grouped worker/queue evidence, five-result limit, safe result dialog/links, preserved disclosure state, empty/unavailable/unreadable-queue cases, no legacy-dashboard requests, 320/390/430/900 px in dark and light mode |
 
 No tests were skipped. The service-suite restart lines are mocked watchdog output. New regressions cover authenticated/redacted read-only data, damaged queues, live claim/process deduplication, missing/stale/invalid usage, provider-status failure isolation, and service names not masquerading as task descriptions. Browser cases also exercise real private song saves and reloads, failed saves, unsaved-edit protection, cleared audio/history, persisted model preference, stale/error response removal, duplicate rows and plain retry details.
+
+The final review also verifies that cancelling navigation from an edited song
+does not create or switch conversations. Logout protects unsaved edits and reports
+errors on the Settings tab. A real private chat submits `status`, verifies the
+saved server-owned reply, then starts a new conversation and logs out. All tabs
+now share the Jobs view's top and bottom spacing. The proof asserts zero model
+calls and zero created jobs; an initial run caught the preference test leaving
+MiniMax selected, and now explicitly restores automatic replies before the status
+test. The no-generation guard prevented an external call in that failed run.
 
 ### Capture and isolation
 

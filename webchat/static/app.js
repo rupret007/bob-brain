@@ -221,7 +221,7 @@ if ($("login-form")) {
       if (message.attempts?.length) {
         const rows = [...new Set(message.attempts.map((attempt) => {
           const name = providers[attempt.provider];
-          return name ? `${name}: ${modelReason(attempt.error)}` : "Another model could not reply.";
+          return name ? `${name}: ${modelReason(attempt.kind || attempt.error)}` : "Another model could not reply.";
         }))];
         const detail = document.createElement("details");
         detail.className = "reply-details";
@@ -357,12 +357,14 @@ if ($("login-form")) {
     }
   });
   $("conversations").addEventListener("change", async () => {
-    $("chats-dialog").close(); setBottomTab("chat");
+    if (!setBottomTab("chat")) { $("conversations").value = current; return; }
+    $("chats-dialog").close();
     current = $("conversations").value; remember("bob.conversation", current); revision = ""; busy = false;
     await poll(); $("messages").scrollTop = $("messages").scrollHeight;
   });
   $("new-chat").addEventListener("click", async () => {
-    $("chats-dialog").close(); setBottomTab("chat");
+    if (!setBottomTab("chat")) return;
+    $("chats-dialog").close();
     try { const conversation = await api("/api/conversations", {}); current = conversation.id; revision = ""; await refreshList(); render(conversation); $("message").focus(); }
     catch (error) { $("notice").textContent = error.message; }
   });
@@ -645,8 +647,10 @@ if ($("login-form")) {
   $("end-call")?.addEventListener("click", () => stopLiveCall());
   $("call-dialog")?.addEventListener("close", () => stopLiveCall());
   $("logout").addEventListener("click", async () => {
-    try { await api("/api/logout", {}); location.assign("/login"); }
-    catch (error) { $("notice").textContent = error.message; }
+    if (!(await confirmLeaveSongEdits())) return;
+    $("settings-notice").textContent = "";
+    try { await api("/api/logout", {}); markSongClean(); location.assign("/login"); }
+    catch (_) { $("settings-notice").textContent = "Could not log out. Please try again."; }
   });
   $("close-report").addEventListener("click", () => $("report").close());
   let songProjectId = stored("bob.songProject") || "", songBusy = false;
@@ -935,7 +939,7 @@ if ($("login-form")) {
       }
       return card;
     }));
-    const finished = uniqueJobs(data.recently_finished).slice(0, 5);
+    const finished = data.inspection?.queue_available ? uniqueJobs(data.recently_finished).slice(0, 5) : [];
     $("finished-empty").hidden = finished.length > 0;
     $("finished-empty").textContent = data.inspection?.queue_available ? "No finished jobs yet." : "Finished jobs could not be checked.";
     $("finished-jobs").replaceChildren(...finished.map((job) => {
@@ -972,7 +976,9 @@ if ($("login-form")) {
     const list = jobElement("dl", "jobs-detail-list");
     const add = (label, value) => list.append(jobElement("dt", "", label), jobElement("dd", "", value));
     add("Live check", new Date(data.checked_at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
-    add("Waiting", `${details.queued || 0} queued${details.unconfirmed ? ` · ${details.unconfirmed} assigned, activity unconfirmed` : ""}`);
+    add("Waiting", data.inspection?.queue_available
+      ? `${details.queued || 0} queued${details.unconfirmed ? ` · ${details.unconfirmed} assigned, activity unconfirmed` : ""}`
+      : "Waiting jobs could not be checked.");
     list.append(jobElement("dt", "", "Activity"), jobElement("dd", "", "A running worker does not confirm progress or completion."));
     $("jobs-detail-body").replaceChildren(list);
   }
@@ -1023,7 +1029,7 @@ if ($("login-form")) {
       card.append(heading);
       const usage = model.usage || {};
       const details = [];
-      if (work.length) details.push(["Current work", [...new Set(work.map((job) => job.title))].join("; ")]);
+      if (work.length) details.push(["Current work", [...new Set(work.map((job) => job.title).filter((title) => title && title !== "Task details unavailable"))].join("; ")]);
       if (model.reason && model.state !== "ready") details.push(["Last reply issue", modelReason(model.reason)]);
       if (model.retry_at > Date.now() / 1000) details.push(["Try again after", timestamp(model.retry_at)]);
       if (model.last_success) details.push(["Last reply", timestamp(model.last_success)]);

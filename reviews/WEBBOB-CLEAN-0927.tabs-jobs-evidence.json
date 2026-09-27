@@ -1,5 +1,5 @@
 {
-  "started_at": "2026-09-27T20:11:43.776300+00:00",
+  "started_at": "2026-09-27T20:14:09.588738+00:00",
   "live_before": {
     "listener": [
       "99149 Sun Sep 27 12:40:03 2026     /opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python"
@@ -88,9 +88,9 @@
       "deviceScaleFactor": 2,
       "source": "live"
     },
-    "finished_screenshot": "/private/tmp/webbob-followup5-jobs-integration.finished.png",
+    "finished_screenshot": "/private/tmp/webbob-tabs-jobs-validation-0927/jobs.finished.png",
     "live": {
-      "checked_at": 1790539905.995446,
+      "checked_at": 1790540051.7368991,
       "inspection": {
         "screens_available": true,
         "processes_available": true,
@@ -105,7 +105,7 @@
             "Codex"
           ],
           "state": "running",
-          "elapsed_seconds": 284
+          "elapsed_seconds": 429
         },
         {
           "key": "17983",
@@ -115,7 +115,7 @@
             "Codex"
           ],
           "state": "running",
-          "elapsed_seconds": 1857
+          "elapsed_seconds": 2002
         },
         {
           "key": "lane-webbob-voice",
@@ -125,7 +125,17 @@
             "Codex"
           ],
           "state": "running",
-          "elapsed_seconds": 1864
+          "elapsed_seconds": 2009
+        },
+        {
+          "key": "svc-job-runner",
+          "project": "Project not specified",
+          "task": "Task details unavailable",
+          "models": [
+            "Cursor"
+          ],
+          "state": "running",
+          "elapsed_seconds": 0
         }
       ],
       "recently_finished": [
@@ -199,41 +209,41 @@
           {
             "provider": "Codex",
             "state": "ready",
-            "age_seconds": 6284
+            "age_seconds": 6430
           },
           {
             "provider": "Claude",
             "state": "ready",
-            "age_seconds": 13397
+            "age_seconds": 13542
           },
           {
             "provider": "Cursor",
             "state": "ready",
-            "age_seconds": 13364
+            "age_seconds": 13510
           },
           {
             "provider": "Gemini",
             "state": "ready",
-            "age_seconds": 2705
+            "age_seconds": 2851
           },
           {
             "provider": "MiniMax",
             "state": "ready",
-            "age_seconds": 9757
+            "age_seconds": 9902
           }
         ],
         "sources": [
           {
             "label": "Queue",
-            "age_seconds": 7909
+            "age_seconds": 8055
           },
           {
             "label": "Job history",
-            "age_seconds": 68
+            "age_seconds": 214
           },
           {
             "label": "Provider health",
-            "age_seconds": 75
+            "age_seconds": 221
           }
         ]
       }
@@ -261,7 +271,7 @@
       "99147.svc-webchat"
     ]
   },
-  "finished_at": "2026-09-27T20:11:46.693398+00:00",
+  "finished_at": "2026-09-27T20:14:12.441717+00:00",
   "source_sha256": {
     "webchat/app.py": "3189210cf84054d5629027d6017cbc9965eabcfca211d69a4c95f8dddee946c8",
     "webchat/jobs_view.py": "714b2330bb96a973757d50713bbb12c4faac97f5c81f8855aa7a1b9648dca421",
@@ -270,10 +280,10 @@
     "webchat/test_jobs_view.py": "b07461effc48b74ab1958e2caa99e847d0d5587178a98a280aa0af0410f617c1",
     "webchat/isolated_jobs_proof.py": "ae5d0c8d9430ad8343829b6606a8b3afa28487ea7cfd5890d7dff2d23711407a",
     "webchat/browser_jobs.cjs": "639f1bfc03a6ba31080d4818f73dbc581f02c714af8caa5e9724031867336b04",
-    "webchat/static/app.js": "29219bd3f5fb6f1a18eb29782c47eee0b90674e3f357b524da6865a60540da2e",
-    "webchat/static/index.html": "d28695f541fea0f3cee8f82f43aec179d5bb1457b7f15751c2185165065cae1d",
-    "webchat/static/style.css": "0d5b5fe7cf6c00c8cd695bdb6be4b254ae72ba93cc2c659b8596a8e7fcbf1726"
+    "webchat/static/app.js": "eba7c83e2a4318146243ed172dcc70ab0f04aacb45c1626d903982dc738d4c03",
+    "webchat/static/index.html": "7f38950eb2c65e416c5a048fcd4cf1a06a296a9cae5cca226d03f310c40c0844",
+    "webchat/static/style.css": "d1e1823be86b0f2be5527dc74f72e560d65867d4b231088680ae3319bb35600a"
   },
-  "screenshot_sha256": "b6baf6beae6ec669cc830acd374ad6dd948c80bad04191d3953c5f07838a9002",
+  "screenshot_sha256": "9e962c3f96a4ae0949c70fefb6f99a12972285e246c845e346f4eabea2b6b7ca",
   "result": "PASS"
 }

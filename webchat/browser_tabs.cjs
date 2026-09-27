@@ -131,6 +131,14 @@ async function layout(page, width, name) {
   page.once("dialog", (dialog) => dialog.dismiss());
   await page.locator('[data-bottom="chat"]').click();
   assert(await page.locator("#view-song").isVisible());
+  await page.locator("#open-chats").click();
+  const priorConversation = await page.locator("#conversations").inputValue();
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.locator("#new-chat").click();
+  assert(await page.locator("#chats-dialog").isVisible());
+  assert.equal(await page.locator("#conversations").inputValue(), priorConversation);
+  assert(await page.locator("#view-song").isVisible());
+  await page.locator("#close-chats").click();
   await page.route("**/api/song-projects", (route) => route.request().method() === "POST"
     ? route.fulfill({ status: 503, json: { error: "Save unavailable." } }) : route.continue());
   await page.locator("#song-save").click();
@@ -188,6 +196,19 @@ async function layout(page, width, name) {
   assert.equal(await minimax.locator("details[open]").count(), 1);
   evidence.checks.push("Fixture: duplicate job cards collapse; recent results remain; unconfirmed activity is explicit; IDs stay hidden and costs stay collapsed; details stay open during polling; live activity overrides cached ready state.");
 
+  await page.unroute("**/api/jobs/activity");
+  await page.route("**/api/jobs/activity", (route) => route.fulfill({ json: {
+    ...jobsFixture, checked_at: Date.now() / 1000,
+    inspection: { ...fixture.inspection, queue_available: false },
+  } }));
+  await tab(page, "ops"); await refresh(page);
+  assert.equal(await page.locator(".finished-job").count(), 0);
+  assert.equal(await page.locator("#finished-empty").innerText(), "Finished jobs could not be checked.");
+  assert((await page.locator("#jobs-detail-body").innerText()).includes("Waiting jobs could not be checked."));
+  assert(!(await page.locator("#jobs-detail-body").innerText()).includes("1 queued"));
+  evidence.checks.push("Fixture: a damaged queue hides unverified finished results and never presents waiting work as zero.");
+  await tab(page, "lanes");
+
   for (const route of ["**/api/overview*", "**/api/jobs/activity"]) {
     await page.unroute(route);
     await page.route(route, (request) => request.fulfill({ status: 503, json: { error: "Unavailable" } }));
@@ -220,7 +241,7 @@ async function layout(page, width, name) {
     const response = await route.fetch();
     const conversation = await response.json();
     conversation.messages = [{ role: "assistant", content: "A reply for the retry display test.", status: "done", provider: "gemini",
-      attempts: [{ provider: "codex", error: "rate_limit" }, { provider: "codex", error: "rate_limit" }] }];
+      attempts: [{ provider: "codex", kind: "rate_limit", error: "Rate limit or quota" }, { provider: "codex", kind: "rate_limit", error: "Rate limit or quota" }] }];
     await route.fulfill({ json: conversation });
   });
   await tab(page, "chat");
@@ -230,6 +251,33 @@ async function layout(page, width, name) {
   assert.equal(await page.locator(".reply-details p").count(), 1);
   assert((await page.locator(".reply-details").innerText()).includes("Codex: Usage limit reached"));
   evidence.checks.push("Fixture: chat retry details are collapsed, deduplicated and translated into plain words.");
+  await page.unroute("**/api/conversations/*");
+  await tab(page, "settings");
+  await page.locator("#provider-choice").selectOption("auto");
+  await tab(page, "chat");
+  await page.locator("#message").fill("status");
+  await page.locator("#send").click();
+  await page.waitForFunction(() => document.querySelector("#message").value === ""
+    && !document.querySelector("#send").disabled && document.querySelectorAll(".message").length === 2);
+  assert((await page.locator(".message.user").innerText()).includes("status"));
+  const conversationId = await page.locator("#conversations").inputValue();
+  const realConversation = await (await page.request.get(url + "/api/conversations/" + conversationId)).json();
+  assert.equal(realConversation.messages.at(-1).provider, "state");
+  assert.equal(realConversation.messages.at(-1).status, "done");
+  await page.locator("#open-chats").click();
+  await page.locator("#new-chat").click();
+  await page.locator(".welcome").waitFor();
+  evidence.checks.push("Real private chat sends a server-owned status reply and starts a new conversation without a model call.");
+  await tab(page, "settings");
+  await page.route("**/api/logout", (route) => route.fulfill({ status: 503, json: { error: "Unavailable" } }));
+  await page.locator("#logout").click();
+  await page.waitForFunction(() => document.querySelector("#settings-notice").textContent.includes("Could not log out"));
+  assert(await page.locator("#settings-notice").isVisible());
+  await page.unroute("**/api/logout");
+  await page.locator("#logout").click();
+  await page.waitForURL(url + "/login");
+  assert.equal((await page.request.get(url + "/api/overview")).status(), 401);
+  evidence.checks.push("Settings shows logout failures in place; a successful logout invalidates the session.");
   assert.deepEqual(errors, [], "No browser runtime errors");
   evidence.checks.push("No browser runtime errors or external browser requests.");
   await context.close();

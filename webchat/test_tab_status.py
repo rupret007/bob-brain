@@ -82,11 +82,23 @@ class TabStatusTests(test_webchat.Fixture):
             path.write_text(json.dumps(dict(codex=dict(used_percent=percent, reset_at=reset))))
             self.assertEqual(recorded_usage(self.root, "codex", now=now), {})
 
-    def test_model_failure_does_not_hide_live_work(self):
+    def test_model_failure_without_work_has_no_invented_model_rows(self):
         with patch.object(self.fake, "health", side_effect=OSError("unavailable")):
             data = overview(self.chat)
         self.assertEqual(data["models"], {})
         self.assertTrue(data["inspection"]["processes_available"])
+
+    def test_model_failure_keeps_observed_activity_and_plain_task_labels(self):
+        processes = parse_processes("100 1 01:00 S codex exec task")
+        self.write("conductor/state/queue.jsonl", json.dumps(dict(
+            id="job-one", status="running", pid=100, worker="codex", title="Review login · abc1234")))
+        with patch.object(self.fake, "health", side_effect=OSError("unavailable")), \
+                patch("live_status_snapshot.process_table", return_value=processes):
+            data = overview(self.chat)
+        self.assertEqual(list(data["models"]), ["codex"])
+        self.assertIsNone(data["models"]["codex"]["state"])
+        self.assertEqual(data["work"][0]["title"], "Review login")
+        self.assertEqual(data["work"][0]["state"], "running")
 
     def test_overview_requires_login_and_redacts_private_values(self):
         self.write("conductor/state/queue.jsonl", json.dumps(dict(
