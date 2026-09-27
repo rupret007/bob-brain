@@ -115,7 +115,7 @@ def snapshot_for_prompt(root: Path, limit: int = 6000) -> str:
 
 
 _MUSIC_COACH_RE = re.compile(
-    r"\b(?:(?:my |a )?song|lyrics|chorus|verse|bridge|hook|chords?|progression|melody|arrange|rhyme|meter|tempo|bpm|structure|time signature|4/4|3/4|6/8|modulation|key change|outro|fade|ending|pre[- ]?chorus|capo|riffs?|vamp)\b",
+    r"\b(?:(?:my |a )?song|lyrics|chorus|verse|bridge|hook|chords?|progression|melody|arrange|rhyme|meter|tempo|bpm|structure|time signature|4/4|3/4|6/8|modulation|key change|outro|fade|ending|pre[- ]?chorus|post[- ]?chorus|double[- ]?chorus|tag[- ]?line|tagline|capo|riffs?|vamp|dynamics?|breakdown|build[- ]?up|drop)\b",
     re.I,
 )
 
@@ -153,6 +153,26 @@ def try_music_coach_reply(text: str) -> str | None:
             "Capo: match the singer’s comfortable range — write shapes in friendly keys (G, C, D) and note capo fret in Songs → chords. "
             "Same chord names on paper; the sounding key shifts up. "
             "Record which fret you used in notes for the handback."
+        )
+    if re.search(r"\b(dynamic|breakdown|build[- ]?up|drop)\b", lower):
+        if not music_ctx:
+            return None
+        return (
+            "Dynamics: verse stays lean (guitar + vocal), pre-chorus adds bass or pad, chorus full band. "
+            "Breakdown = strip to one instrument for 4–8 bars before the final lift. "
+            "Note the map in Songs → notes; Logic level automation is confirm-first."
+        )
+    if "double chorus" in lower or "post-chorus" in lower or "post chorus" in lower:
+        return (
+            "Double chorus: play the full chorus twice back-to-back; lift drums or harmony on the second pass. "
+            "A post-chorus can be instrumental (hook riff only) between verse and chorus. "
+            "Note the map in Songs → notes; Logic arrangement is confirm-first."
+        )
+    if "tag line" in lower or "tagline" in lower or ("chorus" in lower and "tag" in lower):
+        return (
+            "Tag line: repeat one hook phrase after the chorus (often the title) — 2–4 words max, same melody as the chorus hook. "
+            "Use it on the outro vamp or double-chorus ending. "
+            "Save the tag lyric as a new Songs version so Bob sees the final hook."
         )
     if "riff" in lower or "vamp" in lower:
         return (

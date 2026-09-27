@@ -109,6 +109,9 @@ if ($("login-form")) {
     const key = btn.dataset.conductor;
     const text = conductorPrompts[key];
     if (!text) return;
+    if (key === "round" || key === "council" || key === "status") {
+      setBottomTab("chat");
+    }
     submitChatText(text, { confirmStop: key === "stop" });
   });
   let activeBottomTab = "chat";
@@ -183,6 +186,10 @@ if ($("login-form")) {
     const text = chipActions[key];
     if (!text) return;
     setBottomTab("chat");
+    if (key === "round" || key === "council" || key === "status") {
+      submitChatText(text);
+      return;
+    }
     const field = $("message");
     field.value = text;
     field.focus();
@@ -213,13 +220,40 @@ if ($("login-form")) {
       const pending = ["queued", "running"].includes(message.status);
       const article = document.createElement("article");
       article.className = `message ${message.role} ${pending ? "pending" : ""} ${message.status === "error" ? "error" : ""}`;
-      const meta = document.createElement("div"); meta.className = "meta";
-      meta.textContent = `${message.role === "user" ? "You" : "Bob"}${message.provider ? " · " + providers[message.provider] : ""} · ${new Date(message.created_at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+      if (message.role === "user") article.setAttribute("aria-label", "You");
+      else article.setAttribute("aria-label", message.provider ? `Assistant, ${providers[message.provider]}` : "Assistant");
       const body = document.createElement("div"); body.className = "body";
       if (pending) body.textContent = message.provider ? `Thinking via ${providers[message.provider]}…` : "One moment…";
       else if (message.role === "assistant") body.innerHTML = renderMarkdown(message.content || "");
       else body.textContent = message.content;
-      article.append(meta, body);
+      article.append(body);
+      {
+        const raw = (message.content || "").trim();
+        const copyBtn = document.createElement("button");
+        copyBtn.type = "button";
+        copyBtn.className = "msg-copy quiet";
+        copyBtn.setAttribute("aria-label", "Copy message");
+        copyBtn.textContent = "Copy";
+        copyBtn.disabled = pending || !raw;
+        if (!copyBtn.disabled) {
+          copyBtn.addEventListener("click", async () => {
+            try {
+              await navigator.clipboard.writeText(raw);
+              copyBtn.textContent = "Copied";
+              setTimeout(() => { copyBtn.textContent = "Copy"; }, 1200);
+            } catch (_) {
+              $("notice").textContent = "Could not copy — long-press the message instead.";
+            }
+          });
+        }
+        article.append(copyBtn);
+      }
+      if (message.role === "assistant" && message.provider && !pending) {
+        const hint = document.createElement("div");
+        hint.className = "provider-hint";
+        hint.textContent = providers[message.provider];
+        article.append(hint);
+      }
       if (message.status === "waiting" && message.retry_at) {
         const retry = document.createElement("div"); retry.className = "attempt";
         retry.textContent = `Queued · retry after ${new Date(message.retry_at * 1000).toLocaleTimeString()}`;
@@ -301,13 +335,22 @@ if ($("login-form")) {
       render(await api(`/api/conversations/${current}`));
       pollFailures = 0;
       $("connection").textContent = "On the mini";
-      $("status-dot")?.classList.remove("warn");
+      const dot = $("status-dot");
+      if (dot) {
+        dot.classList.remove("warn");
+        dot.setAttribute("aria-label", "Connected");
+      }
       $("offline-banner")?.setAttribute("hidden", "");
       if (!busy && $("notice").textContent === "Stopping this reply…") $("notice").textContent = "";
     } catch (error) {
       pollFailures += 1;
-      $("connection").textContent = pollFailures >= 3 ? "Offline — check the mini" : "Reconnecting…";
-      if (pollFailures >= 2) $("status-dot")?.classList.add("warn");
+      const offline = pollFailures >= 3;
+      $("connection").textContent = offline ? "Offline — check the mini" : "Reconnecting…";
+      const dot = $("status-dot");
+      if (dot) {
+        if (pollFailures >= 2) dot.classList.add("warn");
+        dot.setAttribute("aria-label", offline ? "Offline" : "Reconnecting");
+      }
       if (pollFailures >= 2) $("offline-banner")?.removeAttribute("hidden");
       if (pollFailures < 3) $("notice").textContent = error.message;
     }
@@ -627,16 +670,19 @@ if ($("login-form")) {
     rec.continuous = true;
     rec.onresult = (event) => {
       if (!callSession) return;
-      if (callSession.speaking) {
-        speechSynthesis.cancel();
-        callSession.speaking = null;
-      }
+      let heardInterim = false;
       for (let index = callSession.resultIndex; index < event.results.length; index += 1) {
         const row = event.results[index];
+        const said = (row[0]?.transcript || "").trim();
+        if (!row.isFinal && said.length > 1) heardInterim = true;
         if (!row.isFinal) continue;
         callSession.resultIndex = index + 1;
-        const said = (row[0]?.transcript || "").trim();
         if (said.length > 2) enqueueCallUtterance(said, callSession);
+      }
+      if (heardInterim && callSession.speaking) {
+        speechSynthesis.cancel();
+        callSession.speaking = null;
+        $("call-status").textContent = "Listening… (interrupted Bob)";
       }
     };
     rec.onerror = (event) => {
@@ -649,6 +695,7 @@ if ($("login-form")) {
         try { rec.start(); } catch (_) { /* restart loop while call open */ }
       }
     };
+    callSession.resultIndex = 0;
     try { rec.start(); } catch (_) {
       stopLiveCall();
       $("notice").textContent = "Could not start live call.";
@@ -804,8 +851,20 @@ if ($("login-form")) {
     } catch (error) { $("song-notice").textContent = error.message; }
     event.target.value = "";
   });
-  function renderOpsDetail(ops) {
-    const host = $("ops-detail");
+  function jobLogLines(job) {
+    const events = (job.events || []).filter((e) => e && (e.text || e.sha || e.state));
+    if (events.length) {
+      return events.filter((e) => e.kind === "log" && e.text).map((e) => e.text).slice(-3);
+    }
+    return (job.log_tail || []).slice(-3);
+  }
+  function jobHeadline(job) {
+    const events = (job.events || []).filter((e) => e && (e.text || e.sha || e.state));
+    const status = events.find((e) => e.kind === "status");
+    return status?.text || job.plain_now || "Working…";
+  }
+  function renderOpsDetail(ops, hostId = "ops-detail") {
+    const host = $(hostId);
     if (!host) return;
     if (!ops || !Object.keys(ops).length) {
       host.hidden = true;
@@ -832,15 +891,33 @@ if ($("login-form")) {
       dd.textContent = value;
       dl.append(dt, dd);
     });
+    if (hostId === "jobs-ops-detail" && jobs.length) {
+      jobs.slice(0, 4).forEach((job, index) => {
+        const dt = document.createElement("dt");
+        dt.textContent = `Job ${index + 1}`;
+        const dd = document.createElement("dd");
+        dd.className = "ops-job-snippet";
+        const lines = jobLogLines(job);
+        const sha = job.last_commit?.sha ? ` · ${job.last_commit.sha}` : "";
+        const round = job.round ? ` · round ${job.round}` : "";
+        dd.textContent = `${jobHeadline(job)}${round}${sha}${lines.length ? "\n" + lines.join("\n") : ""}`;
+        dl.append(dt, dd);
+      });
+    }
     host.replaceChildren(dl);
+    if (hostId === "ops-detail") {
+      renderOpsDetail(ops, "jobs-ops-detail");
+    }
   }
-  function renderScoresTable(scores) {
-    const host = $("scores-table");
+  function renderScoresTable(scores, hostId = "scores-table") {
+    const host = $(hostId);
     if (!host) return;
     if (!scores?.length) {
+      host.hidden = hostId === "jobs-scores-table";
       host.replaceChildren();
       return;
     }
+    host.hidden = false;
     host.replaceChildren(...scores.slice(0, 8).map((row) => {
       const card = document.createElement("article");
       card.className = "score-card";
@@ -884,16 +961,10 @@ if ($("login-form")) {
       stall.textContent = resolvedStall;
       stall.classList.toggle("stalled", resolvedStall === "stalled");
       stall.classList.toggle("running", resolvedStall !== "stalled");
-      if (events.length) {
-        now.textContent = events.find((e) => e.kind === "status")?.text || job.plain_now || "Working…";
-      } else {
-        now.textContent = job.plain_now || "Working…";
-      }
+      now.textContent = jobHeadline(job);
       const tail = document.createElement("pre");
       tail.className = "log-tail";
-      const logLines = events.length
-        ? events.filter((e) => e.kind === "log").map((e) => e.text).slice(-3)
-        : (job.log_tail || []).slice(-3);
+      const logLines = jobLogLines(job);
       tail.textContent = logLines.length ? logLines.join("\n") : "";
       const commit = document.createElement("p");
       commit.className = "job-commit muted";
@@ -935,6 +1006,8 @@ if ($("login-form")) {
       const meta = data.live_ops_meta || {};
       lastPanelMeta = meta;
       const ops = data.live_ops || {};
+      lastPanelOps = ops;
+      renderOpsDetail(ops, "jobs-ops-detail");
       const spend = ops.minimax_spend || {};
       const roles = ops.roles || {};
       const jobs = ops.running_jobs || [];
@@ -964,6 +1037,7 @@ if ($("login-form")) {
       renderLiveJobs(jobs);
       lastPanelScores = ops.scores;
       lastPanelOps = ops;
+      renderScoresTable(ops.scores, "jobs-scores-table");
       if (activeBottomTab === "lanes") {
         renderOpsDetail(ops);
         renderScoresTable(ops.scores);
@@ -993,14 +1067,26 @@ if ($("login-form")) {
       const logFresh = age != null && age < 48 * 3600
         ? `Log updated ${age < 3600 ? Math.round(age / 60) + "m" : Math.round(age / 3600) + "h"} ago`
         : (age != null ? "Self-improve log stale (>48h)" : "");
+      const streak = si.tick_ok_streak ? `${si.tick_ok_streak} OK tick${si.tick_ok_streak === 1 ? "" : "s"} in a row` : "";
       const loaded = si.launchd_loaded === true ? "Scheduled tick loaded"
         : (si.launchd_loaded === false ? "Tick not loaded — run bootstrap on mini" : (si.launchd_loaded === null ? "Launchd probe unavailable" : ""));
-      const health = si.healthy === true ? "Loop healthy"
+      const health = si.loop_ready === true ? "Self-improve loop ready"
+        : (si.healthy === true ? "Loop healthy"
         : (si.healthy === false && si.launchd_files_ok ? "Needs a successful tick — check mini bootstrap"
-          : (si.launchd_files_ok ? "Status unknown — refresh Jobs tab" : "Install tick + plist — see mini setup"));
+          : (si.launchd_files_ok ? "Status unknown — refresh Jobs tab" : "Install tick + plist — see mini setup")));
       const schedule = si.schedule_hint ? `Schedule: ${si.schedule_hint.replace(/\.$/, "")}` : "";
       const bootstrap = si.bootstrap_script ? `One-time on mini: bash ${si.bootstrap_script}` : "";
-      $("self-improve-status").textContent = [health, loaded, schedule, bootstrap, logFresh, si.summary || ""].filter(Boolean).join(" · ");
+      const siLine = [health, streak, loaded, schedule, bootstrap, logFresh, si.summary || ""].filter(Boolean).join(" · ");
+      $("self-improve-status").textContent = siLine;
+      const jobsSi = $("jobs-self-improve-status");
+      if (jobsSi) {
+        if (siLine.trim()) {
+          jobsSi.hidden = false;
+          jobsSi.textContent = `Self-improve: ${siLine}`;
+        } else {
+          jobsSi.hidden = true;
+        }
+      }
       const cl = data.round_changelog || {};
       const clHost = $("changelog-line");
       if (clHost) {
@@ -1009,7 +1095,19 @@ if ($("login-form")) {
           : (cl.line || "Round notes load from the latest RESULT file on the mini.");
       }
     } catch (_) {
-      $("status-summary").textContent = "Jobs panel unavailable";
+      lastPanelMeta = { stale: true };
+      lastPanelOps = null;
+      lastPanelScores = null;
+      $("status-summary").textContent = "Jobs panel unavailable — dashboard may be stale";
+      renderOpsDetail({}, "jobs-ops-detail");
+      renderOpsDetail({}, "ops-detail");
+      renderScoresTable(null, "jobs-scores-table");
+      renderLiveJobs([]);
+      const jobsSi = $("jobs-self-improve-status");
+      if (jobsSi) {
+        jobsSi.hidden = false;
+        jobsSi.textContent = "Self-improve status unavailable — refresh when the mini is back.";
+      }
     }
   }
   let lastPanelScores = null;

@@ -16,13 +16,14 @@
   <div class="app">
     <div id="offline-banner" class="offline-banner" role="status" hidden>Reconnecting to the mini…</div>
     <header class="top-bar">
-      <div class="identity">
-        <span class="status-dot" id="status-dot" aria-hidden="true"></span>
+      <button type="button" class="icon-btn top-back quiet" aria-hidden="true" tabindex="-1" disabled>‹</button>
+      <div class="header-pill identity" role="banner">
         <span class="avatar" aria-hidden="true">b</span>
         <div class="titles">
           <h1>Bob</h1>
-          <p id="connection">Connected</p>
+          <span class="status-dot" id="status-dot" aria-label="Connection status"></span>
         </div>
+        <p id="connection" class="sr-only">Connected</p>
       </div>
       <div class="top-actions">
         <button type="button" id="open-chats" class="icon-btn" aria-label="Conversations" title="Conversations">💬</button>
@@ -41,7 +42,7 @@
       </div>
       <form id="composer" class="composer">
         <label class="sr-only" for="message">Message Bob</label>
-        <button type="button" id="attach-plus" class="composer-plus quiet icon-btn" aria-label="Attach file" title="Attach (coming soon)" hidden>+</button>
+        <button type="button" id="attach-plus" class="composer-plus quiet icon-btn" aria-label="Attach file" title="Attach (coming soon)" disabled>+</button>
         <div class="composer-pill">
           <button type="button" id="mic" class="composer-mic quiet icon-btn" aria-label="Voice input" title="Voice input">🎤</button>
           <textarea id="message" name="message" placeholder="Ask Bob…" rows="1" maxlength="6000" required enterkeyhint="send"></textarea>
@@ -60,6 +61,9 @@
         <h2 class="view-title">Jobs</h2>
         <p id="now-line" class="now-line" hidden></p>
         <p id="status-summary" class="view-lead muted"></p>
+        <p id="jobs-self-improve-status" class="view-hint muted" hidden></p>
+        <div id="jobs-ops-detail" class="ops-detail" aria-label="Live dashboard on Jobs" hidden></div>
+        <div id="jobs-scores-table" class="scores-grid scores-grid-compact" aria-label="Latest Web Bob scores on Jobs" hidden></div>
         <div id="live-jobs" class="live-jobs" aria-live="polite"></div>
         <p id="jobs-empty" class="empty-state" hidden>No jobs on screen right now. Tap Start round in chat when you want a builder pass.</p>
         <div class="conductor-block">

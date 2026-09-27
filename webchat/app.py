@@ -122,10 +122,13 @@ class Chat:
         self.lock = threading.RLock()
         self.sessions, self.conversations = {}, {}
         self.overlay_roots: dict[str, Path] = {}
+        self.overlay_pins: dict[str, Path] = {}
         self.failures = deque()
         self.workers = {}
         self.closing, self.queue_thread = threading.Event(), None
-        self.providers = providers or Providers(root, self.redact, overlay_roots=self.overlay_roots)
+        self.providers = providers or Providers(
+            root, self.redact, overlay_roots=self.overlay_roots, overlay_pins=self.overlay_pins,
+        )
         for path in self.state.glob("*.json"):
             if not UUID.fullmatch(path.stem):
                 continue
@@ -151,8 +154,11 @@ class Chat:
         private_write(self.state / (conversation["id"] + ".json"), json.dumps(conversation, ensure_ascii=False, indent=2) + "\n")
 
     def ledger_root(self, conversation_id: str | None = None) -> Path:
-        if conversation_id and conversation_id in self.overlay_roots:
-            return self.overlay_roots[conversation_id]
+        if conversation_id:
+            if conversation_id in self.overlay_pins:
+                return self.overlay_pins[conversation_id]
+            if conversation_id in self.overlay_roots:
+                return self.overlay_roots[conversation_id]
         return self.root
 
     def bind_drill_overlay(self, conversation_id: str, fixture_id: str) -> dict:
@@ -301,7 +307,7 @@ class Chat:
             conversation["messages"] += [
                 {"id": str(uuid.uuid4()), "request_id": request_id, "preferred_provider": provider, "role": "user", "content": text,
                  "status": "done", "created_at": time.time()},
-                {"id": str(uuid.uuid4()), "role": "assistant", "content": "", "status": "queued",
+                {"id": str(uuid.uuid4()), "request_id": request_id, "role": "assistant", "content": "", "status": "queued",
                  "provider": None, "attempts": [], "created_at": time.time()},
             ]
             if conversation["title"] == "New conversation":
@@ -536,6 +542,8 @@ class Chat:
         # Caller holds self.lock; the same saved assistant message is reused.
         if not self.closing.is_set():
             cancel = threading.Event()
+            if identifier in self.overlay_roots:
+                self.overlay_pins[identifier] = self.overlay_roots[identifier]
             worker = threading.Thread(target=self.complete, args=(identifier, cancel), daemon=True)
             self.workers[identifier] = {"thread": worker, "cancel": cancel, "started_at": time.time()}
             worker.start()
@@ -600,6 +608,7 @@ class Chat:
         finally:
             with self.lock:
                 self.workers.pop(identifier, None)
+                self.overlay_pins.pop(identifier, None)
 
     def stop(self, identifier):
         with self.lock:
@@ -772,8 +781,32 @@ class Chat:
         elif not files_ok:
             summary = "Install self-improve launchd plist + tick script. " + summary
         healthy = bool(files_ok and (launchd_loaded is True or recent_ok))
+        tick_ok_streak = 0
+        if log_path.exists():
+            try:
+                for line in reversed(log_path.read_text(errors="replace").splitlines()[-40:]):
+                    low = line.lower()
+                    if "self-improve tick" not in low:
+                        continue
+                    if re.search(r"self-improve tick ok\b|tick ok\b", low) and "failed" not in low:
+                        tick_ok_streak += 1
+                    elif "skipped" in low:
+                        continue
+                    else:
+                        break
+            except OSError:
+                tick_ok_streak = 0
+        loop_ready = bool(
+            files_ok
+            and recent_ok
+            and tick_ok_streak >= 1
+            and recent_age_seconds is not None
+            and recent_age_seconds < 48 * 3600
+        )
         if schedule_hint:
             summary = schedule_hint + " " + summary
+        if loop_ready:
+            summary = f"Loop ready ({tick_ok_streak} recent OK tick{'s' if tick_ok_streak != 1 else ''}). " + summary
         bootstrap = root / "conductor/webchat/bootstrap_self_improve_launchd.sh"
         return {
             "launchd_plist": plist.exists(),
@@ -788,6 +821,8 @@ class Chat:
             "recent_log_ok": recent_ok,
             "log_age_seconds": recent_age_seconds,
             "schedule_hint": schedule_hint,
+            "tick_ok_streak": tick_ok_streak,
+            "loop_ready": loop_ready,
             "summary": summary,
         }
 

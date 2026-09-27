@@ -7,7 +7,7 @@
       "text": "Reply with exactly: drill A1",
       "status": "done",
       "provider": "gemini",
-      "elapsed_seconds": 1.096,
+      "elapsed_seconds": 1.174,
       "busy_in_attempts": false
     },
     {
@@ -15,7 +15,7 @@
       "text": "Reply with exactly: drill B1",
       "status": "done",
       "provider": "gemini",
-      "elapsed_seconds": 0.948,
+      "elapsed_seconds": 0.74,
       "busy_in_attempts": false
     },
     {
@@ -23,7 +23,7 @@
       "text": "Reply with exactly: drill A2",
       "status": "done",
       "provider": "gemini",
-      "elapsed_seconds": 0.661,
+      "elapsed_seconds": 0.676,
       "busy_in_attempts": false
     },
     {
@@ -31,7 +31,7 @@
       "text": "Reply with exactly: drill B2",
       "status": "done",
       "provider": "gemini",
-      "elapsed_seconds": 0.948,
+      "elapsed_seconds": 0.993,
       "busy_in_attempts": false
     },
     {
@@ -39,7 +39,7 @@
       "text": "Reply with exactly: drill A3",
       "status": "done",
       "provider": "gemini",
-      "elapsed_seconds": 0.972,
+      "elapsed_seconds": 0.975,
       "busy_in_attempts": false
     },
     {
@@ -47,7 +47,7 @@
       "text": "Reply with exactly: drill B3",
       "status": "done",
       "provider": "gemini",
-      "elapsed_seconds": 0.98,
+      "elapsed_seconds": 0.947,
       "busy_in_attempts": false
     },
     {
@@ -55,7 +55,7 @@
       "text": "Reply with exactly: drill A4",
       "status": "done",
       "provider": "gemini",
-      "elapsed_seconds": 0.965,
+      "elapsed_seconds": 0.662,
       "busy_in_attempts": false
     },
     {
@@ -63,7 +63,7 @@
       "text": "Reply with exactly: drill B4",
       "status": "done",
       "provider": "gemini",
-      "elapsed_seconds": 0.984,
+      "elapsed_seconds": 0.981,
       "busy_in_attempts": false
     },
     {
@@ -71,7 +71,7 @@
       "text": "Reply with exactly: drill A5",
       "status": "done",
       "provider": "gemini",
-      "elapsed_seconds": 0.979,
+      "elapsed_seconds": 0.969,
       "busy_in_attempts": false
     },
     {
@@ -79,18 +79,18 @@
       "text": "Reply with exactly: drill B5",
       "status": "done",
       "provider": "gemini",
-      "elapsed_seconds": 0.99,
+      "elapsed_seconds": 0.96,
       "busy_in_attempts": false
     }
   ],
-  "started_at": 1790500251.532458,
+  "started_at": 1790501351.089995,
   "locks": [
     "codex: drill holds background lock",
     "cursor: background job holds lock",
     "gemini: drill holds background lock",
     "minimax: drill holds background lock"
   ],
-  "p50_seconds": 0.975,
-  "finished_at": 1790500261.056292,
+  "p50_seconds": 0.965,
+  "finished_at": 1790501360.167103,
   "result": "PASS"
 }

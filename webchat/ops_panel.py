@@ -165,7 +165,8 @@ def conductor_snapshot(root: Path) -> dict:
             "next_due": pass_schedule.get("next_due"),
             "pass_id": pass_schedule.get("pass_id"),
         },
-        "council_hint": "From chat: run council on: <question> then yes, run council (queues Gemini+MiniMax+Claude on the mini; no Grok).",
-        "safety": "Drafts only · confirm before merge/send/spend · never Grok",
+        "council_hint": "Tap Ask council in Jobs or chat, then approve the card (Gemini + MiniMax + Claude on the mini; no Grok).",
+        "round_hint": "Tap Start round in Jobs or chat, then approve the card to queue a draft screen job.",
+        "safety": "Drafts only · confirm before merge, send, or spend · never Grok",
         "read_at": time.time(),
     }

@@ -674,6 +674,38 @@ class HandbackJobTests(Fixture):
         self.assertIn("approve WebJam", reply)
         self.assertNotIn("drill open item", reply)
 
+    def test_overlay_pin_lifecycle_during_blocked_reply(self):
+        from drill_fixture import new_fixture_root
+
+        fixture = new_fixture_root(self.folder)
+        conv = self.identifier
+        self.chat.overlay_roots[conv] = fixture
+        self.fake.hold.clear()
+        self.chat.submit(conv, "hello overlay pin", str(uuid.uuid4()))
+        time.sleep(0.08)
+        self.assertIn(conv, self.chat.overlay_pins)
+        with self.chat.lock:
+            self.chat.overlay_roots.pop(conv, None)
+        self.assertEqual(self.chat.ledger_root(conv), fixture)
+        self.fake.hold.set()
+        self.wait(conv)
+        self.assertNotIn(conv, self.chat.overlay_pins)
+
+    def test_drill_overlay_pinned_for_inflight_reply(self):
+        from drill_fixture import new_fixture_root
+
+        fixture = new_fixture_root(self.folder)
+        conv = self.identifier
+        with self.chat.lock:
+            self.chat.overlay_roots[conv] = fixture
+            self.chat.overlay_pins[conv] = fixture
+            self.chat.overlay_roots.pop(conv, None)
+        self.assertEqual(self.chat.ledger_root(conv), fixture)
+        real = Providers(self.root, self.chat.redact, overlay_roots=self.chat.overlay_roots, overlay_pins=self.chat.overlay_pins)
+        self.assertEqual(real.context_root(conv), fixture)
+        with self.chat.lock:
+            self.chat.overlay_pins.pop(conv, None)
+
     def test_handback_drill_isolated_fixture(self):
         from drill_fixture import assert_prod_unchanged, events_ok, ledger_round, new_fixture_root, prod_fingerprint, try_bob_state_running_line
 
@@ -777,11 +809,15 @@ class HandbackJobTests(Fixture):
         self.assertIn("pre-chorus", (try_music_coach_reply("help with pre-chorus lift") or "").lower())
         self.assertIn("capo", (try_music_coach_reply("what capo fret for G shapes") or "").lower())
         self.assertIn("intro", (try_music_coach_reply("write an intro riff for my song") or "").lower())
+        self.assertIn("breakdown", (try_music_coach_reply("help with song dynamics and breakdown") or "").lower())
+        self.assertIsNone(try_music_coach_reply("give me a breakdown of running jobs"))
         self.assertIsNone(try_music_coach_reply("write an intro for my presentation"))
         self.assertIn("modulation", (try_music_coach_reply("intro key change on the chorus") or "").lower())
         outro_chorus = (try_music_coach_reply("outro chorus tag line") or "").lower()
-        self.assertIn("outro", outro_chorus)
+        self.assertIn("tag", outro_chorus)
         self.assertNotIn("chorus tip", outro_chorus)
+        self.assertIn("double", (try_music_coach_reply("double chorus ending") or "").lower())
+        self.assertIn("post-chorus", (try_music_coach_reply("add a post-chorus riff") or "").lower())
 
     def test_self_improve_schedule_hint_from_plist(self):
         plist = self.root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist"
@@ -817,10 +853,28 @@ class HandbackJobTests(Fixture):
         (self.root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist").write_text("plist")
         (self.root / "conductor/webchat/self_improve_tick.sh").write_text("#!/bin/bash\n")
         (self.root / "logs").mkdir(parents=True, exist_ok=True)
-        (self.root / "logs/webchat-self-improve.log").write_text("self-improve tick ok\n")
+        (self.root / "logs/webchat-self-improve.log").write_text("[2026-09-27] self-improve tick OK webchat=0 failover=0 sha=abc\n")
         with patch.object(self.chat, "_cached_launchd_loaded", return_value=True):
             status = self.chat.self_improve_status()
         self.assertTrue(status.get("healthy"))
+        self.assertIn("tick_ok_streak", status)
+        self.assertIn("loop_ready", status)
+        self.assertTrue(status.get("loop_ready"))
+        self.assertGreaterEqual(status.get("tick_ok_streak", 0), 1)
+
+    def test_assistant_reply_carries_request_id(self):
+        request_id = str(uuid.uuid4())
+        value = self.chat.submit(self.identifier, "status", request_id)
+        assistant = next(m for m in value["messages"] if m["role"] == "assistant")
+        self.assertEqual(assistant.get("request_id"), request_id)
+
+    def test_conductor_snapshot_plain_hints(self):
+        from ops_panel import conductor_snapshot
+
+        snap = conductor_snapshot(self.root)
+        self.assertIn("round_hint", snap)
+        self.assertNotIn("run council on:", snap.get("council_hint", "").lower())
+        self.assertIn("approve", snap.get("council_hint", "").lower())
 
     def test_music_coach_in_chat(self):
         request_id = str(uuid.uuid4())
