@@ -17,7 +17,7 @@ if ($("login-form")) {
 } else {
   let csrf = "", current = "", busy = false, sending = false, revision = "", polling = false, draftRequest = null, pollFailures = 0;
   let lastQuietHoursActive = null, lastQuietHoursFetchedAt = 0, lastBootstrapCommand = "";
-  const providers = { codex: "Codex", cursor: "Cursor", gemini: "Gemini", minimax: "MiniMax", claude: "Claude" };
+  const providers = { codex: "Codex", cursor: "Cursor", gemini: "Gemini", minimax: "MiniMax", claude: "Claude", texting: "Texts · private" };
   function escapeHtml(text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
@@ -183,6 +183,7 @@ if ($("login-form")) {
   });
   $("new-chat-dialog")?.addEventListener("click", () => { $("new-chat")?.click(); $("chats-dialog")?.close(); });
   const chipActions = {
+    texts: "texts",
     status: "status",
     round: "start a job: Web Bob ready round (draft only, no merge)",
     council: "run council on: score Web Bob mobile UX after bottom tab bar",
@@ -200,7 +201,7 @@ if ($("login-form")) {
     const text = chipActions[key];
     if (!text) return;
     setBottomTab("chat");
-    if (key === "round" || key === "council" || key === "status") {
+    if (key === "round" || key === "council" || key === "status" || key === "texts") {
       submitChatText(text);
       return;
     }
@@ -234,13 +235,15 @@ if ($("login-form")) {
       const pending = ["queued", "running"].includes(message.status);
       const article = document.createElement("article");
       article.className = `message ${message.role} ${pending ? "pending" : ""} ${message.status === "error" ? "error" : ""}`;
+      if (message.texting) article.classList.add("texting");
       if (message.role === "user") article.setAttribute("aria-label", "You");
       else article.setAttribute("aria-label", message.provider ? `Assistant, ${providers[message.provider]}` : "Assistant");
       const body = document.createElement("div"); body.className = "body";
       if (pending) body.textContent = message.provider ? `Thinking via ${providers[message.provider]}…` : "One moment…";
-      else if (message.role === "assistant") body.innerHTML = renderMarkdown(message.content || "");
+      else if (message.role === "assistant" && !message.texting) body.innerHTML = renderMarkdown(message.content || "");
       else body.textContent = message.content;
       article.append(body);
+      if (message.text_draft) article.append(textDraftCard(message.text_draft));
       {
         const raw = (message.content || "").trim();
         const copyBtn = document.createElement("button");
@@ -319,6 +322,64 @@ if ($("login-form")) {
     }
     panel.replaceChildren(fragment);
     if (nearBottom || sending) panel.scrollTop = panel.scrollHeight;
+  }
+  function textDraftCard(draft) {
+    const card = document.createElement("section");
+    card.className = "text-draft-card";
+    card.dataset.draftId = draft.id;
+    card.dataset.state = draft.state;
+    card.setAttribute("aria-label", "Text draft");
+    const title = document.createElement("h3");
+    title.textContent = "Text draft · " + ({ pending: "not sent", editing: "editing", expired: "confirmation expired",
+      superseded: "replaced", cancelled: "cancelled", confirmed_not_sent: "confirmed here, not sent" }[draft.state] || "not sent");
+    const recipient = document.createElement("p");
+    recipient.className = "text-recipient";
+    recipient.textContent = `To: ${draft.recipient.name}\n${draft.recipient.addresses.join(", ")}\nThread: ${draft.recipient.guid}`;
+    const body = document.createElement("pre");
+    body.className = "text-draft-body"; body.textContent = draft.body;
+    card.append(title, recipient, body);
+    if (draft.state === "editing") {
+      const form = document.createElement("form");
+      const toLabel = document.createElement("label");
+      toLabel.textContent = "Recipient or exact thread ID";
+      const to = document.createElement("input");
+      to.value = draft.recipient.guid; to.required = true; to.maxLength = 500;
+      toLabel.append(to);
+      const bodyLabel = document.createElement("label"); bodyLabel.textContent = "Text body";
+      const field = document.createElement("textarea");
+      field.value = draft.body; field.required = true; field.maxLength = 4000; field.rows = 4;
+      bodyLabel.append(field);
+      const review = document.createElement("button"); review.type = "submit"; review.textContent = "Review new draft";
+      form.append(toLabel, bodyLabel, review);
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        submitChatText(`replace text draft ${draft.id} to ${to.value}: ${field.value}`);
+      });
+      card.append(form);
+    }
+    if (draft.confirm_message) {
+      const hint = document.createElement("p");
+      hint.textContent = `To confirm this exact draft, send separately in chat by ${new Date(draft.expires_at * 1000).toLocaleTimeString()}:`;
+      const code = document.createElement("code"); code.className = "text-confirmation"; code.textContent = draft.confirm_message;
+      const prepare = document.createElement("button"); prepare.type = "button"; prepare.textContent = "Put confirmation in chat";
+      prepare.addEventListener("click", () => {
+        $("message").value = draft.confirm_message;
+        $("message").dispatchEvent(new Event("input")); $("message").focus();
+      });
+      card.append(hint, code, prepare);
+    }
+    if (["pending", "expired", "confirmed_not_sent"].includes(draft.state)) {
+      const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "Edit draft";
+      // Clear consent on the server before exposing editable fields, including in other tabs.
+      edit.addEventListener("click", () => submitChatText(`edit text draft ${draft.id}`));
+      const cancel = document.createElement("button"); cancel.type = "button"; cancel.textContent = "Cancel draft";
+      cancel.addEventListener("click", () => submitChatText(`cancel text draft ${draft.id}`));
+      card.append(edit, cancel);
+    }
+    const status = document.createElement("p"); status.className = "text-delivery-status";
+    status.textContent = "Andrea delivery from Web Bob is unavailable. Nothing has been sent.";
+    card.append(status);
+    return card;
   }
   async function refreshList() {
     const data = await api("/api/conversations");

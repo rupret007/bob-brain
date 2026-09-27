@@ -618,3 +618,14 @@ code { overflow-wrap: anywhere; font-size: 11px; }
 @media (min-width: 720px) {
   .app { border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
 }
+/* Text previews preserve the exact body and never interpret message HTML. */
+.message.assistant.texting .body { white-space: pre-wrap; }
+.text-draft-card { border: 1px solid #718eb7; border-radius: 12px; padding: 14px; margin-top: 12px; min-width: 0; }
+.text-draft-card h3 { font-size: 1rem; margin: 0 0 10px; }
+.text-recipient, .text-draft-body { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.text-draft-body { padding: 12px; border-left: 3px solid #718eb7; margin: 12px 0; }
+.text-draft-card button { margin: 6px 6px 0 0; min-height: 44px; }
+.text-draft-card label { display: block; margin: 10px 0; }
+.text-draft-card input, .text-draft-card textarea { display: block; width: 100%; box-sizing: border-box; font: inherit; padding: 10px; margin-top: 6px; }
+.text-confirmation { display: block; white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }
+.text-delivery-status { font-size: .85rem; opacity: .85; }
