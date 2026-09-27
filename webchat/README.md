@@ -55,6 +55,21 @@ cannot acknowledge queue or inbox effects. Explicit small text writes such as
 `start a job: write hello to /tmp/example.txt` use Codex, Cursor or Claude with file
 tools; success requires the server to verify the changed file and its contents.
 
+Named multi-project requests create one durable job per project. For example,
+`prioritize Web Bob, WebJam, AdoptIQ, StoryBoard` saves the order; `push everything
+to the max and fix anything you find` queues four project jobs. Each reply line
+names the project, requested worker and real job ID. Assignment prefers ready
+compatible lanes and accounts for existing claims and queued work. Coding jobs
+use Codex/Cursor; API-only workers keep their existing capability limits.
+
+Conversation files also save explicit holds and the latest permission transition.
+`hold off on Web Bob` blocks new submissions for that project; `go`, `resume`, or
+`the hold is lifted` clears the applicable hold. An explicit project push also
+authorizes those projects. A held request survives a reload and can be resumed.
+Holds govern new chat submissions; they do not stop already queued/running jobs
+or restart services. Old conversations migrate user directives in order without
+dispatching them, and assistant text cannot restore a cleared hold.
+
 Operational replies use the current queue, lane locks and generation health from
 `webchat/sessions/provider-health.json` plus `logs/webchat-failover.log`. The server
 identifies the actual answering provider on each attempt. Old chat errors never

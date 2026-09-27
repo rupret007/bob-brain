@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
 import sys
 import time
@@ -11,20 +12,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
 import task_queue
 import max_mode
+from chat_intent import (POLITE, PREAMBLE, PUSH, blocked_scopes, command, hold_reply,
+                         project_targets, PROJECT, PROJECT_NAMES, state_for)
 
-POLITE = r"(?:(?:please|bob)[,:]?\s+|(?:can|could|would|will) you\s+|i (?:want|need) (?:you )?to\s+|let['’]s\s+)*"
 WORK = re.compile(
     r"^" + POLITE +
     r"(?:review|analy[sz]e|audit|research|investigate|inspect|check|compare|summari[sz]e|calculate|"
     r"read|open|save|append|write|draft|create|build|implement|fix|repair|debug|test|trace|update|refactor|add|remove|"
     r"diagnose|figure out|find out|look into|work on|improve|make)\b.*", re.I | re.S)
-PREAMBLE = re.compile(r"^(?:(?:ok(?:ay)?|yes|yeah|sure|great|thanks)[,.!]?\s+)+", re.I)
 ROUTED = re.compile(r"^" + POLITE + r"(?:have|get|ask|use|assign(?:\s+to)?|delegate(?:\s+to)?)\s+"
                     r"(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\b\s*(?:to\b|[:,])?\s*(.*)$", re.I | re.S)
 PREFIX = re.compile(r"^(?:worker\s*[:=]\s*)?(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\s*:\s*(.+)$", re.I | re.S)
-CODING = re.compile(r"\b(?:fix|repair|implement|refactor|debug|build|run|execute|install|edit|change|modify)\b|"
+CODING = re.compile(r"\b(?:fix|repair|improve|implement|refactor|debug|build|run|execute|install|edit|change|modify)\b|"
                     r"\b(?:write|add|create|update|remove)\b.{0,60}\b(?:code|file|test|function|service|script|app|feature)\b", re.I | re.S)
-FOLLOW_UP = re.compile(r"^" + POLITE + r"(?:go(?: ahead)?|do it|handle it|yes(?: please)?|let['’]s do it)[.!?]*$", re.I)
+FOLLOW_UP = re.compile(r"^" + POLITE + r"(?:go(?: ahead)?|resume|do it|handle it|yes(?: please)?|let['’]s do it)[.!?]*$", re.I)
 CHAT_STYLE = re.compile(r"^" + POLITE + r"(?:keep|make)\s+(?:your\s+)?(?:replies|answers|responses)\s+"
                         r"(?:short(?:er)?|brief(?:er)?|concise|friendly|friendlier|plain(?:er)?|natural)\b", re.I)
 PROPOSAL = re.compile(r"^(?:I can|I could|Happy to|Shall I|Want me to|Would you like me to)\s+(.+?)[.!?]*$", re.I)
@@ -40,6 +41,9 @@ def needs_task_detail(prompt):
 
 def followup_work(conversation):
     """Resolve only a current saved proposal, never an old or completed task."""
+    if conversation.get("held_job"):
+        job = conversation["held_job"]
+        return job["prompt"], job["worker"]
     if conversation.get("pending_job"):
         prompt = conversation["pending_job"]
         work, worker = parse_work(prompt)
@@ -67,7 +71,9 @@ def parse_work(text):
     text = PREAMBLE.sub("", text.strip())
     if CHAT_STYLE.match(text):
         return None, "auto"
-    if max_mode.MAX_MODE.search(text):
+    if PUSH.match(command(text)):
+        return text.strip(), "auto"
+    if max_mode.MAX_MODE.search(text) and (WORK.match(text) or max_mode.MAX_MODE.match(command(text))):
         return text.strip(), "max"
     lane = re.fullmatch(r"(?:start|run)\s+(?:a\s+)?lane\s+(codex|cursor-agent|cursor|claude|gemini|minimax|grok)\s*:\s*(.+)", text.strip(), re.I | re.S)
     if lane:
@@ -110,6 +116,54 @@ def task_kind(prompt):
     return "coding" if CODING.search(prompt) else "analysis"
 
 
+def project_plan(root, description, names, worker):
+    """One independently routable job per project, using existing capabilities."""
+    goal = max_mode.MAX_MODE.sub("", description).strip(" :,-\n")
+    improve = bool(PUSH.match(command(description)) or (max_mode.MAX_MODE.match(command(description)) and not WORK.match(goal)))
+    kind = "coding" if improve else task_kind(goal)
+    eligible = task_queue.worker_order(kind)
+    if worker != "auto":
+        task_queue.validate_worker(worker, kind)
+        eligible = (worker,)
+    board = root / "conductor/lanes.json"
+    health = json.loads(board.read_text()) if board.exists() else {}
+    ready = [lane for lane in eligible if not health or health.get(lane, {}).get("state") in ("ready", "budget_warning")]
+    candidates = ready or list(eligible)
+    rows = list(task_queue.tasks(root).values())
+    load = {}
+    for lane in candidates:
+        observed = sum(row["status"] in task_queue.ACTIVE and row["worker"] == lane for row in rows)
+        reserved = max(observed, health.get(lane, {}).get("active", 0))
+        if health.get(lane, {}).get("state") == "busy":
+            reserved = max(reserved, task_queue.capacity(lane))
+        load[lane] = reserved + sum(row["status"] == "queued" and row["requested_worker"] == lane for row in rows)
+    packages = []
+    for project in names:
+        lane = min(candidates, key=lambda candidate: load[candidate] / task_queue.capacity(candidate))
+        load[lane] += 1
+        # The existing worker chooses its repository from the prompt. Never
+        # include the other projects' names in this project's assignment.
+        scoped = PROJECT.sub(lambda match: project if PROJECT_NAMES[re.sub(r"\s+", "", match[0].lower())] == project
+                             else "another project", description)
+        assignment = ("Improve " + project + ": inspect the project, fix issues you find, and run relevant tests."
+                      if improve else "Carry out this request for " + project + " only.")
+        prompt = ("Project: " + project + "\n" + assignment + "\nJeff's request: " + scoped +
+                  "\nWork only on this project. Keep changes in drafts and report actual results. Do not start other workers.")
+        packages.append(dict(worker=lane, kind=kind, title=project, prompt=prompt))
+    return packages
+
+
+def project_receipt(rows):
+    lines = []
+    for row in sorted(rows, key=lambda row: row["group_index"]):
+        if row["status"] in task_queue.TERMINAL:
+            receipt = ("Finished" if row["status"] == "succeeded" else "Failed") + " on " + str(row["worker"]) + " — job " + row["id"] + "."
+        else:
+            receipt = task_receipt(row)
+        lines.append(row["title"] + ": " + receipt)
+    return "\n".join(lines)
+
+
 class TaskDispatch:
     def submit_max_task(self, conversation, description, request_id):
         return self.submit_task(conversation, description, request_id, worker="max")
@@ -126,8 +180,18 @@ class TaskDispatch:
         routed_prompt, routed_worker = parse_work(description)
         if routed_worker != "auto":
             description, worker = routed_prompt, routed_worker
+        state = state_for(conversation)
+        names = project_targets(description, state)
+        scopes = blocked_scopes(state, names)
+        if scopes:
+            conversation["held_job"] = dict(prompt=description, worker=worker)
+            message.update(status="done", provider="dispatcher", content=hold_reply(scopes))
+            self.save(conversation)
+            self.conversations[identifier] = conversation
+            return self.public(conversation)
         try:
             maximum = worker == "max"
+            project_batch = len(names) >= 2
             worker = "auto" if maximum else task_queue.worker_name(worker)
             kind = task_kind(max_mode.MAX_MODE.sub("", description).strip(" :,-\n") if maximum else description)
             if not maximum:
@@ -139,7 +203,13 @@ class TaskDispatch:
                 raise ValueError("Worker dispatch is disabled in a drill overlay. Use a normal conversation.")
             if (self.root / "conductor/MAINTENANCE").exists():
                 raise ValueError("Scheduling is paused for maintenance; this task was not queued.")
-            if maximum:
+            if project_batch:
+                goal, subtasks = description, project_plan(self.root, description, names, worker)
+                kind = subtasks[0]["kind"]
+            elif names and PUSH.match(command(description)):
+                package = project_plan(self.root, description, names, worker)[0]
+                description, worker, kind = package["prompt"], package["worker"], package["kind"]
+            elif maximum:
                 goal, subtasks = max_mode.plan(self.root, description, kind)
         except ValueError as exc:
             message.update(status="done", content=str(exc), action_card={"state": "refused", "executable": False})
@@ -149,8 +219,13 @@ class TaskDispatch:
         # Save the originating message AND intent before the queue side effect.
         # Startup/reconciliation retries this idempotently after either write fails.
         intent = dict(prompt=description, worker=worker, kind=kind, request_id=request_id)
-        if maximum:
+        if maximum or project_batch:
             intent.update(goal=goal, subtasks=subtasks)
+        if project_batch:
+            intent["project_batch"] = True
+        held = conversation.get("held_job")
+        if held and not blocked_scopes(state, project_targets(held["prompt"], state)):
+            conversation.pop("held_job", None)
         message.update(status="done", content="Saving your task for a worker…", dispatch_intent=intent)
         self.save(conversation)
         self.conversations[identifier] = conversation
@@ -166,11 +241,19 @@ class TaskDispatch:
                     intent = message.get("dispatch_intent")
                     if not intent or message.get("task_id") or message.get("group_id"):
                         continue
+                    state = state_for(value)
+                    scopes = blocked_scopes(state, project_targets(intent["prompt"], state))
+                    if scopes:
+                        content = hold_reply(scopes)
+                        if message["content"] != content:
+                            message["content"] = content
+                            changed = True
+                        continue
                     if intent.get("subtasks"):
                         rows = max_mode.enqueue(self.root, identifier, intent)
                         group = rows[0]["group_id"]
                         message.update(group_id=group, task_ids=[row["id"] for row in rows], status="done", provider="dispatcher",
-                                       content="Queued " + str(len(rows)) + " tasks — group " + group + ".",
+                                       content=project_receipt(rows) if intent.get("project_batch") else "Queued " + str(len(rows)) + " tasks — group " + group + ".",
                                        action_card={"id": message["request_id"], "state": "queued", "executable": False,
                                                     "group_id": group, "queue_id": group, "goal_text": intent["goal"][:160]})
                         changed = True
@@ -186,6 +269,20 @@ class TaskDispatch:
                     self.save(value)
                     self.conversations[identifier] = value
             all_rows = list(task_queue.tasks(self.root).values())
+            by_id = {row["id"]: row for row in all_rows}
+            for identifier, current in list(self.conversations.items()):
+                value = copy.deepcopy(current)
+                changed = False
+                for message in value["messages"]:
+                    if not message.get("dispatch_intent", {}).get("project_batch") or not message.get("task_ids"):
+                        continue
+                    receipt = project_receipt([by_id[task_id] for task_id in message["task_ids"]])
+                    if message["content"] != receipt:
+                        message["content"] = receipt
+                        changed = True
+                if changed:
+                    self.save(value)
+                    self.conversations[identifier] = value
             self.reconcile_groups(all_rows)
             for row in all_rows:
                 if row.get("group_id"):

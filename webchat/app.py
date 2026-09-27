@@ -46,6 +46,7 @@ from music_demo import demo_receipt, generate_demo, music_budget_status, resolve
 from ops_panel import conductor_snapshot, draft_head_sha, enrich_live_ops, load_live_ops, maybe_spawn_dashboard_refresh
 from quiet_hours import in_quiet_hours
 from task_dispatch import FOLLOW_UP, PREAMBLE, TaskDispatch, followup_work, needs_task_detail, parse_work, task_queue
+import chat_intent
 
 HERE = Path(os.environ.get("BOB_WEBCHAT_DIR", Path(__file__).resolve().parent)).resolve()
 ROOT = Path(os.environ.get("BOB_ROOT", HERE.parent.parent)).resolve()
@@ -142,6 +143,8 @@ class Chat(TaskDispatch):
                 raise RuntimeError("Invalid conversation file: " + path.name)
             path.chmod(0o600)
             self.conversations[value["id"]] = value
+            migrated_intent = "intent_state" not in value
+            chat_intent.state_for(value)
             interrupted = False
             for message in value["messages"]:
                 if message.get("status") in ("queued", "running"):
@@ -149,6 +152,7 @@ class Chat(TaskDispatch):
                     interrupted = True
             if interrupted:
                 value["codex_thread_id"] = None
+            if interrupted or migrated_intent:
                 self.save(value)
         if not self.conversations:
             self.new_conversation()
@@ -204,13 +208,19 @@ class Chat(TaskDispatch):
     def new_conversation(self):
         with self.lock:
             value = {"id": str(uuid.uuid4()), "title": "New conversation", "created_at": time.time(),
-                     "messages": [], "codex_thread_id": None}
+                     "messages": [], "codex_thread_id": None, "intent_state": chat_intent.new_state()}
             self.save(value)
             self.conversations[value["id"]] = value
             return self.public(value)
 
     def public(self, value):
-        return {k: copy.deepcopy(v) for k, v in value.items() if k not in ("codex_thread_id", "retry_prompt", "pending_job", "pending_job_id")}
+        return {k: copy.deepcopy(v) for k, v in value.items() if k not in ("codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job")}
+
+    def intent_reply(self, conversation, content):
+        conversation["messages"][-1].update(status="done", provider="dispatcher", content=content)
+        self.save(conversation)
+        self.conversations[conversation["id"]] = conversation
+        return self.public(conversation)
 
     def get(self, identifier):
         if not isinstance(identifier, str) or not UUID.fullmatch(identifier) or identifier not in self.conversations:
@@ -311,6 +321,8 @@ class Chat(TaskDispatch):
                 raise RequestError(409, "Bob is finishing another reply in this conversation. Stop it or wait, then try again.")
             if conversation["messages"] and conversation["messages"][-1]["status"] == "waiting":
                 raise RequestError(409, "This conversation has a queued request. Stop it before sending another message.")
+            intent_state = chat_intent.state_for(conversation)
+            was_held = bool(intent_state["holds"])
             conversation["preferred_provider"] = provider
             conversation["messages"] += [
                 {"id": str(uuid.uuid4()), "request_id": request_id, "preferred_provider": provider, "role": "user", "content": text,
@@ -320,7 +332,20 @@ class Chat(TaskDispatch):
             ]
             if conversation["title"] == "New conversation":
                 conversation["title"] = text[:65]
+            transition = chat_intent.apply_turn(intent_state, text, request_id)
+            if transition == "hold":
+                held_work, held_worker = followup_work(conversation)
+                if held_work:
+                    conversation["held_job"] = dict(prompt=held_work, worker=held_worker)
+                return self.intent_reply(conversation, chat_intent.hold_reply(chat_intent.blocked_scopes(intent_state, [])))
+            if transition == "priorities":
+                conversation["pending_job"] = "Improve " + ", ".join(intent_state["project_order"])
+                conversation["pending_job_id"] = request_id
+                return self.intent_reply(conversation, "Priority order: " + ", ".join(intent_state["project_order"]) + ".")
             work, route = parse_work(text)
+            if transition == "resume" and not work:
+                work_text = re.sub(r"^(?:go(?:\s+ahead)?|resume)(?:\s+and)?[\s,:!]+", "", chat_intent.command(text), flags=re.I)
+                work, route = parse_work(work_text)
             started = parse_start(text)
             inbox_task = state_ledger.parse_inbox_message(text)
             if inbox_task:
@@ -331,6 +356,11 @@ class Chat(TaskDispatch):
             if followup:
                 work, route = followup_work(conversation)
             task = started or work or (text if worker is not None and not followup else None)
+            names = chat_intent.project_targets(task or text, intent_state)
+            if task and len(names) >= 2:
+                intent_state["project_order"] = names
+            if chat_intent.PUSH.match(chat_intent.command(text)) and not names:
+                return self.intent_reply(conversation, "Which projects should I work on?")
             if route != "max":
                 try:
                     task_queue.worker_name(worker or route)
@@ -338,20 +368,23 @@ class Chat(TaskDispatch):
                     return self.submit_task(conversation, task or text, request_id, worker or route)
             if ((followup and not task) or (route != "auto" and not task)
                     or (task and needs_task_detail(task))):
-                conversation["messages"][-1].update(status="done", provider="dispatcher",
-                    content="What would you like me to work on?")
-                self.save(conversation)
-                self.conversations[identifier] = conversation
-                return self.public(conversation)
+                return self.intent_reply(conversation, "Ready when you are." if was_held and transition == "resume" and not task
+                                         else "What would you like me to work on?")
             if task:
                 conversation.pop("pending_job", None)
                 conversation.pop("pending_job_id", None)
                 if route == "max":
                     return self.submit_max_task(conversation, task, request_id)
                 return self.submit_task(conversation, task, request_id, worker or route)
+            if transition == "resume":
+                return self.intent_reply(conversation, "Ready when you are.")
             pending = conversation.get("pending_job")
             pending_council = conversation.get("pending_council")
             council_confirm, council_proposal = parse_council_confirm_proposal(text)
+            if council_confirm or parse_council(text) or inbox_task:
+                scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(pending_council or inbox_task or text))
+                if scopes:
+                    return self.intent_reply(conversation, chat_intent.hold_reply(scopes))
             if council_confirm and pending_council:
                 expected_council = conversation.get("pending_council_id")
                 if council_proposal and (not expected_council or council_proposal != expected_council):
@@ -500,7 +533,10 @@ class Chat(TaskDispatch):
                 if not state_ledger._DRILL_NOISE_RE.search(text):
                     state_ledger.record_webchat_turn(ledger, ask=text, provider="inbox", request_id=request_id)
                 return self.public(conversation)
-            from reply_authority import STATUS_QUESTION, operational_reply
+            from reply_authority import HOLD_QUESTION, STATUS_QUESTION, operational_reply
+            if HOLD_QUESTION.match(text):
+                scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
+                return self.intent_reply(conversation, chat_intent.hold_reply(scopes) if scopes else "Ready when you are.")
             if ledger == self.root and provider == "auto" and STATUS_QUESTION.search(text):
                 conversation["messages"][-1].update(status="done", provider="state",
                     content=self.redact(operational_reply(self.root, "server")))
@@ -581,7 +617,7 @@ class Chat(TaskDispatch):
                 answer["content"] = repair_hollow_progress(self.redact(answer["content"]))
                 user_msg = next((m for m in reversed(value["messages"]) if m["role"] == "user"), {})
                 from reply_authority import enforce
-                answer["content"] = self.redact(enforce(self.ledger_root(identifier), user_msg.get("content", ""), answer))
+                answer["content"] = self.redact(enforce(self.ledger_root(identifier), user_msg.get("content", ""), answer, value))
                 rid = user_msg.get("request_id")
                 value["messages"][-1].update(answer, status="done")
                 if rid:

@@ -2,6 +2,7 @@
 import re
 
 from live_status_snapshot import build_live_status_snapshot
+from chat_intent import blocked_scopes, hold_reply, projects, state_for
 
 QUEUE_CLAIM = re.compile(
     r"\b(?:i|we)(?:['’]ve| have)?\s+(?:(?:just|already|now)\s+)?(?:queued|scheduled|launched|started|created|dispatched|added|submitted|assigned|delegated|asked|kicked off)\b"
@@ -21,6 +22,12 @@ STATUS_QUESTION = re.compile(
     r"who(?:['’]s| is) (?:answering|responding)|(?:gemini|minimax|providers?).{0,45}(?:healthy|failing|errors?|working))\b", re.I)
 PROVIDER_CLAIM = re.compile(
     r"\b(?:codex|cursor|gemini|minimax|claude)\b.{0,90}\b(?:handling (?:the|our) chat|answering|cooldown|failing|still.*errors?)\b", re.I)
+HOLD_CLAIM = re.compile(
+    r"\b(?:your|the|earlier|previous)\s+(?:(?:earlier|previous|existing|current)\s+)?hold\b|"
+    r"\b(?:on hold|still (?:paused|held)|remain(?:s)? (?:paused|held))\b|"
+    r"\b(?:until you (?:say go|give (?:the )?go[- ]ahead)|waiting for (?:your|permission)|"
+    r"(?:need|require) (?:your |fresh |renewed |explicit )*(?:permission|approval|go[- ]ahead))\b", re.I)
+HOLD_QUESTION = re.compile(r"^(?:(?:are|is|am|do|does|why)\b[^.!]*\b(?:on hold|holds? (?:still )?active|paused|need.{0,20}permission)\b[^.!]*|what holds? are active)\??$", re.I)
 
 
 def operational_reply(root, provider):
@@ -40,8 +47,12 @@ def operational_reply(root, provider):
     return "\n\n".join(lines)
 
 
-def enforce(root, text, answer):
+def enforce(root, text, answer, conversation=None):
     content = answer["content"]
+    state = state_for(conversation if conversation is not None else {})
+    scopes = blocked_scopes(state, projects(text))
+    if HOLD_QUESTION.match(text.strip()):
+        return hold_reply(scopes) if scopes else "Ready when you are."
     from task_dispatch import CHAT_STYLE, PREAMBLE
     # A style preference calls for a simple acknowledgement, never a status
     # report from operational snapshots included in the model context.
@@ -59,4 +70,13 @@ def enforce(root, text, answer):
                 and not NO_JOB_NOTICE.search(part) and not PROVIDER_CLAIM.search(part)]
         if len(kept) != len(sentences):
             content = "".join(kept).strip() or "What would you like me to work on?"
+    sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
+    kept = [part for part in sentences if not HOLD_CLAIM.search(part)]
+    if len(kept) != len(sentences):
+        content = "".join(kept).strip()
+        # Only the saved state may explain an operational hold.
+        if scopes:
+            content = (content + "\n\n" if content else "") + hold_reply(scopes)
+        elif not content:
+            content = "Ready when you are."
     return content

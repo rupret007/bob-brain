@@ -1,0 +1,665 @@
+{
+  "root": "/var/folders/qd/q3p1r3ln62569ybqrs84wgp40000gn/T/webbob-intent-proof-yc4bax6t",
+  "url": "http://127.0.0.1:62575",
+  "started_at": "2026-09-27T19:15:58.110059+00:00",
+  "live_listener_before": [
+    "99149 Sun Sep 27 12:40:03 2026     /opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python"
+  ],
+  "service_screens_before": [
+    "17509.svc-dashboard-updater",
+    "45974.svc-reviewer",
+    "53542.svc-watchdog",
+    "77277.svc-webbob-reviewers",
+    "94801.svc-disk-watch",
+    "99081.svc-job-runner",
+    "99147.svc-webchat"
+  ],
+  "provider_fixture": "One synthetic stale hold reply; no external model calls or worker execution.",
+  "examples": [
+    {
+      "message": "Hold off on any coding jobs or service restarts for Web Bob. Bob has Codex fixing job pickup right now, and two fixes at once will clash. You can keep answering questions and reporting status, but don't queue, start, or restart anything for Web Bob until I say go.",
+      "request_id": "8fe808d2-b993-4f05-9958-b67f073d8acd",
+      "reply": "On hold: Web Bob. Say go or resume when you're ready.",
+      "task_ids": [],
+      "intent_state": {
+        "version": 1,
+        "project_order": [],
+        "holds": {
+          "Web Bob": {
+            "request_id": "8fe808d2-b993-4f05-9958-b67f073d8acd",
+            "reason": "Hold off on any coding jobs or service restarts for Web Bob",
+            "released_projects": []
+          }
+        },
+        "last_permission": {
+          "action": "hold",
+          "request_id": "8fe808d2-b993-4f05-9958-b67f073d8acd"
+        }
+      }
+    },
+    {
+      "message": "Ok prioritize making Web Bob better, then WebJam, then AdoptIQ, then Storyboard.",
+      "request_id": "a251c235-f188-4877-9290-944db3e11e7e",
+      "reply": "Priority order: Web Bob, WebJam, AdoptIQ, StoryBoard.",
+      "task_ids": [],
+      "intent_state": {
+        "version": 1,
+        "project_order": [
+          "Web Bob",
+          "WebJam",
+          "AdoptIQ",
+          "StoryBoard"
+        ],
+        "holds": {
+          "Web Bob": {
+            "request_id": "8fe808d2-b993-4f05-9958-b67f073d8acd",
+            "reason": "Hold off on any coding jobs or service restarts for Web Bob",
+            "released_projects": []
+          }
+        },
+        "last_permission": {
+          "action": "hold",
+          "request_id": "8fe808d2-b993-4f05-9958-b67f073d8acd"
+        }
+      }
+    },
+    {
+      "message": "Now push everything to the max and fix anything you find along the way.",
+      "request_id": "12890b20-0789-4ca6-aa25-9e59e2b99b57",
+      "reply": "Web Bob: Queued for Codex — job webchat-fb654cbb485c5ee38c026b285dc75069.\nWebJam: Queued for Cursor — job webchat-fb981204170556f386f879574f06d6b6.\nAdoptIQ: Queued for Codex — job webchat-53155362fcfe5d15b4dd4d5564c82ca6.\nStoryBoard: Queued for Cursor — job webchat-886385387ae5533ea93289bbbd9f80e7.",
+      "task_ids": [
+        "webchat-fb654cbb485c5ee38c026b285dc75069",
+        "webchat-fb981204170556f386f879574f06d6b6",
+        "webchat-53155362fcfe5d15b4dd4d5564c82ca6",
+        "webchat-886385387ae5533ea93289bbbd9f80e7"
+      ],
+      "intent_state": {
+        "version": 1,
+        "project_order": [
+          "Web Bob",
+          "WebJam",
+          "AdoptIQ",
+          "StoryBoard"
+        ],
+        "holds": {},
+        "last_permission": {
+          "action": "resume",
+          "request_id": "12890b20-0789-4ca6-aa25-9e59e2b99b57"
+        }
+      }
+    },
+    {
+      "message": "Now push everything to the max and fix anything you find along the way.",
+      "request_id": "12890b20-0789-4ca6-aa25-9e59e2b99b57",
+      "reply": "Web Bob: Queued for Codex — job webchat-fb654cbb485c5ee38c026b285dc75069.\nWebJam: Queued for Cursor — job webchat-fb981204170556f386f879574f06d6b6.\nAdoptIQ: Queued for Codex — job webchat-53155362fcfe5d15b4dd4d5564c82ca6.\nStoryBoard: Queued for Cursor — job webchat-886385387ae5533ea93289bbbd9f80e7.",
+      "task_ids": [
+        "webchat-fb654cbb485c5ee38c026b285dc75069",
+        "webchat-fb981204170556f386f879574f06d6b6",
+        "webchat-53155362fcfe5d15b4dd4d5564c82ca6",
+        "webchat-886385387ae5533ea93289bbbd9f80e7"
+      ],
+      "intent_state": {
+        "version": 1,
+        "project_order": [
+          "Web Bob",
+          "WebJam",
+          "AdoptIQ",
+          "StoryBoard"
+        ],
+        "holds": {},
+        "last_permission": {
+          "action": "resume",
+          "request_id": "12890b20-0789-4ca6-aa25-9e59e2b99b57"
+        }
+      }
+    },
+    {
+      "message": "Now push everything to the max and fix anything you find along the way.",
+      "request_id": "12890b20-0789-4ca6-aa25-9e59e2b99b57",
+      "reply": "Web Bob: Queued for Codex — job webchat-fb654cbb485c5ee38c026b285dc75069.\nWebJam: Queued for Cursor — job webchat-fb981204170556f386f879574f06d6b6.\nAdoptIQ: Queued for Codex — job webchat-53155362fcfe5d15b4dd4d5564c82ca6.\nStoryBoard: Queued for Cursor — job webchat-886385387ae5533ea93289bbbd9f80e7.",
+      "task_ids": [
+        "webchat-fb654cbb485c5ee38c026b285dc75069",
+        "webchat-fb981204170556f386f879574f06d6b6",
+        "webchat-53155362fcfe5d15b4dd4d5564c82ca6",
+        "webchat-886385387ae5533ea93289bbbd9f80e7"
+      ],
+      "intent_state": {
+        "version": 1,
+        "project_order": [
+          "Web Bob",
+          "WebJam",
+          "AdoptIQ",
+          "StoryBoard"
+        ],
+        "holds": {},
+        "last_permission": {
+          "action": "resume",
+          "request_id": "12890b20-0789-4ca6-aa25-9e59e2b99b57"
+        }
+      }
+    },
+    {
+      "message": "go",
+      "request_id": "d50a721c-cc08-416d-ae2d-3765ad103535",
+      "reply": "What would you like me to work on?",
+      "task_ids": [],
+      "intent_state": {
+        "version": 1,
+        "project_order": [
+          "Web Bob",
+          "WebJam",
+          "AdoptIQ",
+          "StoryBoard"
+        ],
+        "holds": {},
+        "last_permission": {
+          "action": "resume",
+          "request_id": "d50a721c-cc08-416d-ae2d-3765ad103535"
+        }
+      }
+    },
+    {
+      "message": "Any concerns?",
+      "request_id": "a5ddba8a-beaf-4450-98ae-3785c1a9799b",
+      "reply": "Ready when you are.",
+      "task_ids": [],
+      "intent_state": {
+        "version": 1,
+        "project_order": [
+          "Web Bob",
+          "WebJam",
+          "AdoptIQ",
+          "StoryBoard"
+        ],
+        "holds": {},
+        "last_permission": {
+          "action": "resume",
+          "request_id": "d50a721c-cc08-416d-ae2d-3765ad103535"
+        }
+      }
+    },
+    {
+      "message": "Hold off on Web Bob.",
+      "request_id": "8431ce74-c0d7-4556-a97a-6ca831d6d91b",
+      "reply": "On hold: Web Bob. Say go or resume when you're ready.",
+      "task_ids": [],
+      "intent_state": {
+        "version": 1,
+        "project_order": [
+          "Web Bob",
+          "WebJam",
+          "AdoptIQ",
+          "StoryBoard"
+        ],
+        "holds": {
+          "Web Bob": {
+            "request_id": "8431ce74-c0d7-4556-a97a-6ca831d6d91b",
+            "reason": "Hold off on Web Bob.",
+            "released_projects": []
+          }
+        },
+        "last_permission": {
+          "action": "hold",
+          "request_id": "8431ce74-c0d7-4556-a97a-6ca831d6d91b"
+        }
+      }
+    },
+    {
+      "message": "Fix Web Bob login",
+      "request_id": "53405ed7-00ed-4263-b616-4cd8c0bf7063",
+      "reply": "On hold: Web Bob. Say go or resume when you're ready.",
+      "task_ids": [],
+      "intent_state": {
+        "version": 1,
+        "project_order": [
+          "Web Bob",
+          "WebJam",
+          "AdoptIQ",
+          "StoryBoard"
+        ],
+        "holds": {
+          "Web Bob": {
+            "request_id": "8431ce74-c0d7-4556-a97a-6ca831d6d91b",
+            "reason": "Hold off on Web Bob.",
+            "released_projects": []
+          }
+        },
+        "last_permission": {
+          "action": "hold",
+          "request_id": "8431ce74-c0d7-4556-a97a-6ca831d6d91b"
+        }
+      }
+    },
+    {
+      "message": "resume",
+      "request_id": "4afe625a-f817-4a41-afd0-63243da8aee1",
+      "reply": "Queued — job webchat-8df7dc167bcf5c77bf5defb32b48f31f.",
+      "task_ids": [
+        "webchat-8df7dc167bcf5c77bf5defb32b48f31f"
+      ],
+      "intent_state": {
+        "version": 1,
+        "project_order": [
+          "Web Bob",
+          "WebJam",
+          "AdoptIQ",
+          "StoryBoard"
+        ],
+        "holds": {},
+        "last_permission": {
+          "action": "resume",
+          "request_id": "4afe625a-f817-4a41-afd0-63243da8aee1"
+        }
+      }
+    },
+    {
+      "message": "resume",
+      "request_id": "4afe625a-f817-4a41-afd0-63243da8aee1",
+      "reply": "Queued — job webchat-8df7dc167bcf5c77bf5defb32b48f31f.",
+      "task_ids": [
+        "webchat-8df7dc167bcf5c77bf5defb32b48f31f"
+      ],
+      "intent_state": {
+        "version": 1,
+        "project_order": [
+          "Web Bob",
+          "WebJam",
+          "AdoptIQ",
+          "StoryBoard"
+        ],
+        "holds": {},
+        "last_permission": {
+          "action": "resume",
+          "request_id": "4afe625a-f817-4a41-afd0-63243da8aee1"
+        }
+      }
+    }
+  ],
+  "reloads": 4,
+  "retransmissions": 3,
+  "source_sha256": {
+    "webchat/app.py": "9c4eaccc694aa210d0f40b0a6b0155978162aa8de88eef82ab6c33647ada4256",
+    "webchat/chat_intent.py": "31abeb282ac707188eb68465b7f1ae84b11ecda93ae62591e78a1182f9fd8b16",
+    "webchat/providers.py": "e37a0b65c0c41892931c2468743451fc213dc266d6319c02dad952703c54dc9d",
+    "webchat/reply_authority.py": "b592f80d444e0b43a9cebba811dc34d13fc33614acd23f6da55e09c16a4c5e06",
+    "webchat/task_dispatch.py": "b1029d509a6de3818493972a686ddc7095cb09bdd25a4afa29aeaafd2dbea66b",
+    "state/task_queue.py": "fbf19a21398cfb277867e3d99e63952653fd8ff43cce5c05bd7d9f0806371bb5",
+    "webchat/isolated_intent_proof.py": "157c166279cc6ac562fcbd04426d6fef5ced1284210029b7860687f3cdc7d6d6"
+  },
+  "conversation_id": "c0cfd620-100d-45c8-a9f6-b82739f58c47",
+  "project_rows": [
+    {
+      "id": "webchat-fb654cbb485c5ee38c026b285dc75069",
+      "conversation_id": "c0cfd620-100d-45c8-a9f6-b82739f58c47",
+      "request_id": "12890b20-0789-4ca6-aa25-9e59e2b99b57:0",
+      "prompt": "Project: Web Bob\nImprove Web Bob: inspect the project, fix issues you find, and run relevant tests.\nJeff's request: push everything to the max and fix anything you find along the way.\nWork only on this project. Keep changes in drafts and report actual results. Do not start other workers.",
+      "requested_worker": "codex",
+      "kind": "coding",
+      "source_file": null,
+      "status": "queued",
+      "attempts": 0,
+      "created_at": 1790536558.161802,
+      "delivered_at": null,
+      "group_id": "max-3dea8dc5bc405965a4964d89336c655a",
+      "group_size": 4,
+      "group_index": 0,
+      "group_goal": "push everything to the max and fix anything you find along the way.",
+      "title": "Web Bob",
+      "local_suite": null,
+      "tried_workers": [],
+      "max_attempts": 3,
+      "worker": null,
+      "claim_token": null,
+      "lease_until": 0,
+      "retry_at": 0,
+      "event": "enqueued",
+      "updated_at": 1790536558.1618052
+    },
+    {
+      "id": "webchat-fb981204170556f386f879574f06d6b6",
+      "conversation_id": "c0cfd620-100d-45c8-a9f6-b82739f58c47",
+      "request_id": "12890b20-0789-4ca6-aa25-9e59e2b99b57:1",
+      "prompt": "Project: WebJam\nImprove WebJam: inspect the project, fix issues you find, and run relevant tests.\nJeff's request: push everything to the max and fix anything you find along the way.\nWork only on this project. Keep changes in drafts and report actual results. Do not start other workers.",
+      "requested_worker": "cursor",
+      "kind": "coding",
+      "source_file": null,
+      "status": "queued",
+      "attempts": 0,
+      "created_at": 1790536558.162082,
+      "delivered_at": null,
+      "group_id": "max-3dea8dc5bc405965a4964d89336c655a",
+      "group_size": 4,
+      "group_index": 1,
+      "group_goal": "push everything to the max and fix anything you find along the way.",
+      "title": "WebJam",
+      "local_suite": null,
+      "tried_workers": [],
+      "max_attempts": 3,
+      "worker": null,
+      "claim_token": null,
+      "lease_until": 0,
+      "retry_at": 0,
+      "event": "enqueued",
+      "updated_at": 1790536558.162084
+    },
+    {
+      "id": "webchat-53155362fcfe5d15b4dd4d5564c82ca6",
+      "conversation_id": "c0cfd620-100d-45c8-a9f6-b82739f58c47",
+      "request_id": "12890b20-0789-4ca6-aa25-9e59e2b99b57:2",
+      "prompt": "Project: AdoptIQ\nImprove AdoptIQ: inspect the project, fix issues you find, and run relevant tests.\nJeff's request: push everything to the max and fix anything you find along the way.\nWork only on this project. Keep changes in drafts and report actual results. Do not start other workers.",
+      "requested_worker": "codex",
+      "kind": "coding",
+      "source_file": null,
+      "status": "queued",
+      "attempts": 0,
+      "created_at": 1790536558.1623209,
+      "delivered_at": null,
+      "group_id": "max-3dea8dc5bc405965a4964d89336c655a",
+      "group_size": 4,
+      "group_index": 2,
+      "group_goal": "push everything to the max and fix anything you find along the way.",
+      "title": "AdoptIQ",
+      "local_suite": null,
+      "tried_workers": [],
+      "max_attempts": 3,
+      "worker": null,
+      "claim_token": null,
+      "lease_until": 0,
+      "retry_at": 0,
+      "event": "enqueued",
+      "updated_at": 1790536558.162323
+    },
+    {
+      "id": "webchat-886385387ae5533ea93289bbbd9f80e7",
+      "conversation_id": "c0cfd620-100d-45c8-a9f6-b82739f58c47",
+      "request_id": "12890b20-0789-4ca6-aa25-9e59e2b99b57:3",
+      "prompt": "Project: StoryBoard\nImprove StoryBoard: inspect the project, fix issues you find, and run relevant tests.\nJeff's request: push everything to the max and fix anything you find along the way.\nWork only on this project. Keep changes in drafts and report actual results. Do not start other workers.",
+      "requested_worker": "cursor",
+      "kind": "coding",
+      "source_file": null,
+      "status": "queued",
+      "attempts": 0,
+      "created_at": 1790536558.162535,
+      "delivered_at": null,
+      "group_id": "max-3dea8dc5bc405965a4964d89336c655a",
+      "group_size": 4,
+      "group_index": 3,
+      "group_goal": "push everything to the max and fix anything you find along the way.",
+      "title": "StoryBoard",
+      "local_suite": null,
+      "tried_workers": [],
+      "max_attempts": 3,
+      "worker": null,
+      "claim_token": null,
+      "lease_until": 0,
+      "retry_at": 0,
+      "event": "enqueued",
+      "updated_at": 1790536558.162536
+    }
+  ],
+  "queue_api_rows": [
+    {
+      "id": "webchat-fb654cbb485c5ee38c026b285dc75069",
+      "conversation_id": "c0cfd620-100d-45c8-a9f6-b82739f58c47",
+      "status": "queued",
+      "worker": null,
+      "requested_worker": "codex",
+      "created_at": 1790536558.161802,
+      "claimed_at": null,
+      "started_at": null,
+      "finished_at": null,
+      "delivered_at": null,
+      "attempts": 0,
+      "error": null,
+      "group_id": "max-3dea8dc5bc405965a4964d89336c655a",
+      "group_size": 4,
+      "group_index": 0,
+      "title": "Web Bob",
+      "kind": "coding",
+      "tried_workers": [],
+      "pid": null,
+      "execution_started_at": null
+    },
+    {
+      "id": "webchat-fb981204170556f386f879574f06d6b6",
+      "conversation_id": "c0cfd620-100d-45c8-a9f6-b82739f58c47",
+      "status": "queued",
+      "worker": null,
+      "requested_worker": "cursor",
+      "created_at": 1790536558.162082,
+      "claimed_at": null,
+      "started_at": null,
+      "finished_at": null,
+      "delivered_at": null,
+      "attempts": 0,
+      "error": null,
+      "group_id": "max-3dea8dc5bc405965a4964d89336c655a",
+      "group_size": 4,
+      "group_index": 1,
+      "title": "WebJam",
+      "kind": "coding",
+      "tried_workers": [],
+      "pid": null,
+      "execution_started_at": null
+    },
+    {
+      "id": "webchat-53155362fcfe5d15b4dd4d5564c82ca6",
+      "conversation_id": "c0cfd620-100d-45c8-a9f6-b82739f58c47",
+      "status": "queued",
+      "worker": null,
+      "requested_worker": "codex",
+      "created_at": 1790536558.1623209,
+      "claimed_at": null,
+      "started_at": null,
+      "finished_at": null,
+      "delivered_at": null,
+      "attempts": 0,
+      "error": null,
+      "group_id": "max-3dea8dc5bc405965a4964d89336c655a",
+      "group_size": 4,
+      "group_index": 2,
+      "title": "AdoptIQ",
+      "kind": "coding",
+      "tried_workers": [],
+      "pid": null,
+      "execution_started_at": null
+    },
+    {
+      "id": "webchat-886385387ae5533ea93289bbbd9f80e7",
+      "conversation_id": "c0cfd620-100d-45c8-a9f6-b82739f58c47",
+      "status": "queued",
+      "worker": null,
+      "requested_worker": "cursor",
+      "created_at": 1790536558.162535,
+      "claimed_at": null,
+      "started_at": null,
+      "finished_at": null,
+      "delivered_at": null,
+      "attempts": 0,
+      "error": null,
+      "group_id": "max-3dea8dc5bc405965a4964d89336c655a",
+      "group_size": 4,
+      "group_index": 3,
+      "title": "StoryBoard",
+      "kind": "coding",
+      "tried_workers": [],
+      "pid": null,
+      "execution_started_at": null
+    },
+    {
+      "id": "webchat-8df7dc167bcf5c77bf5defb32b48f31f",
+      "conversation_id": "c0cfd620-100d-45c8-a9f6-b82739f58c47",
+      "status": "queued",
+      "worker": null,
+      "requested_worker": "auto",
+      "created_at": 1790536558.199112,
+      "claimed_at": null,
+      "started_at": null,
+      "finished_at": null,
+      "delivered_at": null,
+      "attempts": 0,
+      "error": null,
+      "group_id": null,
+      "group_size": null,
+      "group_index": null,
+      "title": null,
+      "kind": "coding",
+      "tried_workers": [],
+      "pid": null,
+      "execution_started_at": null
+    }
+  ],
+  "queue_events": [
+    {
+      "id": "webchat-fb654cbb485c5ee38c026b285dc75069",
+      "conversation_id": "c0cfd620-100d-45c8-a9f6-b82739f58c47",
+      "request_id": "12890b20-0789-4ca6-aa25-9e59e2b99b57:0",
+      "prompt": "Project: Web Bob\nImprove Web Bob: inspect the project, fix issues you find, and run relevant tests.\nJeff's request: push everything to the max and fix anything you find along the way.\nWork only on this project. Keep changes in drafts and report actual results. Do not start other workers.",
+      "requested_worker": "codex",
+      "kind": "coding",
+      "source_file": null,
+      "status": "queued",
+      "attempts": 0,
+      "created_at": 1790536558.161802,
+      "delivered_at": null,
+      "group_id": "max-3dea8dc5bc405965a4964d89336c655a",
+      "group_size": 4,
+      "group_index": 0,
+      "group_goal": "push everything to the max and fix anything you find along the way.",
+      "title": "Web Bob",
+      "local_suite": null,
+      "tried_workers": [],
+      "max_attempts": 3,
+      "worker": null,
+      "claim_token": null,
+      "lease_until": 0,
+      "retry_at": 0,
+      "event": "enqueued",
+      "updated_at": 1790536558.1618052
+    },
+    {
+      "id": "webchat-fb981204170556f386f879574f06d6b6",
+      "conversation_id": "c0cfd620-100d-45c8-a9f6-b82739f58c47",
+      "request_id": "12890b20-0789-4ca6-aa25-9e59e2b99b57:1",
+      "prompt": "Project: WebJam\nImprove WebJam: inspect the project, fix issues you find, and run relevant tests.\nJeff's request: push everything to the max and fix anything you find along the way.\nWork only on this project. Keep changes in drafts and report actual results. Do not start other workers.",
+      "requested_worker": "cursor",
+      "kind": "coding",
+      "source_file": null,
+      "status": "queued",
+      "attempts": 0,
+      "created_at": 1790536558.162082,
+      "delivered_at": null,
+      "group_id": "max-3dea8dc5bc405965a4964d89336c655a",
+      "group_size": 4,
+      "group_index": 1,
+      "group_goal": "push everything to the max and fix anything you find along the way.",
+      "title": "WebJam",
+      "local_suite": null,
+      "tried_workers": [],
+      "max_attempts": 3,
+      "worker": null,
+      "claim_token": null,
+      "lease_until": 0,
+      "retry_at": 0,
+      "event": "enqueued",
+      "updated_at": 1790536558.162084
+    },
+    {
+      "id": "webchat-53155362fcfe5d15b4dd4d5564c82ca6",
+      "conversation_id": "c0cfd620-100d-45c8-a9f6-b82739f58c47",
+      "request_id": "12890b20-0789-4ca6-aa25-9e59e2b99b57:2",
+      "prompt": "Project: AdoptIQ\nImprove AdoptIQ: inspect the project, fix issues you find, and run relevant tests.\nJeff's request: push everything to the max and fix anything you find along the way.\nWork only on this project. Keep changes in drafts and report actual results. Do not start other workers.",
+      "requested_worker": "codex",
+      "kind": "coding",
+      "source_file": null,
+      "status": "queued",
+      "attempts": 0,
+      "created_at": 1790536558.1623209,
+      "delivered_at": null,
+      "group_id": "max-3dea8dc5bc405965a4964d89336c655a",
+      "group_size": 4,
+      "group_index": 2,
+      "group_goal": "push everything to the max and fix anything you find along the way.",
+      "title": "AdoptIQ",
+      "local_suite": null,
+      "tried_workers": [],
+      "max_attempts": 3,
+      "worker": null,
+      "claim_token": null,
+      "lease_until": 0,
+      "retry_at": 0,
+      "event": "enqueued",
+      "updated_at": 1790536558.162323
+    },
+    {
+      "id": "webchat-886385387ae5533ea93289bbbd9f80e7",
+      "conversation_id": "c0cfd620-100d-45c8-a9f6-b82739f58c47",
+      "request_id": "12890b20-0789-4ca6-aa25-9e59e2b99b57:3",
+      "prompt": "Project: StoryBoard\nImprove StoryBoard: inspect the project, fix issues you find, and run relevant tests.\nJeff's request: push everything to the max and fix anything you find along the way.\nWork only on this project. Keep changes in drafts and report actual results. Do not start other workers.",
+      "requested_worker": "cursor",
+      "kind": "coding",
+      "source_file": null,
+      "status": "queued",
+      "attempts": 0,
+      "created_at": 1790536558.162535,
+      "delivered_at": null,
+      "group_id": "max-3dea8dc5bc405965a4964d89336c655a",
+      "group_size": 4,
+      "group_index": 3,
+      "group_goal": "push everything to the max and fix anything you find along the way.",
+      "title": "StoryBoard",
+      "local_suite": null,
+      "tried_workers": [],
+      "max_attempts": 3,
+      "worker": null,
+      "claim_token": null,
+      "lease_until": 0,
+      "retry_at": 0,
+      "event": "enqueued",
+      "updated_at": 1790536558.162536
+    },
+    {
+      "id": "webchat-8df7dc167bcf5c77bf5defb32b48f31f",
+      "conversation_id": "c0cfd620-100d-45c8-a9f6-b82739f58c47",
+      "request_id": "4afe625a-f817-4a41-afd0-63243da8aee1",
+      "prompt": "Fix Web Bob login",
+      "requested_worker": "auto",
+      "kind": "coding",
+      "source_file": null,
+      "status": "queued",
+      "attempts": 0,
+      "created_at": 1790536558.199112,
+      "delivered_at": null,
+      "group_id": null,
+      "group_size": null,
+      "group_index": null,
+      "group_goal": null,
+      "title": null,
+      "local_suite": null,
+      "tried_workers": [],
+      "max_attempts": 3,
+      "worker": null,
+      "claim_token": null,
+      "lease_until": 0,
+      "retry_at": 0,
+      "event": "enqueued",
+      "updated_at": 1790536558.199114
+    }
+  ],
+  "queue_sha256": "e53c0ab6819ea64a16927ae7561d6d50549d48d0d80ae589383c85c723b747f5",
+  "provider_fixture_calls": 1,
+  "live_listener_after": [
+    "99149 Sun Sep 27 12:40:03 2026     /opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python"
+  ],
+  "service_screens_after": [
+    "17509.svc-dashboard-updater",
+    "45974.svc-reviewer",
+    "53542.svc-watchdog",
+    "77277.svc-webbob-reviewers",
+    "94801.svc-disk-watch",
+    "99081.svc-job-runner",
+    "99147.svc-webchat"
+  ],
+  "finished_at": "2026-09-27T19:15:58.736167+00:00",
+  "result": "PASS"
+}

@@ -58,3 +58,46 @@ python3 webchat/live_clean_proof.py --provider claude --output reviews/WEBBOB-CL
 ```
 
 The [proof runner](../webchat/live_clean_proof.py) allocates its own data root, password, sessions, queue and listener, and closes only that listener when finished. It leaves a private `proof.json` in the temporary root as well as the requested evidence file. It never starts or restarts the live web service or scheduler.
+
+## Follow-up: project dispatch and explicit holds
+
+PASS. This follow-up addresses the final exchanges in `conductor/webchat/sessions/2bd59fcd-cb1d-40e5-adcf-2da66824ec88.json`: the project order was supplied in one turn, then “Now push everything to the max and fix anything you find along the way” received agreement without jobs and an obsolete hold reminder.
+
+The chat now persists project priorities and permission transitions. That request creates exactly one durable job for each named project, with a short server-owned receipt listing project, worker and job ID. Each assignment contains only its own project's name so the existing worker's repository selector cannot pick another project. Worker choice considers ready lanes, queue claims and pending assignments, while retaining existing capability limits: coding runs on Codex/Cursor; supplied-evidence analysis can spread across the other model workers. No scheduler, worker executor or queue schema changed.
+
+Explicit holds block new matching chat submissions. `go`, `resume`, and an explicit hold-lift directive clear the relevant saved hold; an explicit project push authorizes those projects. Held work survives reloads and unrelated project submissions. Old sessions replay only user permission/priority directives into state, without dispatching historical messages. Saved state is included in provider context and checked again when replies are delivered, so stale assistant text cannot restore a cleared hold. Holds do not cancel jobs already accepted by the queue or restart services.
+
+### Full-suite validation
+
+| Command | Final result |
+| --- | --- |
+| `python3 -m unittest discover -s webchat -p 'test_*.py'` | **190 passed**, 13.395 s |
+| `python3 -m unittest discover -s services -p 'test_*.py'` | **111 passed**, 2.484 s |
+| `node --test webchat/test_quiet_hours_js.mjs` | **1 passed** |
+| `python3 bootstrap.py check` | **syntax: PASS** |
+| `git diff --check` | **Passed** |
+
+The 20 new regressions cover the exact two-turn request, inline project lists, aliases/exclusions, worker headroom and capability checks, actual queue claims updating receipts, interrupted batch writes, stable recovery plans, failed state writes, scoped/global holds, resume after reload, legacy session migration, negated/quoted requests, and stale model permission claims. Existing max-mode syntax remains covered; a full-suite run exposed a resume-prefix conflict with “Go to the max,” which was fixed before the final passing run. No tests were skipped. Service restart log lines come from mocked watchdog tests.
+
+### Isolated HTTP proof
+
+The [follow-up proof runner](../webchat/isolated_intent_proof.py) creates a fresh temporary root and ephemeral loopback listener. It authenticates, uses CSRF-protected `/api/messages`, checks `/api/jobs` against the actual `conductor/state/queue.jsonl`, and reloads only its private Chat instance. No worker runner or external model was started. One deliberately stale provider fixture exercises the final reply filter; this proof does not claim live model generation or execution of the queued project work.
+
+The exact hold and priority messages were submitted first. The push then produced this actual receipt:
+
+```text
+Web Bob: Queued for Codex — job webchat-fb654cbb485c5ee38c026b285dc75069.
+WebJam: Queued for Cursor — job webchat-fb981204170556f386f879574f06d6b6.
+AdoptIQ: Queued for Codex — job webchat-53155362fcfe5d15b4dd4d5564c82ca6.
+StoryBoard: Queued for Cursor — job webchat-886385387ae5533ea93289bbbd9f80e7.
+```
+
+All four rows were `queued`, with zero attempts and no claimed worker. Four private state reloads and three HTTP retransmissions preserved the job IDs without duplicates. A later Web Bob hold blocked a new login job; `resume` created exactly that one additional job and persisted the cleared hold. Repeating a bare `go` after the project batch created no jobs. The injected “Your earlier hold … still applies. I need your permission …” reply became “Ready when you are.”
+
+The proof ran **2026-09-27T19:15:58.110059+00:00 → 2026-09-27T19:15:58.736167+00:00**. Its [raw evidence](WEBBOB-CLEAN-0927.followup-evidence.json) contains the exchanges, saved states, five real enqueue events, API rows, source hashes, and queue SHA-256 `e53c0ab6819ea64a16927ae7561d6d50549d48d0d80ae589383c85c723b747f5`. Source hashes were verified against the final implementation.
+
+The live listener remained **PID 99149**, started **Sun Sep 27 12:40:03 2026**, and service screen identities were unchanged. Live queues, sessions, processes and deployment pins were untouched. No live restart, merge, force-push or Grok invocation occurred.
+
+```sh
+python3 webchat/isolated_intent_proof.py --output reviews/WEBBOB-CLEAN-0927.followup-evidence.json
+```
