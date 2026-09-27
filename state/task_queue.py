@@ -96,6 +96,17 @@ def capacity(worker):
     return CONCURRENCY.get(worker, 1)
 
 
+def group_complete(members):
+    if not members:
+        return False
+    first = members[0]
+    size = first.get("group_size")
+    return (type(size) is int and 2 <= size <= 24 and len(members) == size
+            and {r.get("group_index") for r in members} == set(range(size))
+            and all((r.get("group_size"), r.get("conversation_id"), r.get("group_goal")) ==
+                    (size, first.get("conversation_id"), first.get("group_goal")) for r in members))
+
+
 def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="analysis", source_file=None,
             group_id=None, group_size=None, group_index=None, group_goal=None, title=None, local_suite=None):
     worker = worker_name(worker)
@@ -107,15 +118,25 @@ def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="a
         raise ValueError("Small file tasks require an explicit text and /tmp file destination")
     if worker != "auto" and worker not in worker_order(kind):
         raise ValueError("Code changes require codex or cursor-agent. API workers can analyze supplied evidence.")
+    if group_id and (type(group_size) is not int or not 2 <= group_size <= 24 or
+                     type(group_index) is not int or not 0 <= group_index < group_size):
+        raise ValueError("A task group requires a valid size and unique subtask index")
     key = "webbob:" + str(conversation_id) + ":" + str(request_id)
     identifier = "webchat-" + uuid.uuid5(uuid.NAMESPACE_URL, key).hex
     with locked(root) as path:
         rows = _read(path)
         if identifier in rows:
             row = rows[identifier]
-            if (row["prompt"], row["requested_worker"], row["kind"], row.get("group_id")) != (prompt, worker, kind, group_id):
+            if (row["prompt"], row["requested_worker"], row["kind"], row.get("group_id"), row.get("group_size"),
+                row.get("group_index"), row.get("group_goal"), row.get("title"), row.get("local_suite")) != (
+                    prompt, worker, kind, group_id, group_size, group_index, group_goal, title, local_suite):
                 raise ValueError("This request ID already belongs to a different task")
             return row
+        for member in (r for r in rows.values() if group_id and r.get("group_id") == group_id):
+            if (member.get("group_index") == group_index or
+                (member.get("group_size"), member.get("conversation_id"), member.get("group_goal")) !=
+                    (group_size, conversation_id, group_goal)):
+                raise ValueError("Conflicting task group membership")
         return _append(path, dict(id=identifier, conversation_id=conversation_id, request_id=request_id,
                                  prompt=prompt, requested_worker=worker, kind=kind, source_file=source_file,
                                  status="queued", attempts=0, created_at=time.time(), delivered_at=None,
@@ -132,7 +153,8 @@ def claim(root, worker, now=None, *, identifier=None, allow_fallback=False, limi
     now = time.time() if now is None else now
     with locked(root) as path:
         rows = _read(path)
-        if sum(r["status"] in ACTIVE and r["worker"] == worker for r in rows.values()) >= (capacity(worker) if limit is None else limit):
+        ceiling = capacity(worker) if limit is None else max(0, min(capacity(worker), int(limit)))
+        if sum(r["status"] in ACTIVE and r["worker"] == worker for r in rows.values()) >= ceiling:
             return None
         for row in sorted(rows.values(), key=lambda r: r["created_at"]):
             if identifier and row["id"] != identifier:
@@ -143,7 +165,7 @@ def claim(root, worker, now=None, *, identifier=None, allow_fallback=False, limi
                 continue
             if worker not in worker_order(row["kind"]):
                 continue
-            if row.get("group_id") and sum(r.get("group_id") == row["group_id"] for r in rows.values()) != row["group_size"]:
+            if row.get("group_id") and not group_complete([r for r in rows.values() if r.get("group_id") == row["group_id"]]):
                 continue  # Saved intent repairs an interrupted multi-row append before dispatch.
             row.update(status="claimed", worker=worker, claim_token=uuid.uuid4().hex,
                        claimed_at=now, lease_until=now + LEASE_SECONDS, attempts=row["attempts"] + 1,

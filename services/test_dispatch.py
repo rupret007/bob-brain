@@ -394,6 +394,40 @@ class DispatchTests(unittest.TestCase):
             self.assertEqual(web_dispatch.tick(), 1)
             self.assertEqual(launch.call_args.args[0]["worker"], "minimax")
 
+    def test_retry_waits_for_untried_busy_worker_without_spending_attempt(self):
+        row = self.enqueue(worker="gemini")
+        claim = queue.claim(self.root, "gemini", now=100)
+        queue.transition(self.root, row["id"], claim["claim_token"], "retry", now=101, error="Provider failed")
+        health = {"gemini": {"state": "ready"}, "minimax": {"state": "busy"}}
+        with patch.object(lanes, "refresh", return_value=health), patch.object(web_dispatch, "launch") as launch:
+            self.assertEqual(web_dispatch.tick(), 0)
+            self.assertEqual(queue.tasks(self.root)[row["id"]]["attempts"], 1)
+            health["minimax"]["state"] = "ready"
+            self.assertEqual(web_dispatch.tick(), 1)
+            self.assertEqual(launch.call_args.args[0]["worker"], "minimax")
+
+    def test_group_membership_and_replayed_metadata_are_immutable(self):
+        def enqueue(request, index, size=2):
+            return queue.enqueue(self.root, "conversation", request, "Independent evidence", worker="gemini",
+                                 group_id="group", group_size=size, group_index=index)
+        first = enqueue("first", 0)
+        with self.assertRaises(ValueError):
+            enqueue("first", 0, 3)
+        with self.assertRaises(ValueError):
+            enqueue("second", 0)
+        self.assertIsNone(queue.claim(self.root, "gemini"))
+        enqueue("second", 1)
+        self.assertIsNotNone(queue.claim(self.root, "gemini"))
+        rows = list(queue.tasks(self.root).values())
+        rows[1]["group_index"] = rows[0]["group_index"]
+        self.assertFalse(queue.group_complete(rows))
+
+    def test_health_capacity_cannot_raise_the_configured_ceiling(self):
+        for index in range(4):
+            self.enqueue(str(index), worker="gemini")
+        claims = [queue.claim(self.root, "gemini", limit=99) for _ in range(4)]
+        self.assertEqual(sum(row is not None for row in claims), 3)
+
     def test_api_slots_allow_three_real_locks_and_refill_after_release(self):
         import contextlib
         with contextlib.ExitStack() as stack:

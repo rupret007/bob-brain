@@ -19,7 +19,7 @@ MODELS = {"codex", "claude", "cursor", "gemini", "minimax"}
 URL = "http://127.0.0.1:8787"
 PROMPT = """Max mode: Review Web Bob's new parallel task dispatcher. Produce one combined answer covering independent implementation, testing, design, capacity, and failure analyses, with actual local test evidence. Work read-only; do not edit files, push, or open PRs.
 
-Shared evidence: A request saves a durable dispatch intent, expands into independent queue rows with a shared group_id and expected group_size, and starts nothing until every group row exists. Each claim has a unique token and a 90-second renewable lease. CLI capacity is 1 each; Gemini and MiniMax capacity is 3 each. A provider error records the failed worker and retries an untried compatible worker; coding stays on Codex/Cursor. Budgets include outstanding worst-case reservations; tiers warn at 70%, reduce API concurrency at 85%, and refuse new reservations crossing 95%. Queue results are saved before the single deterministic group answer is saved; delivery acknowledgements follow that chat write. Mini runs a named local test suite without a model call. Analysis outputs and local commits from code packages remain attributable to their worker.
+Shared evidence: A request saves a durable dispatch intent, expands into independent queue rows with a shared group_id and expected group_size, and starts nothing until every group row exists. Each claim has a unique token and a 90-second renewable lease. CLI capacity is 1 each; Gemini and MiniMax capacity is 3 each. A provider error records the failed worker and retries an untried compatible worker; coding stays on Codex/Cursor. Budgets include outstanding worst-case reservations; tiers warn at 70%, reduce API concurrency from three slots to one at 85%, and refuse new reservations crossing 95%. Queue results are saved before the single deterministic group answer is saved; delivery acknowledgements follow that chat write. Mini runs a named local test suite without a model call. Analysis outputs and local commits from code packages remain attributable to their worker.
 
 [codex] Read state/task_queue.py and services/web_dispatch.py in the assigned checkout. Audit atomic claims, partial group enqueue recovery, retries, capacity and routing. Cite specific code locations, trace two concrete races, and list the three highest-priority correctness risks. Use 500-700 words and distinguish proven facts from recommendations.
 [cursor] Read webchat/task_dispatch.py, webchat/max_mode.py and webchat/test_dispatch.py in the assigned checkout. Audit the group result outbox, duplicate request handling and restart delivery. Cite code locations and propose a concrete regression matrix with at least eight crash/failure cases. Use 500-700 words; do not modify anything.
@@ -58,14 +58,50 @@ def save(path, data):
     temporary.replace(path)
 
 
+def refill(client, path):
+    """A second real request reuses a freed API slot while other work continues."""
+    conversation = client.call("/api/conversations", {})["id"]
+    request = str(uuid.uuid4())
+    submitted = time.time()
+    before = client.call("/api/jobs")
+    value = client.call("/api/messages", dict(conversation_id=conversation, request_id=request, worker="gemini",
+        message="Analyze this queue refill invariant: the runner polls every five seconds, each API lane has three slots, "
+                "and a completed task releases one slot after persisting its result. Give five concrete acceptance tests "
+                "covering refill latency, racing claims, retries, cap exhaustion and result delivery. Keep it under 250 words."))
+    task = value["messages"][-1]["task_id"]
+    data = dict(conversation_id=conversation, request_id=request, task_id=task, submitted_at=submitted,
+                before=[r for r in before["dispatch"] if r["status"] in ("running", "claimed")])
+    save(path, data)
+    print("Refill queued", task, flush=True)
+    while time.time() - submitted < 120:
+        rows = client.call("/api/jobs")["dispatch"]
+        row = next(r for r in rows if r["id"] == task)
+        history = client.call("/api/conversations/" + conversation)
+        results = [m for m in history["messages"] if m.get("task_id") == task and m.get("task_status")]
+        if results:
+            row = next(r for r in client.call("/api/jobs")["dispatch"] if r["id"] == task)
+            assert len(results) == 1 and row["status"] == "succeeded" and row["worker"] == "gemini"
+            data.update(row=row, answer=results[0], queue_wait_seconds=row["claimed_at"] - submitted,
+                        elapsed_seconds=results[0]["created_at"] - submitted)
+            save(path, data)
+            print("Refill answered", task, "queue_wait", round(data["queue_wait_seconds"], 3),
+                  "end_to_end", round(data["elapsed_seconds"], 3), flush=True)
+            return
+        time.sleep(.5)
+    raise RuntimeError("Refill proof deadline exceeded")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("run", "resume", "verify"))
+    parser.add_argument("mode", choices=("run", "resume", "verify", "refill"))
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
-    parser.add_argument("--receipt", type=Path, help="Select a preserved private receipt without replacing the current run")
+    parser.add_argument("--receipt", "--evidence", dest="receipt", type=Path, help="Select a separate preserved proof receipt")
     args = parser.parse_args()
     path = args.receipt or args.root / "conductor/state/webbob-maxmode-proof-0927.json"
     client = Client(args.root)
+    if args.mode == "refill":
+        refill(client, args.receipt or args.root / "conductor/state/webbob-maxmode-refill-0927.json")
+        return
     if args.mode == "run":
         if path.exists():
             raise RuntimeError("A proof receipt already exists; use resume or verify")

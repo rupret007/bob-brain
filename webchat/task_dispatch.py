@@ -179,7 +179,7 @@ class TaskDispatch:
         for group, members in groups.items():
             first = members[0]
             identifier = first["conversation_id"]
-            if (len(members) != first["group_size"] or any(r["status"] not in task_queue.TERMINAL for r in members)
+            if (not task_queue.group_complete(members) or any(r["status"] not in task_queue.TERMINAL for r in members)
                     or all(r.get("delivered_at") for r in members) or identifier not in self.conversations):
                 continue
             value = copy.deepcopy(self.conversations[identifier])

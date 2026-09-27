@@ -90,6 +90,12 @@ def candidates(row, health):
     # compatible provider before returning to a provider that already failed.
     if preferred in order and not tried and health.get(preferred, {}).get("state") == "busy":
         return []
+    # Wait for an untried busy lane instead of burning the retry budget on the
+    # same failed provider before a compatible alternative can accept work.
+    untried = [lane for lane in order if lane not in tried and
+               health.get(lane, {}).get("state") in ("ready", "budget_warning", "busy")]
+    if tried and untried:
+        ready = [lane for lane in ready if lane in untried]
     return sorted(ready, key=lambda lane: (lane in tried,
                   {"normal": 0, "warn": 1, "slow": 2}.get(health[lane].get("budget", {}).get("tier"), 0),
                   order.index(lane)))

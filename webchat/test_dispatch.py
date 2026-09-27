@@ -235,6 +235,20 @@ class ChatDispatchTests(Fixture):
         finally:
             replacement.close()
 
+    def test_max_mode_chat_save_failure_keeps_every_result_pending(self):
+        self.submit("Max mode: review evidence.\n[gemini] Check scaling.\n[minimax] Check recovery.")
+        for row in queue.tasks(self.root).values():
+            self.complete_task(row)
+        with patch.object(self.chat, "save", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.chat.reconcile_tasks()
+        self.assertTrue(all(row["delivered_at"] is None for row in queue.tasks(self.root).values()))
+        self.chat.reconcile_tasks()
+        self.chat.reconcile_tasks()
+        answers = [m for m in self.chat.history(self.identifier)["messages"] if m.get("task_status")]
+        self.assertEqual(len(answers), 1)
+        self.assertTrue(all(row["delivered_at"] for row in queue.tasks(self.root).values()))
+
     def test_max_mode_rejects_grok_and_keeps_code_packages_independent(self):
         value = self.submit("Max mode: review evidence.\n[grok] Critique.\n[codex] Check.")
         self.assertEqual(value["messages"][-1]["action_card"]["state"], "refused")
