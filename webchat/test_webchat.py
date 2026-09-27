@@ -1167,9 +1167,11 @@ class HandbackJobTests(Fixture):
 
     def test_bob_parity_eval_runs(self):
         from bob_parity_eval import run_eval
+        from app import state_ledger
 
-        result = run_eval(Path(__file__).resolve().parents[2])
-        self.assertEqual(result["passed"], result["total"])
+        state_ledger.write_now(self.root, "offline parity fixture", sha="fedcba1")
+        result = run_eval(self.root)
+        self.assertEqual(result["passed"], result["total"], result["cases"])
         self.assertEqual(result["total"], 24)
 
     def test_catchup_event_ack_cursor(self):
