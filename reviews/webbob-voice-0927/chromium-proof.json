@@ -1,0 +1,45 @@
+{
+  "engine": "chromium",
+  "url": "https://jeffs-mac-mini.tail758ab4.ts.net:54445",
+  "synthetic_microphone": true,
+  "real_provider": true,
+  "checks": [
+    "spoken input, native spoken reply, shared memory",
+    "real provider barge-in clears queued playback",
+    "spoken work request reaches existing durable dispatcher",
+    "hangup releases microphone and audio transport",
+    "transcript persists through reload",
+    "microphone denial shows recovery and leaves chat usable"
+  ],
+  "layout": {
+    "overflow": false,
+    "right_of_mic": true,
+    "tap_width": 44,
+    "tap_height": 44,
+    "secure": true
+  },
+  "barge_in": {
+    "before": {
+      "interruptions": 0,
+      "stops": 0,
+      "starts": 11
+    },
+    "after": {
+      "interruptions": 1,
+      "stops": 6
+    }
+  },
+  "tool_receipt": "Queued — job webchat-629850210fa05d2f9fe432ab63345164.",
+  "transcript": "You: Bob, what color is the test sailboat in my memory? Please answer in one short sentence.Bob: The test sailboat in your memory is amber.You: Tell me a long story about sailing. Keep talking for at least a minute.Bob: Imagine setting off just as the sun [interrupted]You: Stop, say only. Okay, Jeff.Bob: Okay, Jeff.You: Start a job write unit tests for a pretend blue widget.Bob: I've queued the job to write unit tests",
+  "media": {
+    "inputPackets": 268,
+    "outputPackets": 32,
+    "outputBytes": 373444,
+    "starts": 32,
+    "stops": 12,
+    "tracksEnded": true,
+    "socketsClosed": true
+  },
+  "page_errors": [],
+  "ok": true
+}

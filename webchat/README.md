@@ -12,6 +12,53 @@ Claude subscription are needed. The messenger supports mobile layouts, dark mode
 saved conversation selection, new conversations, polling replies, and Stop.
 Enter sends on a desktop; Shift+Enter adds a line. On a phone, use Send.
 
+## Live voice calls
+
+Tap the waveform immediately to the right of the composer microphone to talk
+with Bob. The microphone button still dictates text. Live calls stream microphone
+audio and generated speech in both directions; speaking interrupts Bob's queued
+audio. Tap **Hang up** to stop. The call transcript appears in the current chat
+and survives reloads. Interrupted replies are marked and may include words that
+had been generated but not played. Server action receipts remain separate from
+the spoken paraphrase.
+
+Calls use **Gemini Live (`gemini-3.8-live`)**, the Realtime equivalent available
+through `GEMINI_API_KEY` in `conductor/keys.env`. The Python server needs no new
+packages. It issues one-use tokens constrained to the server's model, instructions
+and tools; the permanent key never reaches the browser. Audio uses a direct TLS
+WebSocket and an AudioWorklet. See Google's [Live WebSocket guide](https://ai.google.dev/gemini-api/docs/live-api/get-started-websocket)
+and [ephemeral-token documentation](https://ai.google.dev/gemini-api/docs/live-api/ephemeral-tokens).
+
+Use the tailnet **HTTPS** origin on iPhone Safari, or HTTPS/localhost on desktop.
+Allow microphone access when asked. Audio is unlocked from the initial tap;
+**Resume audio** appears if Safari suspends it. Leaving the page ends the call.
+Calls last at most ten minutes; tap the waveform again to continue with saved
+context. There are at most two concurrent calls, with a 45-second server lease
+to recover slots after a tab disappears. A failed transcript save offers retry;
+keep the page open until it confirms the save. Raw recordings are not stored.
+
+The call receives the same redacted profile, handback, status and recent chat
+context as typed chat. The `ask_bob` tool routes the **saved spoken words** through
+`Chat.submit`; model-supplied tool arguments cannot authorize a different request.
+Existing dispatcher, memory behavior, draft-only rules and action receipts apply.
+Interrupting speech does not undo an already queued job. All voice endpoints
+require the existing login cookie, CSRF token and allowed origin.
+
+Offline verification:
+
+```bash
+PYTHONPATH=state python3 -m unittest discover -s webchat -p 'test_*.py'
+python3 -m unittest discover -s services -p 'test_*.py'
+node --test webchat/test_voice_js.cjs
+```
+
+`voice_proof_server.py` creates an isolated foreground server on a spare loopback
+port, optionally with a TLS proxy on a spare tailnet port. It does not start
+provider probes, coding workers or services. `voice_browser_proof.cjs` exercises
+real audio, interruption and dispatch with recorded microphone fixtures. See
+[`reviews/WEBBOB-VOICE-0927.md`](../reviews/WEBBOB-VOICE-0927.md) for the exact
+proof setup, screenshots and physical-device verification boundary.
+
 Status opens `conductor/STATUS.md`; Gemini review opens the saved
 `conductor/reviews/LATEST.md`; Jobs shows `screen -ls` and
 `next-prompts/INDEX.md`. Reports show their file timestamps. Opening a report

@@ -1,0 +1,159 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const crypto = require('node:crypto');
+const path = require('node:path');
+const code = fs.readFileSync(path.join(__dirname, 'static/voice.js'), 'utf8');
+const pause = () => new Promise(resolve => setImmediate(resolve));
+function deferred() { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return {promise,resolve,reject}; }
+function fixture(options = {}) {
+  const states=[], requests=[], sockets=[], contexts=[], tracks=[];
+  const track = { stopped:false, stop(){this.stopped=true;}, addEventListener(){} }; tracks.push(track);
+  const stream = {getTracks:()=>[track]};
+  class Node { connect(){return this;} disconnect(){this.disconnected=true;} }
+  class Context {
+    constructor(){this.state='suspended';this.currentTime=0;this.audioWorklet={addModule:async()=>{}};this.destination={};contexts.push(this);}
+    resume(){this.state='running';return Promise.resolve();}
+    close(){this.state='closed';return Promise.resolve();}
+    createMediaStreamSource(){return new Node();}
+    createGain(){return Object.assign(new Node(),{gain:{value:1}});}
+    createBuffer(channels,n,rate){return {duration:n/rate,getChannelData:()=>new Float32Array(n)};}
+    createBufferSource(){return Object.assign(new Node(),{start(){this.started=true;},stop(){this.stopped=true;}});}
+  }
+  class Socket {
+    static OPEN=1;
+    constructor(){this.readyState=1;this.bufferedAmount=0;this.sent=[];sockets.push(this);}
+    send(raw){this.sent.push(JSON.parse(raw));}
+    close(){this.closed=true;this.readyState=3;}
+  }
+  class Worklet extends Node { constructor(){super();this.port={};} }
+  const window={isSecureContext:true,AudioContext:Context,AudioWorkletNode:Worklet,WebSocket:Socket};
+  const context={window,navigator:{mediaDevices:{getUserMedia:options.getUserMedia || (async()=>stream)}},
+    AudioContext:Context,AudioWorkletNode:Worklet,WebSocket:Socket,crypto,setTimeout,clearTimeout,setInterval,clearInterval,
+    TextDecoder,TextEncoder,Uint8Array,ArrayBuffer,DataView,atob,btoa};
+  vm.runInNewContext(code,context);
+  const controller = new window.BobVoice({api:async(route,data)=>{
+    requests.push({route,data});
+    if(options.api) return options.api(route,data);
+    if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example.test',token:'auth_tokens/test',model:'models/test',expires_at:Date.now()/1000+600};
+    return {ok:true};
+  },onState:(text,phase)=>states.push({text,phase}),onTranscript:()=>{},onSaved:()=>{}});
+  return {controller,window,states,requests,sockets,contexts,tracks,stream};
+}
+test('reject insecure contexts without requesting a microphone',async()=>{
+  const f=fixture();f.window.isSecureContext=false;await f.controller.start('chat');
+  assert.equal(f.contexts.length,0);assert.match(f.states.at(-1).text,/HTTPS/);
+});
+test('permission denial releases audio and allows retry',async()=>{
+  const f=fixture({getUserMedia:async()=>{throw Object.assign(new Error(),{name:'NotAllowedError'});}});
+  await f.controller.start('chat');await pause();
+  assert.equal(f.controller.active,false);assert.equal(f.contexts[0].state,'closed');assert.match(f.states.at(-1).text,/Microphone blocked/);
+});
+test('hanging up during microphone permission stops a late stream',async()=>{
+  const mic=deferred(),f=fixture({getUserMedia:()=>mic.promise});
+  const starting=f.controller.start('chat');await f.controller.stop();mic.resolve(f.stream);await starting;
+  assert.equal(f.tracks[0].stopped,true);assert.equal(f.sockets.length,0);
+});
+test('hanging up while token request is pending ends that late session',async()=>{
+  const token=deferred();const f=fixture({api:async(route)=>route.endsWith('/start')?token.promise:{ok:true}});
+  const starting=f.controller.start('chat');await pause();await f.controller.stop();
+  token.resolve({call_id:'late',expires_at:Date.now()/1000+600});await starting;
+  assert.equal(f.sockets.length,0);assert.equal(f.requests.at(-1).route,'/api/voice/end');
+});
+test('setup gates microphone packets and PCM streams over WebSocket',async()=>{
+  const f=fixture();await f.controller.start('chat');const s=f.controller.session;
+  s.capture.port.onmessage({data:new ArrayBuffer(3200)});assert.equal(f.sockets[0].sent.length,0);
+  f.controller.event(s,{setupComplete:{}});s.capture.port.onmessage({data:new ArrayBuffer(3200)});
+  assert.equal(f.sockets[0].sent[0].realtimeInput.audio.mimeType,'audio/pcm;rate=16000');await f.controller.stop();
+});
+test('barge-in stops every queued source immediately and marks interrupted transcript',async()=>{
+  const f=fixture();await f.controller.start('chat');const s=f.controller.session;
+  f.controller.event(s,{setupComplete:{}});
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'Hello'},outputTranscription:{text:'Hello Jeff'}}});
+  f.controller.play(s,{data:btoa('\0'.repeat(4800)),mimeType:'audio/pcm;rate=24000'});
+  f.controller.play(s,{data:btoa('\0'.repeat(4800)),mimeType:'audio/pcm;rate=24000'});
+  const sources=[...s.sources];assert.equal(sources.length,2);
+  f.controller.event(s,{serverContent:{interrupted:true}});
+  assert.ok(sources.every(source=>source.stopped));assert.equal(s.sources.size,0);assert.equal(s.nextAudio,0);
+  assert.ok([...s.entries.values()].some(row=>row.role==='assistant'&&row.interrupted));await f.controller.stop();
+});
+test('hangup releases microphone socket nodes timers and output',async()=>{
+  const f=fixture();await f.controller.start('chat');const s=f.controller.session;
+  await f.controller.stop();assert.equal(f.tracks[0].stopped,true);assert.equal(s.socket.closed,true);
+  assert.equal(s.capture.disconnected,true);assert.equal(s.audio.state,'closed');assert.equal(s.socket.onmessage,null);
+});
+test('slow network closes streaming instead of accumulating delayed speech',async()=>{
+  const f=fixture();await f.controller.start('chat');const s=f.controller.session;
+  f.controller.event(s,{setupComplete:{}});s.socket.bufferedAmount=128001;
+  s.capture.port.onmessage({data:new ArrayBuffer(3200)});await pause();
+  assert.equal(f.controller.active,false);assert.match(f.states.at(-1).text,/too slow/);
+});
+test('transcript retry retains dirty data and uses one flusher',async()=>{
+  let failing=true;
+  const f=fixture({api:async(route)=>{
+    if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
+    if(route.endsWith('/transcript')&&failing)throw new Error('offline');
+    return {ok:true};
+  }});
+  await f.controller.start('chat');const s=f.controller.session;
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'Please keep this'}}});
+  await f.controller.save(s);assert.equal(f.controller.pending.length,1);assert.equal(f.states.at(-1).phase,'unsaved');
+  failing=false;await f.controller.retrySave();assert.equal(f.controller.pending.length,0);await f.controller.stop();
+});
+test('tool dispatch takes saved spoken turn, never model arguments',async()=>{
+  const f=fixture({api:async(route)=>{
+    if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
+    if(route.endsWith('/tool'))return {request_id:'r',conversation:{messages:[{role:'assistant',request_id:'r',status:'done',content:'Queued — job test.'}]}};
+    return {ok:true};
+  }});
+  await f.controller.start('chat');const s=f.controller.session;
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'start a job: test widget'}}});
+  s.inputTurn.lastInputAt=0;
+  await f.controller.tool(s,{id:'tool1',name:'ask_bob',args:{message:'merge main'}});
+  const request=f.requests.find(r=>r.route.endsWith('/tool'));
+  assert.deepEqual(Object.keys(request.data).sort(),['call_id','turn_id']);
+  assert.equal(request.data.turn_id,s.inputTurn.id);assert.match(s.socket.sent.at(-1).toolResponse.functionResponses[0].response.result,/Queued/);
+  await f.controller.stop();
+});
+test('cancelled tools cannot dispatch or speak after a barge-in',async()=>{
+  const f=fixture();await f.controller.start('chat');const s=f.controller.session;
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'status'}}});s.inputTurn.lastInputAt=0;
+  s.cancelledTools.add('cancelled');await f.controller.tool(s,{id:'cancelled',name:'ask_bob'});
+  assert.equal(f.requests.filter(r=>r.route.endsWith('/tool')).length,0);await f.controller.stop();
+});
+test('an interrupted turn cannot swallow the next spoken utterance',async()=>{
+  const f=fixture();await f.controller.start('chat');const s=f.controller.session;
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'Tell me a story'},outputTranscription:{text:'Once upon a time'}}});
+  f.controller.event(s,{serverContent:{interrupted:true}});
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'Stop please'}}});
+  f.controller.event(s,{serverContent:{turnComplete:true}});
+  assert.equal(s.turns.length,2);assert.equal(s.turns[0].user,'Tell me a story');
+  assert.equal(s.turns[1].user,'Stop please');assert.equal(s.turns[1].finished,false);await f.controller.stop();
+});
+test('suspended Safari output keeps Resume audio visible',async()=>{
+  const f=fixture();await f.controller.start('chat');const s=f.controller.session;
+  s.audio.state='suspended';f.controller.play(s,{data:btoa('\0'.repeat(4800)),mimeType:'audio/pcm;rate=24000'});
+  assert.equal(f.states.at(-1).phase,'paused');await f.controller.resume();assert.equal(s.audio.state,'running');await f.controller.stop();
+});
+test('hangup releases the server lease even while transcript saving is blocked',async()=>{
+  const pending=deferred();const f=fixture({api:async(route)=>{
+    if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
+    if(route.endsWith('/transcript'))return pending.promise;
+    return {ok:true};
+  }});
+  await f.controller.start('chat');f.controller.event(f.controller.session,{serverContent:{inputTranscription:{text:'Keep this'}}});
+  const stopping=f.controller.stop();await pause();
+  assert.ok(f.requests.some(r=>r.route.endsWith('/end')));assert.equal(f.tracks[0].stopped,true);
+  pending.resolve({ok:true});await stopping;
+});
+for(const rate of [16000,44100,48000])test(`worklet resamples ${rate} Hz to exactly 1600 PCM samples per 100 ms`,()=>{
+  let Processor;const packets=[];
+  const context={sampleRate:rate,AudioWorkletProcessor:class{constructor(){this.port={postMessage:data=>packets.push(data)};}},
+    registerProcessor:(_,processor)=>{Processor=processor;}};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'static/voice-capture.js'),'utf8'),context);
+  const p=new Processor();p.process([[new Float32Array(rate/10).fill(.5)]]);
+  assert.equal(packets.length,1);assert.equal(packets[0].byteLength,3200);
+  const pcm=new DataView(packets[0]);
+  for (const offset of [0,3198]) assert.ok(Math.abs(pcm.getInt16(offset,true)-16384)<=1, 'PCM rounding within one quantization step');
+});

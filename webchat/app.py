@@ -46,6 +46,7 @@ from music_demo import demo_receipt, generate_demo, music_budget_status, resolve
 from ops_panel import conductor_snapshot, draft_head_sha, enrich_live_ops, load_live_ops, maybe_spawn_dashboard_refresh
 from quiet_hours import in_quiet_hours
 from task_dispatch import FOLLOW_UP, PREAMBLE, TaskDispatch, followup_work, needs_task_detail, parse_work, task_queue
+from voice import VoiceCalls, VoiceError
 
 HERE = Path(os.environ.get("BOB_WEBCHAT_DIR", Path(__file__).resolve().parent)).resolve()
 ROOT = Path(os.environ.get("BOB_ROOT", HERE.parent.parent)).resolve()
@@ -133,6 +134,7 @@ class Chat(TaskDispatch):
         self.providers = providers or Providers(
             root, self.redact, overlay_roots=self.overlay_roots, overlay_pins=self.overlay_pins,
         )
+        self.voice = VoiceCalls(self)
         for path in self.state.glob("*.json"):
             if not UUID.fullmatch(path.stem):
                 continue
@@ -239,8 +241,9 @@ class Chat(TaskDispatch):
                     continue
                 info["cancel"].set()
                 value = self.get(identifier)
-                if value["messages"] and value["messages"][-1]["status"] in ("queued", "running"):
-                    value["messages"][-1].update(status="error",
+                pending = next((m for m in value["messages"] if m["id"] == info.get("reply_id")), None)
+                if pending and pending["status"] in ("queued", "running"):
+                    pending.update(status="error",
                         content="This reply timed out. Tap Stop if it is still running, then send again.")
                     value.pop("retry_prompt", None)
                     self.save(value)
@@ -284,7 +287,7 @@ class Chat(TaskDispatch):
             self.sessions[digest] = {"expires": now + SESSION_SECONDS, "csrf": secrets.token_urlsafe(32), "digest": digest}
             return token
 
-    def submit(self, identifier, text, request_id, provider="auto", worker=None):
+    def submit(self, identifier, text, request_id, provider="auto", worker=None, source_voice=None):
         if provider not in ("auto", "minimax", "gemini", "codex", "claude", "cursor"):
             raise RequestError(400, "Choose auto, minimax, gemini, codex, claude, or cursor.")
         if not isinstance(text, str) or not text.strip() or len(text) > 6000:
@@ -300,6 +303,8 @@ class Chat(TaskDispatch):
             raise RequestError(400, "This message appears to contain a secret. Remove it before sending; it was not saved or sent to a model.")
         with self.lock:
             conversation = copy.deepcopy(self.get(identifier))
+            if source_voice is None and self.voice.active(identifier):
+                raise RequestError(409, "End the voice call before typing in this conversation.")
             for message in conversation["messages"]:
                 if message.get("request_id") == request_id:
                     if (message["content"] != text or message.get("preferred_provider", "auto") != provider
@@ -312,12 +317,22 @@ class Chat(TaskDispatch):
             if conversation["messages"] and conversation["messages"][-1]["status"] == "waiting":
                 raise RequestError(409, "This conversation has a queued request. Stop it before sending another message.")
             conversation["preferred_provider"] = provider
-            conversation["messages"] += [
+            new_messages = [
                 {"id": str(uuid.uuid4()), "request_id": request_id, "preferred_provider": provider, "role": "user", "content": text,
                  "status": "done", "created_at": time.time(), "requested_worker": worker},
                 {"id": str(uuid.uuid4()), "request_id": request_id, "role": "assistant", "content": "", "status": "queued",
                  "provider": None, "attempts": [], "created_at": time.time()},
             ]
+            if source_voice:
+                source = next((m for m in conversation["messages"] if m["id"] == source_voice
+                               and m["role"] == "user" and m.get("voice_call_id") and m["content"] == text), None)
+                if not source:
+                    raise RequestError(400, "The spoken request was not saved.")
+                source.update({k: v for k, v in new_messages[0].items() if k != "id"})
+                new_messages = new_messages[1:]
+                new_messages[0].update(voice_call_id=source["voice_call_id"],
+                    voice_turn_id=source["voice_turn_id"], voice_order=source["voice_order"] + 1)
+            conversation["messages"] += new_messages
             if conversation["title"] == "New conversation":
                 conversation["title"] = text[:65]
             work, route = parse_work(text)
@@ -554,21 +569,25 @@ class Chat(TaskDispatch):
             cancel = threading.Event()
             if identifier in self.overlay_roots:
                 self.overlay_pins[identifier] = self.overlay_roots[identifier]
-            worker = threading.Thread(target=self.complete, args=(identifier, cancel), daemon=True)
-            self.workers[identifier] = {"thread": worker, "cancel": cancel, "started_at": time.time()}
+            snapshot = copy.deepcopy(self.get(identifier))
+            worker = threading.Thread(target=self.complete, args=(identifier, cancel, snapshot), daemon=True)
+            self.workers[identifier] = {"thread": worker, "cancel": cancel, "started_at": time.time(),
+                                        "reply_id": self.get(identifier)["messages"][-1]["id"]}
             worker.start()
 
-    def complete(self, identifier, cancel):
+    def complete(self, identifier, cancel, conversation):
         with self.lock:
-            conversation = copy.deepcopy(self.get(identifier))
+            reply_id = self.workers[identifier]["reply_id"]
+            def reply(value):
+                return next(m for m in value["messages"] if m["id"] == reply_id)
             value = self.get(identifier)
-            if value["messages"] and value["messages"][-1]["status"] == "queued":
-                value["messages"][-1].update(status="running", provider=None, attempts=[])
+            if value["messages"] and reply(value)["status"] == "queued":
+                reply(value).update(status="running", provider=None, attempts=[])
                 self.save(value)
         def progress(provider, attempts):
             with self.lock:
                 value = self.get(identifier)
-                value["messages"][-1].update(status="running", provider=provider, attempts=attempts)
+                reply(value).update(status="running", provider=provider, attempts=attempts)
                 self.save(value)
         try:
             answer = self.providers.reply(conversation, cancel, progress)
@@ -579,14 +598,14 @@ class Chat(TaskDispatch):
                 value["codex_thread_id"] = answer.pop("codex_thread_id", None)
                 value.pop("retry_prompt", None)
                 answer["content"] = repair_hollow_progress(self.redact(answer["content"]))
-                user_msg = next((m for m in reversed(value["messages"]) if m["role"] == "user"), {})
+                user_msg = next((m for m in value["messages"] if m["role"] == "user" and m.get("request_id") == reply(value).get("request_id")), {})
                 from reply_authority import enforce
                 answer["content"] = self.redact(enforce(self.ledger_root(identifier), user_msg.get("content", ""), answer))
                 rid = user_msg.get("request_id")
-                value["messages"][-1].update(answer, status="done")
+                reply(value).update(answer, status="done")
                 if rid:
-                    value["messages"][-1]["request_id"] = rid
-                value["messages"][-1].pop("retry_at", None)
+                    reply(value)["request_id"] = rid
+                reply(value).pop("retry_at", None)
                 self.save(value)
                 user = user_msg.get("content", "")
                 head = draft_head_sha(self.root)
@@ -608,7 +627,7 @@ class Chat(TaskDispatch):
                 value = self.get(identifier)
                 value["codex_thread_id"] = None
                 value["retry_prompt"] = exc.prompt
-                value["messages"][-1].update(status="cancelled" if cancel.is_set() else "waiting",
+                reply(value).update(status="cancelled" if cancel.is_set() else "waiting",
                     provider=None, content="Reply stopped." if cancel.is_set() else str(exc),
                     attempts=exc.attempts, retry_at=exc.retry_at)
                 self.save(value)
@@ -618,7 +637,7 @@ class Chat(TaskDispatch):
                 value["codex_thread_id"] = None
                 value.pop("retry_prompt", None)
                 message = str(exc) if isinstance(exc, ProviderError) else "The reply failed unexpectedly. Your message is saved; please try again."
-                value["messages"][-1].update(status="cancelled" if isinstance(exc, Cancelled) else "error", content=self.redact(message))
+                reply(value).update(status="cancelled" if isinstance(exc, Cancelled) else "error", content=self.redact(message))
                 self.save(value)
         finally:
             with self.lock:
@@ -1029,7 +1048,8 @@ class Handler(BaseHTTPRequestHandler):
         for key, value in {
             "Content-Type": content_type, "Content-Length": str(len(data)), "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
-            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; connect-src 'self' wss://generativelanguage.googleapis.com; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+            "Permissions-Policy": "microphone=(self), camera=()",
             "X-Bob-Webchat": "1", **extra, **(headers or {}),
         }.items():
             self.send_header(key, value)
@@ -1086,7 +1106,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.get(session)
             else:
                 raise RequestError(405, "Method not allowed.")
-        except RequestError as exc:
+        except (RequestError, VoiceError) as exc:
             self.send(exc.status, {"error": exc.message})
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
             pass
@@ -1140,6 +1160,8 @@ class Handler(BaseHTTPRequestHandler):
     def get(self, session):
         route, chat = self.path_only, self.server.chat
         assets = {"/style.css": ("style.css", "text/css; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+                  "/voice.js": ("voice.js", "text/javascript; charset=utf-8"),
+                  "/voice-capture.js": ("voice-capture.js", "text/javascript; charset=utf-8"),
                   "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json")}
         if route in assets:
             name, mime = assets[route]
@@ -1215,12 +1237,27 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(303, "", headers={"Location": "/", "Set-Cookie": self.cookie(token)})
         if route == "/api/logout":
             self.body()
+            chat.voice.logout(session["digest"])
             with chat.lock:
                 chat.sessions.pop(session["digest"], None)
             return self.send(200, {"ok": True}, headers={"Set-Cookie": self.cookie("", clear=True)})
         if route == "/api/conversations":
             self.body()
             return self.send(201, chat.new_conversation())
+        if route.startswith("/api/voice/"):
+            data = self.body(limit=128 * 1024)
+            owner = session["digest"]
+            if route == "/api/voice/start":
+                return self.send(201, chat.voice.start(data.get("conversation_id"), owner))
+            if route == "/api/voice/transcript":
+                return self.send(200, chat.voice.transcript(data.get("call_id"), owner, data.get("entries")))
+            if route == "/api/voice/tool":
+                return self.send(200, chat.voice.tool(data.get("call_id"), owner, data.get("turn_id")))
+            if route == "/api/voice/end":
+                return self.send(200, chat.voice.end(data.get("call_id"), owner))
+            if route == "/api/voice/pulse":
+                return self.send(200, chat.voice.pulse(data.get("call_id"), owner))
+            raise RequestError(404, "Not found.")
         if route == "/api/panel/refresh":
             self.body()
             spawned = maybe_spawn_dashboard_refresh(chat.root)
