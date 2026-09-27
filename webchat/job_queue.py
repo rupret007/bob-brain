@@ -19,6 +19,16 @@ CONFIRM_WITH_PROPOSAL = re.compile(
     re.I,
 )
 COUNCIL = re.compile(r"^(?:run|start)\s+council(?:\s+on)?[:\s]+(.+)$", re.I | re.S)
+NATURAL_COUNCIL = re.compile(r"^ask the council to (.+)$", re.I | re.S)
+DO_MORE = re.compile(
+    r"^(?:i )?need you to do more\.?$|^(?:please )?(?:you )?(?:do it|handle it)\.?$|"
+    r"^(?:don't|do not) tell me to (?:do it|run it|queue it) myself\.?$|"
+    r"^(?:queue|launch|run) (?:that|this|it)(?: repair| brief| task)?\.?$",
+    re.I,
+)
+DEFAULT_DO_MORE_GOAL = (
+    "Web Bob conductor follow-up: review READY queue, assign next draft lane, report SHA (draft only)"
+)
 COUNCIL_CONFIRM = re.compile(r"^yes[,.]?\s*run\s+council\s*$", re.I)
 COUNCIL_CONFIRM_WITH_PROPOSAL = re.compile(
     r"^yes[,.]?\s*run\s+council(?:\s+proposal\s+"
@@ -31,6 +41,19 @@ COUNCIL_CANCEL = re.compile(r"^(?:never mind|cancel|dismiss)(?:\s+council)?\s*$"
 def parse_start(text: str) -> str | None:
     match = START.match(text.strip())
     return match.group(1).strip()[:4000] if match else None
+
+
+def parse_do_more(text: str) -> str | None:
+    stripped = (text or "").strip()
+    if not stripped or len(stripped) > 400:
+        return None
+    if parse_start(stripped) or parse_council(stripped):
+        return None
+    if re.search(r"\b(?:do not|don't|never)\b", stripped, re.I):
+        return None
+    if DO_MORE.match(stripped):
+        return DEFAULT_DO_MORE_GOAL
+    return None
 
 
 def parse_confirm(text: str) -> bool:
@@ -48,8 +71,14 @@ def parse_job_confirm(text: str) -> tuple[bool, str | None]:
 
 
 def parse_council(text: str) -> str | None:
-    match = COUNCIL.match(text.strip())
-    return match.group(1).strip()[:2000] if match else None
+    stripped = text.strip()
+    match = COUNCIL.match(stripped)
+    if match:
+        return match.group(1).strip()[:2000]
+    natural = NATURAL_COUNCIL.match(stripped)
+    if natural:
+        return natural.group(1).strip()[:2000]
+    return None
 
 
 def parse_council_confirm(text: str) -> bool:
@@ -74,6 +103,49 @@ def sanitize_council_question(question: str) -> str:
     """Strip shell metacharacters; council question is data, not a script."""
     cleaned = re.sub(r"[`$\\;|&<>(){}[\]!#*?~]", " ", question or "")
     return " ".join(cleaned.split())[:1800]
+
+
+def _goal_from_prompt(path: Path) -> str:
+    if not path.is_file():
+        return ""
+    text = path.read_text(errors="replace")
+    match = re.search(r"##\s*Task\s*\n+(.+?)(?:\n##|\Z)", text, re.I | re.S)
+    if match:
+        goal = " ".join(match.group(1).strip().split())
+        return goal[:200]
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            return stripped[:200]
+    return ""
+
+
+def list_ready_queue_jobs(root: Path, limit: int = 8) -> list[dict]:
+    """READY rows in next-prompts/INDEX.md with plain-English goal from the prompt body."""
+    index = root / "next-prompts" / "INDEX.md"
+    if not index.is_file():
+        return []
+    prompts = root / "next-prompts"
+    rows: list[dict] = []
+    position = 0
+    for line in index.read_text(errors="replace").splitlines():
+        if not re.search(r"\|\s*READY\s*\|", line, re.I):
+            continue
+        file_match = re.search(r"`([^`]+\.md)`", line)
+        if not file_match:
+            continue
+        position += 1
+        filename = file_match.group(1)
+        goal = _goal_from_prompt(prompts / filename) or "Draft job waiting for the scheduler"
+        rows.append({"file": filename, "goal": goal, "status": "READY", "position": position})
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def count_ready_queue(root: Path) -> int:
+    """Count READY rows in next-prompts/INDEX.md (scheduler backlog)."""
+    return len(list_ready_queue_jobs(root, limit=999))
 
 
 def council_job_description(question: str) -> str:

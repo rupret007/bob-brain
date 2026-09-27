@@ -14,7 +14,7 @@ if str(HERE.parent / "state") not in sys.path:
 
 import ledger as state_ledger  # noqa: E402
 from handback import append_turn, refresh_summary, _pickup_from_ledger  # noqa: E402
-from job_queue import parse_confirm, parse_council, parse_council_confirm, parse_start  # noqa: E402
+from job_queue import parse_confirm, parse_council, parse_council_confirm, parse_do_more, parse_start  # noqa: E402
 from music_notebook import try_music_coach_reply  # noqa: E402
 
 
@@ -31,7 +31,10 @@ def run_eval(root: Path | None = None) -> dict:
     rows.append(_case("parse start job", parse_start("start a job: polish Jobs tab") == "polish Jobs tab"))
     rows.append(_case("parse confirm job", parse_confirm("yes, start job")))
     rows.append(_case("parse council", parse_council("run council on: mobile UX") == "mobile UX"))
+    rows.append(_case("natural council", parse_council("Ask the council to score failover") == "score failover"))
     rows.append(_case("council yes", parse_council_confirm("yes, run council")))
+    rows.append(_case("do more parse", parse_do_more("I need you to do more") is not None))
+    rows.append(_case("do more negation", parse_do_more("please do not run it yourself") is None))
     rows.append(_case("queue job alias", parse_start("queue job: draft polish") == "draft polish"))
     rows.append(_case("run job alias", parse_start("run a job: test harness") == "test harness"))
     rows.append(_case("inbox parse", state_ledger.parse_inbox_message("tell the builder: fix tab copy") == "fix tab copy"))

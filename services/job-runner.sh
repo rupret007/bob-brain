@@ -1,3 +1,3 @@
 #!/bin/bash
 . "$(cd "$(dirname "$0")" && pwd)/common.sh"
-service_loop job-runner 60 "$@"
+service_loop job-runner 5 "$@"

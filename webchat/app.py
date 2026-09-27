@@ -952,7 +952,7 @@ class Chat:
             alignment_events = {}
         if live_ops.get("dashboard_freshness_seconds") is None and dashboard_age is not None:
             live_ops = {**live_ops, "dashboard_freshness_seconds": round(max(0, time.time() - dashboard_age))}
-        live_ops = enrich_live_ops(live_ops)
+        live_ops = enrich_live_ops(live_ops, self.root)
         changelog = self.round_changelog()
         qh = in_quiet_hours()
         return {"lanes": lanes, "jobs": jobs, "recent_results": results, "round_changelog": changelog,

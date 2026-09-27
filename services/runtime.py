@@ -209,9 +209,19 @@ def schedule_pass():
 
 
 def runner_cycle():
-    result = run(["/bin/bash", str(CONDUCTOR / "run-tick.sh")], timeout=600)
-    if result.returncode not in (0, 2):
-        raise RuntimeError("run-tick failed rc=" + str(result.returncode))
+    from web_dispatch import tick as dispatch_tick
+    dispatch_tick()
+    # Chat work is polled every five seconds; the project scheduler keeps its
+    # one-minute cadence so project housekeeping cannot starve idle chat workers.
+    schedule = CONDUCTOR / "dispatch-schedule.json"
+    if read_json(schedule, {}).get("next_legacy_tick", 0) > time.time():
+        return
+    write_json(schedule, {"next_legacy_tick": time.time() + 60})
+    if "svc-project-tick" not in screen_sessions():
+        result = run(["screen", "-dmS", "svc-project-tick", "/bin/bash", str(CONDUCTOR / "run-tick.sh")],
+                     capture_output=True, timeout=15, detach=True)
+        if result.returncode:
+            raise RuntimeError("Could not launch project tick")
     schedule_pass()
     status_report()
 
@@ -250,6 +260,7 @@ def snapshot():
     spend = {lane: __import__("budget").totals(lane) for lane in __import__("lanes").LANES}
     lanes = read_json(CONDUCTOR / "lanes.json", {})
     live_ops = build_live_ops(sessions=sessions, jobs_map=jobs(), lanes=lanes, spend=spend)
+    live_ops = __import__("live_dashboard").enrich_live_ops_bundle(live_ops, ROOT)
     try:
         ledger_dir = str(CONDUCTOR / "state")
         if ledger_dir not in sys.path:

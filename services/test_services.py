@@ -140,7 +140,7 @@ class ServicesTest(unittest.TestCase):
         self.assertNotEqual(result.returncode,0)
     def test_codex_has_commit_push_configuration(self):
         response='{"type":"item.completed","item":{"type":"agent_message","text":"evidence"}}\n'
-        with patch.object(lanes,'run',return_value=NS(returncode=0,stdout=response,stderr='')) as call,patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd:cmd):lanes.cli('codex','task',self.root,True,100)
+        with patch.object(lanes,'run',return_value=NS(returncode=0,stdout=response,stderr='')) as call,patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd,**kwargs:cmd):lanes.cli('codex','task',self.root,True,100)
         self.assertEqual(call.call_args.kwargs['cwd'],str(self.root));self.assertIn('--dangerously-bypass-approvals-and-sandbox',call.call_args.args[0])
     def test_watchdog_caps_restarts(self):
         now=time.time();runtime.HEARTBEATS.mkdir();sessions={'svc-'+n:'1.svc-'+n for n in runtime.INTERVALS}
@@ -172,6 +172,8 @@ class ServicesTest(unittest.TestCase):
         workspaces.git(self.core,'init','-b','draft/test');workspaces.git(self.core,'add','.')
         workspaces.git(self.core,'-c','user.name=Test','-c','user.email=test@localhost','commit','-m','good');workspaces.git(self.core,'tag','last-good')
         p.write_text('def broken(:\n')
+        workspaces.git(self.core,'add','services/example.py')
+        workspaces.git(self.core,'-c','user.name=Test','-c','user.email=test@localhost','commit','-m','broken committed release')
         result=command.run([sys.executable,str(self.core/'bootstrap.py'),'guard'],capture_output=True,text=True,timeout=15)
         self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(p.read_text(),'VALUE = 1\n');self.assertEqual(p.stat().st_mode & 0o222,0)
         self.assertTrue(list((self.core/'reviews/quarantine').rglob('ROLLBACK.txt')))
@@ -180,7 +182,7 @@ class ServicesTest(unittest.TestCase):
         lines=[{"type":"item.completed","item":{"type":"agent_message","text":"Working on it."}},
                {"type":"item.completed","item":{"type":"agent_message","text":"BLOCKER: actual failure"}}]
         output="\n".join(map(json.dumps,lines))
-        with patch.object(lanes,'run',return_value=NS(returncode=0,stdout=output,stderr='')),patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd:cmd):
+        with patch.object(lanes,'run',return_value=NS(returncode=0,stdout=output,stderr='')),patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd,**kwargs:cmd):
             self.assertEqual(lanes.cli('codex','task',self.root,True,100),'BLOCKER: actual failure')
 
     def test_incorrect_harvest_is_reopened_and_retry_does_not_move(self):
@@ -228,7 +230,7 @@ class ServicesTest(unittest.TestCase):
             lanes.ask('claude','x'*20000,purpose='review',timeout=500)
         self.assertLess(len(cli.call_args.args[1]),7000);self.assertEqual(cli.call_args.args[4],120)
         result=NS(returncode=1,stdout='{"is_error":true,"result":"rate_limit_error"}',stderr='')
-        with patch.object(lanes,'run',return_value=result),patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd:cmd):
+        with patch.object(lanes,'run',return_value=result),patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd,**kwargs:cmd):
             with self.assertRaises(RuntimeError):lanes.cli('claude','review',self.root,False,120)
         with patch.object(lanes,'cli') as cli:
             with self.assertRaisesRegex(RuntimeError,'cooldown'):lanes.ask('claude','review',purpose='review')
@@ -243,6 +245,7 @@ class ServicesTest(unittest.TestCase):
                                             now=time.time())
         self.assertIn("running_jobs", ops)
         self.assertEqual(ops["minimax_spend"]["cap_usd"], 59.0)
+        self.assertAlmostEqual(float(ops["minimax_spend"]["percent_used"]), round(100 * 1.5 / 59, 1))
         self.assertTrue(ops["running_jobs"][0]["plain_now"])
         self.assertIn("scores", ops)
         self.assertIn("roles", ops)
@@ -255,6 +258,27 @@ class ServicesTest(unittest.TestCase):
         self.assertIn("events", job)
         self.assertTrue(any(e.get("kind") == "status" for e in job["events"]))
         self.assertIn("dashboard_freshness_seconds", ops)
+
+    def test_live_ops_bundle_queue_and_display(self):
+        import live_dashboard
+
+        index = self.root / "next-prompts"
+        index.mkdir(parents=True, exist_ok=True)
+        prompt = index / "webchat-r20-test.md"
+        prompt.write_text("## Task\nShip scheduler queue on dashboard\n")
+        (index / "INDEX.md").write_text(f"| READY | `{prompt.name}` | test |\n")
+        jobs_map = {"job-a": {"job_id": "job-a", "state": "running", "launched_at": time.time() - 60,
+                               "engine": "cursor", "job_dir": str(self.root / "job-a")}}
+        raw = live_dashboard.build_live_ops(sessions={"job-a": "1.job-a"}, jobs_map=jobs_map,
+                                            lanes={}, spend={}, now=time.time())
+        ops = live_dashboard.enrich_live_ops_bundle(raw, self.root)
+        self.assertEqual(ops.get("queue_ready_count"), 1)
+        self.assertTrue(ops.get("queued_jobs"))
+        self.assertEqual(ops["running_jobs"][0].get("display_state"), "Live on screen")
+        self.assertTrue(ops.get("live_activity_preview"))
+        public = live_dashboard.public_live_ops(ops)
+        self.assertEqual(public.get("queue_ready_count"), 1)
+        self.assertTrue(public.get("queued_jobs"))
 
     def test_alignment_events_append_and_tail(self):
         ledger_dir = str(HERE.parent / "state")
@@ -309,6 +333,102 @@ class ServicesTest(unittest.TestCase):
         self.assertTrue(rows)
         self.assertIn("9.9", rows[0]["score"])
 
+    def test_scores_weakest_picks_lowest_area(self):
+        import live_dashboard
+
+        rows = [
+            {"area": "Self-improve loop", "score": "9.80"},
+            {"area": "Speed", "score": "9.82"},
+        ]
+        weak = live_dashboard._scores_weakest(rows)
+        self.assertEqual(weak.get("area"), "Self-improve loop")
+        self.assertEqual(weak.get("value"), 9.8)
+
+    def test_public_live_ops_carries_scores_weakest(self):
+        import live_dashboard
+
+        raw = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())
+        raw["scores"] = [
+            {"area": "Speed", "score": "9.79"},
+            {"area": "Self-improve loop", "score": "9.88"},
+        ]
+        raw["scores_weakest"] = live_dashboard._scores_weakest(raw["scores"])
+        public = live_dashboard.public_live_ops(raw)
+        self.assertEqual(public.get("scores_weakest", {}).get("area"), "Speed")
+        self.assertAlmostEqual(public.get("scores_weakest", {}).get("value"), 9.79)
+
+    def test_public_live_ops_carries_scores_measured_at(self):
+        import live_dashboard
+
+        with patch.object(live_dashboard, "CONDUCTOR", self.core):
+            reviews = self.core / "reviews"
+            reviews.mkdir(parents=True, exist_ok=True)
+            (reviews / "WEBCHAT-READY-R99-RESULT.md").write_text(
+                "| Area | R98 | R99 |\n| Speed | 9.9 | **9.91** |\n"
+            )
+            measured = live_dashboard._scores_measured_at()
+            self.assertIsNotNone(measured)
+            self.assertRegex(measured, r"^\d{4}-\d{2}-\d{2}T")
+            raw = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())
+            public = live_dashboard.public_live_ops(raw)
+            self.assertEqual(public.get("scores_measured_at"), measured)
+
+    def test_public_live_ops_carries_generated_at(self):
+        import live_dashboard
+
+        raw = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())
+        self.assertRegex(raw.get("generated_at") or "", r"^\d{4}-\d{2}-\d{2}T")
+        public = live_dashboard.public_live_ops(raw)
+        self.assertEqual(public.get("generated_at"), raw.get("generated_at"))
+
+    def test_bob_catchup_preview_in_bundle(self):
+        import live_dashboard
+
+        state = self.root / "conductor/state"
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "BOB-CATCHUP.md").write_text(
+            "# Catch-up\n\n- Web Bob queued polish Jobs tab\n- Round 23 scores updated\n"
+        )
+        bundle = live_dashboard.enrich_live_ops_bundle({}, self.root)
+        preview = bundle.get("bob_catchup_preview") or []
+        self.assertGreaterEqual(len(preview), 1)
+        public = live_dashboard.public_live_ops(bundle)
+        self.assertEqual(public.get("bob_catchup_preview"), preview)
+
+    def test_attach_scheduler_queue_carries_position(self):
+        import live_dashboard
+
+        prompts = self.root / "next-prompts"
+        prompts.mkdir(parents=True, exist_ok=True)
+        (prompts / "job-a.md").write_text("# Job\n\n## Task\n\nPolish tab copy\n")
+        (prompts / "INDEX.md").write_text(
+            "| Status | Prompt |\n| READY | `job-a.md` |\n| READY | `job-b.md` |\n"
+        )
+        (prompts / "job-b.md").write_text("# Job\n\n## Task\n\nSecond job\n")
+        bundle = live_dashboard.enrich_live_ops_bundle({}, self.root)
+        queued = bundle.get("queued_jobs") or []
+        self.assertGreaterEqual(len(queued), 2)
+        self.assertEqual(queued[1].get("position"), 2)
+
+    def test_public_live_ops_queue_position(self):
+        import live_dashboard
+
+        raw = {"queued_jobs": [{"goal": "Polish Jobs tab", "status": "READY", "id": "webchat-test.md", "position": 2}]}
+        public = live_dashboard.public_live_ops(raw)
+        self.assertEqual(public.get("queued_jobs", [{}])[0].get("position"), 2)
+
+    def test_public_live_ops_carries_queue_next_preview(self):
+        import live_dashboard
+
+        raw = {
+            "queue_next_preview": "Polish Jobs tab on draft branch",
+            "tracked_job_count": 3,
+            "running_jobs": [],
+        }
+        public = live_dashboard.public_live_ops(raw)
+        self.assertEqual(public.get("queue_next_preview"), "Polish Jobs tab on draft branch")
+        self.assertEqual(public.get("tracked_job_count"), 3)
+
     def test_alignment_events_paginated_read(self):
         ledger_dir = str(HERE.parent / "state")
         if ledger_dir not in sys.path:
@@ -357,6 +477,218 @@ class ServicesTest(unittest.TestCase):
         self.assertTrue(any(e.get("kind") == "log" for e in events))
         self.assertTrue(any(e.get("kind") == "commit" for e in events))
 
+
+    def test_dashboard_plain_in_public_live_ops(self):
+        import live_dashboard
+
+        raw = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={'minimax': {'committed_usd': 2.0, 'cap_usd': 59.0, 'percent_used': 3.4}}, now=time.time())
+        raw['now_line'] = 'Round 29 dashboard pass'
+        raw['roles'] = {'building': 'cursor', 'reviewing': 'gemini'}
+        bundle = live_dashboard.enrich_live_ops_bundle(raw, self.root)
+        self.assertTrue(bundle.get('dashboard_plain'))
+        public = live_dashboard.public_live_ops(bundle)
+        labels = [r.get('label') for r in public.get('dashboard_plain') or []]
+        self.assertIn('MiniMax spend', labels)
+        self.assertIn('Builder', labels)
+
+    def test_dashboard_plain_deploy_and_in_flight(self):
+        import live_dashboard
+
+        raw = live_dashboard.build_live_ops(
+            sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time()
+        )
+        raw['deploy_head_sha'] = 'abc1234dead'
+        raw['in_flight_replies'] = 2
+        raw['deploy_restart'] = {'allowed': False, 'defer_reasons': ['in_flight_replies']}
+        bundle = live_dashboard.enrich_live_ops_bundle(raw, self.root)
+        labels = [r.get('label') for r in bundle.get('dashboard_plain') or []]
+        self.assertIn('Deploy version', labels)
+        self.assertIn('Replies in flight', labels)
+        self.assertIn('Safe restart', labels)
+
+    def test_dashboard_plain_scheduler_queue_after_attach(self):
+        import live_dashboard
+
+        prompts = self.root / 'next-prompts'
+        prompts.mkdir(parents=True, exist_ok=True)
+        (prompts / 'webchat-test.md').write_text('# job\n\n## Task\n\nPolish Jobs cards\n')
+        (prompts / 'INDEX.md').write_text(
+            '| Pri | File | Project | Kind | Status | Notes |\n'
+            '| --- | --- | --- | --- | --- | --- |\n'
+            '| 99 | `webchat-test.md` | WebBob | non-coding | READY | test |\n'
+        )
+        raw = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())
+        bundle = live_dashboard.enrich_live_ops_bundle(raw, self.root)
+        labels = [r.get('label') for r in bundle.get('dashboard_plain') or []]
+        self.assertIn('Scheduler queue', labels)
+
+    def test_dashboard_plain_ops_snapshot_row(self):
+        import live_dashboard
+
+        now = time.time()
+        raw = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=now)
+        bundle = live_dashboard.enrich_live_ops_bundle(raw, self.root)
+        labels = [r.get('label') for r in bundle.get('dashboard_plain') or []]
+        self.assertIn('Ops snapshot', labels)
+
+    def test_dashboard_plain_ops_snapshot_unknown_without_generated_at(self):
+        import live_dashboard
+
+        raw = {'now_line': 'fixture without timestamp'}
+        bundle = live_dashboard.enrich_live_ops_bundle(raw, self.root)
+        self.assertTrue(bundle.get('ops_snapshot_freshness_unknown'))
+        row = next(r for r in bundle['dashboard_plain'] if r.get('label') == 'Ops snapshot')
+        self.assertIn('Unknown', row.get('value') or '')
+        public = live_dashboard.public_live_ops(bundle)
+        self.assertTrue(public.get('ops_snapshot_freshness_unknown'))
+
+    def test_dashboard_plain_ops_snapshot_unknown_bad_timestamp(self):
+        import live_dashboard
+
+        raw = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())
+        raw['generated_at'] = 'not-a-real-timestamp'
+        bundle = live_dashboard.enrich_live_ops_bundle(raw, self.root)
+        self.assertTrue(bundle.get('ops_snapshot_freshness_unknown'))
+        row = next(r for r in bundle['dashboard_plain'] if r.get('label') == 'Ops snapshot')
+        self.assertIn('unreadable', (row.get('value') or '').lower())
+
+    def test_dashboard_plain_overflow_more_row(self):
+        import live_dashboard
+
+        raw = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())
+        raw['now_line'] = 'Busy mini snapshot'
+        raw['roles'] = {'building': 'cursor', 'reviewing': 'gemini,minimax'}
+        raw['deploy_head_sha'] = 'deadbeefcafe'
+        raw['in_flight_replies'] = 1
+        raw['deploy_restart'] = {'allowed': False, 'defer_reasons': ['typing']}
+        raw['scores_measured_at'] = '2026-09-27T12:00:00Z'
+        raw['minimax_spend'] = {'committed_usd': 12.5, 'cap_usd': 59.0, 'percent_used': 21}
+        raw['scores_weakest'] = {'area': 'voice', 'value': 9.5}
+        raw['queue_ready_count'] = 2
+        raw['queue_next_preview'] = 'polish Jobs'
+        raw['bob_catchup_preview'] = ['Jeff asked for status', 'Round 31 shipped']
+        raw['running_jobs'] = [{
+            'live_screen': True,
+            'plain_now': 'Web Bob round',
+            'elapsed_seconds': 120,
+            'round': 32,
+            'stall_state': 'stalled',
+            'last_commit': {'sha': 'abc1234', 'message': 'fix dashboard'},
+            'log_tail': ['line one', 'line two', 'line three'],
+        }]
+        bundle = live_dashboard.enrich_live_ops_bundle(raw, self.root)
+        labels = [r.get('label') for r in bundle.get('dashboard_plain') or []]
+        self.assertLessEqual(len(bundle.get('dashboard_plain') or []), 18)
+        if bundle.get('dashboard_plain_omitted', 0) > 0:
+            self.assertIn('More fields', labels)
+        public = live_dashboard.public_live_ops(bundle)
+        self.assertEqual(public.get('dashboard_plain_omitted'), bundle.get('dashboard_plain_omitted'))
+
+    def test_dashboard_plain_second_live_job_row(self):
+        import live_dashboard
+
+        raw = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())
+        raw['running_jobs'] = [
+            {
+                'live_screen': True,
+                'plain_now': 'WebJam polish',
+                'elapsed_seconds': 90,
+                'stall_state': 'ok',
+            },
+            {
+                'live_screen': True,
+                'plain_now': 'AdoptIQ CI',
+                'elapsed_seconds': 240,
+                'stall_state': 'stalled',
+            },
+        ]
+        bundle = live_dashboard.enrich_live_ops_bundle(raw, self.root)
+        labels = [r.get('label') for r in bundle.get('dashboard_plain') or []]
+        self.assertIn('Top live job', labels)
+        self.assertIn('Also running', labels)
+        also = next(r for r in bundle['dashboard_plain'] if r.get('label') == 'Also running')
+        self.assertIn('AdoptIQ', also.get('value', ''))
+        self.assertIn('stalled', also.get('value', ''))
+        self.assertEqual(also.get('action'), {'type': 'focus_live_job', 'index': 1})
+
+    def test_dashboard_plain_also_job_log_row(self):
+        import live_dashboard
+
+        raw = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())
+        raw['running_jobs'] = [
+            {'live_screen': True, 'plain_now': 'WebJam polish', 'elapsed_seconds': 60, 'stall_state': 'ok'},
+            {
+                'live_screen': True,
+                'plain_now': 'AdoptIQ CI',
+                'elapsed_seconds': 120,
+                'stall_state': 'ok',
+                'log_tail': ['step one', 'step two', 'fixing tests now'],
+            },
+        ]
+        bundle = live_dashboard.enrich_live_ops_bundle(raw, self.root)
+        labels = [r.get('label') for r in bundle.get('dashboard_plain') or []]
+        self.assertIn('Also job log', labels)
+        log_row = next(r for r in bundle['dashboard_plain'] if r.get('label') == 'Also job log')
+        self.assertIn('fixing tests', log_row.get('value', ''))
+        self.assertEqual(log_row.get('action'), {'type': 'focus_live_job', 'index': 1})
+
+    def test_self_improve_plain_on_dashboard(self):
+        import live_dashboard
+
+        (self.root / 'conductor/webchat').mkdir(parents=True, exist_ok=True)
+        (self.root / 'conductor/launchd').mkdir(parents=True, exist_ok=True)
+        (self.root / 'logs').mkdir(parents=True, exist_ok=True)
+        (self.root / 'conductor/webchat/self_improve_tick.sh').write_text('#!/bin/bash\n')
+        (self.root / 'conductor/launchd/com.jeff.bob-webchat-self-improve.plist').write_text('<plist/>')
+        (self.root / 'logs/webchat-self-improve.log').write_text(
+            '[2026-09-27] self-improve tick OK webchat=0\n'
+        )
+        raw = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())
+        bundle = live_dashboard.enrich_live_ops_bundle(raw, self.root)
+        labels = [r.get('label') for r in bundle.get('dashboard_plain') or []]
+        self.assertIn('Self-improve', labels)
+        row = next(r for r in bundle['dashboard_plain'] if r.get('label') == 'Self-improve')
+        self.assertIn('healthy', row.get('value', '').lower())
+
+    def test_self_improve_stale_plain_on_dashboard(self):
+        import live_dashboard
+        import os
+
+        (self.root / 'conductor/webchat').mkdir(parents=True, exist_ok=True)
+        (self.root / 'conductor/launchd').mkdir(parents=True, exist_ok=True)
+        (self.root / 'logs').mkdir(parents=True, exist_ok=True)
+        (self.root / 'conductor/webchat/self_improve_tick.sh').write_text('#!/bin/bash\n')
+        (self.root / 'conductor/launchd/com.jeff.bob-webchat-self-improve.plist').write_text('<plist/>')
+        log = self.root / 'logs/webchat-self-improve.log'
+        log.write_text('[old] self-improve tick OK\n')
+        stale = time.time() - (25 * 3600)
+        os.utime(log, (stale, stale))
+        raw = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())
+        bundle = live_dashboard.enrich_live_ops_bundle(raw, self.root)
+        row = next(r for r in bundle['dashboard_plain'] if r.get('label') == 'Self-improve')
+        self.assertRegex(row.get('value', ''), r'^Stale')
+        self.assertTrue(bundle.get('self_improve_log_stale_24h'))
+
+    def test_dashboard_plain_third_plus_live_jobs_row(self):
+        import live_dashboard
+
+        raw = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())
+        raw['running_jobs'] = [
+            {'live_screen': True, 'plain_now': 'WebJam polish', 'elapsed_seconds': 60, 'stall_state': 'ok'},
+            {'live_screen': True, 'plain_now': 'AdoptIQ CI', 'elapsed_seconds': 120, 'stall_state': 'ok'},
+            {'live_screen': True, 'plain_now': 'Shelf docs', 'elapsed_seconds': 30, 'stall_state': 'ok'},
+            {'live_screen': True, 'plain_now': 'bob-ops lane', 'elapsed_seconds': 400, 'stall_state': 'stalled'},
+        ]
+        bundle = live_dashboard.enrich_live_ops_bundle(raw, self.root)
+        labels = [r.get('label') for r in bundle.get('dashboard_plain') or []]
+        self.assertIn('More live jobs', labels)
+        more = next(r for r in bundle['dashboard_plain'] if r.get('label') == 'More live jobs')
+        self.assertIn('2 more', more.get('value', ''))
+        self.assertIn('stalled', more.get('value', ''))
+        self.assertNotIn('Shelf', more.get('value', ''))
+        self.assertEqual(more.get('action'), {'type': 'focus_live_job', 'index': 2})
+        top = next(r for r in bundle['dashboard_plain'] if r.get('label') == 'Top live job')
+        self.assertEqual(top.get('action'), {'type': 'focus_live_job', 'index': 0})
 
     def test_public_live_ops_screen_count_contract(self):
         import json

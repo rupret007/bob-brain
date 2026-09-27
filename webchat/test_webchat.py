@@ -681,13 +681,26 @@ class HandbackJobTests(Fixture):
                 {"live_screen": False, "stall_state": "running", "state": "running", "plain_now": "tracked"},
             ]
         }
-        enriched = enrich_live_ops(raw)
+        enriched = enrich_live_ops(raw, self.root)
         public = live_dashboard.public_live_ops(enriched)
         for row in public["running_jobs"]:
             self.assertIn("display_state", row)
             self.assertIn("stall_plain", row)
             self.assertTrue(row["display_state"])
             self.assertTrue(row["stall_plain"])
+
+    def test_dashboard_plain_includes_ops_snapshot(self):
+        from ops_panel import enrich_live_ops
+
+        enriched = enrich_live_ops(
+            {"generated_at": "2026-09-27T12:00:00+00:00", "running_jobs": [], "roles": {}},
+            self.root,
+        )
+        labels = [r.get("label") for r in enriched.get("dashboard_plain") or []]
+        self.assertIn("Ops snapshot", labels)
+        self.assertTrue(enriched.get("dashboard_plain"))
+        ops_row = next(r for r in enriched["dashboard_plain"] if r["label"] == "Ops snapshot")
+        self.assertTrue(ops_row.get("value"))
 
     def test_inbox_message_queues_builder_note(self):
         request_id = str(uuid.uuid4())
@@ -1073,7 +1086,7 @@ class HandbackJobTests(Fixture):
 
         result = run_eval(Path(__file__).resolve().parents[2])
         self.assertEqual(result["passed"], result["total"])
-        self.assertEqual(result["total"], 24)
+        self.assertEqual(result["total"], 25)
 
     def test_catchup_event_ack_cursor(self):
         ledger_dir = Path(__file__).resolve().parent.parent / "state"

@@ -147,6 +147,9 @@ def queue_specs():
             if len(parts) < 8 or not parts[1].isdigit() or parts[5] != "READY":
                 continue
             project = next((p for p in PROJECTS if parts[3].lower().startswith(p.lower())), None)
+            # Chat receipts are migrated into state/queue.jsonl; never launch the legacy row too.
+            if parts[3].lower().startswith("webbob") or parts[2].startswith("webchat-"):
+                continue
             if not project:
                 continue
             # Dedicated per-PR jobs supersede the old shared-worktree CI prompt.

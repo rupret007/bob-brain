@@ -133,40 +133,14 @@ def load_live_ops(root: Path, *, max_age: float = LIVE_OPS_MAX_AGE) -> dict:
     return {"live_ops": {}, "meta": meta}
 
 
-def _stall_plain(stall: str, live: bool) -> str:
-    if stall == "stalled":
-        return "Stalled — no heartbeat" if live else "Marked stalled"
-    if stall == "running":
-        return "Running normally" if live else "Tracked as running"
-    if stall == "queued":
-        return "Waiting to start"
-    return "Status unknown"
+def enrich_live_ops(live_ops: dict, root: Path | None = None) -> dict:
+    """Plain-English display fields + dashboard_plain for Jobs (phone)."""
+    services = Path(__file__).resolve().parent.parent / "services"
+    if str(services) not in sys.path:
+        sys.path.insert(0, str(services))
+    import live_dashboard
 
-
-def enrich_live_ops(live_ops: dict) -> dict:
-    """Plain-English display fields for Jobs dashboard (phone)."""
-    if not live_ops:
-        return live_ops
-    jobs = []
-    for row in live_ops.get("running_jobs") or []:
-        job = dict(row)
-        live = bool(job.get("live_screen"))
-        stall = job.get("stall_state") or "unknown"
-        state = job.get("state") or ""
-        job["stall_plain"] = _stall_plain(stall, live)
-        if live and stall == "stalled":
-            job["display_state"] = "Stalled on screen"
-        elif live:
-            job["display_state"] = "Live on screen"
-        elif state in ("running", "launched"):
-            job["display_state"] = "Marked running; screen unconfirmed"
-        elif state == "queued":
-            job["display_state"] = "Queued"
-        else:
-            job["display_state"] = "Tracked"
-        jobs.append(job)
-    screens = live_ops.get("service_screens") or []
-    return {**live_ops, "running_jobs": jobs, "service_screen_count": len(screens)}
+    return live_dashboard.enrich_live_ops_bundle(live_ops or {}, root)
 
 
 def conductor_snapshot(root: Path) -> dict:

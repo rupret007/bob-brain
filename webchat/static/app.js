@@ -84,7 +84,7 @@ if ($("login-form")) {
   }
   const conductorPrompts = {
     round: "start a job: Web Bob ready round (draft only, no merge)",
-    council: "run council on: score Web Bob iPhone tab UI and handback failover",
+    council: "Ask the council to score Web Bob iPhone tab UI and handback failover",
     status: "status",
     stop: "stop current job (draft only)",
   };
@@ -185,7 +185,7 @@ if ($("login-form")) {
   const chipActions = {
     status: "status",
     round: "start a job: Web Bob ready round (draft only, no merge)",
-    council: "run council on: score Web Bob mobile UX after bottom tab bar",
+    council: "Ask the council to score Web Bob mobile UX after bottom tab bar",
     song: "",
   };
   $("quick-chips")?.addEventListener("click", (event) => {
@@ -965,15 +965,65 @@ if ($("login-form")) {
     if (job.live_screen) return `${round} · live on screen${state}`;
     return `${round} · ${engine}${state}`;
   }
-  function renderLiveJobs(jobs) {
+  function focusLiveJobIndex(index) {
+    const cards = [...document.querySelectorAll("#live-jobs .live-job[data-live-job-index]")];
+    const target = cards.find((el) => Number(el.dataset.liveJobIndex) === index) || cards[index];
+    if (!target) return;
+    setBottomTab("ops");
+    target.classList.add("queue-highlight");
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    const btn = target.querySelector(".live-job-actions button");
+    if (btn) btn.focus({ preventScroll: true });
+    setTimeout(() => target.classList.remove("queue-highlight"), 2400);
+  }
+  function renderDashboardPlain(rows) {
+    const host = $("jobs-dashboard-plain");
+    if (!host) return;
+    const list = (rows || []).slice(0, 18);
+    if (!list.length) {
+      host.hidden = true;
+      host.replaceChildren();
+      return;
+    }
+    host.hidden = false;
+    host.replaceChildren(...list.map((row) => {
+      const article = document.createElement("article");
+      article.className = "dashboard-plain-row";
+      if (row.stale) article.classList.add("dashboard-plain-stale");
+      const label = document.createElement("span");
+      label.className = "dashboard-plain-label";
+      label.textContent = row.label || "—";
+      const value = document.createElement("span");
+      value.className = "dashboard-plain-value";
+      value.textContent = row.value || "—";
+      article.append(label, value);
+      const action = row.action;
+      if (action?.type === "focus_live_job" && action.index != null) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "dashboard-plain-jump quiet";
+        btn.textContent = "Open";
+        btn.setAttribute("aria-label", `View ${row.label || "job"}`);
+        btn.addEventListener("click", () => focusLiveJobIndex(action.index));
+        article.append(btn);
+      }
+      return article;
+    }));
+  }
+  function renderLiveJobs(jobs, liveOnly) {
     const host = $("live-jobs");
     const empty = $("jobs-empty");
     if (!host) return;
+    const liveList = liveOnly || (jobs || []).filter((j) => j.live_screen);
     const rows = (jobs || []).slice(0, 6);
     if (empty) empty.hidden = rows.length > 0;
     host.replaceChildren(...rows.map((job) => {
       const card = document.createElement("article");
       card.className = "live-job";
+      if (job.live_screen) {
+        const li = liveList.indexOf(job);
+        if (li >= 0) card.dataset.liveJobIndex = String(li);
+      }
       const header = document.createElement("header");
       const title = document.createElement("strong");
       title.textContent = plainJobTitle(job);
@@ -1066,7 +1116,8 @@ if ($("login-form")) {
         }
       }
       $("status-summary").textContent = `${freshness}${scoreStamp} · ${jobLead} · MiniMax ${spendText} · round ${ops.webchat_round || "?"}`;
-      renderLiveJobs(jobs);
+      renderDashboardPlain(ops.dashboard_plain);
+      renderLiveJobs(jobs, jobs.filter((j) => j.live_screen));
       lastPanelScores = ops.scores;
       lastPanelOps = ops;
       renderScoresTable(ops.scores, "jobs-scores-table");

@@ -6,91 +6,91 @@
       "conversation": 0,
       "text": "Reply with exactly: drill A1",
       "status": "done",
-      "provider": "gemini",
-      "elapsed_seconds": 1.109,
+      "provider": "state",
+      "elapsed_seconds": 0.206,
       "busy_in_attempts": false
     },
     {
       "conversation": 1,
       "text": "Reply with exactly: drill B1",
       "status": "done",
-      "provider": "gemini",
-      "elapsed_seconds": 1.091,
+      "provider": "state",
+      "elapsed_seconds": 0.209,
       "busy_in_attempts": false
     },
     {
       "conversation": 0,
       "text": "Reply with exactly: drill A2",
       "status": "done",
-      "provider": "gemini",
-      "elapsed_seconds": 1.14,
+      "provider": "state",
+      "elapsed_seconds": 0.236,
       "busy_in_attempts": false
     },
     {
       "conversation": 1,
       "text": "Reply with exactly: drill B2",
       "status": "done",
-      "provider": "gemini",
-      "elapsed_seconds": 1.085,
+      "provider": "state",
+      "elapsed_seconds": 0.207,
       "busy_in_attempts": false
     },
     {
       "conversation": 0,
       "text": "Reply with exactly: drill A3",
       "status": "done",
-      "provider": "gemini",
-      "elapsed_seconds": 1.109,
+      "provider": "state",
+      "elapsed_seconds": 0.22,
       "busy_in_attempts": false
     },
     {
       "conversation": 1,
       "text": "Reply with exactly: drill B3",
       "status": "done",
-      "provider": "gemini",
-      "elapsed_seconds": 1.438,
+      "provider": "state",
+      "elapsed_seconds": 0.211,
       "busy_in_attempts": false
     },
     {
       "conversation": 0,
       "text": "Reply with exactly: drill A4",
       "status": "done",
-      "provider": "gemini",
-      "elapsed_seconds": 0.778,
+      "provider": "state",
+      "elapsed_seconds": 0.209,
       "busy_in_attempts": false
     },
     {
       "conversation": 1,
       "text": "Reply with exactly: drill B4",
       "status": "done",
-      "provider": "gemini",
-      "elapsed_seconds": 0.796,
+      "provider": "state",
+      "elapsed_seconds": 0.218,
       "busy_in_attempts": false
     },
     {
       "conversation": 0,
       "text": "Reply with exactly: drill A5",
       "status": "done",
-      "provider": "gemini",
-      "elapsed_seconds": 0.792,
+      "provider": "state",
+      "elapsed_seconds": 0.21,
       "busy_in_attempts": false
     },
     {
       "conversation": 1,
       "text": "Reply with exactly: drill B5",
       "status": "done",
-      "provider": "gemini",
-      "elapsed_seconds": 1.109,
+      "provider": "state",
+      "elapsed_seconds": 0.219,
       "busy_in_attempts": false
     }
   ],
-  "started_at": 1790504636.9465861,
+  "started_at": 1790522002.823138,
   "locks": [
     "codex: drill holds background lock",
     "cursor: drill holds background lock",
     "gemini: drill holds background lock",
     "minimax: drill holds background lock"
   ],
-  "p50_seconds": 1.1,
-  "finished_at": 1790504647.394303,
+  "p50_seconds": 0.21,
+  "finished_at": 1790522004.9677398,
   "result": "PASS"
 }
