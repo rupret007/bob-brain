@@ -1,7 +1,7 @@
 # Web Bob READY-FOR-PHONE — Round 7 result (Cursor lane)
 
 **Branch:** `draft/webchat-failover-20260927`  
-**Round 6 base:** `b815ea35` (R6 RESULT doc) · **Round 7 commit:** _(see below after commit)_  
+**Round 6 base:** `b815ea35` (R6 RESULT doc) · **Round 7 commit:** `00ddcc3ffeedb96f72ad54c882ce45120bc8498e`  
 **Design note:** `conductor/reviews/WEBCHAT-READY-R7-DESIGN.md` (research-first; sources in table)  
 **Council (no Grok):** `conductor/reviews/webchat-ready-r7-council/20260927-022954-786384.md` (Gemini, MiniMax, Claude, Codex synthesize; Cursor lane busy on propose). **Vote:** structured `events[]` plus retained `log_tail`; bottom tab **Models** maps to lanes sheet (Conductor stays in Jobs sheet + quick chips). Applied: `compact_digest` every turn, draft HEAD in handback log, async dashboard refresh spawn, `BOB_WEBCHAT_CURL_TIMEOUT`, iPhone R7 screenshots.  
 **Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
