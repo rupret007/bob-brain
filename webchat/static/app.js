@@ -268,10 +268,19 @@ if ($("login-form")) {
   });
   let micRecognition = null;
   let micErrorActive = false;
+  let speechVoicesReady = false;
+  function primeSpeechVoices() {
+    if (!("speechSynthesis" in window)) return;
+    const voices = speechSynthesis.getVoices();
+    if (voices.length) speechVoicesReady = true;
+    speechSynthesis.onvoiceschanged = () => {
+      if (speechSynthesis.getVoices().length) speechVoicesReady = true;
+    };
+  }
   let speakingUtterance = null;
   $("mic").addEventListener("click", () => {
     const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Speech) { $("notice").textContent = "Voice input is not supported in this browser."; return; }
+    if (!Speech) { $("notice").textContent = "Voice input needs Safari on iPhone or Chrome on desktop. Keyboard dictation always works."; return; }
     if (micRecognition) {
       micRecognition.stop();
       micRecognition = null;
@@ -347,6 +356,7 @@ if ($("login-form")) {
       speechSynthesis.cancel();
       const utter = new SpeechSynthesisUtterance(speechText(last.content).slice(0, 4000));
       utter.rate = 1.02;
+      if (!speechVoicesReady) primeSpeechVoices();
       const voices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith("en"));
       if (voices.length) utter.voice = voices.find((v) => /samantha|daniel|english/i.test(v.name)) || voices[0];
       utter.onend = utter.onerror = () => {
@@ -646,10 +656,13 @@ if ($("login-form")) {
   }
   async function init() {
     try {
-      if (window.speechSynthesis) {
-        speechSynthesis.getVoices();
-        speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
+      primeSpeechVoices();
+      const micBtn = $("mic");
+      const speakBtn = $("speak");
+      if (micBtn && !window.SpeechRecognition && !window.webkitSpeechRecognition) {
+        micBtn.setAttribute("title", "Use keyboard dictation (mic key on iOS keyboard)");
       }
+      if (speakBtn && !("speechSynthesis" in window)) speakBtn.hidden = true;
       csrf = (await api("/api/session")).csrf; current = stored("bob.conversation");
       await refreshList(); await poll(); $("messages").scrollTop = $("messages").scrollHeight;
       await refreshPanel(); await refreshLanes(); await loadSong();

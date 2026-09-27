@@ -244,6 +244,14 @@ class ServicesTest(unittest.TestCase):
         self.assertIn("running_jobs", ops)
         self.assertEqual(ops["minimax_spend"]["cap_usd"], 59.0)
         self.assertTrue(ops["running_jobs"][0]["plain_now"])
+        self.assertIn("scores", ops)
+        self.assertIn("roles", ops)
+        self.assertIn("now_line", ops)
+        self.assertIn("webchat_round", ops)
+        job = ops["running_jobs"][0]
+        self.assertIn("log_tail", job)
+        self.assertIn("last_commit", job)
+        self.assertIn("stall_state", job)
 
     def test_state_ledger_catchup_and_now(self):
         ledger_dir = str(HERE.parent / "state")
@@ -257,6 +265,20 @@ class ServicesTest(unittest.TestCase):
         catchup = (self.root / "conductor/state/BOB-CATCHUP.md").read_text()
         self.assertIn("INBOX", catchup)
         self.assertTrue((self.root / "conductor/state/NOW.md").exists())
+        loaded = state_ledger.load_state(self.root)
+        self.assertGreaterEqual(int(loaded.get("revision") or 0), 2)
+
+    def test_state_ledger_mutate_under_lock(self):
+        ledger_dir = str(HERE.parent / "state")
+        if ledger_dir not in sys.path:
+            sys.path.insert(0, ledger_dir)
+        import ledger as state_ledger
+
+        rev0 = int(state_ledger.load_state(self.root).get("revision") or 0)
+        state_ledger.record_webchat_turn(self.root, ask="hello", provider="state")
+        state_ledger.add_open_ask(self.root, "ship tab polish")
+        rev1 = int(state_ledger.load_state(self.root).get("revision") or 0)
+        self.assertGreater(rev1, rev0)
 
     def test_public_live_ops_allowlists_log_tail(self):
         import live_dashboard

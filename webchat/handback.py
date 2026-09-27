@@ -131,6 +131,18 @@ def refresh_summary(root: Path) -> None:
     lines += [f"- {row}" for row in groups["waiting"]] or ["_No open confirmations._"]
     lines += ["", "## Risks"]
     lines += [f"- {row}" for row in groups["risks"]] or ["- Drafts only; no merge/send/spend without yes."]
+    pickup: list[str] = []
+    for block in [text for _, text in _parse_blocks(log_path)][-4:]:
+        for label, pattern in (
+            ("Commits", r"\*\*Commits/SHAs:\*\*\s*(.+)"),
+            ("Open", r"\*\*Open:\*\*\s*(.+)"),
+            ("Jobs", r"\*\*Jobs:\*\*\s*(.+)"),
+        ):
+            match = re.search(pattern, block)
+            if match:
+                pickup.append(f"{label}: {match.group(1).strip()[:140]}")
+    lines += ["", "## Latest pickup (commits / open / jobs)"]
+    lines += [f"- {row}" for row in pickup[-8:]] or ["- See HANDBACK-LOG for full detail."]
     lines += ["", "## Web Bob turns since last seen (detail)"]
     if entries:
         lines.extend(entries[-8:])

@@ -635,7 +635,10 @@ class Chat:
         if launchd_loaded is True:
             summary = "Launchd job loaded. " + summary
         elif launchd_loaded is False and files_ok:
-            summary = "Launchd job not loaded — bootstrap com.jeff.bob-webchat-self-improve when ready. " + summary
+            summary = (
+                "Launchd job not loaded — run conductor/webchat/bootstrap_self_improve_launchd.sh on the mini. "
+                + summary
+            )
         elif launchd_loaded is None and files_ok:
             summary = "Launchd probe unavailable on this host. " + summary
         elif not files_ok:

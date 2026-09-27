@@ -58,9 +58,25 @@ def _now_ct() -> str:
     return datetime.now(CT).strftime("%Y-%m-%d %H:%M:%S CT")
 
 
+_REQUIRED_KEYS = (
+    "version",
+    "updated_at",
+    "active_round",
+    "last_sha",
+    "owner",
+    "jobs",
+    "open_asks",
+    "decisions",
+    "now_history",
+    "inbox",
+    "webchat_turns",
+)
+
+
 def default_state() -> dict:
     return {
         "version": 1,
+        "revision": 0,
         "updated_at": _now_ct(),
         "active_round": None,
         "last_sha": None,
@@ -72,6 +88,19 @@ def default_state() -> dict:
         "inbox": [],
         "webchat_turns": [],
     }
+
+
+def _validate_state(data: dict) -> bool:
+    return isinstance(data, dict) and all(key in data for key in _REQUIRED_KEYS)
+
+
+def _log_corrupt(root: Path, reason: str) -> None:
+    try:
+        path = _folder(root) / ".STATE.corrupt.log"
+        with path.open("a") as handle:
+            handle.write(f"{_now_ct()} {reason}\n")
+    except OSError:
+        pass
 
 
 def _state_lock(root: Path):
@@ -87,28 +116,47 @@ def load_state(root: Path) -> dict:
         return default_state()
     try:
         data = json.loads(path.read_text(errors="replace"))
-        if isinstance(data, dict) and "version" in data:
+        if _validate_state(data):
+            if "revision" not in data:
+                data["revision"] = 0
             return data
-    except (OSError, json.JSONDecodeError):
-        pass
+        _log_corrupt(root, "schema mismatch")
+    except (OSError, json.JSONDecodeError) as err:
+        _log_corrupt(root, f"parse error: {err}")
     return default_state()
 
 
 def save_state(root: Path, state: dict) -> None:
     state["updated_at"] = _now_ct()
+    state["revision"] = int(state.get("revision") or 0) + 1
     _atomic_write(_folder(root) / STATE_FILE, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
 
 
-def _mutate(root: Path, fn):
+def _mutate(root: Path, fn, *, inbox: bool = False, now_line: str | None = None, catchup: bool = True):
     handle = _state_lock(root)
     try:
         state = load_state(root)
         result = fn(state)
         save_state(root, state)
+        if inbox:
+            _rewrite_inbox_md(root, state)
+        if now_line is not None:
+            _atomic_write(_folder(root) / NOW_FILE, f"{now_line}\n")
+        if catchup:
+            _write_catchup_body(root, state)
         return result
     finally:
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         handle.close()
+
+
+def _rewrite_inbox_md(root: Path, state: dict) -> None:
+    inbox_path = _folder(root) / INBOX_FILE
+    lines = [f"# Builder inbox · updated {_now_ct()}", ""]
+    for row in state.get("inbox") or []:
+        flag = "DONE" if row.get("status") == "done" else "OPEN"
+        lines.append(f"- [{flag}] ({row.get('source', '?')}) {row.get('body', '')[:500]}")
+    _atomic_write(inbox_path, "\n".join(lines) + "\n")
 
 
 def parse_inbox_message(text: str) -> str | None:
@@ -133,51 +181,43 @@ def append_inbox(root: Path, body: str, *, source: str = "web-bob", request_id: 
         state["inbox"] = state["inbox"][-80:]
         return item
 
-    item = _mutate(root, _apply)
-    state = load_state(root)
-    inbox_path = _folder(root) / INBOX_FILE
-    lines = [f"# Builder inbox · updated {_now_ct()}", ""]
-    for row in state["inbox"]:
-        flag = "DONE" if row.get("status") == "done" else "OPEN"
-        lines.append(f"- [{flag}] ({row.get('source', '?')}) {row.get('body', '')[:500]}")
-    _atomic_write(inbox_path, "\n".join(lines) + "\n")
-    write_catchup(root, state=state)
-    return item
+    return _mutate(root, _apply, inbox=True, catchup=True)
 
 
 def record_webchat_turn(root: Path, *, ask: str, provider: str | None, request_id: str | None = None) -> None:
-    state = load_state(root)
     turn = {"at": _now_ct(), "ask": ask.strip()[:500], "provider": provider or "none", "request_id": request_id}
-    state.setdefault("webchat_turns", []).append(turn)
-    state["webchat_turns"] = state["webchat_turns"][-40:]
-    save_state(root, state)
-    write_catchup(root, state=state)
+
+    def _apply(state: dict) -> None:
+        state.setdefault("webchat_turns", []).append(turn)
+        state["webchat_turns"] = state["webchat_turns"][-40:]
+
+    _mutate(root, _apply, catchup=True)
 
 
 def record_decision(root: Path, text: str, *, kind: str = "jeff") -> None:
-    state = load_state(root)
     entry = {"at": _now_ct(), "kind": kind, "text": text.strip()[:800]}
-    state.setdefault("decisions", []).append(entry)
-    state["decisions"] = state["decisions"][-50:]
-    save_state(root, state)
-    write_catchup(root, state=state)
+
+    def _apply(state: dict) -> None:
+        state.setdefault("decisions", []).append(entry)
+        state["decisions"] = state["decisions"][-50:]
+
+    _mutate(root, _apply, catchup=True)
 
 
 def add_open_ask(root: Path, body: str, *, status: str = "new", finished_sha: str | None = None) -> str:
-    state = load_state(root)
     ask_id = str(uuid.uuid4())[:8]
-    state.setdefault("open_asks", []).append(
-        {"id": ask_id, "body": body.strip()[:500], "status": status, "finished_sha": finished_sha, "at": _now_ct()}
-    )
-    state["open_asks"] = state["open_asks"][-60:]
-    save_state(root, state)
-    write_catchup(root, state=state)
-    return ask_id
+    row = {"id": ask_id, "body": body.strip()[:500], "status": status, "finished_sha": finished_sha, "at": _now_ct()}
+
+    def _apply(state: dict) -> str:
+        state.setdefault("open_asks", []).append(row)
+        state["open_asks"] = state["open_asks"][-60:]
+        return ask_id
+
+    return _mutate(root, _apply, catchup=True)
 
 
 def write_now(root: Path, line: str, *, step: str | None = None, elapsed_seconds: int | None = None,
-              sha: str | None = None, state: dict | None = None) -> None:
-    state = state or load_state(root)
+              sha: str | None = None) -> None:
     plain = line.strip()[:500]
     if elapsed_seconds is not None:
         plain += f" · {elapsed_seconds // 60}m elapsed"
@@ -186,11 +226,12 @@ def write_now(root: Path, line: str, *, step: str | None = None, elapsed_seconds
     if step:
         plain += f" · step {step}"
     entry = {"at": _now_ct(), "line": plain}
-    state.setdefault("now_history", []).append(entry)
-    state["now_history"] = state["now_history"][-40:]
-    save_state(root, state)
-    _atomic_write(_folder(root) / NOW_FILE, f"{plain}\n")
-    write_catchup(root, state=state)
+
+    def _apply(st: dict) -> None:
+        st.setdefault("now_history", []).append(entry)
+        st["now_history"] = st["now_history"][-40:]
+
+    _mutate(root, _apply, now_line=plain, catchup=True)
 
 
 def _commits_since(root: Path, since: float) -> list[str]:
@@ -210,8 +251,7 @@ def _commits_since(root: Path, since: float) -> list[str]:
         return []
 
 
-def write_catchup(root: Path, *, state: dict | None = None) -> None:
-    state = state or load_state(root)
+def _write_catchup_body(root: Path, state: dict) -> None:
     seen = root / LAST_SEEN
     since = seen.stat().st_mtime if seen.exists() else 0.0
     lines: list[str] = [f"# Bob catch-up · {_now_ct()} · since last Bob read", ""]
@@ -258,49 +298,72 @@ def write_catchup(root: Path, *, state: dict | None = None) -> None:
     _atomic_write(_folder(root) / CATCHUP_FILE, "\n".join(lines) + "\n")
 
 
+def write_catchup(root: Path) -> None:
+    """Refresh BOB-CATCHUP.md from current STATE.json under lock."""
+    _mutate(root, lambda _state: None, catchup=True)
+
+
 def sync_from_live_ops(root: Path, live_ops: dict, *, head_sha: str | None = None,
                        webchat_round: int | None = None) -> dict:
-    state = load_state(root)
-    if head_sha:
-        state["last_sha"] = head_sha
-    if webchat_round:
-        state["active_round"] = {"number": webchat_round, "label": "webchat-ready"}
-    jobs_out = []
-    now = time.time()
-    for row in live_ops.get("running_jobs") or []:
-        launched = row.get("started_at")
-        heartbeat = now
-        if launched:
-            try:
-                heartbeat = datetime.fromisoformat(launched.replace("Z", "+00:00")).timestamp()
-            except (TypeError, ValueError):
-                heartbeat = now - float(row.get("elapsed_seconds") or 0)
-        stale = (now - heartbeat) > STALL_SECONDS and row.get("live_screen")
-        jobs_out.append({
-            "job_id": row.get("job_id") or row.get("engine"),
-            "engine": row.get("engine"),
-            "plain_now": row.get("plain_now"),
-            "live": bool(row.get("live_screen")),
-            "stall": "stalled" if stale or row.get("stall_state") == "stalled" else "running",
-            "round": row.get("round"),
-            "last_commit": (row.get("last_commit") or {}).get("sha"),
-        })
-    state["jobs"] = jobs_out[:12]
-    save_state(root, state)
-    lead = jobs_out[0] if jobs_out else None
-    if lead and lead.get("live"):
-        write_now(
-            root,
-            lead.get("plain_now") or f"{lead.get('engine', 'job')} is running",
-            sha=lead.get("last_commit") or head_sha,
-            elapsed_seconds=live_ops.get("running_jobs", [{}])[0].get("elapsed_seconds") if live_ops.get("running_jobs") else None,
-            state=state,
-        )
-    elif head_sha:
-        write_now(root, f"Idle on mini · last commit {head_sha[:12]}", sha=head_sha, state=state)
-    else:
-        write_catchup(root, state=state)
-    return state
+    now_plain: str | None = None
+    elapsed_for_now: int | None = None
+    sha_for_now: str | None = None
+
+    def _apply(state: dict) -> None:
+        nonlocal now_plain, elapsed_for_now, sha_for_now
+        if head_sha:
+            state["last_sha"] = head_sha
+        round_no = webchat_round or live_ops.get("webchat_round")
+        if round_no:
+            state["active_round"] = {"number": round_no, "label": "webchat-ready"}
+        jobs_out = []
+        for row in live_ops.get("running_jobs") or []:
+            stalled = row.get("stall_state") == "stalled"
+            jobs_out.append({
+                "job_id": row.get("job_id") or row.get("engine"),
+                "engine": row.get("engine"),
+                "plain_now": row.get("plain_now"),
+                "live": bool(row.get("live_screen")),
+                "stall": "stalled" if stalled else "running",
+                "round": row.get("round"),
+                "last_commit": (row.get("last_commit") or {}).get("sha"),
+            })
+        state["jobs"] = jobs_out[:12]
+        lead = next((j for j in jobs_out if j.get("live")), jobs_out[0] if jobs_out else None)
+        if lead and lead.get("live"):
+            elapsed_for_now = None
+            for row in live_ops.get("running_jobs") or []:
+                if lead.get("job_id") and row.get("job_id") == lead.get("job_id"):
+                    elapsed_for_now = row.get("elapsed_seconds")
+                    break
+            if elapsed_for_now is None:
+                for row in live_ops.get("running_jobs") or []:
+                    if row.get("engine") == lead.get("engine"):
+                        elapsed_for_now = row.get("elapsed_seconds")
+                        break
+            sha_for_now = lead.get("last_commit") or head_sha
+            plain = lead.get("plain_now") or f"{lead.get('engine', 'job')} is running"
+            if elapsed_for_now is not None:
+                plain += f" · {int(elapsed_for_now) // 60}m elapsed"
+            if sha_for_now:
+                plain += f" · {str(sha_for_now)[:12]}"
+            now_plain = plain
+            entry = {"at": _now_ct(), "line": plain[:500]}
+            state.setdefault("now_history", []).append(entry)
+            state["now_history"] = state["now_history"][-40:]
+        elif head_sha:
+            now_plain = f"Idle on mini · last commit {head_sha[:12]}"
+            entry = {"at": _now_ct(), "line": now_plain}
+            state.setdefault("now_history", []).append(entry)
+            state["now_history"] = state["now_history"][-40:]
+
+    _mutate(
+        root,
+        _apply,
+        now_line=f"{now_plain}\n" if now_plain else None,
+        catchup=True,
+    )
+    return load_state(root)
 
 
 def read_now_line(root: Path) -> str | None:

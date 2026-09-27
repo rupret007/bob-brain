@@ -1,20 +1,20 @@
 {
-  "started_at": 1790495459.530438,
+  "started_at": 1790495974.568695,
   "rounds": [
     {
       "ledger": {
         "tag": "r8-1",
         "ledger_ok": true,
         "bob_pickup_ok": true,
-        "summary_chars": 2639
+        "summary_chars": 936
       },
       "live": {
         "tag": "r8-1",
         "status": "done",
         "provider": "gemini",
-        "elapsed_seconds": 1.686,
+        "elapsed_seconds": 1.789,
         "mentions_running": true,
-        "snippet": "Hey Jeff,\n\nFrom the `BOB-STATE` and `HANDBACK-SUMMARY`, here's what's running right now:\n\n*   **`drill-r8-1`**: This is the handback drill screen.\n*   **`cursor-queue-23-recordin`**: This is a Cursor job that's active on",
+        "snippet": "Right now, the `handback drill screen drill-r8-1` is running.\n\nAlso, the `cursor-queue-23-recordin` job is active on a screen session.",
         "live_ok": true
       },
       "reverse_handback_ok": true,
@@ -25,15 +25,15 @@
         "tag": "r8-2",
         "ledger_ok": true,
         "bob_pickup_ok": true,
-        "summary_chars": 2689
+        "summary_chars": 1583
       },
       "live": {
         "tag": "r8-2",
         "status": "done",
         "provider": "gemini",
-        "elapsed_seconds": 1.123,
+        "elapsed_seconds": 1.12,
         "mentions_running": true,
-        "snippet": "Hey Jeff,\n\nFrom the `BOB-STATE` and `HANDBACK-SUMMARY`, here's what's running right now:\n\n*   `drill-r8-1` (handback drill screen)\n*   `cursor-queue-23-recordin` (cursor job, active on a screen session, 70m elapsed, SHA ",
+        "snippet": "Right now, the `handback drill screen drill-r8-1` is running.\n\nAlso, the `cursor-queue-23-recordin` job is active on a screen session. It's been running for 78 minutes.",
         "live_ok": true
       },
       "reverse_handback_ok": true,
@@ -41,6 +41,6 @@
     }
   ],
   "restored_handback": true,
-  "finished_at": 1790495462.7105448,
+  "finished_at": 1790495978.100945,
   "result": "PASS"
 }
