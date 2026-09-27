@@ -252,6 +252,8 @@ class ServicesTest(unittest.TestCase):
         self.assertIn("log_tail", job)
         self.assertIn("last_commit", job)
         self.assertIn("stall_state", job)
+        self.assertIn("events", job)
+        self.assertTrue(any(e.get("kind") == "status" for e in job["events"]))
         self.assertIn("dashboard_freshness_seconds", ops)
 
     def test_alignment_events_append_and_tail(self):

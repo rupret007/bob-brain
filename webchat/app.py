@@ -695,12 +695,33 @@ class Chat:
         self._launchd_probe_cache = cache
         return value
 
+    def _self_improve_schedule_hint(self, plist: Path) -> str | None:
+        if not plist.is_file():
+            return None
+        try:
+            text = plist.read_text(errors="replace")
+        except OSError:
+            return None
+        hour = minute = None
+        for key, var in (("Hour", "hour"), ("Minute", "minute")):
+            match = re.search(rf"<key>{key}</key>\s*<integer>(\d+)</integer>", text)
+            if match:
+                if var == "hour":
+                    hour = int(match.group(1))
+                else:
+                    minute = int(match.group(1))
+        if hour is None:
+            return None
+        minute = minute if minute is not None else 0
+        return f"Scheduled daily ~{hour:02d}:{minute:02d} CT on the mini (launchd)."
+
     def self_improve_status(self):
         root = self.root
         plist = root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist"
         tick = root / "conductor/webchat/self_improve_tick.sh"
         log_path = root / "logs/webchat-self-improve.log"
         label = "com.jeff.bob-webchat-self-improve"
+        schedule_hint = self._self_improve_schedule_hint(plist)
         last_tick = None
         last_tick_outcome = None
         handback = root / "conductor/handback/HANDBACK-LOG.md"
@@ -751,6 +772,8 @@ class Chat:
         elif not files_ok:
             summary = "Install self-improve launchd plist + tick script. " + summary
         healthy = bool(files_ok and (launchd_loaded is True or recent_ok))
+        if schedule_hint:
+            summary = schedule_hint + " " + summary
         return {
             "launchd_plist": plist.exists(),
             "tick_script": tick.exists(),
@@ -762,6 +785,7 @@ class Chat:
             "last_tick_log_line": last_tick_outcome,
             "recent_log_ok": recent_ok,
             "log_age_seconds": recent_age_seconds,
+            "schedule_hint": schedule_hint,
             "summary": summary,
         }
 

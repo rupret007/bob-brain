@@ -770,6 +770,7 @@ class HandbackJobTests(Fixture):
         self.assertIn("rhyme", (try_music_coach_reply("fix the rhyme scheme") or "").lower())
         self.assertIn("bridge", (try_music_coach_reply("help with song structure and bridge") or "").lower())
         self.assertIn("bpm", (try_music_coach_reply("what tempo bpm should I use") or "").lower())
+        self.assertIn("4/4", (try_music_coach_reply("what time signature 4/4") or "").lower())
 
     def test_self_improve_healthy_flag(self):
         (self.root / "conductor/launchd").mkdir(parents=True, exist_ok=True)

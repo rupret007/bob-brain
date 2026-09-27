@@ -147,6 +147,20 @@ def _lane_roles(lanes: dict, sessions: set[str]) -> dict:
     return {"building": building, "reviewing": reviewing}
 
 
+def _structured_events(row: dict, tail: list[str], commit: dict, plain: str | None) -> list[dict]:
+    events: list[dict] = []
+    if plain:
+        events.append({"kind": "status", "text": plain})
+    for line in tail:
+        events.append({"kind": "log", "text": line})
+    if commit.get("sha"):
+        events.append({"kind": "commit", "sha": commit.get("sha"), "message": commit.get("message")})
+    stall = row.get("stall_state")
+    if stall:
+        events.append({"kind": "stall", "state": stall})
+    return events[:8]
+
+
 def _stalled(record: dict, now: float, live: bool) -> str:
     state = record.get("state", "unknown")
     if state in ("harvested", "blocked"):
@@ -174,19 +188,24 @@ def build_live_ops(*, sessions: dict, jobs_map: dict, lanes: dict, spend: dict, 
         job_dir = Path(record.get("job_dir") or ROOT / job_id)
         log_lines = _job_log_lines(job_dir, job_id)
         launched = float(record.get("launched_at") or record.get("timestamp") or now)
-        active_jobs.append({
+        stall_state = _stalled(record, now, live)
+        plain_now = _plain_english(job_id, record.get("engine"), record.get("state", ""), log_lines)
+        last_commit = _git_head(job_dir)
+        row = {
             "job_id": job_id,
             "engine": record.get("engine") or record.get("model"),
             "state": record.get("state"),
             "live_screen": live,
-            "stall_state": _stalled(record, now, live),
+            "stall_state": stall_state,
             "started_at": datetime.fromtimestamp(launched, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00") if launched else None,
             "elapsed_seconds": round(max(0, now - launched)),
-            "plain_now": _plain_english(job_id, record.get("engine"), record.get("state", ""), log_lines),
+            "plain_now": plain_now,
             "log_tail": log_lines,
-            "last_commit": _git_head(job_dir),
+            "last_commit": last_commit,
             "round": _webchat_round(),
-        })
+        }
+        row["events"] = _structured_events(row, log_lines[-3:], last_commit, plain_now)
+        active_jobs.append(row)
     active_jobs.sort(key=lambda row: (0 if row["live_screen"] else 1, -row["elapsed_seconds"]))
     minimax = spend.get("minimax") or {}
     roles = _lane_roles(lanes, session_names)
@@ -219,20 +238,6 @@ def build_live_ops(*, sessions: dict, jobs_map: dict, lanes: dict, spend: dict, 
         "service_screens": sorted(svc_screens),
         "running_jobs": active_jobs[:12],
     }
-
-
-def _structured_events(row: dict, tail: list[str], commit: dict, plain: str | None) -> list[dict]:
-    events: list[dict] = []
-    if plain:
-        events.append({"kind": "status", "text": plain})
-    for line in tail:
-        events.append({"kind": "log", "text": line})
-    if commit.get("sha"):
-        events.append({"kind": "commit", "sha": commit.get("sha"), "message": commit.get("message")})
-    stall = row.get("stall_state")
-    if stall:
-        events.append({"kind": "stall", "state": stall})
-    return events[:8]
 
 
 def public_live_ops(live_ops: dict) -> dict:

@@ -20,6 +20,10 @@ if ($("login-form")) {
   function escapeHtml(text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
+  function minimaxCapUsd(spend) {
+    const cap = spend?.cap_usd;
+    return cap === undefined || cap === null ? 59 : cap;
+  }
   function speechText(text) {
     return text.replace(/```[\s\S]*?```/g, " ").replace(/`([^`]+)`/g, "$1")
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1")
@@ -425,6 +429,7 @@ if ($("login-form")) {
       return;
     }
     micErrorActive = false;
+    const micBase = ($("message").value || "").trim();
     const rec = new Speech();
     micRecognition = rec;
     rec.lang = "en-US";
@@ -438,8 +443,8 @@ if ($("login-form")) {
       : "Listening… tap mic again to stop.";
     rec.onresult = (event) => {
       if (micRecognition !== rec) return;
-      const transcript = Array.from(event.results).map((row) => row[0].transcript).join(" ").trim();
-      $("message").value = ($("message").value + " " + transcript).trim();
+      const dictated = Array.from(event.results).map((row) => row[0].transcript).join(" ").trim();
+      $("message").value = [micBase, dictated].filter(Boolean).join(" ").trim();
       $("message").dispatchEvent(new Event("input"));
     };
     rec.onend = () => {
@@ -863,12 +868,13 @@ if ($("login-form")) {
     try {
       const data = await api("/api/panel");
       const meta = data.live_ops_meta || {};
+      lastPanelMeta = meta;
       const ops = data.live_ops || {};
       const spend = ops.minimax_spend || {};
       const roles = ops.roles || {};
       const jobs = ops.running_jobs || [];
       const committed = spend.committed_usd;
-      const cap = spend.cap_usd || 59;
+      const cap = minimaxCapUsd(spend);
       const spendText = committed === undefined || committed === null ? "budget unknown" : `$${committed.toFixed(2)} of $${cap}`;
       const dashAge = ops.dashboard_freshness_seconds;
       const dashNote = dashAge === null || dashAge === undefined ? "" : ` · dashboard ${dashAge}s ago`;
@@ -924,7 +930,8 @@ if ($("login-form")) {
       const health = si.healthy === true ? "Loop healthy"
         : (si.healthy === false && si.launchd_files_ok ? "Needs a successful tick — check mini bootstrap"
           : (si.launchd_files_ok ? "Status unknown — refresh Jobs tab" : "Install tick + plist — see mini setup"));
-      $("self-improve-status").textContent = [health, loaded, logFresh, si.summary || ""].filter(Boolean).join(" · ");
+      const schedule = si.schedule_hint ? si.schedule_hint.replace(/\.$/, "") : "";
+      $("self-improve-status").textContent = [health, loaded, schedule, logFresh, si.summary || ""].filter(Boolean).join(" · ");
       const cl = data.round_changelog || {};
       const clHost = $("changelog-line");
       if (clHost) {
@@ -938,6 +945,7 @@ if ($("login-form")) {
   }
   let lastPanelScores = null;
   let lastPanelOps = null;
+  let lastPanelMeta = { stale: false };
   async function refreshLanes() {
     try {
       renderScoresTable(lastPanelScores);
@@ -945,19 +953,23 @@ if ($("login-form")) {
       const spend = ops.minimax_spend || {};
       const roles = ops.roles || {};
       const dashAge = ops.dashboard_freshness_seconds;
-      const dashBit = dashAge == null ? "dashboard age unknown" : `dashboard ${dashAge}s ago`;
-      const spendBit = spend.committed_usd == null ? "MiniMax spend unknown" : `MiniMax $${Number(spend.committed_usd).toFixed(2)} / $${spend.cap_usd || 59}`;
-      $("lanes-summary").textContent = [
+      const opsLead = [
         ops.now_line || "Live ops from the mini",
-        dashBit,
-        spendBit,
+        dashAge == null ? "dashboard age unknown" : `dashboard ${dashAge}s ago`,
+        spend.committed_usd == null ? "MiniMax spend unknown" : `MiniMax $${Number(spend.committed_usd).toFixed(2)} / $${minimaxCapUsd(spend)}`,
         `Builder ${roles.building || "idle"} · Reviews ${roles.reviewing || "idle"}`,
         ops.webchat_round ? `Round ${ops.webchat_round} scores below` : "",
       ].filter(Boolean).join(" · ");
       const data = await api("/api/lanes" + (current ? "?conversation_id=" + encodeURIComponent(current) : ""));
       const entries = Object.entries(data.providers);
       const cooling = entries.filter(([, lane]) => lane.state === "cooldown").length;
-      $("lanes-summary").textContent = cooling ? `${cooling} model${cooling === 1 ? "" : "s"} cooling down` : "All models ready to help";
+      const busy = entries.filter(([, lane]) => lane.state === "busy").length;
+      const allReady = entries.length > 0 && entries.every(([, lane]) => lane.state === "ready");
+      const laneNote = cooling
+        ? `${cooling} model${cooling === 1 ? "" : "s"} cooling down`
+        : (busy ? `${busy} model${busy === 1 ? "" : "s"} busy` : (allReady ? "All lanes ready" : "Lane status updating"));
+      const stalePrefix = lastPanelMeta.stale ? "Refreshing dashboard… · " : "";
+      $("lanes-summary").textContent = `${stalePrefix}${opsLead} · ${laneNote}`;
       $("lanes").replaceChildren(...entries.map(([name, lane]) => {
         const card = document.createElement("article");
         card.className = "lane-card";

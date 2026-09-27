@@ -115,7 +115,7 @@ def snapshot_for_prompt(root: Path, limit: int = 6000) -> str:
 
 
 _MUSIC_COACH_RE = re.compile(
-    r"\b(?:(?:my |a )?song|lyrics|chorus|verse|bridge|hook|chords?|progression|melody|arrange|rhyme|meter|tempo|bpm|structure)\b",
+    r"\b(?:(?:my |a )?song|lyrics|chorus|verse|bridge|hook|chords?|progression|melody|arrange|rhyme|meter|tempo|bpm|structure|time signature|4/4|3/4|6/8)\b",
     re.I,
 )
 
@@ -155,6 +155,12 @@ def try_music_coach_reply(text: str) -> str | None:
             "Structure: verse sets the story, chorus is the emotional headline, bridge is one new angle before the final chorus. "
             "Try 8-bar sections in 4/4; label them in Songs → notes so versions stay clear. "
             "When a section feels long, cut a line instead of adding chords."
+        )
+    if "time signature" in lower or "4/4" in lower or "3/4" in lower or "6/8" in lower:
+        return (
+            "Time signature: 4/4 is the default pop/rock feel; 6/8 gives a lilting triplet groove; 3/4 is waltz. "
+            "Keep the lyric syllables per bar consistent once you pick one. "
+            "Note the choice in Songs → notes so Bob and versions stay aligned."
         )
     if "tempo" in lower or "bpm" in lower or "key" in lower:
         return (
