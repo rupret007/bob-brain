@@ -1,7 +1,7 @@
 # Web Bob READY-FOR-PHONE — Round 5 result (Cursor lane)
 
 **Branch:** `draft/webchat-failover-20260927`  
-**Round 4 base:** `d2fa8360f20e20d85d5183aa50ea5986bd140a9e` · **Round 5 commit:** _(see git log after commit)_  
+**Round 4 base:** `d2fa8360f20e20d85d5183aa50ea5986bd140a9e` · **Round 5 commit:** `336328a0d56857fcaa2f0a3d4918533ca04fd392`  
 **Council (no Grok):** `conductor/reviews/webchat-ready-r5-council/20260927-020914-624582.md` (Gemini, MiniMax, Claude, Codex synthesize; Cursor busy). Applied by vote: local-only music (`music_demo.py` + `/api/music/demo`), mic stops before read-aloud, status panel reads `dashboard.json` `live_ops` with log tails, handback drill backup/restore + stricter takeover prompts. Deferred: full fixture-root isolated webchat server (effort M).  
 **Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
 
