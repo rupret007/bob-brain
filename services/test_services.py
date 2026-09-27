@@ -176,4 +176,34 @@ class ServicesTest(unittest.TestCase):
         self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(p.read_text(),'VALUE = 1\n');self.assertEqual(p.stat().st_mode & 0o222,0)
         self.assertTrue(list((self.core/'reviews/quarantine').rglob('ROLLBACK.txt')))
 
+    def test_progress_cannot_hide_final_blocker(self):
+        lines=[{"type":"item.completed","item":{"type":"agent_message","text":"Working on it."}},
+               {"type":"item.completed","item":{"type":"agent_message","text":"BLOCKER: actual failure"}}]
+        output="\n".join(map(json.dumps,lines))
+        with patch.object(lanes,'run',return_value=NS(returncode=0,stdout=output,stderr='')),patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd:cmd):
+            self.assertEqual(lanes.cli('codex','task',self.root,True,100),'BLOCKER: actual failure')
+
+    def test_incorrect_harvest_is_reopened_and_retry_does_not_move(self):
+        folder=self.folder();(folder/'RESULT.txt').write_text('Progress.\nBLOCKER: unfinished\n')
+        state.job_event('a','harvested',job_dir=str(folder),managed=True,verified=True,outcome='result')
+        self.recover();first=state.jobs()['a'];self.assertEqual(first['state'],'blocked')
+        self.recover();self.assertEqual(state.jobs()['a']['retry_at'],first['retry_at'])
+
+    def test_external_coder_claim_blocks_new_webjam_work(self):
+        notice=self.core/'reviews/WEBJAM-TEST-BUILD-SCHEDULER.md';notice.parent.mkdir()
+        notice.write_text('Status: ACTIVE — test build.\n')
+        self.assertTrue(jobs.external_webjam_lease({}))
+        notice.write_text('Status: COMPLETE\n');self.assertFalse(jobs.external_webjam_lease({}))
+        self.assertTrue(jobs.external_webjam_lease({'svc-webjam-test':'123.svc-webjam-test'}))
+
+    def test_coding_boundary_allows_real_commit_and_normal_push(self):
+        repo=self.root/'repo';repo.mkdir();remote=self.root/'remote.git'
+        command.run(['git','init','--bare',str(remote)],capture_output=True,timeout=10,check=True)
+        workspaces.git(repo,'init','-b','draft/fixture');workspaces.git(repo,'config','user.name','Fixture');workspaces.git(repo,'config','user.email','fixture@localhost')
+        workspaces.git(repo,'remote','add','origin',str(remote))
+        (repo/'proof.txt').write_text('verified commit/push boundary\n')
+        for args in [['add','proof.txt'],['commit','-m','fixture'],['push','origin','HEAD']]:
+            command.run(workspaces.sandbox_command(['git','-C',str(repo),*args],repo),capture_output=True,timeout=10,check=True)
+        self.assertEqual(workspaces.git(repo,'rev-parse','HEAD'),workspaces.git(remote,'rev-parse','refs/heads/draft/fixture'))
+
 if __name__=='__main__':unittest.main(verbosity=2)

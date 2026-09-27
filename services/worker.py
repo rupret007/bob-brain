@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from command import run
-from jobs import blocked, setup_record
+from jobs import blocked, setup_record, external_webjam_lease
 from lanes import ask
 from state import CONDUCTOR, atomic_write, job_event, jobs, lock
 from workspaces import git, prepare
@@ -28,6 +28,9 @@ def execute(job):
             stack.enter_context(lock("worktree-" + hashlib.sha256(record["worktree"].encode()).hexdigest(), blocking=False))
             if coding and record["project"] == "WebJam":
                 stack.enter_context(lock("webjam-coder", blocking=False))
+                from runtime import screen_sessions
+                if external_webjam_lease(screen_sessions()):
+                    raise BlockingIOError("external WebJam coding lease")
             cwd = setup_record(record)
             job_event(job, "running", recovery="worker executing")
             prompt = (folder / "PROMPT.txt").read_text()

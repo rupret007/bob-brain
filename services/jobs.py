@@ -107,6 +107,14 @@ def recover(refill=None):
                 job_event(record["job_id"], "running", recovery="live worker adopted after restart")
             continue  # do not harvest files an active writer may still be changing
         if result:
+            if record.get("managed") and re.search(r"(?im)^\s*(?:\*\*)?BLOCKER\s*:", result.read_text()):
+                if record["state"] != "blocked" or record.get("verified"):
+                    job_event(record["job_id"], "blocked", invalidate_result=True, verified=False,
+                              outcome="blocked", recovery="final response is a BLOCKER; completion invalidated",
+                              retry_at=time.time() + 300)
+                update_index(record, "BLOCKED")
+                unresolved.append(record["job_id"])
+                continue
             digest = hashlib.sha256(result.read_bytes()).hexdigest()
             if record["state"] != "harvested" or record.get("result_sha256") != digest:
                 # Managed jobs must pass worker verification before RESULT is terminal.
@@ -236,6 +244,14 @@ def can_assign(spec, lane, active, health):
     return len(active) < 5
 
 
+def external_webjam_lease(sessions):
+    """Honor the separately requested local test build without taking its worktree."""
+    notice = CONDUCTOR / "reviews/WEBJAM-TEST-BUILD-SCHEDULER.md"
+    if "svc-webjam-test" in sessions:
+        return True
+    return notice.exists() and bool(re.search(r"(?m)^Status:\s*ACTIVE\b", notice.read_text()))
+
+
 def tick():
     with lock("queue", blocking=False):
         if (CONDUCTOR / "MAINTENANCE").exists():
@@ -250,6 +266,8 @@ def tick():
         active = [dict(r, project=r.get("project") or ("WebJam" if "webjam" in r["job_id"] else "unknown"),
                        kind=r.get("kind") or "coding") for r in records.values()
                   if r["job_id"] in sessions and r["state"] != "harvested"]
+        external_coder = external_webjam_lease(sessions)
+        alert("external-webjam", "WebJam coding held for the separately requested local test build; other lanes continue" if external_coder else None)
         known = {r.get("spec_id") for r in records.values()}
         candidates = [r for r in records.values() if r.get("managed") and r["state"] in ("queued", "blocked")
                       and r.get("retry_at", 0) <= time.time() and r.get("attempts", 0) < MAX_ATTEMPTS]
@@ -259,6 +277,8 @@ def tick():
                 candidates.append(spec)
         candidates.sort(key=lambda r: (PROJECTS.index(r["project"]), r.get("priority", 99)))
         for spec in candidates:
+            if external_coder and spec["project"] == "WebJam" and spec["kind"] == "coding":
+                continue
             lane_order = ("cursor", "codex", "claude", "gemini", "minimax") if spec["kind"] == "coding" else ("gemini", "minimax", "cursor", "claude", "codex")
             for lane in lane_order:
                 if not can_assign(spec, lane, active, health):

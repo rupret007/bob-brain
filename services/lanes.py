@@ -85,8 +85,12 @@ def cli(lane, prompt, cwd, coding, timeout):
     else:
         argv = [str(CURSOR), "-p", prompt, "--output-format", "json", "--trust"]
         argv += ["--force"] if coding else ["--mode", "ask"]
-    result = run(sandbox_command(argv, cwd), cwd=str(cwd), env=clean_env(),
-                 capture_output=True, text=True, timeout=timeout)
+    try:
+        result = run(sandbox_command(argv, cwd), cwd=str(cwd), env=clean_env(),
+                     capture_output=True, text=True, timeout=timeout)
+    except Exception:
+        budget.record_cli(lane, [], False, "coding" if coding else "analysis")
+        raise
     events, answers = [], []
     for line in result.stdout.splitlines():
         try:
@@ -111,7 +115,9 @@ def cli(lane, prompt, cwd, coding, timeout):
         raise RuntimeError(lane + " CLI exit " + str(result.returncode) + "; " + result.stderr[-250:])
     if any(e.get("is_error") for e in events):
         raise RuntimeError(lane + " reported an error result")
-    answer = "\n".join(answers).strip()
+    # Codex emits progress messages as well as the final answer. Only the last
+    # final message is a closeout; prefacing BLOCKER with progress hid failures.
+    answer = answers[-1].strip() if answers else ""
     if not answer:
         raise RuntimeError(lane + " returned no final answer")
     return answer

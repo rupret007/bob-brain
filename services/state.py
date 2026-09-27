@@ -117,7 +117,7 @@ def job_event(job_id, state=None, **fields):
         row = dict(previous, **fields)
         row.update(job_id=job_id, state=state or previous.get("state", "launched"))
         # Reconciliation may discover a closeout after the launch but before running.
-        if previous.get("state") == "harvested" and previous.get("outcome") != "blocked" and row["state"] != "harvested":
+        if previous.get("state") == "harvested" and previous.get("outcome") != "blocked" and row["state"] != "harvested" and not fields.get("invalidate_result"):
             raise ValueError("cannot relaunch a harvested job: " + job_id)
         if all(previous.get(k) == v for k, v in row.items()):
             return previous
