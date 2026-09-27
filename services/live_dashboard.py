@@ -260,7 +260,10 @@ def public_live_ops(live_ops: dict) -> dict:
         events = _structured_events(row, tail[-3:], commit, plain)
         jobs.append({
             "engine": row.get("engine") or "worker",
+            "state": row.get("state"),
             "stall_state": row.get("stall_state"),
+            "display_state": row.get("display_state"),
+            "stall_plain": row.get("stall_plain"),
             "started_at": row.get("started_at"),
             "elapsed_seconds": row.get("elapsed_seconds"),
             "plain_now": plain,

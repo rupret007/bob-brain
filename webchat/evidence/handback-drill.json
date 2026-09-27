@@ -1,46 +1,46 @@
 {
-  "started_at": 1790501644.1826198,
+  "started_at": 1790504146.76536,
   "rounds": [
     {
       "ledger": {
-        "tag": "r15-1",
-        "fixture_id": "610e68ec-3fed-4939-9da0-f564d996f9be",
+        "tag": "r17-1",
+        "fixture_id": "6fa41d7f-5ccd-4a72-9343-6e1fde7e942d",
         "ledger_ok": true,
         "bob_pickup_ok": true,
         "summary_chars": 967
       },
       "live": {
-        "tag": "r15-1",
+        "tag": "r17-1",
         "status": "done",
         "provider": "state",
-        "elapsed_seconds": 0.05,
+        "elapsed_seconds": 0.044,
         "mentions_running": true,
-        "snippet": "Running: handback drill screen `drill-r15-1`",
+        "snippet": "Running: handback drill screen `drill-r17-1`",
         "live_ok": true
       },
-      "fixture_id": "610e68ec-3fed-4939-9da0-f564d996f9be",
+      "fixture_id": "6fa41d7f-5ccd-4a72-9343-6e1fde7e942d",
       "reverse_handback_ok": true,
       "events_ok": true,
       "pass": true
     },
     {
       "ledger": {
-        "tag": "r15-2",
-        "fixture_id": "80aab232-cc88-4eef-8870-d3e883e095c5",
+        "tag": "r17-2",
+        "fixture_id": "b1b07837-8f02-472d-aa8e-121237f69170",
         "ledger_ok": true,
         "bob_pickup_ok": true,
         "summary_chars": 967
       },
       "live": {
-        "tag": "r15-2",
+        "tag": "r17-2",
         "status": "done",
         "provider": "state",
-        "elapsed_seconds": 0.057,
+        "elapsed_seconds": 0.046,
         "mentions_running": true,
-        "snippet": "Running: handback drill screen `drill-r15-2`",
+        "snippet": "Running: handback drill screen `drill-r17-2`",
         "live_ok": true
       },
-      "fixture_id": "80aab232-cc88-4eef-8870-d3e883e095c5",
+      "fixture_id": "b1b07837-8f02-472d-aa8e-121237f69170",
       "reverse_handback_ok": true,
       "events_ok": true,
       "pass": true
@@ -48,7 +48,7 @@
   ],
   "isolated": true,
   "prod_unchanged": true,
-  "finished_at": 1790501644.561428,
+  "finished_at": 1790504147.095422,
   "result": "PASS",
   "drill_commit_marker": "drill0001"
 }

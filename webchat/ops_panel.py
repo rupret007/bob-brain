@@ -133,6 +133,42 @@ def load_live_ops(root: Path, *, max_age: float = LIVE_OPS_MAX_AGE) -> dict:
     return {"live_ops": {}, "meta": meta}
 
 
+def _stall_plain(stall: str, live: bool) -> str:
+    if stall == "stalled":
+        return "Stalled — no heartbeat" if live else "Marked stalled"
+    if stall == "running":
+        return "Running normally" if live else "Tracked as running"
+    if stall == "queued":
+        return "Waiting to start"
+    return "Status unknown"
+
+
+def enrich_live_ops(live_ops: dict) -> dict:
+    """Plain-English display fields for Jobs dashboard (phone)."""
+    if not live_ops:
+        return live_ops
+    jobs = []
+    for row in live_ops.get("running_jobs") or []:
+        job = dict(row)
+        live = bool(job.get("live_screen"))
+        stall = job.get("stall_state") or "unknown"
+        state = job.get("state") or ""
+        job["stall_plain"] = _stall_plain(stall, live)
+        if live and stall == "stalled":
+            job["display_state"] = "Stalled on screen"
+        elif live:
+            job["display_state"] = "Live on screen"
+        elif state in ("running", "launched"):
+            job["display_state"] = "Marked running; screen unconfirmed"
+        elif state == "queued":
+            job["display_state"] = "Queued"
+        else:
+            job["display_state"] = "Tracked"
+        jobs.append(job)
+    screens = live_ops.get("service_screens") or []
+    return {**live_ops, "running_jobs": jobs, "service_screen_count": len(screens)}
+
+
 def conductor_snapshot(root: Path) -> dict:
     conductor = root / "conductor"
     branch = "unknown"
@@ -178,6 +214,6 @@ def conductor_snapshot(root: Path) -> dict:
         },
         "council_hint": "Tap Ask council in Jobs or chat, then approve the card (Gemini + MiniMax + Claude on the mini; no Grok).",
         "round_hint": "Tap Start round in Jobs or chat, then approve the card to queue a draft screen job.",
-        "safety": "Drafts only · confirm before merge, send, or spend · never Grok",
+        "safety": "Drafts only · never merge, send, or spend · no Grok",
         "read_at": time.time(),
     }

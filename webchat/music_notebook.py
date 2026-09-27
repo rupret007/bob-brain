@@ -115,7 +115,7 @@ def snapshot_for_prompt(root: Path, limit: int = 6000) -> str:
 
 
 _MUSIC_COACH_RE = re.compile(
-    r"\b(?:(?:my |a )?song|lyrics|chorus|verse|bridge|hook|chords?|progression|melody|arrange|rhyme|meter|tempo|bpm|structure|time signature|4/4|3/4|6/8|modulation|key change|outro|fade|ending|pre[- ]?chorus|post[- ]?chorus|double[- ]?chorus|tag[- ]?line|tagline|capo|riffs?|vamp|dynamics?|breakdown|build[- ]?up|drop)\b",
+    r"\b(?:(?:my |a )?song|lyrics|chorus|verse|bridge|hook|chords?|progression|melody|arrange|rhyme|meter|tempo|bpm|structure|time signature|4/4|3/4|6/8|modulation|key change|outro|fade|ending|pre[- ]?chorus|post[- ]?chorus|double[- ]?chorus|tag[- ]?line|tagline|refrain|capo|riffs?|vamp|dynamics?|breakdown|build[- ]?up|drop)\b",
     re.I,
 )
 
@@ -162,15 +162,16 @@ def try_music_coach_reply(text: str) -> str | None:
             "Breakdown = strip to one instrument for 4–8 bars before the final lift. "
             "Note the map in Songs → notes; Logic level automation is confirm-first."
         )
-    if "double chorus" in lower or "post-chorus" in lower or "post chorus" in lower:
+    norm = re.sub(r"[-_]", " ", lower)
+    if "double chorus" in norm or "post chorus" in norm:
         return (
             "Double chorus: play the full chorus twice back-to-back; lift drums or harmony on the second pass. "
-            "A post-chorus can be instrumental (hook riff only) between verse and chorus. "
+            "A post-chorus sits right after the chorus — hook riff or repeated lyric before the next verse. "
             "Note the map in Songs → notes; Logic arrangement is confirm-first."
         )
-    if "tag line" in lower or "tagline" in lower or ("chorus" in lower and "tag" in lower):
+    if "tag line" in lower or "tagline" in norm or ("chorus" in lower and "tag" in lower):
         return (
-            "Tag line: repeat one hook phrase after the chorus (often the title) — 2–4 words max, same melody as the chorus hook. "
+            "Tag line: repeat one hook phrase after the chorus (often the title), same melody as the chorus hook. "
             "Use it on the outro vamp or double-chorus ending. "
             "Save the tag lyric as a new Songs version so Bob sees the final hook."
         )
@@ -192,9 +193,15 @@ def try_music_coach_reply(text: str) -> str | None:
             "Match the mood in the Songs tab — save a version after each pass. "
             "Local sketch demo ($0) can render a rough MP3 from lyrics + style when you are ready."
         )
-    if "chorus" in lower or "hook" in lower:
+    if "refrain" in lower and "chorus" not in lower and "hook" not in lower:
         return (
-            "Chorus tip: one clear emotional line, repeat the title, keep lines short for singing. "
+            "Refrain polish: keep it to one repeatable line (often the title) with the same rhythm each time. "
+            "Trim extra syllables on beat 1; if the verse is wordy, make the refrain the emotional release. "
+            "Save each pass in Songs → versions so Bob sees what changed ($0)."
+        )
+    if "chorus" in lower or "hook" in lower or "refrain" in lower:
+        return (
+            "Chorus/refrain tip: one clear emotional line, repeat the title, keep lines short for singing. "
             "Contrast with the verse (higher energy or wider melody). "
             "Drop a draft in Songs → lyrics, then ask me to tighten a specific line."
         )

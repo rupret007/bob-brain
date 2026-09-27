@@ -34,6 +34,7 @@ from job_queue import (
     parse_council_cancel,
     parse_council_confirm_proposal,
     parse_job_confirm,
+    parse_do_more,
     parse_start,
 )
 from actions import queue_once
@@ -41,7 +42,7 @@ from music_notebook import get_project, list_projects, save_project, try_music_c
 from reply_guard import repair_hollow_progress
 from drill_fixture import try_bob_state_running_line
 from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
-from ops_panel import conductor_snapshot, draft_head_sha, load_live_ops
+from ops_panel import conductor_snapshot, draft_head_sha, enrich_live_ops, load_live_ops, maybe_spawn_dashboard_refresh
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -438,7 +439,10 @@ class Chat:
                 self.save(conversation)
                 self.conversations[identifier] = conversation
                 return self.public(conversation)
-            job_text = parse_start(text)
+            started = parse_start(text)
+            do_more_goal = parse_do_more(text) if not started else None
+            job_text = started or do_more_goal
+            do_more = bool(do_more_goal)
             if job_text:
                 if hard_rule_refusal(job_text):
                     refusal = hard_rule_refusal(job_text)
@@ -451,8 +455,14 @@ class Chat:
                     return self.public(conversation)
                 conversation["pending_job"] = job_text
                 conversation["pending_job_id"] = request_id
+                confirm_body = (
+                    "I can queue a **draft** screen job for the conductor scheduler — I am not read-only here. "
+                    "Reply `yes, start job` to confirm, or say `start a job: …` with your exact goal."
+                    if do_more
+                    else "I can queue a **draft** screen job for the conductor scheduler. Reply `yes, start job` to confirm, or edit your request."
+                )
                 conversation["messages"][-1].update(status="done",
-                    content="I can queue a **draft** screen job for the conductor scheduler. Reply `yes, start job` to confirm, or edit your request.",
+                    content=confirm_body,
                     action_card={"id": request_id, "proposal_id": request_id, "state": "confirm", "executable": True,
                                  "reason": "Queue job: " + job_text[:120]})
                 self.save(conversation)
@@ -815,6 +825,10 @@ class Chat:
         if loop_ready:
             summary = f"Loop ready ({tick_ok_streak} recent OK tick{'s' if tick_ok_streak != 1 else ''}). " + summary
         bootstrap = root / "conductor/webchat/bootstrap_self_improve_launchd.sh"
+        install_ready = bool(files_ok and bootstrap.is_file())
+        bootstrap_command = (
+            f"bash {bootstrap.relative_to(root)}" if bootstrap.is_file() else None
+        )
         return {
             "launchd_plist": plist.exists(),
             "tick_script": tick.exists(),
@@ -830,6 +844,8 @@ class Chat:
             "schedule_hint": schedule_hint,
             "tick_ok_streak": tick_ok_streak,
             "loop_ready": loop_ready,
+            "install_ready": install_ready,
+            "bootstrap_command": bootstrap_command,
             "summary": summary,
         }
 
@@ -917,6 +933,7 @@ class Chat:
             alignment_events = {}
         if live_ops.get("dashboard_freshness_seconds") is None and dashboard_age is not None:
             live_ops = {**live_ops, "dashboard_freshness_seconds": round(max(0, time.time() - dashboard_age))}
+        live_ops = enrich_live_ops(live_ops)
         changelog = self.round_changelog()
         return {"lanes": lanes, "jobs": jobs, "recent_results": results, "round_changelog": changelog,
                 "dashboard_modified_at": dashboard_age,
@@ -1117,6 +1134,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, chat.handback())
         if route == "/api/panel":
             return self.send(200, chat.panel())
+        if route == "/api/panel/refresh":
+            return self.send(405, {"error": "Use POST to refresh dashboard."})
         if route == "/api/conductor":
             return self.send(200, conductor_snapshot(chat.root))
         if route == "/api/music/eligibility":
@@ -1171,6 +1190,10 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/conversations":
             self.body()
             return self.send(201, chat.new_conversation())
+        if route == "/api/panel/refresh":
+            self.body()
+            spawned = maybe_spawn_dashboard_refresh(chat.root)
+            return self.send(202, {"ok": True, "spawned": spawned})
         if route == "/api/messages":
             data = self.body()
             return self.send(202, chat.submit(data.get("conversation_id"), data.get("message"), data.get("request_id"), data.get("provider", "auto")))

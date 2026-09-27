@@ -18,9 +18,9 @@ from unittest.mock import patch
 
 from app import Chat, RequestError, Server, password_at, private_write
 from handback import append_turn, refresh_summary
-from job_queue import parse_confirm, parse_council, parse_council_cancel, parse_council_confirm, parse_start, queue_draft, sanitize_council_question
+from job_queue import parse_confirm, parse_council, parse_council_cancel, parse_council_confirm, parse_do_more, parse_start, queue_draft, sanitize_council_question
 from failover import AllDown
-from providers import Cancelled, ProviderError, Providers, Redactor, clean_env, parse_codex, parse_cursor, parse_gemini, run
+from providers import Cancelled, ProviderError, Providers, Redactor, RULES, clean_env, parse_codex, parse_cursor, parse_gemini, run
 
 THREAD = "11111111-2222-3333-4444-555555555555"
 
@@ -592,9 +592,91 @@ class HandbackJobTests(Fixture):
     def test_job_merge_refused_before_queue(self):
         self.chat.submit(self.identifier, "start a job: merge #158", str(uuid.uuid4()))
         self.assertNotIn("pending_job", self.chat.conversations[self.identifier])
-        self.chat.submit(self.identifier, "start a job: safe task", str(uuid.uuid4()))
-        self.chat.submit(self.identifier, "hello bob", str(uuid.uuid4()))
-        self.assertNotIn("pending_job", self.chat.conversations[self.identifier])
+
+    def test_do_more_offers_conductor_job(self):
+        self.assertIsNotNone(parse_do_more("I need you to do more"))
+        self.chat.submit(self.identifier, "I need you to do more", str(uuid.uuid4()))
+        pending = self.chat.conversations[self.identifier].get("pending_job")
+        self.assertIsNotNone(pending)
+        self.assertIn("conductor", pending.lower())
+        last = self.chat.conversations[self.identifier]["messages"][-1]
+        self.assertIn("not read-only", last.get("content", "").lower())
+
+    def test_do_more_does_not_match_negation(self):
+        self.assertIsNone(parse_do_more("please do not run it yourself"))
+
+    def test_provider_rules_not_readonly_chat(self):
+        lower = RULES.lower()
+        self.assertNotIn("read-only chat", lower)
+        self.assertIn("conductor when bob is away", lower)
+        self.assertIn("server handlers execute", lower)
+
+    def test_enrich_live_ops_display_state(self):
+        from ops_panel import enrich_live_ops
+
+        out = enrich_live_ops(
+            {
+                "running_jobs": [
+                    {"live_screen": True, "stall_state": "running", "state": "running"},
+                    {"live_screen": False, "stall_state": "running", "state": "running"},
+                ],
+                "service_screens": ["svc-a", "svc-b"],
+            }
+        )
+        self.assertEqual(out["service_screen_count"], 2)
+        self.assertEqual(out["running_jobs"][0]["display_state"], "Live on screen")
+        self.assertEqual(out["running_jobs"][1]["display_state"], "Marked running; screen unconfirmed")
+        self.assertIn("stall_plain", out["running_jobs"][0])
+        self.assertEqual(out["running_jobs"][0]["stall_plain"], "Running normally")
+
+    def test_self_improve_bootstrap_command(self):
+        launchd = self.root / "conductor/launchd"
+        launchd.mkdir(parents=True, exist_ok=True)
+        (launchd / "com.jeff.bob-webchat-self-improve.plist").write_text("<plist/>")
+        (self.root / "conductor/webchat/self_improve_tick.sh").write_text("#!/bin/bash\n")
+        bootstrap = self.root / "conductor/webchat/bootstrap_self_improve_launchd.sh"
+        bootstrap.write_text("#!/bin/bash\n")
+        status = self.chat.self_improve_status()
+        self.assertTrue(status["install_ready"])
+        self.assertIn("bootstrap_self_improve_launchd.sh", status.get("bootstrap_command") or "")
+
+    def test_quiet_hours_ct(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from quiet_hours import in_quiet_hours
+
+        ct = ZoneInfo("America/Chicago")
+        self.assertTrue(in_quiet_hours(datetime(2026, 9, 27, 23, 30, tzinfo=ct)))
+        self.assertTrue(in_quiet_hours(datetime(2026, 9, 27, 6, 0, tzinfo=ct)))
+        self.assertFalse(in_quiet_hours(datetime(2026, 9, 27, 12, 0, tzinfo=ct)))
+
+    def test_quiet_hours_js_harness(self):
+        import subprocess
+
+        script = Path(__file__).resolve().parent / "test_quiet_hours_js.mjs"
+        subprocess.run(["node", str(script)], check=True, cwd=str(self.root))
+
+    def test_public_live_ops_carries_display_fields(self):
+        from ops_panel import enrich_live_ops
+
+        services = Path(__file__).resolve().parent.parent / "services"
+        if str(services) not in sys.path:
+            sys.path.insert(0, str(services))
+        import live_dashboard
+        raw = {
+            "running_jobs": [
+                {"live_screen": True, "stall_state": "running", "state": "running", "plain_now": "ok"},
+                {"live_screen": False, "stall_state": "running", "state": "running", "plain_now": "tracked"},
+            ]
+        }
+        enriched = enrich_live_ops(raw)
+        public = live_dashboard.public_live_ops(enriched)
+        for row in public["running_jobs"]:
+            self.assertIn("display_state", row)
+            self.assertIn("stall_plain", row)
+            self.assertTrue(row["display_state"])
+            self.assertTrue(row["stall_plain"])
 
     def test_inbox_message_queues_builder_note(self):
         request_id = str(uuid.uuid4())
@@ -800,6 +882,9 @@ class HandbackJobTests(Fixture):
     def test_music_coach_cheap_reply(self):
         from music_notebook import try_music_coach_reply
         self.assertIn("chorus", (try_music_coach_reply("help with chorus hook") or "").lower())
+        refrain_only = (try_music_coach_reply("polish the refrain") or "").lower()
+        self.assertIn("refrain", refrain_only)
+        self.assertIn("versions", refrain_only)
         self.assertIn("rhyme", (try_music_coach_reply("fix the rhyme scheme") or "").lower())
         self.assertIn("bridge", (try_music_coach_reply("help with song structure and bridge") or "").lower())
         self.assertIn("bpm", (try_music_coach_reply("what tempo bpm should I use") or "").lower())
@@ -819,6 +904,10 @@ class HandbackJobTests(Fixture):
         self.assertNotIn("chorus tip", outro_chorus)
         self.assertIn("double", (try_music_coach_reply("double chorus ending") or "").lower())
         self.assertIn("post-chorus", (try_music_coach_reply("add a post-chorus riff") or "").lower())
+        tag_bridge = (try_music_coach_reply("add a tag line on the bridge") or "").lower()
+        self.assertIn("tag", tag_bridge)
+        hyphen = (try_music_coach_reply("double-chorus lift") or "").lower()
+        self.assertIn("double", hyphen)
 
     def test_self_improve_schedule_hint_from_plist(self):
         plist = self.root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist"
@@ -879,6 +968,16 @@ class HandbackJobTests(Fixture):
             out = load_live_ops(self.root, max_age=120.0)
         self.assertTrue(out["meta"]["stale"])
         self.assertEqual(out["live_ops"].get("now_line"), "cached")
+
+    def test_maybe_spawn_dashboard_refresh_respects_fresh_dashboard(self):
+        from ops_panel import maybe_spawn_dashboard_refresh
+
+        dash = self.root / "conductor/dashboard.json"
+        dash.parent.mkdir(parents=True, exist_ok=True)
+        dash.write_text("{}")
+        with patch("ops_panel.subprocess.Popen") as popen:
+            self.assertFalse(maybe_spawn_dashboard_refresh(self.root))
+        popen.assert_not_called()
 
     def test_self_improve_start_line_not_loop_ready(self):
         (self.root / "conductor/launchd").mkdir(parents=True, exist_ok=True)
@@ -957,7 +1056,7 @@ class HandbackJobTests(Fixture):
 
         result = run_eval(Path(__file__).resolve().parents[2])
         self.assertEqual(result["passed"], result["total"])
-        self.assertEqual(result["total"], 22)
+        self.assertEqual(result["total"], 24)
 
     def test_catchup_event_ack_cursor(self):
         ledger_dir = Path(__file__).resolve().parent.parent / "state"

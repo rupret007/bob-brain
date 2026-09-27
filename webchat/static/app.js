@@ -24,6 +24,15 @@ if ($("login-form")) {
     const cap = spend?.cap_usd;
     return cap === undefined || cap === null ? 59 : cap;
   }
+  function isQuietHoursCt() {
+    try {
+      const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", hour: "numeric", hour12: false }).formatToParts(new Date());
+      const hour = Number(parts.find((p) => p.type === "hour")?.value ?? 12);
+      return hour >= 23 || hour < 7;
+    } catch (_) {
+      return true;
+    }
+  }
   function speechText(text) {
     return text.replace(/```[\s\S]*?```/g, " ").replace(/`([^`]+)`/g, "$1")
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1")
@@ -536,6 +545,10 @@ if ($("login-form")) {
       const last = conversation.messages.filter((m) => m.role === "assistant" && m.status === "done").at(-1);
       if (!last?.content) { $("notice").textContent = "No finished reply to read."; return; }
       await ensureSpeechVoices();
+      if (isQuietHoursCt()) {
+        $("notice").textContent = "Quiet hours (11 PM–7 AM CT) — read-aloud is off. Live call still works.";
+        return;
+      }
       speechSynthesis.cancel();
       const utter = new SpeechSynthesisUtterance(speechText(last.content).slice(0, 4000));
       utter.rate = 1.02;
@@ -619,11 +632,12 @@ if ($("login-form")) {
     if (callSession.busy) return;
     callSession.busy = true;
     appendCallLine("you", transcript);
+    const thinkStarted = performance.now();
     $("call-status").textContent = "Bob is thinking…";
     speechSynthesis.cancel();
     try {
       const requestId = crypto.randomUUID();
-      const convId = current;
+      const convId = callSession.convId || current;
       const payload = {
         conversation_id: convId,
         message: transcript,
@@ -636,7 +650,8 @@ if ($("login-form")) {
       const msg = value.messages.find((m) => m.role === "assistant" && m.request_id === requestId);
       const body = msg?.content || "No reply yet.";
       appendCallLine("bob", body);
-      $("call-status").textContent = "Listening… speak anytime (tap End to stop).";
+      const thinkMs = Math.round(performance.now() - thinkStarted);
+      $("call-status").textContent = `Listening… (${thinkMs}ms to reply · speak anytime, tap End to stop)`;
       await speakCallReply(body);
     } catch (error) {
       $("call-status").textContent = error.message || "Call error";
@@ -654,6 +669,7 @@ if ($("login-form")) {
     const rec = new Speech();
     callSession = {
       id: crypto.randomUUID(),
+      convId: current,
       recognition: rec,
       speaking: null,
       resultIndex: 0,
@@ -693,6 +709,7 @@ if ($("login-form")) {
     };
     rec.onend = () => {
       if (callSession?.recognition === rec) {
+        callSession.resultIndex = 0;
         try { rec.start(); } catch (_) { /* restart loop while call open */ }
       }
     };
@@ -874,7 +891,9 @@ if ($("login-form")) {
     host.hidden = false;
     const spend = ops.minimax_spend || {};
     const roles = ops.roles || {};
-    const jobs = (ops.running_jobs || []).filter((j) => j.live_screen);
+    const allJobs = ops.running_jobs || [];
+    const jobs = allJobs.filter((j) => j.live_screen);
+    const screenCount = ops.service_screen_count;
     const rows = [
       ["Now", ops.now_line || "—"],
       ["Dashboard", ops.dashboard_freshness_seconds == null ? "unknown" : `${ops.dashboard_freshness_seconds}s ago`],
@@ -882,6 +901,7 @@ if ($("login-form")) {
       ["Builder", roles.building || "idle"],
       ["Reviews", roles.reviewing || "idle"],
       ["MiniMax", spend.committed_usd == null ? "unknown" : `$${Number(spend.committed_usd).toFixed(2)} / $${minimaxCapUsd(spend)}`],
+      ["Service screens", screenCount == null ? "—" : String(screenCount)],
       ["Live jobs", jobs.length ? `${jobs.length} on screen` : "none on screen"],
     ];
     const dl = document.createElement("dl");
@@ -892,8 +912,8 @@ if ($("login-form")) {
       dd.textContent = value;
       dl.append(dt, dd);
     });
-    if (hostId === "jobs-ops-detail" && jobs.length) {
-      jobs.slice(0, 4).forEach((job, index) => {
+    if (hostId === "jobs-ops-detail" && allJobs.length) {
+      allJobs.slice(0, 12).forEach((job, index) => {
         const dt = document.createElement("dt");
         dt.textContent = `Job ${index + 1}`;
         const dd = document.createElement("dd");
@@ -902,8 +922,9 @@ if ($("login-form")) {
         const sha = job.last_commit?.sha ? ` · ${job.last_commit.sha}` : "";
         const round = job.round ? ` · round ${job.round}` : "";
         const elapsed = job.elapsed_seconds != null ? ` · ${Math.round(job.elapsed_seconds / 60)}m elapsed` : "";
-        const stall = job.stall_state ? ` · ${job.stall_state}` : "";
-        dd.textContent = `${jobHeadline(job)}${round}${elapsed}${stall}${sha}${lines.length ? "\n" + lines.join("\n") : ""}`;
+        const stall = job.stall_plain ? ` · ${job.stall_plain}` : (job.stall_state ? ` · ${job.stall_state}` : "");
+        const display = job.display_state ? ` · ${job.display_state}` : "";
+        dd.textContent = `${jobHeadline(job)}${round}${elapsed}${stall}${display}${sha}${lines.length ? "\n" + lines.join("\n") : ""}`;
         dl.append(dt, dd);
       });
     }
@@ -935,8 +956,9 @@ if ($("login-form")) {
   function plainJobTitle(job) {
     const round = job.round ? `Round ${job.round}` : "Job";
     const engine = (job.engine || "worker").replace(/_/g, " ");
-    if (job.live_screen) return `${round} · live on screen`;
-    return `${round} · ${engine}`;
+    const state = job.display_state ? ` · ${job.display_state}` : "";
+    if (job.live_screen) return `${round} · live on screen${state}`;
+    return `${round} · ${engine}${state}`;
   }
   function renderLiveJobs(jobs) {
     const host = $("live-jobs");
@@ -961,9 +983,11 @@ if ($("login-form")) {
       const events = (job.events || []).filter((e) => e && (e.text || e.sha || e.state));
       const stallEvent = events.find((e) => e.kind === "stall");
       const resolvedStall = stallEvent?.state || job.stall_state || "unknown";
-      stall.textContent = resolvedStall;
-      stall.classList.toggle("stalled", resolvedStall === "stalled");
-      stall.classList.toggle("running", resolvedStall !== "stalled");
+      const stallLabel = job.stall_plain || (resolvedStall === "stalled" ? "Stalled" : resolvedStall === "running" ? "Running" : resolvedStall);
+      const isStalled = resolvedStall === "stalled" || /stalled/i.test(stallLabel);
+      stall.textContent = stallLabel;
+      stall.classList.toggle("stalled", isStalled);
+      stall.classList.toggle("running", !isStalled);
       now.textContent = jobHeadline(job);
       const tail = document.createElement("pre");
       tail.className = "log-tail";
@@ -1074,11 +1098,14 @@ if ($("login-form")) {
       const loaded = si.launchd_loaded === true ? "Scheduled tick loaded"
         : (si.launchd_loaded === false ? "Tick not loaded — run bootstrap on mini" : (si.launchd_loaded === null ? "Launchd probe unavailable" : ""));
       const health = si.loop_ready === true ? "Self-improve loop ready"
+        : (si.install_ready === true && si.launchd_loaded !== true ? "Self-improve installed — load launchd on mini"
         : (si.healthy === true ? "Loop healthy"
         : (si.healthy === false && si.launchd_files_ok ? "Needs a successful tick — check mini bootstrap"
-          : (si.launchd_files_ok ? "Status unknown — refresh Jobs tab" : "Install tick + plist — see mini setup")));
+          : (si.launchd_files_ok ? "Status unknown — refresh Jobs tab" : "Install tick + plist — see mini setup"))));
       const schedule = si.schedule_hint ? `Schedule: ${si.schedule_hint.replace(/\.$/, "")}` : "";
-      const bootstrap = si.bootstrap_script ? `One-time on mini: bash ${si.bootstrap_script}` : "";
+      const bootstrap = si.bootstrap_command
+        ? `One-time on mini: ${si.bootstrap_command}`
+        : (si.bootstrap_script ? `One-time on mini: bash ${si.bootstrap_script}` : "");
       const siLine = [health, streak, loaded, schedule, bootstrap, logFresh, si.summary || ""].filter(Boolean).join(" · ");
       $("self-improve-status").textContent = siLine;
       const jobsSi = $("jobs-self-improve-status");
@@ -1113,6 +1140,28 @@ if ($("login-form")) {
       }
     }
   }
+  $("refresh-dashboard")?.addEventListener("click", async () => {
+    const btn = $("refresh-dashboard");
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    const prior = btn.textContent;
+    btn.textContent = "Refreshing…";
+    const timeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("Refresh timed out — try again in a moment.")), 15000);
+    });
+    try {
+      const result = await Promise.race([api("/api/panel/refresh", {}), timeout]);
+      await refreshPanel();
+      $("notice").textContent = result?.spawned
+        ? "Dashboard refresh queued on the mini."
+        : "Dashboard already fresh — showing the latest snapshot.";
+    } catch (error) {
+      $("notice").textContent = error.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = prior || "Refresh";
+    }
+  });
   let lastPanelScores = null;
   let lastPanelOps = null;
   let lastPanelMeta = { stale: false };
