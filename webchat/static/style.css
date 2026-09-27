@@ -164,6 +164,15 @@ select option { background: var(--surface-2); color: var(--text); }
 .message.error .body { color: #ffceb2; }
 .message.pending .body { color: color-mix(in srgb, var(--text) 72%, var(--muted)); }
 .attempt { color: #d2bb94; font-size: 12px; margin-top: 7px; }
+.action-card-title { font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.action-card-hint { color: var(--muted); font-size: 11px; margin-bottom: 8px; }
+.action-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.action-approve { flex: 1; min-height: 44px; background: color-mix(in srgb, var(--accent) 35%, var(--surface)); color: var(--text); border-radius: 10px; border: 1px solid var(--line); font-weight: 600; }
+.action-deny { min-height: 44px; padding: 0 14px; background: transparent; color: var(--muted); border-radius: 10px; border: 1px solid var(--line); }
+.message.assistant .body .md-h { margin: 10px 0 6px; font-size: 15px; font-weight: 600; }
+.message.assistant .body ol { margin: 6px 0 6px 1.2em; padding: 0; }
+.message.assistant .body pre.code-block { position: relative; padding-top: 28px; }
+.copy-code { position: absolute; top: 6px; right: 6px; font-size: 11px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); }
 .action-card { border: 1px solid var(--line); border-radius: 10px; margin-top: 8px; padding: 10px; font-size: 12px; }
 
 .notice { min-height: 20px; color: #ffd7b1; font-size: 13px; margin: 0 0 6px; flex-shrink: 0; }

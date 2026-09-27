@@ -144,6 +144,7 @@ def _mutate(root: Path, fn, *, inbox: bool = False, now_line: str | None = None,
             _atomic_write(_folder(root) / NOW_FILE, f"{now_line}\n")
         if catchup:
             _write_catchup_body(root, state)
+            save_state(root, state)
         return result
     finally:
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
@@ -251,6 +252,8 @@ def write_now(root: Path, line: str, *, step: str | None = None, elapsed_seconds
     def _apply(st: dict) -> None:
         st.setdefault("now_history", []).append(entry)
         st["now_history"] = st["now_history"][-40:]
+        if sha:
+            st["last_sha"] = sha[:40]
 
     _mutate(root, _apply, now_line=plain, catchup=True)
 
@@ -297,8 +300,33 @@ def _write_catchup_body(root: Path, state: dict) -> None:
         progress.insert(0, f"Now: {now_line}")
     for commit in _commits_since(root, since):
         done.append(f"Commit {commit}")
-    for turn in reversed(state.get("webchat_turns") or []):
-        done.append(f"Web Bob ({turn.get('provider')}): {turn.get('ask', '')[:100]}")
+    ack = int(state.get("bob_events_ack_seq") or 0)
+    event_lines: list[str] = []
+    try:
+        import alignment_events  # noqa: WPS433
+
+        pending_events = alignment_events.read_events(root, since_seq=ack, limit=40)
+        for ev in pending_events:
+            kind = ev.get("kind") or "note"
+            if kind not in ("chat-turn", "handback-turn", "inbox", "decision", "tick", "blocker"):
+                continue
+            event_lines.append(
+                f"Event {ev.get('seq')}: {kind} — {(ev.get('summary') or '')[:100]}"
+            )
+        if len(pending_events) > 20:
+            blockers.insert(0, f"+{len(pending_events) - 20} alignment events since ack seq {ack}")
+    except (ImportError, OSError):
+        pending_events = []
+    delivered_seq = ack
+    if event_lines:
+        done.extend(event_lines[:12])
+        for ev in pending_events[:12]:
+            if (ev.get("kind") or "") in ("chat-turn", "handback-turn", "inbox", "decision", "tick", "blocker"):
+                delivered_seq = max(delivered_seq, int(ev.get("seq") or 0))
+        state["last_catchup_event_seq"] = delivered_seq
+    elif not ack:
+        for turn in reversed(state.get("webchat_turns") or []):
+            done.append(f"Web Bob ({turn.get('provider')}): {turn.get('ask', '')[:100]}")
     for path in sorted((root / "conductor/reviews").glob("WEBCHAT-READY-R*-RESULT.md"),
                        key=lambda p: p.stat().st_mtime, reverse=True)[:2]:
         if path.stat().st_mtime >= since:
@@ -322,6 +350,30 @@ def _write_catchup_body(root: Path, state: dict) -> None:
 def write_catchup(root: Path) -> None:
     """Refresh BOB-CATCHUP.md from current STATE.json under lock."""
     _mutate(root, lambda _state: None, catchup=True)
+
+
+def ack_events_for_bob(root: Path, *, seq: int | None = None) -> int:
+    """Bob read catch-up: advance event ack cursor and touch .bob-last-seen."""
+    try:
+        import alignment_events  # noqa: WPS433
+    except ImportError:
+        alignment_events = None
+    if seq is not None:
+        target = int(seq)
+    else:
+        st = load_state(root)
+        target = int(st.get("last_catchup_event_seq") or 0)
+        if alignment_events and target <= 0:
+            target = alignment_events.latest_seq(root)
+
+    def _apply(state: dict) -> int:
+        state["bob_events_ack_seq"] = max(int(state.get("bob_events_ack_seq") or 0), target)
+        seen = root / LAST_SEEN
+        seen.parent.mkdir(parents=True, exist_ok=True)
+        seen.write_text(f"{_now_ct()}\n")
+        return state["bob_events_ack_seq"]
+
+    return _mutate(root, _apply, catchup=True)
 
 
 def sync_from_live_ops(root: Path, live_ops: dict, *, head_sha: str | None = None,

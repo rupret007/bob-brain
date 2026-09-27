@@ -686,6 +686,40 @@ class HandbackJobTests(Fixture):
         self.assertTrue(path.exists())
 
 
+    def test_music_coach_cheap_reply(self):
+        from music_notebook import try_music_coach_reply
+        self.assertIn("chorus", (try_music_coach_reply("help with chorus hook") or "").lower())
+
+    def test_music_coach_in_chat(self):
+        request_id = str(uuid.uuid4())
+        value = self.chat.submit(self.identifier, "suggest chords for a folk song", request_id)
+        assistant = value["messages"][-1]
+        self.assertEqual(assistant["status"], "done")
+        self.assertEqual(assistant.get("provider"), "state")
+        self.assertIn("chord", assistant["content"].lower())
+
+    def test_bob_parity_eval_runs(self):
+        from bob_parity_eval import run_eval
+
+        result = run_eval(Path(__file__).resolve().parents[2])
+        self.assertEqual(result["passed"], result["total"])
+        self.assertEqual(result["total"], 22)
+
+    def test_catchup_event_ack_cursor(self):
+        ledger_dir = Path(__file__).resolve().parent.parent / "state"
+        if str(ledger_dir) not in sys.path:
+            sys.path.insert(0, str(ledger_dir))
+        import ledger as state_ledger
+        import alignment_events
+
+        state_ledger.record_webchat_turn(self.root, ask="ack drill turn", provider="state")
+        state_ledger.write_catchup(self.root)
+        self.assertIn("ack drill", (self.root / "conductor/state/BOB-CATCHUP.md").read_text())
+        seq = alignment_events.latest_seq(self.root)
+        state_ledger.ack_events_for_bob(self.root, seq=seq)
+        loaded = state_ledger.load_state(self.root)
+        self.assertGreaterEqual(int(loaded.get("bob_events_ack_seq") or 0), seq)
+
 class InstallerTests(Fixture):
     def test_webchat_only_leaves_other_agents_alone(self):
         source = Path(__file__).resolve().parents[1] / "launchd/install.py"

@@ -27,10 +27,19 @@ if ($("login-form")) {
   }
   function renderMarkdown(text) {
     let html = escapeHtml(text);
-    html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre class="code-block"><code>${code.trim()}</code></pre>`);
+    html = html.replace(/```([\s\S]*?)```/g, (_, code) => {
+      const inner = code.trim();
+      return `<pre class="code-block" tabindex="0"><button type="button" class="copy-code" aria-label="Copy code">Copy</button><code>${inner}</code></pre>`;
+    });
     html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
     html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" rel="noopener noreferrer" target="_blank">$1</a>');
     html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    html = html.replace(/^### (.+)$/gm, "<h4 class=\"md-h\">$1</h4>");
+    html = html.replace(/^## (.+)$/gm, "<h3 class=\"md-h\">$1</h3>");
+    html = html.replace(/(?:^|\n)(\d+\. .+(?:\n\d+\. .+)*)/g, (block) => {
+      const items = block.trim().split("\n").map((line) => `<li>${line.replace(/^\d+\.\s+/, "")}</li>`).join("");
+      return `<ol>${items}</ol>`;
+    });
     html = html.replace(/(?:^|\n)([-*] .+(?:\n[-*] .+)*)/g, (block) => {
       const items = block.trim().split("\n").map((line) => `<li>${line.replace(/^[-*]\s+/, "")}</li>`).join("");
       return `<ul>${items}</ul>`;
@@ -187,8 +196,37 @@ if ($("login-form")) {
       }
       if (message.action_card) {
         const card = document.createElement("div"); card.className = "action-card";
-        const suffix = message.action_card.state === "queued" ? "Queued for scheduler" : message.action_card.state === "confirm" ? "Awaiting your yes" : "No action executed";
-        card.textContent = `${message.action_card.reason} · ${suffix}`;
+        const title = document.createElement("div"); title.className = "action-card-title";
+        title.textContent = message.action_card.reason || "Action";
+        card.append(title);
+        const suffix = message.action_card.state === "queued" ? "Queued for scheduler"
+          : message.action_card.state === "confirm" ? "Tap approve to continue (draft only)"
+          : message.action_card.state === "refused" ? "Blocked by safety rules"
+          : "No action executed";
+        const hint = document.createElement("div"); hint.className = "action-card-hint"; hint.textContent = suffix;
+        card.append(hint);
+        if (message.action_card.state === "confirm" && message.action_card.executable) {
+          const actions = document.createElement("div"); actions.className = "action-card-actions";
+          const council = /council/i.test(message.action_card.reason || "");
+          const approve = document.createElement("button");
+          approve.type = "button"; approve.className = "action-approve";
+          approve.textContent = council ? "Yes, run council" : "Yes, start job";
+          approve.addEventListener("click", () => {
+            $("message").value = council ? "yes, run council" : "yes, start job";
+            $("message").dispatchEvent(new Event("input"));
+            $("composer").requestSubmit();
+          });
+          const deny = document.createElement("button");
+          deny.type = "button"; deny.className = "action-deny";
+          deny.textContent = council ? "Dismiss" : "Not now";
+          deny.addEventListener("click", () => {
+            $("message").value = council ? "never mind council" : "never mind";
+            $("message").dispatchEvent(new Event("input"));
+            $("composer").requestSubmit();
+          });
+          actions.append(approve, deny);
+          card.append(actions);
+        }
         article.append(card);
       }
       if (message.attempts?.length) {
@@ -228,6 +266,16 @@ if ($("login-form")) {
     }
     finally { polling = false; }
   }
+  $("messages")?.addEventListener("click", async (event) => {
+    const btn = event.target.closest(".copy-code");
+    if (!btn) return;
+    const code = btn.parentElement?.querySelector("code")?.textContent || "";
+    try {
+      await navigator.clipboard.writeText(code);
+      btn.textContent = "Copied";
+      setTimeout(() => { btn.textContent = "Copy"; }, 1200);
+    } catch (_) { $("notice").textContent = "Could not copy — select the code manually."; }
+  });
   $("composer").addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = $("message").value.trim();

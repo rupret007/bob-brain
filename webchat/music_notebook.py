@@ -112,3 +112,34 @@ def snapshot_for_prompt(root: Path, limit: int = 6000) -> str:
             continue
     text = "\n\n".join(lines)
     return text[:limit]
+
+
+_MUSIC_COACH_RE = re.compile(
+    r"\b(?:(?:my |a )?song|lyrics|chorus|verse|bridge|hook|chords?|progression|melody|arrange|rhyme|meter)\b",
+    re.I,
+)
+
+
+def try_music_coach_reply(text: str) -> str | None:
+    """Cheap songwriting partner tips (no API spend)."""
+    stripped = (text or "").strip()
+    if not stripped or len(stripped) > 280 or not _MUSIC_COACH_RE.search(stripped):
+        return None
+    lower = stripped.lower()
+    if "chord" in lower or "progression" in lower:
+        return (
+            "For chords, try a simple loop (verse: I–V–vi–IV, chorus lift to IV or vi). "
+            "Match the mood in the Songs tab — save a version after each pass. "
+            "Local sketch demo ($0) can render a rough MP3 from lyrics + style when you are ready."
+        )
+    if "chorus" in lower or "hook" in lower:
+        return (
+            "Chorus tip: one clear emotional line, repeat the title, keep lines short for singing. "
+            "Contrast with the verse (higher energy or wider melody). "
+            "Drop a draft in Songs → lyrics, then ask me to tighten a specific line."
+        )
+    return (
+        "Song structure: verse → chorus → verse → chorus → bridge → chorus is a solid default. "
+        "Use the Songs tab for lyrics/chords/versions; I can rewrite lines, rhyme, or arrangement notes here. "
+        "No MiniMax music API — local sketch + Logic (confirm-first) when you want audio on the mini."
+    )

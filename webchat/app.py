@@ -30,7 +30,7 @@ from failover import AllDown
 from handback import append_turn, public_digest
 from job_queue import council_job_description, parse_confirm, parse_council, parse_council_cancel, parse_council_confirm, parse_start
 from actions import queue_once
-from music_notebook import get_project, list_projects, save_project
+from music_notebook import get_project, list_projects, save_project, try_music_coach_reply
 from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
 from ops_panel import conductor_snapshot, draft_head_sha, load_live_ops
 
@@ -413,6 +413,15 @@ class Chat:
                 )
             except OSError:
                 pass
+            music_tip = try_music_coach_reply(text)
+            if music_tip:
+                conversation["messages"][-1].update(status="done", content=music_tip, provider="state")
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                self.record_turn(ask=text, provider="state", jobs=[], files=["conductor/webchat/song-projects"],
+                            commits=[], confirmations=[], refusals=[], open_items=[], request_id=request_id)
+                state_ledger.record_webchat_turn(self.root, ask=text, provider="state", request_id=request_id)
+                return self.public(conversation)
             local_status = state_ledger.try_status_reply(self.root, text)
             if local_status:
                 conversation["messages"][-1].update(status="done", content=local_status, provider="state")
@@ -692,6 +701,8 @@ class Chat:
             }
         except (ImportError, OSError):
             alignment_events = {}
+        if live_ops.get("dashboard_freshness_seconds") is None and dashboard_age is not None:
+            live_ops = {**live_ops, "dashboard_freshness_seconds": round(max(0, time.time() - dashboard_age))}
         return {"lanes": lanes, "jobs": jobs, "recent_results": results, "dashboard_modified_at": dashboard_age,
                 "live_ops": live_ops, "live_ops_meta": meta, "conductor": conductor_snapshot(self.root),
                 "handback": self.handback(), "self_improve": self.self_improve_status(),

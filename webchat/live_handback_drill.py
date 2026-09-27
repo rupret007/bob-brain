@@ -130,12 +130,26 @@ def main():
             log_path = ROOT / "conductor/handback/HANDBACK-LOG.md"
             log_text = log_path.read_text(errors="replace").lower() if log_path.exists() else ""
             reverse_ok = f"handback drill {tag}" in log_text and "abc1234" in log_text
+            events_ok = False
+            try:
+                if str(ROOT / "conductor/state") not in sys.path:
+                    sys.path.insert(0, str(ROOT / "conductor/state"))
+                import alignment_events
+                rows = alignment_events.read_events(ROOT, since_seq=max(0, alignment_events.latest_seq(ROOT) - 30))
+                events_ok = any(
+                    f"handback drill {tag}" in (r.get("summary") or "").lower() and r.get("kind") == "handback-turn"
+                    for r in rows
+                )
+            except (ImportError, OSError):
+                events_ok = False
+            round_evidence["events_ok"] = events_ok
             round_evidence["reverse_handback_ok"] = reverse_ok
             round_evidence["pass"] = (
                 round_evidence["ledger"]["ledger_ok"]
                 and round_evidence["ledger"]["bob_pickup_ok"]
                 and round_evidence["live"].get("live_ok")
                 and reverse_ok
+                and round_evidence.get("events_ok")
             )
             evidence["rounds"].append(round_evidence)
     finally:
