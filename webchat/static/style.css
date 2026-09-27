@@ -40,6 +40,14 @@ option { background: #202d28; color: #e9efec; }
 #status-panel { font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 6px; }
 #status-panel summary { cursor: pointer; min-height: 28px; color: #e9efec; }
 .status-body { white-space: pre-wrap; max-height: 22dvh; overflow: auto; font-size: 11px; line-height: 1.45; }
+#song-panel { font-size: 12px; border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 6px; }
+#song-panel summary { cursor: pointer; min-height: 28px; color: #e9efec; }
+.song-body { display: grid; gap: 8px; padding-bottom: 6px; }
+.song-body input, .song-body textarea { width: 100%; border: 1px solid var(--line); border-radius: 10px; background: #16271d; color: #e9efec; padding: 8px 10px; font-size: 16px; }
+.song-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.upload-label { font-size: 12px; color: var(--muted); }
+.upload-label input { font-size: 12px; max-width: 100%; }
+#song-player { width: 100%; margin-top: 4px; }
 .message.user .body { border-radius: 18px 18px 4px 18px; padding: 13px 18px; background: #294c3b; }
 .message.assistant .body { padding: 3px 0; }
 .message .meta { font-size: 12px; color: var(--muted); margin-bottom: 7px; }

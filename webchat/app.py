@@ -2,11 +2,13 @@
 """Private, single-owner Bob web chat. Python standard library only."""
 from __future__ import annotations
 
+import base64
 import copy
 import fcntl
 import hashlib
 import hmac
 import json
+import mimetypes
 import os
 import re
 import secrets
@@ -26,6 +28,8 @@ from failover import AllDown
 from handback import append_turn, public_digest
 from job_queue import parse_confirm, parse_start
 from actions import queue_once
+from music_notebook import get_project, list_projects, save_project
+from music_demo import generate_demo, resolve_audio, store_upload
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -33,6 +37,7 @@ HOST, PORT = "127.0.0.1", 8787  # Deliberately no all-interface or port override
 COOKIE = "bob_session"
 SESSION_SECONDS = 12 * 60 * 60
 MAX_BODY = 32768
+MAX_AUDIO_BODY = 35 * 1024 * 1024
 
 
 def hard_rule_refusal(text):
@@ -509,21 +514,22 @@ class Handler(BaseHTTPRequestHandler):
         for key, value in {
             "Content-Type": content_type, "Content-Length": str(len(data)), "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
-            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
             "X-Bob-Webchat": "1", **(headers or {}),
         }.items():
             self.send_header(key, value)
         self.end_headers()
         self.wfile.write(data)
 
-    def body(self, form=False):
+    def body(self, form=False, limit=None):
         if self.headers.get("Transfer-Encoding"):
             raise RequestError(400, "Transfer encoding is not supported.")
+        cap = limit or MAX_BODY
         try:
             size = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             raise RequestError(400, "Invalid content length.") from None
-        if not 0 < size <= MAX_BODY:
+        if not 0 < size <= cap:
             raise RequestError(413, "Request is empty or too large.")
         mime = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
         if mime != ("application/x-www-form-urlencoded" if form else "application/json"):
@@ -607,6 +613,22 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, chat.handback())
         if route == "/api/panel":
             return self.send(200, chat.panel())
+        if route == "/api/song-projects":
+            return self.send(200, {"projects": list_projects(chat.root)})
+        if route.startswith("/api/song-projects/"):
+            project_id = route.removeprefix("/api/song-projects/").strip("/")
+            try:
+                return self.send(200, get_project(chat.root, project_id))
+            except FileNotFoundError:
+                raise RequestError(404, "Song project not found.") from None
+        if route.startswith("/api/audio/"):
+            audio_id = route.removeprefix("/api/audio/").strip("/")
+            try:
+                path = resolve_audio(chat.root, audio_id)
+            except (ValueError, FileNotFoundError):
+                raise RequestError(404, "Audio not found.") from None
+            mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            return self.send(200, path.read_bytes(), mime)
         if route == "/api/lanes":
             identifier = parse_qs(urlsplit(self.path).query).get("conversation_id", [None])[0]
             if identifier:
@@ -633,6 +655,45 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/cancel":
             chat.stop(self.body().get("conversation_id"))
             return self.send(202, {"ok": True})
+        if route == "/api/song-projects":
+            data = self.body()
+            try:
+                project = save_project(chat.root, data)
+            except (TypeError, json.JSONDecodeError, OSError) as exc:
+                raise RequestError(400, "Could not save song project.") from exc
+            chat.record_turn(ask="song notebook save: " + project.get("title", ""), provider=None, jobs=[], files=[project["id"]],
+                            commits=[], confirmations=[], refusals=[], open_items=[])
+            return self.send(200, project)
+        if route == "/api/music/demo":
+            data = self.body()
+            lyrics = data.get("lyrics") or ""
+            style = data.get("style") or ""
+            if not data.get("confirm"):
+                return self.send(200, {"ok": False, "needs_confirm": True,
+                                       "estimate_usd": 0.04, "message": "Reply yes or tap confirm to spend ~$0.04 on a MiniMax demo."})
+            try:
+                result = generate_demo(chat.root, lyrics=lyrics, style=style, dry_run=bool(data.get("dry_run")))
+            except Exception as exc:
+                raise RequestError(400, str(exc)) from exc
+            return self.send(200, result)
+        if route == "/api/audio/upload":
+            data = self.body(limit=MAX_AUDIO_BODY)
+            name = data.get("filename") or "upload.mp3"
+            raw = data.get("data_base64")
+            if not isinstance(raw, str):
+                raise RequestError(400, "Audio payload required.")
+            try:
+                blob = base64.b64decode(raw, validate=True)
+            except ValueError:
+                raise RequestError(400, "Invalid audio encoding.") from None
+            suffix = Path(name).suffix or ".mp3"
+            try:
+                stored = store_upload(chat.root, blob, suffix)
+            except ValueError as exc:
+                raise RequestError(400, str(exc)) from exc
+            chat.record_turn(ask=f"audio upload {name}", provider=None, jobs=[], files=[stored["path"]],
+                            commits=[], confirmations=[], refusals=[], open_items=[])
+            return self.send(201, stored)
         raise RequestError(404, "Not found.")
 
 

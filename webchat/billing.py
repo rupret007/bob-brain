@@ -1,5 +1,5 @@
-"""This job's $48 ceiling, independent of increases to background-lane credit."""
-MINIMAX_CAP_USD = 48.0
+"""Web chat MiniMax ceiling (matches shared budget cap, never above $59)."""
+MINIMAX_CAP_USD = 59.0
 
 
 def enforce_chat_cap(budget):

@@ -468,6 +468,18 @@ class ProviderTests(Fixture):
 
 
 class HandbackJobTests(Fixture):
+    def test_handback_summary_groups(self):
+        folder = self.root / "conductor/handback"
+        folder.mkdir(parents=True)
+        append_turn(self.root, ask="merge #1", provider=None, jobs=[], files=[], commits=[], confirmations=[],
+                    refusals=["drafts only"], open_items=[])
+        append_turn(self.root, ask="music demo: rock", provider="minimax-music", jobs=[], files=["demo.mp3"],
+                    commits=[], confirmations=[], refusals=[], open_items=[])
+        refresh_summary(self.root)
+        text = (folder / "HANDBACK-SUMMARY.md").read_text()
+        self.assertIn("## Done", text)
+        self.assertIn("## Risks", text)
+
     def test_handback_log_and_summary(self):
         folder = self.root / "conductor/handback"
         folder.mkdir(parents=True)
@@ -503,6 +515,24 @@ class HandbackJobTests(Fixture):
         self.assertIn("lanes", data)
         self.assertIn("handback", data)
         self.assertIn("recent_results", data)
+
+    def test_song_notebook_roundtrip(self):
+        from music_notebook import get_project, list_projects, save_project
+        project = save_project(self.root, {"title": "Night Drive", "lyrics": "Verse one", "chords": "Am G F"})
+        self.assertTrue(list_projects(self.root))
+        loaded = get_project(self.root, project["id"])
+        self.assertEqual(loaded["lyrics"], "Verse one")
+
+    def test_music_demo_dry_run(self):
+        from music_demo import generate_demo
+        result = generate_demo(self.root, lyrics="hook line", style="folk", dry_run=True)
+        self.assertTrue(result["dry_run"])
+
+    def test_audio_upload_and_fetch(self):
+        from music_demo import resolve_audio, store_upload
+        stored = store_upload(self.root, b"\x00\x01\x02", ".mp3")
+        path = resolve_audio(self.root, stored["audio_id"])
+        self.assertTrue(path.exists())
 
 
 class InstallerTests(Fixture):

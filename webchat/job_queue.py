@@ -39,6 +39,9 @@ def duplicate_task(screens: str, description: str) -> bool:
 
 
 def queue_draft(root: Path, description: str) -> dict:
+    maintenance = root / "conductor/MAINTENANCE"
+    if maintenance.exists():
+        return {"ok": False, "error": "Scheduling is paused (MAINTENANCE). Jobs were not queued."}
     screens = running_screens(root)
     if duplicate_task(screens, description):
         return {"ok": False, "error": "A screen session may already be running this task. Check Jobs before queueing again."}

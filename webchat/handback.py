@@ -39,26 +39,64 @@ def read_slice(root: Path, name: str, limit: int = 12000, tail: bool = False) ->
         return {"path": name, "available": False}
 
 
+def _parse_blocks(log_path: Path) -> list[tuple[float, str]]:
+    blocks = []
+    if not log_path.exists():
+        return blocks
+    for block in re.split(r"\n(?=## )", log_path.read_text(errors="replace")):
+        if not block.strip():
+            continue
+        m = re.search(r"^## (\d{4}-\d{2}-\d{2} .+?)\n", block)
+        if not m:
+            continue
+        try:
+            when = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S CT").replace(tzinfo=CT).timestamp()
+        except ValueError:
+            when = log_path.stat().st_mtime
+        blocks.append((when, block.strip()))
+    return blocks
+
+
+def _one_line(block: str) -> str:
+    ask = re.search(r"\*\*Ask:\*\* (.+)", block)
+    provider = re.search(r"\*\*Provider:\*\* (.+)", block)
+    head = ask.group(1)[:140] if ask else block.split("\n", 1)[0][:140]
+    if provider:
+        head += f" ({provider.group(1).strip()})"
+    return head
+
+
+def grouped_sections(blocks: list[str]) -> dict[str, list[str]]:
+    done, running, waiting, risks = [], [], [], []
+    for block in blocks:
+        line = _one_line(block)
+        lower = block.lower()
+        if "**outcome:** refused" in lower or "**refused:**" in lower:
+            risks.append(line)
+        elif "**outcome:** waiting" in lower or "**jeff confirmed:**" in lower:
+            waiting.append(line)
+        elif "**outcome:** job" in lower or "music demo" in lower or "**jobs:**" in lower:
+            done.append(line)
+        elif "**outcome:** chat" in lower:
+            done.append(line)
+        else:
+            waiting.append(line)
+    return {"done": done[-12:], "running": running[-8:], "waiting": waiting[-12:], "risks": risks[-8:]}
+
+
 def refresh_summary(root: Path) -> None:
     folder = _folder(root)
     seen = folder / LAST_SEEN
     cutoff = seen.stat().st_mtime if seen.exists() else 0.0
     log_path = folder / LOG
-    entries = []
-    if log_path.exists():
-        for block in re.split(r"\n(?=## )", log_path.read_text(errors="replace")):
-            if not block.strip():
-                continue
-            m = re.search(r"^## (\d{4}-\d{2}-\d{2} .+?)\n", block)
-            if not m:
-                continue
-            try:
-                when = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S CT").replace(tzinfo=CT).timestamp()
-            except ValueError:
-                when = log_path.stat().st_mtime
-            if when >= cutoff:
-                entries.append(block.strip())
+    entries = [text for when, text in _parse_blocks(log_path) if when >= cutoff]
     state = read_slice(root, STATE, 4000)
+    state_text = state.get("text", "") if state.get("available") else ""
+    groups = grouped_sections(entries)
+    for line in state_text.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith(("running:", "active:", "in progress:")):
+            groups["running"].append(stripped[:160])
     lines = [
         "# HANDBACK-SUMMARY",
         "",
@@ -67,13 +105,20 @@ def refresh_summary(root: Path) -> None:
         "## Bob state (snapshot)",
         state.get("text", "(unavailable)") if state.get("available") else "(BOB-STATE.md missing)",
         "",
-        "## Web Bob turns since last seen",
+        "## Done (ranked recent)",
     ]
+    lines += [f"- {row}" for row in reversed(groups["done"])] or ["_None logged._"]
+    lines += ["", "## Running"]
+    lines += [f"- {row}" for row in groups["running"]] or ["_See BOB-STATE above._"]
+    lines += ["", "## Waiting on Jeff"]
+    lines += [f"- {row}" for row in groups["waiting"]] or ["_No open confirmations._"]
+    lines += ["", "## Risks"]
+    lines += [f"- {row}" for row in groups["risks"]] or ["- Drafts only; no merge/send/spend without yes."]
+    lines += ["", "## Web Bob turns since last seen (detail)"]
     if entries:
-        lines.extend(entries)
+        lines.extend(entries[-8:])
     else:
         lines.append("_No Web Bob turns logged since last Bob read._")
-    lines += ["", "## Grouped (manual digest)", "- **Done:** see log entries marked done", "- **Running:** see BOB-STATE", "- **Waiting on Jeff:** confirmations in log", "- **Risks:** drafts only; no merge/send without yes"]
     (folder / SUMMARY).write_text("\n".join(lines) + "\n")
 
 
@@ -98,6 +143,14 @@ def append_turn(root: Path, *, ask: str, provider: str | None, jobs: list[str], 
         block.append("- **Refused:** " + "; ".join(refusals[:10]))
     if open_items:
         block.append("- **Open:** " + "; ".join(open_items[:15]))
+    if refusals:
+        block.append("- **Outcome:** refused")
+    elif confirmations:
+        block.append("- **Outcome:** waiting")
+    elif jobs:
+        block.append("- **Outcome:** job")
+    else:
+        block.append("- **Outcome:** chat")
     block.append("")
     with log_path.open("a") as handle:
         handle.write("\n".join(block))

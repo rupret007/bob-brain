@@ -22,7 +22,7 @@ REASONS = {
     "invalid_output": "returned an empty, incomplete or invalid answer",
     "network": "had a network error",
     "busy": "is answering another chat; trying the next provider",
-    "budget": "cannot fit another request under the $48 chat spend cap",
+    "budget": "cannot fit another request under the $59 chat spend cap",
     "not_installed": "is not installed",
     "session_unavailable": "could not resume the saved session",
 }

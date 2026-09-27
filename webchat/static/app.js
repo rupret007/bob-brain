@@ -205,6 +205,69 @@ if ($("login-form")) {
     } catch (error) { $("report-body").textContent = error.message; }
   });
   $("close-report").addEventListener("click", () => $("report").close());
+  let songProjectId = stored("bob.songProject") || "";
+  async function loadSong() {
+    try {
+      const list = await api("/api/song-projects");
+      const row = list.projects.find((p) => p.id === songProjectId) || list.projects[0];
+      if (!row) { $("song-summary").textContent = "new"; return; }
+      songProjectId = row.id; remember("bob.songProject", songProjectId);
+      const project = await api(`/api/song-projects/${songProjectId}`);
+      $("song-title").value = project.title || "";
+      $("song-lyrics").value = project.lyrics || "";
+      $("song-chords").value = project.chords || "";
+      $("song-notes").value = project.notes || "";
+      $("song-summary").textContent = project.title || "saved";
+    } catch (_) { $("song-summary").textContent = "offline"; }
+  }
+  $("song-save").addEventListener("click", async () => {
+    $("song-notice").textContent = "Saving…";
+    try {
+      const project = await api("/api/song-projects", {
+        id: songProjectId || undefined,
+        title: $("song-title").value,
+        lyrics: $("song-lyrics").value,
+        chords: $("song-chords").value,
+        notes: $("song-notes").value,
+        version_note: "saved from phone",
+      });
+      songProjectId = project.id; remember("bob.songProject", songProjectId);
+      $("song-notice").textContent = "Saved " + new Date().toLocaleTimeString();
+      $("song-summary").textContent = project.title;
+    } catch (error) { $("song-notice").textContent = error.message; }
+  });
+  $("song-demo").addEventListener("click", async () => {
+    const lyrics = $("song-lyrics").value.trim();
+    if (!lyrics) { $("song-notice").textContent = "Add lyrics first."; return; }
+    if (!window.confirm("Generate a MiniMax music sketch for ~$0.04 against the metered cap?")) return;
+    $("song-notice").textContent = "Generating demo…";
+    try {
+      const demo = await api("/api/music/demo", { lyrics, style: $("song-notes").value || "acoustic songwriter", confirm: true });
+      if (demo.audio_id) {
+        const player = $("song-player");
+        player.hidden = false;
+        player.src = `/api/audio/${demo.audio_id}`;
+        $("song-notice").textContent = `Demo ready · ~$${demo.cost_usd.toFixed(2)} · ${demo.bytes} bytes`;
+      } else $("song-notice").textContent = demo.message || "Demo queued.";
+    } catch (error) { $("song-notice").textContent = error.message; }
+  });
+  $("song-upload").addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    $("song-notice").textContent = "Uploading…";
+    try {
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      const stored = await api("/api/audio/upload", { filename: file.name, data_base64: btoa(binary) });
+      const player = $("song-player");
+      player.hidden = false;
+      player.src = `/api/audio/${stored.audio_id}`;
+      $("song-notice").textContent = `Uploaded ${file.name}`;
+    } catch (error) { $("song-notice").textContent = error.message; }
+    event.target.value = "";
+  });
   async function refreshPanel() {
     try {
       const data = await api("/api/panel");
@@ -247,7 +310,7 @@ if ($("login-form")) {
     try {
       csrf = (await api("/api/session")).csrf; current = stored("bob.conversation");
       await refreshList(); await poll(); $("messages").scrollTop = $("messages").scrollHeight;
-      await refreshPanel(); await refreshLanes();
+      await refreshPanel(); await refreshLanes(); await loadSong();
       setInterval(refreshPanel, 8000);
       setInterval(refreshLanes, 5000);
       setInterval(poll, 1200);

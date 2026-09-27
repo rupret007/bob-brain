@@ -5,6 +5,8 @@
 .drill.tmp
 sessions/
 evidence/
+uploads/
+song-projects/
 __pycache__/
 *.pyc
 *.lock

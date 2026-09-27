@@ -360,7 +360,7 @@ class BillingTests(Fixture):
     def test_chat_cap_blocks_shared_transport_after_background_cap_increase(self):
         ledger = self.root / "conductor/ledger"
         ledger.mkdir(parents=True)
-        (ledger / "minimax.jsonl").write_text(json.dumps({"call_id": "existing", "cost_usd": 48}) + "\n")
+        (ledger / "minimax.jsonl").write_text(json.dumps({"call_id": "existing", "cost_usd": 59}) + "\n")
         services = Path(__file__).resolve().parents[1] / "services"
         script = """
 import sys
@@ -370,7 +370,7 @@ import api, budget
 from billing import enforce_chat_cap
 budget.CAP_USD = 96
 enforce_chat_cap(budget)
-assert budget.CAP_USD == 48
+assert budget.CAP_USD == 59
 def no_http(*a, **kw):
     raise AssertionError('transport must never run')
 api.run = no_http

@@ -23,6 +23,24 @@
       <summary>Status <span id="status-summary" class="muted"></span></summary>
       <div id="status-body" class="status-body"></div>
     </details>
+    <details id="song-panel">
+      <summary>Song project <span id="song-summary" class="muted"></span></summary>
+      <div class="song-body">
+        <label class="sr-only" for="song-title">Title</label>
+        <input id="song-title" type="text" placeholder="Song title" maxlength="120">
+        <label class="sr-only" for="song-lyrics">Lyrics</label>
+        <textarea id="song-lyrics" placeholder="Lyrics / hooks" rows="4" maxlength="120000"></textarea>
+        <textarea id="song-chords" placeholder="Chords / progression" rows="2" maxlength="120000"></textarea>
+        <textarea id="song-notes" placeholder="Arrangement notes" rows="2" maxlength="120000"></textarea>
+        <div class="song-actions">
+          <button id="song-save" type="button">Save notebook</button>
+          <button id="song-demo" type="button">MiniMax demo (~$0.04)</button>
+          <label class="upload-label"><input id="song-upload" type="file" accept="audio/*"> Upload audio</label>
+        </div>
+        <audio id="song-player" controls hidden></audio>
+        <p id="song-notice" class="muted"></p>
+      </div>
+    </details>
     <nav aria-label="Bob reports">
       <button data-report="status">STATUS.md</button>
       <button data-report="review">Latest review</button>
@@ -36,7 +54,7 @@
     </div>
     <main id="messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions text"></main>
     <div id="notice" class="notice" role="status"></div>
-    <div class="routing"><label for="provider-choice">Reply with</label><select id="provider-choice"><option value="auto">Automatic · Codex → Cursor → Gemini → MiniMax</option><option value="claude">Claude · short critique (explicit choice)</option></select></div>
+    <div class="routing"><label for="provider-choice">Reply with</label><select id="provider-choice"><option value="auto">Automatic · short: Gemini → MiniMax · long: Codex → Cursor</option><option value="claude">Claude · short critique (explicit choice)</option></select></div>
     <form id="composer" class="composer">
       <label class="sr-only" for="message">Message Bob</label>
       <button id="mic" type="button" class="quiet" aria-label="Voice input" title="Voice input">🎤</button>

@@ -32,8 +32,8 @@ saved sessions use recent conversation context. See the official
 Cursor uses `cursor-agent --trust --mode ask --print --output-format json`.
 Gemini and MiniMax use `webchat/api_call.py`, which calls the same metered
 `services/api.py`/`budget.py` transport as the ask scripts, bypassing background
-lane leases. MiniMax has this task's **$48 chat ceiling** even if background credit
-is increased; the child process applies the lower of the chat and shared caps.
+lane leases. MiniMax has this task's **$59 chat ceiling** (shared budget cap) even if background credit
+is increased elsewhere; the child process applies the lower of the chat and shared caps.
 Reservations and uncertain calls count toward the cap. Lane health shows that
 committed amount, not just settled charges.
 Fallbacks receive up to the last 20 messages (24,000 characters) plus bounded, redacted handoff, brain,
