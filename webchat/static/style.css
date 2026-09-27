@@ -183,6 +183,11 @@ select option { background: var(--surface-2); color: var(--text); }
   border: 1px dashed var(--line);
   border-radius: 14px;
   padding: 10px 12px;
+  animation: pulse-soft 1.4s ease-in-out infinite;
+}
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.72; }
 }
 .attempt { color: #d2bb94; font-size: 12px; margin-top: 7px; }
 .action-card-title { font-weight: 600; color: var(--text); margin-bottom: 4px; }
@@ -291,6 +296,10 @@ select option { background: var(--surface-2); color: var(--text); }
 .message.assistant .body { color: var(--text); }
 .message.assistant .body strong { color: var(--text); font-weight: 650; }
 .tab-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 390px) {
+  .bottom-tab { font-size: 9px; padding: 3px 1px; }
+  .bottom-tab .tab-icon svg { width: 20px; height: 20px; }
+}
 .bottom-tab.active {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -339,6 +348,8 @@ textarea::placeholder { color: var(--muted); }
 .live-job .stall.running { color: #8fd4a8; }
 .live-job .stall.stalled { color: var(--danger); }
 .live-job .log-tail { color: var(--muted); margin: 4px 0 0; white-space: pre-wrap; font-size: 11px; }
+.live-job-actions { display: flex; gap: 8px; margin-top: 10px; }
+.live-job-actions button { flex: 1; min-height: 44px; font-size: 13px; border-radius: 10px; }
 #view-song input, #view-song textarea {
   width: 100%;
   border: 1px solid var(--line);

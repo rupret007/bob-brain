@@ -1,46 +1,46 @@
 {
-  "started_at": 1790498589.673128,
+  "started_at": 1790498669.026628,
   "rounds": [
     {
       "ledger": {
-        "tag": "r9-1",
-        "fixture_id": "9b2e0c3c-d752-4fb5-b95b-3bd1b2deff7b",
+        "tag": "r10-1",
+        "fixture_id": "e450bb3c-5cf4-40ad-9bed-0074850920a3",
         "ledger_ok": true,
         "bob_pickup_ok": true,
-        "summary_chars": 957
+        "summary_chars": 967
       },
       "live": {
-        "tag": "r9-1",
+        "tag": "r10-1",
         "status": "done",
         "provider": "state",
-        "elapsed_seconds": 0.051,
+        "elapsed_seconds": 0.052,
         "mentions_running": true,
-        "snippet": "Running: handback drill screen `drill-r9-1`",
+        "snippet": "Running: handback drill screen `drill-r10-1`",
         "live_ok": true
       },
-      "fixture_id": "9b2e0c3c-d752-4fb5-b95b-3bd1b2deff7b",
+      "fixture_id": "e450bb3c-5cf4-40ad-9bed-0074850920a3",
       "reverse_handback_ok": true,
       "events_ok": true,
       "pass": true
     },
     {
       "ledger": {
-        "tag": "r9-2",
-        "fixture_id": "890433d1-496a-41d4-87a8-5584ae3a9528",
+        "tag": "r10-2",
+        "fixture_id": "db219980-838c-478a-a430-8101df08b4fb",
         "ledger_ok": true,
         "bob_pickup_ok": true,
-        "summary_chars": 957
+        "summary_chars": 967
       },
       "live": {
-        "tag": "r9-2",
+        "tag": "r10-2",
         "status": "done",
         "provider": "state",
-        "elapsed_seconds": 0.05,
+        "elapsed_seconds": 0.052,
         "mentions_running": true,
-        "snippet": "Running: handback drill screen `drill-r9-2`",
+        "snippet": "Running: handback drill screen `drill-r10-2`",
         "live_ok": true
       },
-      "fixture_id": "890433d1-496a-41d4-87a8-5584ae3a9528",
+      "fixture_id": "db219980-838c-478a-a430-8101df08b4fb",
       "reverse_handback_ok": true,
       "events_ok": true,
       "pass": true
@@ -48,7 +48,7 @@
   ],
   "isolated": true,
   "prod_unchanged": true,
-  "finished_at": 1790498590.040297,
+  "finished_at": 1790498669.4195552,
   "result": "PASS",
   "drill_commit_marker": "drill0001"
 }

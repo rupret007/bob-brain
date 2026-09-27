@@ -68,18 +68,44 @@ if ($("login-form")) {
     round: "start a job: Web Bob ready round (draft only, no merge)",
     council: "run council on: score Web Bob iPhone tab UI and handback failover",
     status: "status",
-    stop: "stop the current screen job if it's safe (draft only)",
+    stop: "stop current job (draft only)",
   };
+  async function submitChatText(text, { confirmStop = false, confirmMessage } = {}) {
+    if (!text || !current) return;
+    if (confirmStop && !window.confirm(confirmMessage || "Stop this job?")) return;
+    if ((busy || sending) && !confirmStop) {
+      $("notice").textContent = "Wait for the current reply to finish, then try again.";
+      setBottomTab("chat");
+      return;
+    }
+    setBottomTab("chat");
+    const provider = $("provider-choice").value;
+    if (!draftRequest || draftRequest.message !== text || draftRequest.conversation_id !== current) {
+      draftRequest = { conversation_id: current, message: text, provider, request_id: crypto.randomUUID() };
+    }
+    const payload = draftRequest;
+    sending = true;
+    composerState();
+    $("notice").textContent = "";
+    try {
+      const conversation = await api("/api/messages", payload);
+      if (payload === draftRequest) draftRequest = null;
+      render(conversation);
+      await refreshList();
+    } catch (error) {
+      $("notice").textContent = error.message;
+    } finally {
+      sending = false;
+      composerState();
+    }
+  }
   document.querySelector(".app")?.addEventListener("click", (event) => {
     const btn = event.target.closest("[data-conductor]");
     if (!btn) return;
-    const text = conductorPrompts[btn.dataset.conductor];
+    const key = btn.dataset.conductor;
+    const text = conductorPrompts[key];
     if (!text) return;
-    setBottomTab("chat");
-    const field = $("message");
-    field.value = text;
-    field.focus();
-    field.dispatchEvent(new Event("input"));
+    submitChatText(text, { confirmStop: key === "stop" });
   });
   let activeBottomTab = "chat";
   let songSnapshot = "";
@@ -94,7 +120,7 @@ if ($("login-form")) {
   }
   function setBottomTab(name) {
     if (activeBottomTab === "song" && name !== "song" && songFieldsText() !== songSnapshot) {
-      if (!window.confirm("You have unsaved song edits. Leave this tab anyway?")) return;
+      if (!window.confirm("You have unsaved song edits. Leave this tab anyway?")) return false;
     }
     activeBottomTab = name;
     for (const btn of document.querySelectorAll(".bottom-tab")) {
@@ -107,6 +133,7 @@ if ($("login-form")) {
       view.hidden = !on;
       view.classList.toggle("active", on);
     }
+    return true;
   }
   for (const btn of document.querySelectorAll(".bottom-tab")) {
     btn.addEventListener("click", () => setBottomTab(btn.dataset.bottom));
@@ -543,6 +570,20 @@ if ($("login-form")) {
     $("song-title").focus();
     markSongClean();
   });
+  $("song-coach")?.addEventListener("click", () => {
+    if (!setBottomTab("chat")) return;
+    const title = ($("song-title")?.value || "Untitled").trim().slice(0, 80);
+    const lyricLine = ($("song-lyrics")?.value || "").trim().split("\n").find((l) => l.trim())?.slice(0, 120) || "";
+    const chords = ($("song-chords")?.value || "").trim().slice(0, 80);
+    const field = $("message");
+    const draft = lyricLine
+      ? `help with rhyme and meter for "${title}" — opening line: ${lyricLine}${chords ? ` · chords: ${chords}` : ""}`
+      : `help with rhyme and song structure for "${title}" (add lyrics in Songs if you want line-level edits)`;
+    field.value = draft;
+    field.focus();
+    field.dispatchEvent(new Event("input"));
+    $("song-notice").textContent = "Prepared in chat — send when ready.";
+  });
   $("song-save").addEventListener("click", async () => {
     $("song-notice").textContent = "Saving…";
     try {
@@ -656,17 +697,41 @@ if ($("login-form")) {
       }
       const tail = document.createElement("pre");
       tail.className = "log-tail";
-      const lines = events.length
+      const logLines = events.length
         ? events.filter((e) => e.kind === "log").map((e) => e.text).slice(-3)
         : (job.log_tail || []).slice(-3);
-      tail.textContent = lines.length ? lines.join("\n") : "";
+      tail.textContent = logLines.length ? logLines.join("\n") : "";
       const commit = document.createElement("p");
       commit.className = "job-commit muted";
       if (job.last_commit?.sha) {
         const msg = job.last_commit.message ? job.last_commit.message.replace(/\.md\b/gi, "").slice(0, 80) : "";
         commit.textContent = `Latest commit ${job.last_commit.sha}${msg ? " — " + msg : ""}`;
       }
-      card.append(header, now, tail, commit);
+      const actions = document.createElement("div");
+      actions.className = "live-job-actions";
+      const stopBtn = document.createElement("button");
+      stopBtn.type = "button";
+      stopBtn.className = "quiet";
+      stopBtn.textContent = "Stop";
+      stopBtn.addEventListener("click", () => {
+        const label = plainJobTitle(job);
+        submitChatText(`stop job: ${label} (draft only)`, { confirmStop: true, confirmMessage: `Stop ${label}?` });
+      });
+      const detailBtn = document.createElement("button");
+      detailBtn.type = "button";
+      detailBtn.className = "quiet";
+      detailBtn.textContent = "Details";
+      detailBtn.setAttribute("aria-label", `Details for ${plainJobTitle(job)}`);
+      detailBtn.addEventListener("click", () => {
+        const bodyParts = [job.plain_now || "", ...logLines, ...(job.log_tail || [])].filter(Boolean);
+        const body = [...new Set(bodyParts)].join("\n\n") || "No extra detail yet.";
+        $("report-title").textContent = plainJobTitle(job);
+        $("report-date").textContent = elapsed.textContent || "";
+        $("report-body").textContent = body;
+        $("report")?.showModal();
+      });
+      actions.append(stopBtn, detailBtn);
+      card.append(header, now, tail, commit, actions);
       return card;
     }));
   }
@@ -729,8 +794,12 @@ if ($("login-form")) {
       const logFresh = age != null && age < 48 * 3600
         ? `Log updated ${age < 3600 ? Math.round(age / 60) + "m" : Math.round(age / 3600) + "h"} ago`
         : (age != null ? "Self-improve log stale (>48h)" : "");
-      const loaded = si.launchd_loaded === true ? "Scheduled tick loaded" : (si.launchd_loaded === false ? "Tick not loaded in launchd" : (si.launchd_loaded === null ? "Launchd probe unavailable" : ""));
-      $("self-improve-status").textContent = [loaded, logFresh, si.summary || "Self-improve tick runs on the mini (launchd)."].filter(Boolean).join(" · ");
+      const loaded = si.launchd_loaded === true ? "Scheduled tick loaded"
+        : (si.launchd_loaded === false ? "Tick not loaded — run bootstrap on mini" : (si.launchd_loaded === null ? "Launchd probe unavailable" : ""));
+      const health = si.healthy === true ? "Loop healthy"
+        : (si.healthy === false && si.launchd_files_ok ? "Needs a successful tick — check mini bootstrap"
+          : (si.launchd_files_ok ? "Status unknown — refresh Jobs tab" : "Install tick + plist — see mini setup"));
+      $("self-improve-status").textContent = [health, loaded, logFresh, si.summary || ""].filter(Boolean).join(" · ");
       const cl = data.round_changelog || {};
       const clHost = $("changelog-line");
       if (clHost) {
@@ -760,7 +829,7 @@ if ($("login-form")) {
         title.textContent = providers[name];
         const state = document.createElement("p");
         state.className = "lane-state";
-        state.textContent = lane.state.replace(/_/g, " ");
+        state.textContent = ({ ready: "Ready", cooldown: "Cooling down", busy: "Busy" }[lane.state] || lane.state.replace(/_/g, " "));
         const detail = document.createElement("p");
         detail.className = "lane-detail muted";
         const spend = lane.spend;

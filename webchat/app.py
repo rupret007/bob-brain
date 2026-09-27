@@ -750,11 +750,14 @@ class Chat:
             summary = "Launchd probe unavailable on this host. " + summary
         elif not files_ok:
             summary = "Install self-improve launchd plist + tick script. " + summary
+        healthy = bool(files_ok and (launchd_loaded is True or recent_ok))
         return {
             "launchd_plist": plist.exists(),
             "tick_script": tick.exists(),
             "launchd_files_ok": files_ok,
             "launchd_loaded": launchd_loaded,
+            "healthy": healthy,
+            "recent_tick_ok": recent_ok,
             "last_logged": last_tick,
             "last_tick_log_line": last_tick_outcome,
             "recent_log_ok": recent_ok,

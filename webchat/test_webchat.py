@@ -755,6 +755,17 @@ class HandbackJobTests(Fixture):
     def test_music_coach_cheap_reply(self):
         from music_notebook import try_music_coach_reply
         self.assertIn("chorus", (try_music_coach_reply("help with chorus hook") or "").lower())
+        self.assertIn("rhyme", (try_music_coach_reply("fix the rhyme scheme") or "").lower())
+
+    def test_self_improve_healthy_flag(self):
+        (self.root / "conductor/launchd").mkdir(parents=True, exist_ok=True)
+        (self.root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist").write_text("plist")
+        (self.root / "conductor/webchat/self_improve_tick.sh").write_text("#!/bin/bash\n")
+        (self.root / "logs").mkdir(parents=True, exist_ok=True)
+        (self.root / "logs/webchat-self-improve.log").write_text("self-improve tick ok\n")
+        with patch.object(self.chat, "_cached_launchd_loaded", return_value=True):
+            status = self.chat.self_improve_status()
+        self.assertTrue(status.get("healthy"))
 
     def test_music_coach_in_chat(self):
         request_id = str(uuid.uuid4())

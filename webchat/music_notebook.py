@@ -138,6 +138,18 @@ def try_music_coach_reply(text: str) -> str | None:
             "Contrast with the verse (higher energy or wider melody). "
             "Drop a draft in Songs → lyrics, then ask me to tighten a specific line."
         )
+    if "rhyme" in lower or "meter" in lower:
+        return (
+            "Rhyme without forcing: pick one rhyme sound per section (e.g. -ay) and leave one line unrhymed for breath. "
+            "For meter, read lines aloud and trim syllables until stresses land on beats 1 and 3 in 4/4. "
+            "Save a version in Songs after each rewrite so Bob sees the history."
+        )
+    if "melody" in lower or "arrange" in lower:
+        return (
+            "Melody: start with the chorus on fewer notes than the verse; leave space at phrase ends. "
+            "Arrangement: add one layer at a time (guitar → bass → pad). "
+            "Use Songs for structure notes; Logic on the mini is confirm-first for tempo/markers/bounce."
+        )
     return (
         "Song structure: verse → chorus → verse → chorus → bridge → chorus is a solid default. "
         "Use the Songs tab for lyrics/chords/versions; I can rewrite lines, rhyme, or arrangement notes here. "
