@@ -1,7 +1,7 @@
 # Web Bob READY-FOR-PHONE — Round 4 result (Cursor lane)
 
 **Branch:** `draft/webchat-failover-20260927`  
-**Round 3 base:** `a47699f35deb9cc210bea949c580faff961983ea` · **Round 4 commit:** _(see `git log -1` after this file lands)_  
+**Round 3 base:** `a47699f35deb9cc210bea949c580faff961983ea` · **Round 4 commit:** `d2fa8360f20e20d85d5183aa50ea5986bd140a9e`  
 **Council (no Grok):** `conductor/reviews/webchat-ready-r4-council/20260927-020334-254748.md` (Gemini, MiniMax, Claude, Codex; Cursor busy). Applied: fail-fast on MiniMax music 410, `FAST_MAX_CHARS` 400, iPhone voice footer, handback drill script.  
 **Music research:** `reviews/webbob-music-research/20260927-004512-470258.md` — hosted MiniMax music returns **410** (not entitled); demos use **local-sketch** WAV fallback (optional `REPLICATE_API_TOKEN` when Jeff adds it).  
 **Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
