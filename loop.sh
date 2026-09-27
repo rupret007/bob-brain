@@ -1,9 +1,5 @@
-#!/usr/bin/env bash
-# tick every 15 min; conductor every 2 h (8 ticks)
-cd "$HOME/Documents/bob-overnight-inject" || exit 1
-n=0
-while true; do
-  bash conductor/run-tick.sh
-  if [ $((n % 8)) -eq 0 ]; then bash conductor/run-conductor.sh; fi
-  n=$((n+1)); sleep 900
-done
+#!/bin/bash
+# Compatibility only: the four services own all timers and launches.
+export BOB_ROOT="${BOB_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+exec python3 "$BOB_ROOT/conductor/bootstrap.py" runtime legacy-shim < /dev/null

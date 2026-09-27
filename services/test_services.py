@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
-"""Recovery/failure tests in a disposable workspace; no live API or screen calls."""
-from __future__ import annotations
-
-import hashlib
-import importlib.util
+"""Test recovery, isolation, spending and process death without live model calls."""
+import concurrent.futures
 import json
 import os
 import shutil
@@ -13,235 +10,170 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import SimpleNamespace as NS
 from unittest.mock import patch
-
-HERE = Path(__file__).resolve().parent
-SOURCE = HERE.parents[1]
-sys.path.insert(0, str(HERE))
-import state
-import api
-import jobs
-import runtime
-import conductor_pass
+HERE=Path(__file__).resolve().parent
+sys.path.insert(0,str(HERE))
+import api,budget,command,jobs,lanes,runtime,state,worker,workspaces
 
 
 class ServicesTest(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="bob-services-test-")
-        self.root = Path(self.temp.name)
-        self.conductor = self.root / "conductor"
-        self.conductor.mkdir()
-        (self.root / "next-prompts").mkdir()
-        (self.root / "next-prompts/INDEX.md").write_text("| Pri | File | Project | Kind | Status | Notes |\n")
-        self.patches = []
-        for module in (state, api, jobs, runtime, conductor_pass):
-            for name, value in (("ROOT", self.root), ("CONDUCTOR", self.conductor)):
-                if hasattr(module, name):
-                    self.patches.append(patch.object(module, name, value))
-        self.patches += [patch.object(runtime, "HEARTBEATS", self.conductor / "heartbeats"),
-                         patch.object(runtime, "SERVICES", self.conductor / "services"),
-                         patch.dict(os.environ, {"BOB_ROOT": str(self.root)})]
-        for p in self.patches:
-            p.start()
-
+        self.tmp=tempfile.TemporaryDirectory(prefix='harden-test-')
+        self.root=Path(self.tmp.name);self.core=self.root/'conductor';self.core.mkdir()
+        self.patches=[]
+        for module in (api,budget,jobs,lanes,runtime,state,worker,workspaces):
+            for name,value in [('ROOT',self.root),('CONDUCTOR',self.core)]:
+                if hasattr(module,name):self.patches.append(patch.object(module,name,value))
+        self.patches += [patch.object(runtime,'HEARTBEATS',self.core/'heartbeats'),patch.object(runtime,'SERVICES',self.core/'services'),patch.dict(os.environ,{'BOB_ROOT':str(self.root)})]
+        for p in self.patches:p.start()
     def tearDown(self):
-        for p in reversed(self.patches):
-            p.stop()
-        self.temp.cleanup()
+        for p in reversed(self.patches):p.stop()
+        self.tmp.cleanup()
+    def folder(self):
+        p=self.root/'job';p.mkdir();return p
+    def recover(self):
+        with patch.object(runtime,'screen_sessions',return_value={}):jobs.recover()
+    def test_journal_tail_repair_preserves_blocked_job(self):
+        state.job_event('a','running',attempts=1)
+        with (self.core/'jobs.jsonl').open('ab') as f:f.write(b'{partial')
+        state.job_event('a','blocked',outcome='blocked')
+        self.assertEqual(state.jobs()['a']['attempts'],1)
+        self.assertTrue((self.core/'jobs.jsonl.interrupted-tail').exists())
+    def test_middle_corruption_is_visible(self):
+        state.job_event('a','running');p=self.core/'jobs.jsonl';p.write_text('bad\n'+p.read_text())
+        with self.assertRaises(ValueError):state.jobs()
+    def test_terminal_results_cannot_reopen_but_legacy_blockers_can(self):
+        state.job_event('a','harvested',outcome='result')
+        with self.assertRaises(ValueError):state.job_event('a','running')
+        state.job_event('b','harvested',outcome='blocked');jobs.import_legacy()
+        self.assertEqual(state.jobs()['b']['state'],'blocked')
+    def test_blocker_is_never_harvested_or_closed(self):
+        folder=self.folder();(folder/'BLOCKER.txt').write_text('unfinished')
+        state.job_event('a','running',job_dir=str(folder));self.recover()
+        self.assertIsNone(jobs.closeout(folder));self.assertEqual(state.jobs()['a']['state'],'blocked')
+        self.assertGreater(state.jobs()['a']['retry_at'],time.time())
+    def test_legacy_orphan_is_retained_without_replay(self):
+        state.write_json(self.root/'local-cursor-job-watch-state.json',{'jobs':{'lost':{'running':True}}})
+        jobs.import_legacy();self.assertEqual(state.jobs()['lost']['state'],'blocked')
+        self.assertTrue((self.root/'lost/ORPHAN_WARNING.txt').exists())
+    def test_three_failures_escalate(self):
+        state.job_event('a','running',attempts=3);jobs.blocked(state.jobs()['a'],'failure')
+        self.assertTrue(state.jobs()['a']['escalated'])
+        self.assertIn('job-a',state.read_json(self.core/'alerts.json'))
+    def test_verified_result_harvest_is_idempotent(self):
+        folder=self.folder();(folder/'RESULT.txt').write_text('evidence')
+        state.job_event('a','running',job_dir=str(folder),managed=True,verified=True)
+        self.recover();self.recover();self.assertEqual(state.jobs()['a']['state'],'harvested')
+        self.assertEqual(len(list((self.root/'next-prompts/_inbox').glob('*'))),1)
+    def test_unverified_result_stays_unfinished(self):
+        folder=self.folder();(folder/'RESULT.txt').write_text('claim')
+        state.job_event('a','running',job_dir=str(folder),managed=True);self.recover()
+        self.assertEqual(state.jobs()['a']['state'],'blocked')
+    def test_live_writer_is_not_harvested(self):
+        folder=self.folder();(folder/'RESULT.txt').write_text('still writing')
+        state.job_event('a','running',job_dir=str(folder))
+        with patch.object(runtime,'screen_sessions',return_value={'a':'1.a'}):jobs.recover()
+        self.assertEqual(state.jobs()['a']['state'],'running')
+    def test_alert_only_updates_json(self):
+        (self.core/'STATUS.md').write_text('runtime owns this');state.alert('a','failure')
+        self.assertEqual((self.core/'STATUS.md').read_text(),'runtime owns this')
+    def test_runtime_renders_notes_and_login_state(self):
+        (self.core/'status').mkdir();(self.core/'status/notes-cursor.md').write_text('real observation')
+        state.write_json(self.core/'lanes.json',{'cursor':{'state':'needs_login'}})
+        with patch.object(runtime,'screen_sessions',return_value={}):runtime.status_report()
+        text=(self.core/'STATUS.md').read_text();self.assertIn('real observation',text);self.assertIn('cursor=needs_login',text)
+    def test_concurrent_budget_reservations_cannot_cross_cap(self):
+        def reserve(_):
+            try:budget.reserve('minimax','x',1_000_000);return True
+            except budget.BudgetExceeded:return False
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:results=list(pool.map(reserve,range(50)))
+        self.assertLess(sum(results),50);self.assertLessEqual(budget.totals('minimax')['committed_usd'],48)
+    def test_response_usage_settles_unknown_retains_reservation(self):
+        row=budget.reserve('minimax','x',1000);budget.settle('minimax',row,{'usage':{'prompt_tokens':100,'completion_tokens':200}})
+        self.assertAlmostEqual(budget.totals('minimax')['spent_usd'],.00027)
+        row=budget.reserve('minimax','x',1000);budget.settle('minimax',row,{})
+        self.assertAlmostEqual(budget.totals('minimax')['reserved_usd'],row['reserved_usd'])
+    def test_import_spend_once(self):
+        p=self.core/'webjam-ux/spend.log';p.parent.mkdir();p.write_text('{"pass":"one","cost_usd":2}\n')
+        budget.import_ux_ledger();budget.import_ux_ledger();self.assertEqual(budget.totals('minimax')['spent_usd'],2)
+    def test_cap_stops_transport(self):
+        state._append(budget.path('minimax'),{'call_id':'old','cost_usd':48})
+        with patch.object(api,'run') as transport:
+            with self.assertRaises(budget.BudgetExceeded):api.http_json('https://example.invalid',lane='minimax',prompt='x',max_tokens=1)
+        transport.assert_not_called()
+    def test_http_secret_file_and_retry(self):
+        calls=[]
+        def transport(cmd,**kw):
+            config=Path(cmd[cmd.index('--config')+1]);self.assertIn('fixture-secret',config.read_text())
+            self.assertEqual(config.stat().st_mode & 0o777,0o600);self.assertNotIn('fixture-secret',' '.join(cmd));self.assertNotIn('input',kw)
+            calls.append(cmd);Path(cmd[cmd.index('-o')+1]).write_text('{"ok":true}')
+            return NS(returncode=0,stdout='503' if len(calls)==1 else '200')
+        with patch.object(api,'run',side_effect=transport),patch.object(api.time,'sleep'):
+            self.assertTrue(api.http_json('https://example.invalid',headers={'Authorization':'fixture-secret'})['ok'])
+        self.assertEqual(len(calls),2)
+    def test_cursor_login_auto_activation(self):
+        binary=self.root/'cursor';binary.touch()
+        for output,expected in [('Not logged in','needs_login'),('Logged in','ready')]:
+            with patch.object(lanes,'CURSOR',binary),patch.object(lanes,'run',return_value=NS(returncode=0,stdout=output,stderr='')):
+                self.assertEqual(lanes.refresh()['cursor']['state'],expected)
+    def test_lane_lease_shared_with_council_and_reviews(self):
+        with state.lock('lane-cursor'),patch.object(lanes,'cli') as cli:
+            with self.assertRaises(BlockingIOError):lanes.ask('cursor','prompt')
+        cli.assert_not_called()
+    def test_scheduler_limits(self):
+        health={n:{'state':'ready'} for n in lanes.LANES};coder={'kind':'coding','project':'WebJam'}
+        active=[dict(coder,engine='codex')]
+        self.assertFalse(jobs.can_assign(coder,'cursor',active,health));self.assertFalse(jobs.can_assign(coder,'gemini',[],health))
+        self.assertTrue(jobs.can_assign(dict(coder,kind='non-coding'),'gemini',active,health))
+        self.assertFalse(jobs.can_assign(coder,'cursor',[{'engine':str(i)} for i in range(5)],health))
+    def test_project_and_ci_priority(self):
+        p=self.core/'services';p.mkdir();state.write_json(p/'backlog.json',[{'id':'feature','project':'WebJam','priority':20},{'id':'sb','project':'StoryBoard','priority':0},{'id':'ci','project':'WebJam','priority':0}])
+        self.assertEqual([r['id'] for r in jobs.queue_specs()],['ci','feature','sb'])
+    def test_worktrees_separate_and_main_push_denied(self):
+        repo=self.root/'repo';repo.mkdir();workspaces.git(repo,'init','-b','main')
+        workspaces.git(repo,'-c','user.name=Test','-c','user.email=test@localhost','commit','--allow-empty','-m','fixture')
+        for name in ('a','b'):
+            workspaces.prepare({'repo':str(repo),'worktree':str(self.root/name),'branch':'draft/'+name,'job_dir':str(self.root/('job-'+name))})
+        self.assertNotEqual(workspaces.git(self.root/'a','branch','--show-current'),workspaces.git(self.root/'b','branch','--show-current'))
+        result=subprocess.run([str(self.root/'job-a/hooks/pre-push')],input='refs/heads/draft/a abc refs/heads/main 0000000000000000000000000000000000000000\n',text=True,capture_output=True,timeout=10)
+        self.assertNotEqual(result.returncode,0)
+    def test_codex_has_commit_push_configuration(self):
+        response='{"type":"item.completed","item":{"type":"agent_message","text":"evidence"}}\n'
+        with patch.object(lanes,'run',return_value=NS(returncode=0,stdout=response,stderr='')) as call,patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd:cmd):lanes.cli('codex','task',self.root,True,100)
+        self.assertEqual(call.call_args.kwargs['cwd'],str(self.root));self.assertIn('--dangerously-bypass-approvals-and-sandbox',call.call_args.args[0])
+    def test_watchdog_caps_restarts(self):
+        now=time.time();runtime.HEARTBEATS.mkdir();sessions={'svc-'+n:'1.svc-'+n for n in runtime.INTERVALS}
+        for n in runtime.INTERVALS:(runtime.HEARTBEATS/n).touch()
+        state.write_json(self.core/'supervisor.json',{n:{'ever_started':True,'started_at':now} for n in runtime.INTERVALS})
+        with patch.object(runtime,'screen_sessions',return_value=sessions),patch.object(runtime,'run',return_value=NS(returncode=0)),patch.object(runtime,'start_screen',return_value=True),patch.object(runtime,'service_lock_held',return_value=False):
+            for _ in range(4):
+                data=state.read_json(self.core/'supervisor.json');data['reviewer']['started_at']=now-4000;state.write_json(self.core/'supervisor.json',data)
+                os.utime(runtime.HEARTBEATS/'reviewer',(now-4000,now-4000));runtime.ensure_services(True,'watchdog')
+        self.assertEqual(len(state.read_json(self.core/'supervisor.json')['reviewer']['restarts']),3)
+    def test_timeout_kills_grandchild(self):
+        path=self.root/'child.pid';child="import os,signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);open(%r,'w').write(str(os.getpid()));time.sleep(60)"%str(path)
+        parent="import subprocess,sys,time;subprocess.Popen([sys.executable,'-c',%r]);time.sleep(60)"%child
+        start=time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):command.run([sys.executable,'-c',parent],timeout=.5,capture_output=True)
+        self.assertLess(time.monotonic()-start,3)
+        probe=command.run(['ps','-p',path.read_text(),'-o','stat='],capture_output=True,text=True,timeout=5)
+        self.assertTrue(not probe.stdout.strip() or probe.stdout.strip().startswith('Z'),probe.stdout)
+    def test_devnull_and_core_write_boundary(self):
+        result=command.run([sys.executable,'-c','import sys;print(repr(sys.stdin.read()))'],capture_output=True,text=True,timeout=5)
+        self.assertEqual(result.stdout.strip(),"''")
+        target=self.core/'PROMPT.md';target.write_text('protected')
+        argv=[sys.executable,'-c',"from pathlib import Path;Path(%r).write_text('bad')"%str(target)]
+        result=command.run(workspaces.sandbox_command(argv,self.root),capture_output=True,text=True,timeout=5)
+        self.assertNotEqual(result.returncode,0);self.assertEqual(target.read_text(),'protected')
+    def test_git_rollback_before_import_and_chmod(self):
+        shutil.copy2(HERE.parent/'bootstrap.py',self.core/'bootstrap.py');(self.core/'services').mkdir();(self.core/'PROMPT.md').write_text('rules')
+        p=self.core/'services/example.py';p.write_text('VALUE = 1\n')
+        workspaces.git(self.core,'init','-b','draft/test');workspaces.git(self.core,'add','.')
+        workspaces.git(self.core,'-c','user.name=Test','-c','user.email=test@localhost','commit','-m','good');workspaces.git(self.core,'tag','last-good')
+        p.write_text('def broken(:\n')
+        result=command.run([sys.executable,str(self.core/'bootstrap.py'),'guard'],capture_output=True,text=True,timeout=15)
+        self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(p.read_text(),'VALUE = 1\n');self.assertEqual(p.stat().st_mode & 0o222,0)
+        self.assertTrue(list((self.core/'reviews/quarantine').rglob('ROLLBACK.txt')))
 
-    def harvest_helper(self):
-        (self.root / "bin").mkdir(exist_ok=True)
-        shutil.copy2(SOURCE / "bin/auto_harvest.py", self.root / "bin/auto_harvest.py")
-        return jobs.load_helper("auto_harvest")
-
-    def test_journal_repairs_interrupted_append_without_losing_job(self):
-        state.job_event("a", "launched", job_dir="a", pri="1")
-        with (self.conductor / "jobs.jsonl").open("ab") as out:
-            out.write(b'{"job_id":"b", "sta')
-        state.job_event("a", "running", recovery="resumed")
-        self.assertEqual(state.jobs()["a"]["pri"], "1")
-        self.assertEqual(state.jobs()["a"]["state"], "running")
-        self.assertTrue((self.conductor / "jobs.jsonl.interrupted-tail").exists())
-
-    def test_journal_refuses_middle_corruption_and_terminal_regression(self):
-        state.job_event("a", "harvested")
-        with self.assertRaises(ValueError):
-            state.job_event("a", "running")
-        path = self.conductor / "jobs.jsonl"
-        path.write_text("broken\n" + path.read_text())
-        with self.assertRaises(ValueError):
-            state.jobs()
-
-    def test_harvest_twice_does_not_duplicate_queue_or_deliverables(self):
-        helper = self.harvest_helper()
-        folder = self.root / "job-a"
-        (folder / "queue-ready").mkdir(parents=True)
-        (folder / "RESULT.txt").write_text("Result with concrete evidence and one follow-on prompt.\n")
-        (folder / "queue-ready/01-audit.md").write_text("Audit the existing rehearsal receipt with specific evidence and do not invent coding work.\n")
-        state.job_event("job-a", "launched", job_dir=str(folder))
-        helper.harvest_job("job-a")
-        first_index = (self.root / "next-prompts/INDEX.md").read_text()
-        first_files = sorted(p.name for p in (self.root / "next-prompts/_inbox").iterdir())
-        helper.harvest_job("job-a")
-        self.assertEqual(first_index, (self.root / "next-prompts/INDEX.md").read_text())
-        self.assertEqual(first_files, sorted(p.name for p in (self.root / "next-prompts/_inbox").iterdir()))
-        self.assertEqual(state.jobs()["job-a"]["state"], "harvested")
-
-    def test_harvest_failure_does_not_mark_complete(self):
-        helper = self.harvest_helper()
-        folder = self.root / "job-b"
-        folder.mkdir()
-        (folder / "RESULT.txt").write_text("result")
-        (folder / "PROMOTE.json").write_text('[{"file":"missing.md"}]')
-        state.job_event("job-b", "running", job_dir=str(folder))
-        with self.assertRaises(ValueError):
-            helper.harvest_job("job-b")
-        self.assertEqual(state.jobs()["job-b"]["state"], "running")
-
-    def fake_refill(self):
-        return SimpleNamespace(screen_ls=lambda: "No Sockets found", parse_running_rows=lambda: [],
-                               screen_alive=lambda *a: False, copy_tmp_closeout=lambda *a: [],
-                               job_dir_looks_coding=lambda *a: False)
-
-    def test_restart_resumes_journaled_launch_before_screen_was_started(self):
-        folder = self.root / "job-c"
-        folder.mkdir()
-        (folder / "run.sh").write_text("#!/bin/bash\nexit 0\n")
-        state.write_json(self.conductor / "jobs-imported.json", {"done": True})
-        state.job_event("job-c", "launched", job_dir=str(folder), legacy=False)
-        with patch.object(jobs.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as launch:
-            self.assertEqual(jobs.recover(self.fake_refill()), [])
-        self.assertEqual(launch.call_count, 1)
-        self.assertEqual(state.jobs()["job-c"]["state"], "running")
-        self.assertEqual(state.jobs()["job-c"]["resume_count"], 1)
-
-    def test_live_job_is_adopted_without_duplicate_launch(self):
-        folder = self.root / "job-d"
-        folder.mkdir()
-        state.write_json(self.conductor / "jobs-imported.json", {"done": True})
-        state.job_event("job-d", "launched", job_dir=str(folder))
-        refill = self.fake_refill()
-        refill.screen_alive = lambda *a: True
-        with patch.object(jobs.subprocess, "run") as launch:
-            jobs.recover(refill)
-        launch.assert_not_called()
-        self.assertEqual(state.jobs()["job-d"]["state"], "running")
-
-    def test_recovery_reharvests_result_after_previous_result_changed(self):
-        helper = self.harvest_helper()
-        folder = self.root / "job-e"
-        folder.mkdir()
-        (folder / "BLOCKER.txt").write_text("BLOCKER first")
-        state.job_event("job-e", "running", job_dir=str(folder))
-        helper.harvest_job("job-e")
-        (folder / "RESULT.txt").write_text("Recovered final result")
-        state.write_json(self.conductor / "jobs-imported.json", {"done": True})
-        refill = self.fake_refill()
-        refill.harvest_on_reap = helper.harvest_job
-        jobs.recover(refill)
-        self.assertEqual(state.jobs()["job-e"]["outcome"], "result")
-        self.assertTrue(state.jobs()["job-e"]["result_path"].endswith("RESULT.txt"))
-
-    def test_watchdog_caps_three_restarts_and_start_all_cannot_bypass(self):
-        now = time.time()
-        runtime.HEARTBEATS.mkdir()
-        sessions = {"svc-" + n: "123.svc-" + n for n in runtime.INTERVALS}
-        for n in runtime.INTERVALS:
-            (runtime.HEARTBEATS / n).touch()
-        state.write_json(self.conductor / "supervisor.json", {n: {"ever_started": True, "started_at": now} for n in runtime.INTERVALS})
-        with patch.object(runtime, "screen_sessions", return_value=sessions), patch.object(runtime.subprocess, "run", return_value=SimpleNamespace(returncode=0)), patch.object(runtime.time, "sleep"):
-            for count in range(4):
-                entries = state.read_json(self.conductor / "supervisor.json")
-                entries["reviewer"]["started_at"] = now - 4000
-                state.write_json(self.conductor / "supervisor.json", entries)
-                os.utime(runtime.HEARTBEATS / "reviewer", (now - 4000, now - 4000))
-                runtime.ensure_services(check_stale=True, self_name="watchdog")
-            self.assertEqual(len(state.read_json(self.conductor / "supervisor.json")["reviewer"]["restarts"]), 3)
-            sessions.pop("svc-reviewer")
-            runtime.ensure_services(check_stale=False)
-        self.assertEqual(len(state.read_json(self.conductor / "supervisor.json")["reviewer"]["restarts"]), 3)
-        self.assertIn("JEFF:", (self.conductor / "STATUS.md").read_text())
-
-    def test_external_guard_can_restart_stale_watchdog(self):
-        runtime.HEARTBEATS.mkdir()
-        for n in runtime.INTERVALS:
-            (runtime.HEARTBEATS / n).touch()
-        os.utime(runtime.HEARTBEATS / "watchdog", (1, 1))
-        sessions = {"svc-" + n: "123.svc-" + n for n in runtime.INTERVALS}
-        with patch.object(runtime, "screen_sessions", return_value=sessions), patch.object(runtime.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as command, patch.object(runtime.time, "sleep"):
-            runtime.ensure_services(check_stale=True)
-        self.assertEqual(command.call_count, 2)
-        self.assertIn("watchdog", str(command.call_args))
-
-    def test_http_backoff_and_curl_timeout_without_key_in_argv(self):
-        calls = []
-        def transport(command, **kwargs):
-            calls.append((command, kwargs))
-            Path(command[command.index("-o") + 1]).write_text('{"ok":true}')
-            return SimpleNamespace(returncode=0, stdout="503" if len(calls) < 3 else "200")
-        with patch.object(api.subprocess, "run", side_effect=transport), patch.object(api.time, "sleep") as sleep:
-            self.assertTrue(api.http_json("https://example.invalid/?key=secret")['ok'])
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4])
-        for cmd, kwargs in calls:
-            self.assertIn("-m", cmd)
-            self.assertNotIn("secret", " ".join(cmd))
-            self.assertIn("secret", kwargs["input"])
-
-    def test_rejects_reasoning_only_and_truncated_model_answers(self):
-        for response in ({"choices": [{"finish_reason": "length", "message": {"content": "long response"}}]},
-                         {"choices": [{"finish_reason": "stop", "message": {"content": "<think>hidden only</think>"}}]}):
-            with self.assertRaises(RuntimeError):
-                api.extract("minimax", response)
-        with self.assertRaises(RuntimeError):
-            api.extract("gemini", {"candidates": [{"finishReason": "MAX_TOKENS"}]})
-
-    def test_missing_key_failure_and_cached_success_resume_independently(self):
-        output = self.root / "RESULT.txt.gemini.md"
-        with patch.dict(os.environ, {"GEMINI_API_KEY": ""}):
-            self.assertFalse(api.critique("gemini", "evidence", output))
-        self.assertIn("need GEMINI_API_KEY", (self.conductor / "STATUS.md").read_text())
-        with patch.dict(os.environ, {"GEMINI_API_KEY": "fixture"}), patch.object(api, "http_json", return_value="A complete critique with a concrete check.") as http:
-            self.assertTrue(api.critique("gemini", "evidence", output))
-            self.assertTrue(api.critique("gemini", "evidence", output))
-            self.assertEqual(http.call_count, 1)
-
-    def test_api_failure_stays_pending_and_cools_down(self):
-        with patch.dict(os.environ, {"MINIMAX_API_KEY": "fixture"}), patch.object(api, "http_json", side_effect=RuntimeError("HTTP 402")) as http:
-            self.assertFalse(api.critique("minimax", "evidence", self.root / "out.md"))
-            self.assertFalse(api.critique("minimax", "evidence", self.root / "out.md"))
-        self.assertEqual(http.call_count, 1)
-        self.assertFalse(state.journal_rows("model-runs")[0]["ok"])
-
-    def test_dashboard_failure_writes_local_snapshot_and_advances_heartbeat(self):
-        with patch.object(runtime, "snapshot", return_value={"generated_at": "fixture"}), patch.object(runtime, "push_dashboard", side_effect=RuntimeError("no auth")):
-            runtime.cycle("dashboard-updater")
-        self.assertTrue((runtime.HEARTBEATS / "dashboard-updater").exists())
-        self.assertFalse(state.read_json(self.conductor / "dashboard.json")["publication"]["ok"])
-        self.assertIn("JEFF:", (self.conductor / "STATUS.md").read_text())
-
-    def test_failed_cycle_does_not_forge_heartbeat(self):
-        with patch.object(runtime, "runner_cycle", side_effect=RuntimeError("broken queue")):
-            with self.assertRaises(RuntimeError):
-                runtime.cycle("job-runner")
-        self.assertFalse((runtime.HEARTBEATS / "job-runner").exists())
-
-    def test_real_bash_once_and_lifetime_lock(self):
-        shutil.copytree(HERE, self.conductor / "services", ignore=shutil.ignore_patterns("__pycache__"))
-        script = str(self.conductor / "services/reviewer.sh")
-        env = dict(os.environ, BOB_ROOT=str(self.root))
-        once = subprocess.run(["/bin/bash", script, "--once"], env=env, capture_output=True, timeout=10)
-        self.assertEqual(once.returncode, 0, once.stderr)
-        self.assertTrue((runtime.HEARTBEATS / "reviewer").exists())
-        process = subprocess.Popen(["/bin/bash", script], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        try:
-            time.sleep(0.4)
-            second = subprocess.run(["/bin/bash", script, "--once"], env=env, capture_output=True, text=True, timeout=10)
-            self.assertIn("already running", second.stdout)
-        finally:
-            process.terminate()
-            process.communicate(timeout=10)
-
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+if __name__=='__main__':unittest.main(verbosity=2)

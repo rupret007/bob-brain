@@ -26,3 +26,9 @@ webjam-ux/pass-*
 webjam-ux/*.error.txt
 launchd/retired/
 !services/projects.json
+!services/backlog.json
+
+screenrc/
+webchat/.password
+webchat/.session-secret
+webchat/uploads/

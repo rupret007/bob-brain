@@ -4,11 +4,11 @@ service_loop() {
   local name="$1" interval="$2"
   shift 2
   export BOB_ROOT="${BOB_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-  export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+  export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
   mkdir -p "$BOB_ROOT/logs" "$BOB_ROOT/conductor/heartbeats"
   cd "$BOB_ROOT" || return 1
   if [ "${1:-}" != "--locked" ]; then
-    exec python3 "$BOB_ROOT/conductor/services/runtime.py" lock-service "$name" "$@"
+    exec python3 "$BOB_ROOT/conductor/bootstrap.py" runtime lock-service "$name" "$@"
   fi
   shift
   exec >> "$BOB_ROOT/logs/$name.log" 2>&1
@@ -20,7 +20,7 @@ service_loop() {
     set -a
     [ -f conductor/keys.env ] && . conductor/keys.env
     set +a
-    python3 conductor/services/runtime.py cycle "$name" &
+    python3 conductor/bootstrap.py runtime cycle "$name" < /dev/null &
     child=$!
     wait "$child"
     rc=$?

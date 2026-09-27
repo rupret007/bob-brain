@@ -14,15 +14,16 @@ import sys
 import time
 from pathlib import Path
 
+from command import run
 from state import CONDUCTOR, ROOT, alert, append_event, atomic_write, job_event, jobs, journal_rows, lock, log, read_json, stamp, write_json
 
-INTERVALS = {"job-runner": 900, "reviewer": 300, "dashboard-updater": 300, "watchdog": 180}
+INTERVALS = {"job-runner": 60, "reviewer": 300, "dashboard-updater": 300, "watchdog": 180}
 SERVICES = CONDUCTOR / "services"
 HEARTBEATS = CONDUCTOR / "heartbeats"
 
 
 def screen_sessions():
-    result = subprocess.run(["screen", "-ls"], capture_output=True, text=True, timeout=15)
+    result = run(["screen", "-ls"], capture_output=True, text=True, timeout=15)
     text = result.stdout + result.stderr
     if not ("Sockets in" in text or "No Sockets found" in text):
         raise RuntimeError("screen inventory unavailable; refusing to guess")
@@ -43,6 +44,54 @@ def health(now=None, sessions=None):
     return result
 
 
+def service_lock_held(name):
+    try:
+        with lock("service-" + name, blocking=False):
+            return False
+    except BlockingIOError:
+        return True
+
+
+def stop_service_process(name):
+    """`screen -X quit` orphans the login/bash loop on macOS, leaving its lifetime lock held.
+
+    The loop exec'd from lock-service keeps the pid recorded in locks/<name>.pid; stop that
+    process (its trap also stops the running cycle) so a restart can take the lock.
+    """
+    try:
+        pid = int((CONDUCTOR / "locks" / (name + ".pid")).read_text().strip())
+        command = run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, timeout=15).stdout
+    except (OSError, ValueError):
+        return
+    if (name + ".sh") not in command:
+        return
+    for sig, wait in ((signal.SIGTERM, 25), (signal.SIGKILL, 10)):
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            return
+        for _ in range(wait):
+            if not service_lock_held(name):
+                return
+            time.sleep(0.2)
+
+
+def start_screen(name):
+    """screen can return zero before its child exec fails on macOS. Verify it."""
+    config = CONDUCTOR / "screenrc" / name
+    screen_log = ROOT / "logs" / (name + "-screen.log")
+    atomic_write(config, "logfile " + json.dumps(str(screen_log)) + "\nlogfile flush 1\nlog on\n")
+    result = run(["screen", "-c", str(config), "-L", "-dmS", "svc-" + name,
+                             "/bin/bash", str(SERVICES / (name + ".sh"))], capture_output=True, timeout=15, detach=True)
+    if result.returncode:
+        return False
+    for _ in range(30):
+        time.sleep(0.2)
+        if "svc-" + name in screen_sessions() and service_lock_held(name):
+            return True
+    return False
+
+
 def ensure_services(check_stale=False, self_name=None):
     """All entrypoints share this lock and rate cap, including both launchd jobs."""
     with lock("supervisor", blocking=False):
@@ -50,6 +99,7 @@ def ensure_services(check_stale=False, self_name=None):
         state = read_json(path, {})
         sessions = screen_sessions()
         now = time.time()
+        failed = []
         for name, interval in INTERVALS.items():
             if name == self_name:
                 continue
@@ -77,22 +127,29 @@ def ensure_services(check_stale=False, self_name=None):
             # Save BEFORE attempting restart; failures and supervisor crashes count.
             write_json(path, state)
             if not missing:
-                stopped = subprocess.run(["screen", "-S", sessions[session], "-X", "quit"],
+                stopped = run(["screen", "-S", sessions[session], "-X", "quit"],
                                          capture_output=True, timeout=15)
                 if stopped.returncode:
                     log(name + " could not stop stale screen")
                     continue
-                time.sleep(1)
-            started = subprocess.run(["screen", "-dmS", session, "/bin/bash", str(SERVICES / (name + ".sh"))],
-                                     capture_output=True, timeout=15)
-            append_event("service-restarts", {"service": name, "initial": initial, "ok": started.returncode == 0,
+            if not initial:
+                stop_service_process(name)
+            started = start_screen(name)
+            entry["last_start_ok"] = started
+            if not started:
+                failed.append(name)
+            append_event("service-restarts", {"service": name, "initial": initial, "ok": started,
                                                "reason": entry["reason"]})
-            log(("started " if initial else "restarted ") + session + " rc=" + str(started.returncode))
+            log(("started " if initial else "restarted ") + session + " verified=" + str(started))
             if len(recent) >= 3:
                 alert("restart-" + name, name + " reached 3 restarts/hour; automatic restarts paused until the rolling window clears")
-            elif started.returncode == 0:
+            elif started:
                 alert("restart-" + name)
         write_json(path, state)
+        if failed:
+            alert("service-start", "screen startup failed for " + ", ".join(failed) + "; inspect logs/*-screen.log and run start-all.sh from Terminal")
+        elif all("svc-" + n in screen_sessions() for n in INTERVALS if n != self_name):
+            alert("service-start")
 
 
 def takeover():
@@ -113,7 +170,7 @@ def takeover():
             except PermissionError:
                 log("cannot verify old pass PID; leaving it until the next check")
                 return
-        stopped = subprocess.run(["screen", "-S", sessions["mini-conductor"], "-X", "quit"], capture_output=True, timeout=15)
+        stopped = run(["screen", "-S", sessions["mini-conductor"], "-X", "quit"], capture_output=True, timeout=15)
         if stopped.returncode:
             raise RuntimeError("old mini-conductor screen could not be stopped")
         log("retired mini-conductor screen; job-runner owns ticks and the two-hour pass")
@@ -122,12 +179,14 @@ def takeover():
     marker = CONDUCTOR / "takeover.json"
     if not marker.exists():
         for label in ("com.jeff.mini-conductor", "com.jeff.mini-tick"):
-            subprocess.run(["launchctl", "bootout", "gui/%s/%s" % (os.getuid(), label)],
+            run(["launchctl", "bootout", "gui/%s/%s" % (os.getuid(), label)],
                            capture_output=True, timeout=10)
         write_json(marker, {"at": stamp(), "legacy_screen_retired": True})
 
 
 def schedule_pass():
+    if (CONDUCTOR / "MAINTENANCE").exists():
+        return
     with lock("pass-schedule"):
         path = CONDUCTOR / "pass-schedule.json"
         state = read_json(path, {})
@@ -142,18 +201,19 @@ def schedule_pass():
         if "svc-conductor-pass" in sessions:
             return
         # No due-time advance until run-conductor actually claims the pass lock.
-        result = subprocess.run(["screen", "-dmS", "svc-conductor-pass", "/bin/bash", str(CONDUCTOR / "run-conductor.sh")],
-                                capture_output=True, timeout=15)
+        result = run(["screen", "-dmS", "svc-conductor-pass", "/bin/bash", str(CONDUCTOR / "run-conductor.sh")],
+                                capture_output=True, timeout=15, detach=True)
         if result.returncode:
             raise RuntimeError("could not schedule two-hour conductor pass")
         log("scheduled two-hour run-conductor.sh pass")
 
 
 def runner_cycle():
-    result = subprocess.run(["/bin/bash", str(CONDUCTOR / "run-tick.sh")], timeout=600)
+    result = run(["/bin/bash", str(CONDUCTOR / "run-tick.sh")], timeout=600)
     if result.returncode not in (0, 2):
         raise RuntimeError("run-tick failed rc=" + str(result.returncode))
     schedule_pass()
+    status_report()
 
 
 def reviewer_cycle():
@@ -170,9 +230,8 @@ def reviewer_cycle():
             continue
         prompt = "Harvested result: " + result.name + "\n" + result.read_text(errors="replace")[:18000]
         outcomes = {}
-        for model in ("minimax", "gemini"):
-            with lock("api-" + model):
-                outcomes[model] = critique(model, prompt, result.with_name(result.name + "." + model + ".md"))
+        for model in ("cursor", "minimax", "gemini"):
+            outcomes[model] = critique(model, prompt, result.with_name(result.name + "." + model + ".md"))
         job_event(record["job_id"], review_models=outcomes,
                   reviewed_sha256=digest if all(outcomes.values()) else None, review_attempt_at=time.time())
         log("review cycle " + record["job_id"] + " " + json.dumps(outcomes))
@@ -190,7 +249,8 @@ def snapshot():
             "jobs": {"total": len(records), "launched": sum(r["state"] == "launched" for r in records),
                      "running": sum(r["state"] == "running" for r in records),
                      "harvested": sum(r["state"] == "harvested" for r in records),
-                     "blocked_closeouts": sum(r.get("outcome") == "blocked" for r in records),
+                     "blocked_closeouts": sum(r["state"] == "blocked" for r in records),
+                     "queued": sum(r["state"] == "queued" for r in records),
                      "unharvested": [{"job_id": r["job_id"], "state": r["state"], "recovery": r.get("recovery"),
                                       "screen_running": r["job_id"] in sessions} for r in pending],
                      "orphaned": sum(r["job_id"] not in sessions for r in pending)},
@@ -198,13 +258,15 @@ def snapshot():
             "restarts_total": {name: e.get("restarts_total", 0) for name, e in supervisor.items()},
             "models_succeeded_last_24h": sorted(set(r["model"] for r in runs if r.get("ok"))),
             "models_attempted_last_24h": sorted(set(r["model"] for r in runs)),
-            "alerts": read_json(CONDUCTOR / "alerts.json", {})}
+            "alerts": read_json(CONDUCTOR / "alerts.json", {}),
+            "lanes": read_json(CONDUCTOR / "lanes.json", {}),
+            "spend": {lane: __import__("budget").totals(lane) for lane in __import__("lanes").LANES}}
 
 
 def github_token():
     if os.environ.get("BOB_DASHBOARD_TOKEN"):
         return os.environ["BOB_DASHBOARD_TOKEN"]
-    result = subprocess.run(["gh", "auth", "token", "--hostname", "github.com"], capture_output=True, text=True, timeout=10)
+    result = run(["gh", "auth", "token", "--hostname", "github.com"], capture_output=True, text=True, timeout=10)
     if result.returncode or not result.stdout.strip():
         raise RuntimeError("GitHub push credentials unavailable")
     return result.stdout.strip()
@@ -221,14 +283,15 @@ def push_dashboard(data):
     if not repo.get("permissions", {}).get("push"):
         raise RuntimeError("GitHub token has no dashboard push permission")
     url = base + "/contents/agents-status.json"
-    old = http_json(url, headers=headers, allowed=(200, 404))
+    from urllib.parse import quote
+    old = http_json(url + "?ref=" + quote(os.environ["BOB_DASHBOARD_DRAFT_BRANCH"], safe=""), headers=headers, allowed=(200, 404))
     models = data["models_succeeded_last_24h"]
     sessions = screen_sessions()
     agents = []
-    for engine, title in (("codex", "Codex"), ("claude", "Claude"), ("gemini", "Gemini"), ("minimax", "MiniMax")):
+    for engine, title in (("codex", "Codex"), ("claude", "Claude"), ("cursor", "Cursor"), ("gemini", "Gemini"), ("minimax", "MiniMax")):
         active = any(r["state"] == "running" and r.get("engine") == engine and r["job_id"] in sessions for r in jobs().values())
         used = any(engine in name.lower() for name in models)
-        agents.append({"id": engine, "name": title, "state": "running" if active else "idle" if used else "unknown",
+        agents.append({"id": engine, "name": title, "state": data.get("lanes", {}).get(engine, {}).get("state", "running" if active else "idle" if used else "unknown"),
                        "detail": "Active local job" if active else "Completed local work in last 24h" if used else "No confirmed run in last 24h",
                        "checked_at": data["generated_at"]})
     # Public payload intentionally excludes job names, private PRs, local paths,
@@ -237,7 +300,7 @@ def push_dashboard(data):
               "conductor": {"services": data["services"], "models_succeeded_last_24h": models,
                             "jobs_running": data["jobs"]["running"], "jobs_unharvested": len(data["jobs"]["unharvested"]),
                             "restarts_last_hour": data["restarts_last_hour"]}}
-    payload = {"message": "chore: refresh Mini conductor status data", "branch": repo["default_branch"],
+    payload = {"message": "chore: refresh Mini conductor status data", "branch": os.environ["BOB_DASHBOARD_DRAFT_BRANCH"],
                "content": base64.b64encode((json.dumps(public, indent=2) + "\n").encode()).decode()}
     if old.get("sha"):
         payload["sha"] = old["sha"]
@@ -251,6 +314,11 @@ def dashboard_cycle():
     # prevent this cycle from completing or its heartbeat from advancing.
     write_json(CONDUCTOR / "dashboard.json", data)
     try:
+        if not os.environ.get("BOB_DASHBOARD_DRAFT_BRANCH", "").startswith("draft/"):
+            data["publication"] = {"ok": True, "mode": "local", "reason": "draft-only publication; no default-branch writes"}
+            write_json(CONDUCTOR / "dashboard.json", data)
+            alert("dashboard")
+            return
         sha = push_dashboard(data)
         if not sha:
             raise RuntimeError("dashboard update returned no commit")
@@ -269,14 +337,17 @@ def status_report():
     data = snapshot()
     healthy = sum(s["healthy"] for s in data["services"].values())
     lines = ["# STATUS — " + stamp(),
-             "SERVICES: %s/4 healthy; job-runner 15m, reviewer 5m, dashboard-updater 5m, watchdog 3m." % healthy,
+             "SERVICES: %s/4 healthy; job-runner 1m, reviewer 5m, dashboard-updater 5m, watchdog 3m." % healthy,
              "HEARTBEATS: " + "; ".join(n + " " + str(s["heartbeat_age_seconds"]) + "s" for n, s in data["services"].items()),
-             "JOBS: %(launched)s launched, %(running)s running, %(harvested)s harvested; %(blocked_closeouts)s blocked closeouts preserved." % data["jobs"],
+             "JOBS: %(launched)s launched, %(running)s running, %(harvested)s harvested; %(blocked_closeouts)s blocked jobs retained." % data["jobs"],
              "RECOVERY: %s unharvested; %s without a live job screen (see jobs.jsonl)." % (len(data["jobs"]["unharvested"]), data["jobs"]["orphaned"]),
              "RESTARTS (last hour): " + json.dumps(data["restarts_last_hour"], sort_keys=True),
              "MODELS confirmed in last 24h: " + (", ".join(data["models_succeeded_last_24h"]) or "none; see model-runs.jsonl"),
-             "CONDUCTOR: run-conductor.sh scheduled every two hours; dual critique and one learned improvement required.",
-             "PR/CI: prior WebJam #159/#160 red; no fresh GitHub CI verification in this service build."]
+             "CONDUCTOR: single scheduler; two-hour council assessment only; live core read-only.",
+             "LANES: " + "; ".join(n + "=" + v["state"] for n, v in data["lanes"].items()),
+             "MINIMAX: $%.4f spent + $%.4f reserved / $48 hard cap." % (data["spend"]["minimax"]["spent_usd"], data["spend"]["minimax"]["reserved_usd"])]
+    for note in sorted((CONDUCTOR / "status").glob("notes-*.md")):
+        lines.append(note.stem + ": " + " ".join(note.read_text(errors="replace").split())[:1500])
     with lock("status"):
         entries = read_json(CONDUCTOR / "alerts.json", {})
         # Group model failures to keep the human status below 15 lines.
@@ -299,10 +370,23 @@ def lock_service(name, args):
     except BlockingIOError:
         log(name + " already running (lifetime lock)")
         return 0
+    atomic_write(CONDUCTOR / "locks" / (name + ".pid"), str(os.getpid()) + "\n")
     fd = handle.fileno()
     os.set_inheritable(fd, True)
     env = dict(os.environ, BOB_SERVICE_LOCK_FD=str(fd))
     os.execve("/bin/bash", ["/bin/bash", str(SERVICES / (name + ".sh")), "--locked"] + args, env)
+
+
+def rotate_log(name):
+    path = ROOT / "logs" / (name + ".log")
+    if path.exists() and path.stat().st_size > 5 * 1024 * 1024:
+        with path.open("rb") as handle:
+            handle.seek(-1024 * 1024, 2)
+            tail = handle.read().decode("utf-8", "replace")
+        atomic_write(path.with_suffix(".log.1"), tail)
+        # Retain the inode: the loop's append descriptor continues writing here.
+        with path.open("r+") as handle:
+            handle.truncate(0)
 
 
 def cycle(name):
@@ -310,6 +394,7 @@ def cycle(name):
     # after a screen is stopped or while a separately scheduled pass runs.
     if os.environ.get("BOB_SERVICE_LOCK_FD"):
         os.close(int(os.environ.pop("BOB_SERVICE_LOCK_FD")))
+    rotate_log(name)
     log(name + " cycle start")
     if name == "job-runner":
         runner_cycle()
@@ -319,7 +404,12 @@ def cycle(name):
         dashboard_cycle()
     elif name == "watchdog":
         ensure_services(check_stale=True, self_name="watchdog")
-        takeover()
+        try:
+            takeover()
+            alert("takeover")
+        except Exception as exc:
+            alert("takeover", "legacy takeover deferred: " + type(exc).__name__)
+        status_report()
     else:
         raise ValueError("unknown service")
     HEARTBEATS.mkdir(parents=True, exist_ok=True)
@@ -336,6 +426,14 @@ def main():
     elif command == "tick":
         from jobs import tick
         return tick()
+    elif command == "legacy-shim":
+        try:
+            with lock("service-job-runner", blocking=False):
+                pass
+        except BlockingIOError:
+            log("services already own orchestration; legacy shim exits")
+            return 0
+        ensure_services()
     elif command == "start-all":
         ensure_services(check_stale="--watchdog-guard" in sys.argv)
         time.sleep(1)
@@ -361,3 +459,11 @@ if __name__ == "__main__":
         reason = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
         log("cycle error: " + reason)
         raise SystemExit(1)
+    finally:
+        # All services persist alerts, but STATUS has this one rendering path.
+        # Render after failed cycles too, so missing keys/restart limits are visible.
+        if len(sys.argv) > 1 and sys.argv[1] in ("cycle", "start-all"):
+            try:
+                status_report()
+            except Exception as exc:
+                log("status refresh pending: " + type(exc).__name__)

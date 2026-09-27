@@ -109,7 +109,7 @@ def jobs():
 
 
 def job_event(job_id, state=None, **fields):
-    if state and state not in ("launched", "running", "harvested"):
+    if state and state not in ("queued", "launched", "running", "blocked", "harvested"):
         raise ValueError("invalid job state")
     with lock("jobs"):
         path = CONDUCTOR / "jobs.jsonl"
@@ -117,7 +117,7 @@ def job_event(job_id, state=None, **fields):
         row = dict(previous, **fields)
         row.update(job_id=job_id, state=state or previous.get("state", "launched"))
         # Reconciliation may discover a closeout after the launch but before running.
-        if previous.get("state") == "harvested" and row["state"] != "harvested":
+        if previous.get("state") == "harvested" and previous.get("outcome") != "blocked" and row["state"] != "harvested":
             raise ValueError("cannot relaunch a harvested job: " + job_id)
         if all(previous.get(k) == v for k, v in row.items()):
             return previous
@@ -128,7 +128,7 @@ def job_event(job_id, state=None, **fields):
 
 
 def alert(key, message=None):
-    """Durable keyed alerts survive a conductor STATUS overwrite; never lose peers."""
+    """Persist alerts only. runtime.py is the sole STATUS.md writer."""
     with lock("status"):
         path = CONDUCTOR / "alerts.json"
         entries = read_json(path, {})
@@ -137,11 +137,6 @@ def alert(key, message=None):
         else:
             entries.pop(key, None)
         write_json(path, entries)
-        status = CONDUCTOR / "STATUS.md"
-        old = status.read_text() if status.exists() else "# Conductor status\n"
-        lines = [s for s in old.splitlines() if "[svc:" not in s]
-        lines.extend("JEFF: " + value + " [svc:" + name + "]" for name, value in sorted(entries.items()))
-        atomic_write(status, "\n".join(lines) + "\n")
 
 
 def log(message):

@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
-"""Queue recovery and launch hooks. The existing queue remains the scheduler."""
+"""Deterministic five-lane scheduler, durable blockers, and legacy migration."""
 from __future__ import annotations
 
 import hashlib
 import importlib.util
 import json
 import re
-import subprocess
+import shlex
 import sys
 import time
+import uuid
 from pathlib import Path
 
+from command import run
 from state import CONDUCTOR, ROOT, alert, atomic_write, job_event, jobs, lock, log, read_json, write_json
+import lanes
+from workspaces import git, prepare
+
+PROJECTS = ("WebJam", "StoryBoard", "AdoptIQ", "shelf")
+MAX_ATTEMPTS = 3
 
 
 def load_helper(name):
@@ -22,144 +29,251 @@ def load_helper(name):
 
 
 def closeout(job_dir):
-    for name in ("RESULT.txt", "RESULT.md", "BLOCKER.txt"):
-        path = job_dir / name
+    for name in ("RESULT.txt", "RESULT.md"):
+        path = Path(job_dir) / name
         if path.is_file() and path.stat().st_size:
             return path
     return None
 
 
-def import_legacy(refill, screens):
-    if (CONDUCTOR / "jobs-imported.json").exists():
+def blocked(record, reason):
+    attempt = record.get("attempts", 0)
+    job_event(record["job_id"], "blocked", outcome="blocked", recovery=reason,
+              retry_at=time.time() + min(3600, 60 * 2 ** attempt), escalated=attempt >= MAX_ATTEMPTS)
+    if attempt >= MAX_ATTEMPTS or record.get("legacy"):
+        alert("job-" + record["job_id"], record["job_id"] + " blocked: " + reason)
+
+
+def import_legacy(refill=None, screens=None):
+    """Recover already misclassified BLOCKERs even after the old import marker."""
+    records = jobs()
+    for record in records.values():
+        if record.get("outcome") == "blocked" and record["state"] == "harvested":
+            blocked(record, "legacy BLOCKER retained; explicit retry or escalation required")
+    if (CONDUCTOR / "jobs-imported-v2.json").exists():
         return
-    known = jobs()
-    legacy = read_json(ROOT / "local-cursor-job-watch-state.json", {})
-    running_rows = {r["job"]: r for r in refill.parse_running_rows() if r.get("job")}
-    candidates = set(legacy.get("jobs", {})) | set(running_rows)
-    for path in ROOT.iterdir():
-        if path.is_dir() and re.match(r"^(codex|cursor|claude|webjam|storyboard|adoptiq|shelf)-", path.name):
-            if closeout(path) or (path / "run.sh").is_file():
-                candidates.add(path.name)
-    for job in sorted(candidates):
-        if job in known:
+    old = read_json(ROOT / "local-cursor-job-watch-state.json", {}).get("jobs", {})
+    for job, record in old.items():
+        if job in records or not record.get("running"):
             continue
         folder = ROOT / job
+        job_event(job, "blocked", legacy=True, job_dir=str(folder), outcome="blocked",
+                  recovery="orphaned legacy running record", escalated=True)
+        folder.mkdir(parents=True, exist_ok=True)
+        atomic_write(folder / "ORPHAN_WARNING.txt", "No durable active worker was found; job retained as blocked.\n")
+    write_json(CONDUCTOR / "jobs-imported-v2.json", {"at": time.time()})
+
+
+def update_index(record, status):
+    if not record.get("file"):
+        return
+    index = ROOT / "next-prompts/INDEX.md"
+    if not index.exists():
+        return
+    lines = index.read_text().splitlines()
+    for i, line in enumerate(lines):
+        parts = line.split("|")
+        if len(parts) >= 8 and parts[2].strip().strip("`") == record["file"]:
+            parts[5] = " " + status + " "
+            parts[6] = " " + record["job_id"] + "; " + record.get("recovery", "managed by services") + " "
+            lines[i] = "|".join(parts)
+    atomic_write(index, "\n".join(lines) + "\n")
+
+
+def harvest(record, result):
+    digest = hashlib.sha256(result.read_bytes()).hexdigest()
+    # Persist deliverables/promotions before terminal journal state.
+    atomic_write(ROOT / "next-prompts/_inbox" / (record["job_id"] + "-" + result.name), result.read_text())
+    if (Path(record["job_dir"]) / "queue-ready").exists() or (Path(record["job_dir"]) / "PROMOTE.json").exists():
+        helper = load_helper("auto_harvest")
+        helper.promote_from_queue_ready(Path(record["job_dir"]), record["job_id"])
+    update_index(record, "DONE")
+    job_event(record["job_id"], "harvested", outcome="result", result_path=str(result),
+              result_sha256=digest, recovery="deliverables persisted")
+    alert("job-" + record["job_id"])
+
+
+def recover(refill=None):
+    from runtime import screen_sessions
+    sessions = screen_sessions()
+    import_legacy()
+    unresolved = []
+    for record in jobs().values():
+        folder = Path(record.get("job_dir", ROOT / record["job_id"]))
         result = closeout(folder)
-        active = job in running_rows or refill.screen_alive(job, screens)
-        old = legacy.get("jobs", {}).get(job, {})
-        if not result and not active and not old.get("running"):
+        live = record["job_id"] in sessions
+        if live:
+            if record["state"] in ("queued", "launched"):
+                job_event(record["job_id"], "running", recovery="live worker adopted after restart")
+            continue  # do not harvest files an active writer may still be changing
+        if result:
+            digest = hashlib.sha256(result.read_bytes()).hexdigest()
+            if record["state"] != "harvested" or record.get("result_sha256") != digest:
+                # Managed jobs must pass worker verification before RESULT is terminal.
+                if not record.get("managed") or record.get("verified"):
+                    harvest(record, result)
+                    continue
+        if record["state"] == "harvested":
             continue
-        row = running_rows.get(job, {})
-        job_event(job, "running" if active else "launched", job_dir=str(folder),
-                  legacy=True, pri=row.get("pri"), file=row.get("file"), recovery="imported")
-        if not result and not active:
-            # Stale historical metadata is not authority to relaunch a cancelled job.
-            # Preserve an explicit closeout and let the queue decide follow-on work.
-            folder.mkdir(parents=True, exist_ok=True)
-            atomic_write(folder / "BLOCKER.txt", "BLOCKER: legacy running record has no live screen, current RUNNING row, or closeout.\n"
-                         "Recovered by service migration; retained for review, not silently treated as completed work.\n")
-    write_json(CONDUCTOR / "jobs-imported.json", {"at": time.time(), "candidates": len(candidates)})
+        if record["state"] in ("running", "launched"):
+            blocked(record, "worker exited without a verified result")
+        elif (folder / "BLOCKER.txt").exists() and record["state"] != "blocked":
+            blocked(record, "BLOCKER.txt requires retry")
+        if record.get("legacy") and record["state"] != "blocked":
+            blocked(record, "legacy job needs a private worktree specification")
+        if record.get("legacy") and record.get("file"):
+            # Requeue its prompt through the new scheduler; never replay old run.sh.
+            update_index(record, "READY")
+        unresolved.append(record["job_id"])
+    alert("jobs", str(len(unresolved)) + " unfinished/blocked jobs retained in jobs.jsonl" if unresolved else None)
+    return unresolved
+
+
+def queue_specs():
+    configured = read_json(CONDUCTOR / "services/backlog.json", [])
+    index = ROOT / "next-prompts/INDEX.md"
+    rows = []
+    if index.exists():
+        for line in index.read_text().splitlines():
+            parts = [p.strip().strip("`") for p in line.split("|")]
+            if len(parts) < 8 or not parts[1].isdigit() or parts[5] != "READY":
+                continue
+            project = next((p for p in PROJECTS if parts[3].lower().startswith(p.lower())), None)
+            if not project:
+                continue
+            # Dedicated per-PR jobs supersede the old shared-worktree CI prompt.
+            if parts[2] == "20-webjam-ci-fix-choice-helper.md":
+                continue
+            prompt = ROOT / "next-prompts" / parts[2]
+            if not prompt.is_file():
+                continue
+            sidecar = read_json(prompt.with_suffix(".json"), {})
+            rows.append(dict(id="queue-" + prompt.stem, file=parts[2], project=project,
+                             kind="non-coding" if "non-coding" in parts[4] else "coding",
+                             priority=int(parts[1]) + 20, prompt=prompt.read_text(), **sidecar))
+    # Unknown legacy work is retained for escalation, not silently relaunched.
+    return sorted(configured + rows, key=lambda r: (PROJECTS.index(r["project"]), r.get("priority", 99), r["id"]))
+
+
+def evidence(spec, repo):
+    sections = []
+    for field, root in (("evidence", repo), ("conductor_evidence", CONDUCTOR)):
+        for name in spec.get(field, []):
+            path = (root / name).resolve()
+            if root.resolve() not in path.parents or path.name == "keys.env":
+                raise RuntimeError("evidence path outside approved root")
+            if path.is_file():
+                sections.append("FILE " + name + "\n" + path.read_text(errors="replace")[:20000])
+            else:
+                sections.append("FILE " + name + ": missing; do not infer contents")
+    return "\n\n".join(sections)[:80000]
+
+
+def create_record(spec, lane):
+    projects = read_json(CONDUCTOR / "services/projects.json", {})
+    project = projects[spec["project"]]
+    job_id = lane + "-" + spec["id"][:48] + "-" + uuid.uuid4().hex[:8]
+    folder = ROOT / "jobs" / job_id
+    folder.mkdir(parents=True)
+    repo = str(Path(spec.get("repo", project["repo"])).expanduser().resolve())
+    record = dict(spec, job_id=job_id, spec_id=spec["id"], job_dir=str(folder), repo=repo,
+                  remote=project["remote"], engine=lane, worktree=str(ROOT / "workspaces" / job_id),
+                  branch="draft/" + job_id, managed=True, attempts=0, legacy=False)
+    atomic_write(folder / "PROMPT.txt", spec["prompt"])
+    atomic_write(folder / "run.sh", "#!/bin/bash\nexec python3 " + shlex.quote(str(CONDUCTOR / "bootstrap.py")) +
+                 " worker " + shlex.quote(job_id) + " < /dev/null\n")
+    (folder / "run.sh").chmod(0o755)
+    return job_event(job_id, "queued", **{k: v for k, v in record.items() if k != "job_id"})
+
+
+def setup_record(record):
+    if record.get("pr"):
+        pr = json.loads(run(["gh", "pr", "view", str(record["pr"]), "-R", record["remote"],
+                             "--json", "isDraft,state,headRefName,headRefOid,url"],
+                            capture_output=True, text=True, timeout=30, check=True).stdout)
+        if not pr["isDraft"] or pr["state"] != "OPEN":
+            raise RuntimeError("target PR is not an open draft")
+        record.update(fetch_ref=pr["headRefName"], publish_branch=pr["headRefName"], pr_url=pr["url"])
+        job_event(record["job_id"], **{k: record[k] for k in ("fetch_ref", "publish_branch", "pr_url")})
+    workspace = prepare(record)
+    body = evidence(record, workspace)
+    if body:
+        atomic_write(Path(record["job_dir"]) / "EVIDENCE.txt", body)
+    return workspace
+
+
+def launch_record(record):
+    folder = Path(record["job_dir"])
+    attempt = record.get("attempts", 0) + 1
+    job_event(record["job_id"], "launched", attempts=attempt, verified=False, recovery="launch intent")
+    try:
+        for name in ("BLOCKER.txt", "RESULT.txt", "RESULT.md"):
+            path = folder / name
+            if path.exists():
+                path.rename(folder / (name + ".attempt-" + str(attempt - 1)))
+        launch(record["job_id"], folder)
+    except Exception as exc:
+        reason = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
+        atomic_write(folder / "BLOCKER.txt", "BLOCKER: " + reason + "\n")
+        blocked(jobs()[record["job_id"]], reason)
 
 
 def launch(job_name, job_dir):
-    """Called only after the intent is fsynced. No zombie interactive shell."""
-    result = subprocess.run(["screen", "-dmS", job_name, "/bin/bash", str(job_dir / "run.sh")],
-                            capture_output=True, text=True, timeout=15)
-    if result.returncode:
-        job_event(job_name, recovery="launch_failed", launch_error=result.returncode)
-        raise RuntimeError("screen launch failed rc=" + str(result.returncode))
-    job_event(job_name, "running", recovery="screen_started")
+    run(["screen", "-dmS", job_name, "/bin/bash", str(job_dir / "run.sh")],
+        capture_output=True, text=True, timeout=15, check=True, detach=True)
+    job_event(job_name, "running", recovery="worker launched")
+    update_index(jobs()[job_name], "RUNNING")
 
 
-def recover(refill):
-    screens = refill.screen_ls()
-    if "screen_error:" in screens or ("Sockets in" not in screens and "No Sockets found" not in screens):
-        raise RuntimeError("cannot inspect screens; refusing duplicate job launches")
-    import_legacy(refill, screens)
-    # Also adopt a job created immediately before a crash at the journal boundary.
-    known = jobs()
-    for row in refill.parse_running_rows():
-        job = row.get("job")
-        if job and job not in known:
-            job_event(job, "running", job_dir=str(ROOT / job), pri=row["pri"], file=row["file"], legacy=True)
-    unresolved = []
-    for job, record in jobs().items():
-        folder = Path(record.get("job_dir", ROOT / job))
-        result = closeout(folder)
-        # Re-harvest changed results, including RESULT arriving after a BLOCKER.
-        digest = hashlib.sha256(result.read_bytes()).hexdigest() if result else None
-        if record["state"] == "harvested" and digest == record.get("result_sha256"):
-            continue
-        if folder.is_dir():
-            refill.copy_tmp_closeout(job, folder)
-            result = closeout(folder)
-        if result:
-            for action in refill.harvest_on_reap(job):
-                log(action)
-            current = jobs()[job]
-            expected = hashlib.sha256(result.read_bytes()).hexdigest()
-            if current["state"] != "harvested" or current.get("result_sha256") != expected:
-                unresolved.append(job + ": harvest pending")
-            continue
-        if record["state"] == "harvested":
-            unresolved.append(job + ": harvested source missing (journal retained)")
-            continue
-        if refill.screen_alive(job, screens):
-            job_event(job, "running", recovery="live")
-            continue
-        if record.get("legacy"):
-            # Do not replay old shell scripts that may reset worktrees. Resume via
-            # the common worker with the existing prompt and an explicit resume contract.
-            if (folder / "PROMPT.txt").exists():
-                atomic_write(folder / "resume.sh", '#!/bin/bash\nexec python3 ' +
-                             __import__("shlex").quote(str(CONDUCTOR / "services" / "worker.py")) +
-                             ' ' + __import__("shlex").quote(job) + ' --resume\n')
-            else:
-                unresolved.append(job + ": prompt missing")
-                job_event(job, recovery="prompt_missing")
-                continue
-        if record.get("resume_count", 0) >= 3:
-            unresolved.append(job + ": three job resume attempts exhausted")
-            job_event(job, recovery="resume_limit")
-            continue
-        # Reuse the existing coding lease guard, never bypass another coder.
-        if "webjam" in job.lower() and refill.job_dir_looks_coding(folder):
-            if refill.webjam_coding_screens_alive(screens):
-                job_event(job, recovery="waiting_for_coding_lease")
-                continue
-            reason = refill.webjam_coding_lease_blocked(ci_unblock="ci" in job.lower())
-            if reason:
-                job_event(job, recovery="lease_blocked", recovery_detail=reason)
-                unresolved.append(job + ": coding lease blocked")
-                continue
-        script = folder / ("resume.sh" if record.get("legacy") else "run.sh")
-        if not script.exists() and not record.get("legacy") and record.get("prompt_path"):
-            source = Path(record["prompt_path"])
-            if source.is_file():
-                refill.write_job(job, source, record.get("kind", "non-coding"))
-        if not script.exists():
-            unresolved.append(job + ": launch script missing")
-            job_event(job, recovery="script_missing")
-            continue
-        job_event(job, resume_count=record.get("resume_count", 0) + 1, recovery="resuming")
-        result = subprocess.run(["screen", "-dmS", job, "/bin/bash", str(script)], capture_output=True, timeout=15)
-        if result.returncode:
-            unresolved.append(job + ": resume screen failed")
-        else:
-            job_event(job, "running", recovery="resumed")
-        screens = refill.screen_ls()
-    alert("jobs", (str(len(unresolved)) + " job recovery issues; see conductor/jobs.jsonl: " + "; ".join(unresolved[:3])) if unresolved else None)
-    return unresolved
+def can_assign(spec, lane, active, health):
+    if health[lane]["state"] != "ready" or any(r.get("engine") == lane for r in active):
+        return False
+    if spec["kind"] == "coding" and lane in ("gemini", "minimax"):
+        return False
+    if spec["kind"] == "coding" and spec["project"] == "WebJam":
+        if any(r.get("project", "").startswith("WebJam") and r.get("kind") == "coding" for r in active):
+            return False
+    return len(active) < 5
 
 
 def tick():
     with lock("queue", blocking=False):
-        refill = load_helper("ops-queue-refill")
-        recover(refill)
-        # Existing reaping logic preserves BLOCKED vs DONE and the coding lease.
-        result = subprocess.run([sys.executable, str(ROOT / "bin/job-watch-tick.py")], cwd=str(ROOT), timeout=300)
-        recover(refill)
-        if result.returncode not in (0, 2):
-            raise RuntimeError("queue tick failed rc=" + str(result.returncode))
-        log("tick complete rc=%s (2 means queue safely held)" % result.returncode)
-        return result.returncode
+        if (CONDUCTOR / "MAINTENANCE").exists():
+            log("maintenance: scheduling paused")
+            return 0
+        health = lanes.refresh()  # Cursor login checked every tick, even with an empty queue.
+        recover()
+        from runtime import screen_sessions
+        sessions = screen_sessions()
+        records = jobs()
+        # Count live legacy coders too; never start beside an inherited WebJam edit.
+        active = [dict(r, project=r.get("project") or ("WebJam" if "webjam" in r["job_id"] else "unknown"),
+                       kind=r.get("kind") or "coding") for r in records.values()
+                  if r["job_id"] in sessions and r["state"] != "harvested"]
+        known = {r.get("spec_id") for r in records.values()}
+        candidates = [r for r in records.values() if r.get("managed") and r["state"] in ("queued", "blocked")
+                      and r.get("retry_at", 0) <= time.time() and r.get("attempts", 0) < MAX_ATTEMPTS]
+        specs = queue_specs()
+        for spec in specs:
+            if spec["id"] not in known:
+                candidates.append(spec)
+        candidates.sort(key=lambda r: (PROJECTS.index(r["project"]), r.get("priority", 99)))
+        for spec in candidates:
+            lane_order = ("cursor", "codex", "claude", "gemini", "minimax") if spec["kind"] == "coding" else ("gemini", "minimax", "cursor", "claude", "codex")
+            for lane in lane_order:
+                if not can_assign(spec, lane, active, health):
+                    continue
+                record = spec if "job_id" in spec else create_record(spec, lane)
+                if record["engine"] != lane:
+                    job_event(record["job_id"], engine=lane)
+                    record = jobs()[record["job_id"]]
+                launch_record(record)
+                current = jobs()[record["job_id"]]
+                if current["state"] == "running":
+                    active.append(current)
+                else:
+                    # Do not repeatedly spend the same lane on setup errors this tick.
+                    health[lane]["state"] = "deferred"
+                break
+        log("tick complete; %d active jobs; five lane ceiling" % len(active))
+        return 0

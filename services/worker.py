@@ -1,60 +1,75 @@
 #!/usr/bin/env python3
-"""Codex/Claude job execution with a durable, honest closeout on every exit."""
+"""Execute one explicit job in its private worktree with a persistent blocker."""
 from __future__ import annotations
 
-import os
-import signal
-import subprocess
+import contextlib
+import hashlib
 import sys
+import time
 from pathlib import Path
 
-from state import CONDUCTOR, ROOT, append_event, atomic_write, job_event, jobs, lock, stamp
+from command import run
+from jobs import blocked, setup_record
+from lanes import ask
+from state import CONDUCTOR, atomic_write, job_event, jobs, lock
+from workspaces import git, prepare
 
 
-def main():
-    job = sys.argv[1]
+def execute(job):
     record = jobs()[job]
     folder = Path(record["job_dir"])
-    with lock("worker-" + job, blocking=False):
-        if any((folder / name).exists() for name in ("RESULT.txt", "RESULT.md", "BLOCKER.txt")):
+    if record["state"] == "harvested":
+        return 0
+    coding = record.get("kind") == "coding"
+    try:
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(lock("worker-" + job, blocking=False))
+            stack.enter_context(lock("lane-" + record["engine"], blocking=False))
+            stack.enter_context(lock("worktree-" + hashlib.sha256(record["worktree"].encode()).hexdigest(), blocking=False))
+            if coding and record["project"] == "WebJam":
+                stack.enter_context(lock("webjam-coder", blocking=False))
+            cwd = setup_record(record)
+            job_event(job, "running", recovery="worker executing")
+            prompt = (folder / "PROMPT.txt").read_text()
+            prompt = ("ASSIGNED WORKTREE: " + str(cwd) + "\nBRANCH: " + record["branch"] +
+                      "\nThis job specification replaces every legacy shared-worktree instruction in the task. "
+                      "Do not switch branches or use other checkout paths. "
+                      "Write status notes to STATUS-NOTE.md inside this worktree.\n" +
+                      ("Approved draft PR push target: origin HEAD:refs/heads/" + record["publish_branch"] + "\n" if record.get("publish_branch") else "") +
+                      "Return an honest final result with tests, SHA and links, or begin BLOCKER: if unfinished.\n\nTASK:\n" + prompt)
+            evidence = folder / "EVIDENCE.txt"
+            if evidence.exists():
+                prompt += "\nSUPPLIED EVIDENCE:\n" + evidence.read_text()
+            answer = ask(record["engine"], prompt, cwd=cwd, coding=coding, timeout=5400 if coding else 300,
+                         purpose="job-" + job, locked=True)
+            atomic_write(folder / (record["engine"] + ".log"), answer + "\n")
+            if answer.lstrip().upper().startswith("BLOCKER:"):
+                raise RuntimeError(answer[:1000])
+            if coding:
+                if git(cwd, "status", "--porcelain", "--untracked-files=no"):
+                    raise RuntimeError("tracked changes remain uncommitted")
+                if git(cwd, "branch", "--show-current") != record["branch"]:
+                    raise RuntimeError("worker changed its assigned draft branch")
+                target = record.get("publish_branch", record["branch"])
+                remote = git(cwd, "ls-remote", "origin", "refs/heads/" + target).split()
+                if not remote or remote[0] != git(cwd, "rev-parse", "HEAD"):
+                    raise RuntimeError("HEAD is not pushed to the approved draft branch")
+            atomic_write(folder / "RESULT.txt", answer + "\n")
+            job_event(job, verified=True, recovery="result verified; pending harvest")
+            note = cwd / "STATUS-NOTE.md"
+            if note.exists():
+                atomic_write(CONDUCTOR / "status" / ("notes-" + record["engine"] + ".md"), note.read_text()[:12000])
             return 0
-        prompt = (folder / "PROMPT.txt").read_text()
-        prompt += ("\nHard rules: drafts only; never merge, undraft, force-push, send messages/emails, "
-                   "spend money/buy credits, change logins, or launch other workers. Only one WebJam coding job. "
-                   "Use bash/python3; no rg or GNU timeout. Never reset, overwrite, or stash preexisting edits. "
-                   "Inspect existing work and resume it; an earlier invocation may already have made progress. "
-                   "Write an honest RESULT.txt or BLOCKER.txt in " + str(folder) + ".\n")
-        brief = (folder / "BRIEF.txt").read_text() if (folder / "BRIEF.txt").exists() else ""
-        coding = record.get("kind") == "coding" or "coding" in brief.replace("non-coding", "")
-        engine = record.get("engine") or ("codex" if coding else "claude")
-        if engine not in ("codex", "claude"):
-            engine = "codex"
-        cwd = Path.home() / "Documents/webjam-pr158-fold" if coding and "webjam" in job else folder
-        if not cwd.exists():
-            atomic_write(folder / "BLOCKER.txt", "BLOCKER: required worktree is missing; no work started.\n")
-            return 1
-        cmd = (["codex", "exec", "-s", "workspace-write", "-c", "sandbox_workspace_write.network_access=true",
-                "--skip-git-repo-check", prompt] if engine == "codex" else
-               ["claude", "-p", prompt, "--permission-mode", "acceptEdits"])
-        env = dict(os.environ)
-        env.pop("ANTHROPIC_API_KEY", None)  # use the existing CLI login; never buy credits
-        job_event(job, "running", engine=engine, recovery="worker_started")
-        with (folder / (engine + ".log")).open("a") as out:
-            out.write("\n=== " + stamp() + " resume/start\n")
-            out.flush()
-            try:
-                result = subprocess.run(cmd, cwd=str(cwd), env=env, stdin=subprocess.DEVNULL,
-                                        stdout=out, stderr=subprocess.STDOUT, timeout=5400)
-                rc = result.returncode
-            except Exception as exc:
-                out.write("worker error: " + type(exc).__name__ + "\n")
-                rc = 1
-            out.write("\nEXIT=" + str(rc) + "\n")
-        append_event("model-runs", {"model": engine, "ok": rc == 0, "job_id": job, "kind": "worker"})
-        if not any((folder / name).is_file() and (folder / name).stat().st_size for name in ("RESULT.txt", "RESULT.md", "BLOCKER.txt")):
-            atomic_write(folder / "BLOCKER.txt", "BLOCKER: " + engine + " exited " + str(rc) + " without a closeout; inspect its log and existing work before retry.\n")
-        return rc
+    except BlockingIOError:
+        job_event(job, "queued", attempts=max(0, record.get("attempts", 1) - 1),
+                  retry_at=time.time() + 30, recovery="waiting for lane/worktree lease")
+        return 0
+    except Exception as exc:
+        reason = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
+        atomic_write(folder / "BLOCKER.txt", "BLOCKER: " + reason + "\n")
+        blocked(jobs()[job], reason)
+        return 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(execute(sys.argv[1]))

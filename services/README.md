@@ -1,72 +1,72 @@
-# Mini conductor services
+# Mini conductor
 
-Run `/bin/bash conductor/services/start-all.sh` from any directory. It starts only
-missing screens, retires the idle `mini-conductor` screen, and shares the watchdog's
-restart limits. Each entrypoint also supports `--once`; a live instance's lifetime
-lock prevents a concurrent one-cycle invocation. Inspect `logs/<name>.log` and
-`conductor/heartbeats/<name>`.
+Start or recover with `bash conductor/services/start-all.sh`. `launchd/install.sh`
+installs and loads bob-services (5 minute guard) and bob-watchdog (3 minute guard)
+for this user's login. Reboot startup occurs after login; no login settings are
+changed. `loop.sh` and old queue entrypoints only defer to these services.
 
-| Service | Interval | Stale after |
-| --- | ---: | ---: |
-| job-runner | 900 seconds | 2700 seconds |
-| reviewer | 300 seconds | 900 seconds |
-| dashboard-updater | 300 seconds | 900 seconds |
-| watchdog | 180 seconds | 540 seconds |
+| Service | Interval | Responsibility |
+| --- | --- | --- |
+| job-runner | 60s | Cursor login check, recover, harvest, fill idle lanes |
+| reviewer | 300s | Cursor/MiniMax/Gemini critique with cached receipts |
+| dashboard-updater | 300s | Local dashboard.json; optional draft branch publication |
+| watchdog | 180s | Heartbeats, verified restarts, three attempts/hour cap |
 
-The watchdog checks the three peer services. The separate launchd watchdog guard
-checks all four, including a hung watchdog. Every automatic entrypoint uses the
-same durable rolling cap of three restart attempts per service per hour. Initial
-starts do not consume the restart allowance. A restarted service gets a startup
-grace of three intervals. Failed cycles do not touch heartbeats; a completed cycle
-with a recorded API/publish failure is healthy but degraded and creates a JEFF alert.
+`locks/<service>.pid` plus lifetime flock ownership prevent duplicate services.
+Startup verifies both screen presence and the lock. Restart stops the recorded
+loop process as well as its screen; macOS can orphan the shell on screen exit.
+`MAINTENANCE` pauses automatic entrypoints while an operator changes the core.
+Service logs retain a bounded tail backup once they exceed 5 MiB.
 
-`jobs.jsonl` is an append-only, locked/fsynced journal with `launched`, `running`, and
-`harvested` states. A launch intent is written before starting its screen. Restart
-recovery reconnects to live screens, resumes interrupted jobs through the coding
-lease checks, or repeats the idempotent harvest. A result is harvested only after
-its deliverables and queue promotions are persisted. BLOCKER closeouts are retained
-and counted separately from successful results. An interrupted final JSONL append
-is saved as `.interrupted-tail` and repaired; corruption in the middle fails visibly.
-The old historical state is imported once. Stale historical running records with
-no current queue ownership or screen become explicit BLOCKER closeouts, never
-newly launched jobs or claimed successful work.
+`jobs.jsonl` is an append-only/fsynced journal. States are queued, launched,
+running, blocked, harvested. Only verified results become harvested. BLOCKERs
+remain unfinished, retry with backoff and escalate after three attempts. Legacy
+blocked closeouts are reopened as blocked; old shell scripts are never replayed.
+A completed result arriving later can still be harvested idempotently.
 
-The reviewer saves `RESULT.txt.minimax.md` / `RESULT.txt.gemini.md` (or the same
-suffixes beside a BLOCKER/RESULT.md). Content-hash receipts let each model resume
-independently without redoing successful calls. One result per cycle bounds API
-work. Missing keys skip that model. Network, API, malformed, empty and truncated
-responses retry three times with 2/4 second backoff and `curl -m 60`; exhausted
-model failures defer for one hour. `keys.env` is sourced afresh each cycle. Keys are
-passed via curl stdin and never printed, put into argv, or published. No credit
-purchases, account changes, or billing configuration are performed.
+The scheduler reads `services/backlog.json`, `services/projects.json`, and READY
+rows in `../next-prompts/INDEX.md` (optional adjacent JSON specs). It prioritizes
+WebJam > StoryBoard > AdoptIQ > shelf, with explicit #159/#160 CI fixes before UX.
+Cursor is preferred for coding and is also a council/reviewer member. The five
+shared lane leases permit one call per lane across every entrypoint. The scheduler
+allows five jobs, one WebJam coder and separate Git worktrees under ../workspaces/.
 
-The dashboard always writes `conductor/dashboard.json` first. It uses the existing
-GitHub CLI login (or `BOB_DASHBOARD_TOKEN` in keys.env) to update only the public
-repo's `agents-status.json` through a normal Contents commit. No merges or force
-pushes. This matches the existing dashboard input. The payload contains coarse
-agent/service health only. Failure leaves a local snapshot and JEFF alert, then
-the loop continues. The dashboard's scheduled refresh consumes that input.
+Every job has an explicit repo, worktree, draft/ branch, kind, prompt and lane.
+Existing PR targets are checked as OPEN + draft before execution. Push hooks allow
+only the approved branch and fast-forward updates. Git-capable Codex jobs use the
+bypass flag inside a separate macOS boundary denying writes to the live conductor,
+bin helpers, queue and handoff. CLI subprocesses have DEVNULL stdin and hard
+wall-clock timeouts; timeout/signals kill the entire child process group.
+The boundary protects the core from same-user chmod attempts too. It is not a
+separate-user security boundary or a restriction on every possible remote action;
+GitHub account permissions and the standing draft-only rules still apply.
 
-`job-runner` schedules `run-conductor.sh` every two hours in a temporary
-`svc-conductor-pass` screen so the long pass does not stall ticks. The schedule
-survives restart, preserving the old pass's initial cadence. Each pass records
-0–4 health, unharvested jobs, restart counts and confirmed model calls, snapshots
-its own work, obtains both critiques, and attempts one verified learned improvement.
-Pass artifacts and proof live in `conductor/passes/`.
+`PROMPT.md`, bootstrap and service scripts are chmod a-w. Bootstrap runs bash -n
+and python -m py_compile before importing services. Invalid core files are copied
+to reviews/quarantine/, then restored from Git's last-good tag and checked again.
+Scheduled council passes only assess and preserve proposed evidence. To maintain
+this core: set MAINTENANCE, edit intentionally, run the tests/syntax check, commit,
+advance the local last-good tag, remove MAINTENANCE, and run start-all.sh. Never
+advance last-good over failed checks. The Git repository excludes credentials,
+worktrees, runtime journals and transient logs.
 
-For login after reboot, grant Full Disk Access to `/bin/bash`, then run:
+runtime.py alone writes STATUS.md. Alerts go to alerts.json; worker observations
+start as STATUS-NOTE.md in the job worktree and are copied to status/notes-<lane>.md.
+Cursor `needs_login` is visible there and automatically clears after successful
+login status on the next tick. No service attempts to log in or buy credits.
 
-```bash
-/bin/bash ~/Documents/bob-overnight-inject/conductor/launchd/install.sh
-```
+All API calls reserve worst-case cost under a ledger lock before the request.
+MiniMax stops before a request could exceed $48, including prior UX usage and
+uncertain calls. Raw usage settles reservations even for rejected/truncated model
+answers; missing/failed responses retain their reservation. CLI token usage and
+reported costs are recorded; unknown subscription charges remain unknown. The
+compat/ directory contains installed legacy wrapper copies; asks/tip reviews use
+the same metered transport. MiniMax-M2.7 and Gemini 2.5 Flash are the priced models.
 
-This installs the two supplied LaunchAgents under `~/Library/LaunchAgents`, retires
-the old timers with backups, and loads them. Merely writing plist files inside this
-workspace does not install LaunchAgents. macOS LaunchAgents start at user login.
+Rates were checked against [MiniMax pricing](https://platform.minimax.io/subscribe/token-plan?tab=api-enterprise)
+and [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing). Codex launch
+flags were checked locally and against the [official CLI reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli).
 
-Tests use a disposable directory and mocked transports/processes; they never buy
-credits, merge, message anyone or touch live job screens:
-
-```bash
-python3 conductor/services/test_services.py
-```
+Validation: `python3 -m unittest discover -s services -p 'test_*.py'`,
+`python3 bootstrap.py check`, and the live smoke harness `python3 services/smoke.py`
+with keys.env exported. Smoke evidence is in reviews/SMOKE.md.

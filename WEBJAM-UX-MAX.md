@@ -1,7 +1,15 @@
-WebJam deep UI/UX pass, MAX effort. Jeff added $50 of MiniMax credit for this and said use all of it if useful. Goal: make WebJam better overall for a novice musician.
-1. Locate the WebJam repo/worktrees on this Mac (check next-prompts/INDEX.md, ~/Documents, ~/ ; the one with open draft PRs #158-#160). Read-only for this step.
-2. MiniMax (bin/ask-minimax.sh, MiniMax-M2.7) deep review, MANY passes: go screen by screen / file by file through every user-facing UI file (views, strings, onboarding, errors, empty states, recording/playback flow, export, settings). For each: send the code plus context and ask for concrete UX problems and exact fixes (copy, layout, flow, accessibility, feedback, first-run). Chunk big files. Then run cross-cutting passes: consistency, novice first-10-minutes journey, error recovery, and delight. Save everything under conductor/webjam-ux/ (pass-NNN.md). Track rough spend in conductor/webjam-ux/spend.log (tokens from responses); stop at about $48.
-3. Council: Gemini and Claude critique MiniMax's findings; merge into conductor/webjam-ux/PUNCHLIST.md ranked by user impact vs effort, each item with the file, change, and why.
-4. Implement: ONE coder only (Codex, then Claude as fallback). Respect the one-coder guard: if the #160 worktree still has unpushed changes, first commit and push them to its own draft branch (never force). Then implement the punch list top-down on a new branch codex/ux-max-pass, in small commits, run the tests, and push as a DRAFT PR. Never undraft, merge, or claim feel/Final Build; Jeff judges feel.
-5. Write a summary in conductor/STATUS.md with the PR link, commit SHAs, the top 10 changes, MiniMax spend, and any JEFF: lines.
-Hard rules: never merge, undraft, force-push, send messages, spend beyond the MiniMax credit, or modify ~/Andrea_NanoBot.
+Review WebJam for novice musicians in bounded, independently scheduled jobs.
+Each job uses its own Git worktree. API reviewers receive bounded file evidence;
+CLI reviewers may inspect the assigned worktree. Produce concrete findings in
+webjam-ux/PUNCHLIST.md with files, suggested changes, user impact and validation.
+
+All MiniMax calls must use services/lanes.py or the compatibility ask-minimax.sh
+wrapper; webjam-ux/paid_review.py also uses that same metered transport. The script
+reserves worst-case usage before each request, records response usage and refuses
+requests that could exceed the shared $48 cap. Unknown calls retain reservations.
+Do not estimate spend yourself, call APIs directly, or start an autonomous loop.
+
+The scheduler selects the next UX item after WebJam CI unblockers. One WebJam coder
+at a time, private worktrees, normal pushes to draft branches only. Never merge,
+undraft, force-push, send texts/emails, use Cursor Cloud, or claim feel/Final Build.
+Write STATUS-NOTE.md in the assigned worktree; runtime merges the lane notes.

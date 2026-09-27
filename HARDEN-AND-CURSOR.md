@@ -13,3 +13,16 @@ Read reviews/LATEST.md (Gemini) and reviews/LATEST-MINIMAX.md if present. Implem
 11. Update BOB-HANDOFF.md "All AI resources" with cursor lane.
 Rules: drafts only, never merge/undraft/force-push, no texts/emails, no Cursor Cloud agents.
 Verify: run a smoke test of each lane (short prompt), bash -n everything, start-all.sh up, write results to reviews/HARDEN-RESULT.md with pass/fail per item. Commit conductor changes to git.
+
+## UPDATE 22:57 CT
+- Cursor is LOGGED IN (jeffstory007). Headless call verified: `cursor-agent -p "..." --output-format text --trust` (needs --trust; add -f/--force for edits). Lane must be active, not needs_login. Separate pool from Bob: use it heavily.
+- Jeff added /bin/bash to Full Disk Access. After hardening passes, run conductor/launchd/install.sh (retires old mini-conductor/mini-tick agents, installs bob-services + bob-watchdog) and record result in HARDEN-RESULT.md.
+
+## UPDATE 23:05 CT
+- After this task passes, also do HELPER-MACBOOK.md.
+
+## UPDATE 23:05 CT
+- CANCELLED: MacBook helper. Do NOT do HELPER-MACBOOK.md. Mini only.
+
+## UPDATE 23:07 CT (Jeff)
+- Claude is only the $20 plan. Demote Claude lane: council critiques + small reviews only, low concurrency (max 1, short prompts), back off on rate-limit. Primary coding/orchestration = Codex (ChatGPT plan) + Cursor (own pool). Takeover launchers prefer codex.
