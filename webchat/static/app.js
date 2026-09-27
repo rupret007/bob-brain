@@ -295,12 +295,38 @@ if ($("login-form")) {
   for (const btn of document.querySelectorAll(".bottom-tab")) {
     btn.addEventListener("click", () => setBottomTab(btn.dataset.bottom));
   }
-  $("open-chats").addEventListener("click", () => $("chats-dialog").showModal());
+  $("open-chats").addEventListener("click", () => {
+    syncConversationDialog();
+    $("chats-dialog").showModal();
+  });
   $("close-chats").addEventListener("click", () => $("chats-dialog").close());
+  function syncConversationDialog() {
+    const main = $("conversations");
+    const dialog = $("conversations-dialog");
+    if (!main || !dialog) return;
+    dialog.replaceChildren(...Array.from(main.options).map((opt) => {
+      const clone = document.createElement("option");
+      clone.value = opt.value;
+      clone.textContent = opt.textContent;
+      return clone;
+    }));
+    dialog.value = main.value;
+  }
+  $("conversations-dialog")?.addEventListener("change", async () => {
+    $("conversations").value = $("conversations-dialog").value;
+    $("conversations").dispatchEvent(new Event("change"));
+    $("chats-dialog").close();
+  });
+  $("new-chat-dialog")?.addEventListener("click", () => { $("new-chat").click(); $("chats-dialog").close(); });
+  const chipActions = { status: "status", song: "" };
   $("quick-chips").addEventListener("click", (event) => {
     const key = event.target.closest("[data-chip]")?.dataset.chip;
-    if (key === "song") { setBottomTab("song"); $("song-new").click(); }
-    if (key === "status") setBottomTab("ops");
+    if (!key) return;
+    if (key === "song") { setBottomTab("song"); $("song-new")?.click(); return; }
+    const text = chipActions[key];
+    if (!text) return;
+    setBottomTab("chat");
+    submitChatText(text);
   });
   $("provider-choice").addEventListener("change", () => remember("bob.provider", $("provider-choice").value));
   function render(conversation) {

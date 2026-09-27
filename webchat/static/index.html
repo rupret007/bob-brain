@@ -155,6 +155,8 @@
             <option value="claude">Claude first</option>
           </select>
           <p class="view-hint muted">If your choice cannot reply, Bob tries another model.</p>
+          <label class="sr-only field-label" for="conversations">Active conversation</label>
+          <select id="conversations" class="sr-only" aria-label="Conversation"></select>
         </div>
         <details class="disclosure">
           <summary>Voice</summary>
@@ -191,8 +193,10 @@
 
   <dialog id="chats-dialog">
     <div class="report-heading"><h2>Conversations</h2><button type="button" id="close-chats" aria-label="Close">Close</button></div>
-    <select id="conversations" size="8" aria-label="Pick conversation"></select>
-    <button type="button" id="new-chat" class="primary">New chat</button>
+    <p class="muted sheet-hint">Switch chats here; your draft message is kept on this device.</p>
+    <select id="conversations-dialog" size="8" aria-label="Pick conversation"></select>
+    <button type="button" id="new-chat-dialog" class="primary">New chat</button>
+    <button type="button" id="new-chat" class="sr-only" tabindex="-1" aria-hidden="true">New chat</button>
   </dialog>
 
   <dialog id="report">
