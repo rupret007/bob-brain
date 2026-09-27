@@ -8,7 +8,9 @@ PROJECT_NAMES = {"webbob": "Web Bob", "webjam": "WebJam", "adoptiq": "AdoptIQ", 
 HOLD = re.compile(r"^(?:hold(?:\s+off)?|pause)(?:\b|$)", re.I)
 RELEASE = re.compile(r"^(?:go(?:\s+ahead)?|resume)(?=$|[.!,:]|\s+(?:now|please|and|with|on|all|everything|to|the|max|work|coding|fix|review|web\s*bob|web\s*jam|adopt\s*iq|story\s*board|shelf)\b)", re.I)
 LIFT = re.compile(r"^(?:(?:the\s+)?hold(?:\s+(?:on|for)\s+.+?)?\s+(?:is\s+)?(?:lifted|cleared)|(?:lift|clear|remove)\s+(?:the\s+)?hold)\b", re.I)
-PUSH = re.compile(r"^(?:push\b[^.!?]*\b(?:max|all out)|send\s+(?:all\s+)?the\s+work\s+off\b)", re.I)
+PUSH = re.compile(r"^(?:push\b[^.!?]*\b(?:max|all out)|push\s+" + PROJECT.pattern +
+                  r"(?:\s*(?:,|&|\band\b|\bthen\b)\s*(?:and\s+)?" + PROJECT.pattern +
+                  r")*[.!]*$|send\s+(?:all\s+)?the\s+work\s+off\b)", re.I)
 PRIORITIES = re.compile(r"^(?:prioriti[sz]e|(?:set|use)\s+(?:the\s+)?priorit(?:y|ies)\b)", re.I)
 ALL_PROJECTS = re.compile(r"\b(?:everything|all(?:\s+of)?\s+(?:(?:these|those|the|my|our)\s+)?(?:projects|requests|work|them)|them)\b", re.I)
 

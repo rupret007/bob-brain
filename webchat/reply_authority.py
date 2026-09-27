@@ -21,7 +21,7 @@ STATUS_QUESTION = re.compile(
     r"\b(?:status|resources?|workers? doing|each (?:worker|model)|all (?:workers|models)|"
     r"everything (?:going|running)|how(?:['’]s| is| we)? (?:everything|it going|we doing)|"
     r"(?:is|are) (?:it|anything|everything|things|the (?:work|jobs?|workers?)) "
-    r"(?:moving(?: along)?|running|making progress)|(?:any|making) progress|"
+    r"(?:going(?: now)?|moving(?: along)?|running|making progress)|(?:any|making) progress|"
     r"what(?:['’]s| is| are) (?:running|moving|happening)|(?:job|task|screen|process) (?:ids?|names?)|"
     r"(?:service|disk|storage) status|diagnostics?|"
     r"who(?:['’]s| is) (?:answering|responding)|(?:gemini|minimax|providers?).{0,45}(?:healthy|failing|errors?|working))\b", re.I)

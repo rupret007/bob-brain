@@ -31,6 +31,29 @@ class IntentTests(Fixture):
     def ready(self, *lanes):
         (self.root / "conductor/lanes.json").write_text(json.dumps({lane: dict(state="ready", active=0) for lane in lanes}))
 
+    def test_exact_live_push_creates_two_jobs_and_releases_only_named_holds(self):
+        self.ready("codex", "cursor")
+        self.submit("hold")
+        request = str(uuid.uuid4())
+        receipt = self.submit("push WebJam and AdoptIQ", request)["messages"][-1]
+        rows = list(queue.tasks(self.root).values())
+        self.assertEqual([row["title"] for row in rows], ["WebJam", "AdoptIQ"])
+        self.assertEqual(set(receipt["task_ids"]), {row["id"] for row in rows})
+        self.assertEqual({row["kind"] for row in rows}, {"coding"})
+        self.assertNotIn("hold", receipt["content"].lower())
+        self.reload()
+        self.submit("push WebJam and AdoptIQ", request)
+        self.assertEqual(len(queue.tasks(self.root)), 2)
+        self.assertIn("On hold", self.submit("fix Web Bob login")["messages"][-1]["content"])
+        self.assertFalse(self.fake.calls)
+
+    def test_exact_live_going_question_uses_server_status_without_generation(self):
+        answer = self.submit("is it going now?")["messages"][-1]
+        self.assertEqual(answer["provider"], "state")
+        self.assertIn("I don't see active work", answer["content"])
+        self.assertFalse(queue.tasks(self.root))
+        self.assertFalse(self.fake.calls)
+
     def test_incident_two_turn_request_persists_one_real_job_per_project(self):
         self.ready("codex", "cursor", "claude", "gemini", "minimax")
         self.submit(PRIORITY)

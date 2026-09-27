@@ -70,7 +70,7 @@ class AuthorityTests(unittest.TestCase):
             root = Path(folder)
             (root / "conductor").mkdir()
             (root / "conductor/jobs.jsonl").write_text('{"job_id":"shelf-load-1659","state":"harvested"}\n')
-            for text in ("Ok great is it moving along now?", "Is anything running?", "Are things making progress?", "What's running?",
+            for text in ("is it going now?", "Ok great is it moving along now?", "Is anything running?", "Are things making progress?", "What's running?",
                          "Status without internal IDs or raw diagnostics, please"):
                 with self.subTest(text=text):
                     answer = enforce(root, text, dict(provider="gemini", content=
