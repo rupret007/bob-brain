@@ -383,7 +383,7 @@ class DispatchTests(unittest.TestCase):
                 answer = "Tomatoes grow best with enough sunlight and regular watering."
                 with patch.object(dispatch_worker, "ask", side_effect=[answer, review]) as ask:
                     self.assertEqual(dispatch_worker.execute(row["id"], row["claim_token"]), 1)
-                self.assertEqual(ask.call_count, 2)
+                self.assertEqual(ask.call_count, 3 if review == "Not JSON" else 2)
                 self.assertEqual(ask.call_args.kwargs["purpose"], "result-acceptance")
                 result = queue.tasks(self.root)[row["id"]]
                 self.assertEqual(result["status"], "failed")
