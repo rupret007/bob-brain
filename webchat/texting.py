@@ -289,7 +289,10 @@ class Texting:
         compose = compose or re.fullmatch(r"text (.+?):\s*([\s\S]+)", clean, re.I)
         read = re.fullmatch(r"(read|show|summari[sz]e) (?:the )?(?:recent )?(?:texts?|messages?|imessages?|sms|thread) (?:from |with |in |for )?(.+)", clean, re.I)
         listing = command in ("texts", "list texts", "show texts", "recent texts", "show recent texts", "list recent texts", "summarize recent texts", "summarize texts")
-        help_request = command in ("texting", "texting help", "texting status") or re.match(r"^(?:draft|write|compose|send) (?:a )?(?:text|reply|sms|message)\b|^text \S", clean, re.I)
+        # Incomplete texting commands only — not colloquial chat like “text me when you're free”.
+        help_request = command in ("texting", "texting help", "texting status") or re.match(
+            r"^(?:draft|write|compose|send) (?:a )?(?:text|reply|sms|message)\b", clean, re.I
+        )
         cancel = active and command in ("cancel text", "cancel text draft", "never mind", "cancel")
         if not any((confirmation, edit, replace, compose, read, listing, help_request, cancel)):
             # An intervening turn also withdraws consent, including unsupported edits.

@@ -1089,6 +1089,22 @@ class HandbackJobTests(Fixture):
         self.assertTrue(out["meta"]["stale"])
         self.assertEqual(out["live_ops"].get("now_line"), "cached")
 
+    def test_load_live_ops_read_only_skips_inline_snapshot(self):
+        from ops_panel import load_live_ops
+
+        dash = self.root / "conductor/dashboard.json"
+        dash.parent.mkdir(parents=True, exist_ok=True)
+        old = time.time() - 3600
+        dash.write_text(
+            json.dumps({"live_ops": {"generated_at": "2020-01-01T00:00:00+00:00", "now_line": "cached-only"}})
+        )
+        os.utime(dash, (old, old))
+        with patch("ops_panel.inline_live_ops") as inline:
+            out = load_live_ops(self.root, max_age=120.0, read_only=True)
+        inline.assert_not_called()
+        self.assertTrue(out["meta"]["stale"])
+        self.assertEqual(out["live_ops"].get("now_line"), "cached-only")
+
     def test_maybe_spawn_dashboard_refresh_respects_fresh_dashboard(self):
         from ops_panel import maybe_spawn_dashboard_refresh
 

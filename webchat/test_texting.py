@@ -78,6 +78,24 @@ class TextingTests(unittest.TestCase):
         self.mock.chats[0]["participants"] = []
         self.assertIn("could not verify", self.say("draft reply to Alex Morgan: Hi")["messages"][-1]["content"])
 
+    def test_colloquial_text_phrasing_is_not_texting_help(self):
+        def conversation():
+            return {"id": str(uuid.uuid4()), "messages": [{"role": "user"}, {"role": "assistant", "content": ""}]}
+
+        for phrase in (
+            "text me about the bridge mix",
+            "text Bob when you're free",
+            "text the band tonight",
+        ):
+            conv = conversation()
+            handled = self.texting.handle(
+                conv, phrase, self.actor, str(uuid.uuid4()), lambda _value: None, lambda value: value
+            )
+            self.assertFalse(handled)
+        incomplete = self.say("send a text to")["messages"][-1]
+        self.assertTrue(incomplete.get("texting"))
+        self.assertIn("I can read recent texts", incomplete["content"])
+
     def test_send_request_is_only_a_draft_and_separate_yes_is_required(self):
         draft = self.draft("send a text to Alex Morgan: yes, send it now")
         self.assertEqual(draft["body"], "yes, send it now")

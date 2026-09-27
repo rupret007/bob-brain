@@ -325,7 +325,7 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
     try:
         from ops_panel import load_live_ops
 
-        loaded = load_live_ops(root, max_age=300.0)
+        loaded = load_live_ops(root, max_age=300.0, read_only=True)
         live_ops = loaded.get("live_ops") or {}
         live_ops_meta = loaded.get("meta") or {}
     except Exception:
