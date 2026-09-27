@@ -112,7 +112,7 @@ lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
 | Round 14 final | `6d70901` |
 | Pre-R15 HEAD | `55840a6` |
 | **R15 primary (code)** | `e482927` |
-| **Final SHA (this round)** | `56083f7` (`draft/webchat-failover-20260927`; code `e482927`) |
+| **Final SHA (this round)** | `361ecfb` (`draft/webchat-failover-20260927`; code `e482927`) |
 
 ## Remaining risks
 
