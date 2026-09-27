@@ -1,8 +1,8 @@
 # Web Bob deep assessment — RESULT (Cursor lane)
 
 **Branch:** `draft/webchat-failover-20260927` (draft only; no merge)  
-**Base HEAD before fixes:** `d8f22d1` (R6 SHA doc)  
-**Deep assess commit:** _(see `git log -1` after commit)_  
+**Base HEAD before assess:** `ec0d030` (R7 SHA doc) · **Prior code:** `6b31d10` (R7 webchat)  
+**Deep assess commit:** `9c26ddc92f6aeb37bf9d67c8c804cfacba6eea74`  
 **Council (no Grok):** `reviews/webbob-deep-assess-council/20260927-023624-887811.md` — Gemini, MiniMax, Claude critique; Codex synthesize; Cursor busy.  
 **Server:** restarted production (`screen` quit + `bash conductor/webchat/start.sh`); `127.0.0.1:8787` → HTTP 200 on `/login`; drills header **off** in prod.
 
@@ -46,13 +46,13 @@
 
 | Priority | Fix | SHA |
 |----------|-----|-----|
-| P0 | Failover preflight + `X-Bob-Webchat-Drills`; `start.py` env to screen | _(commit)_ |
-| P0 | Autopilot: `flock`, round auto-increment, wait for builders | _(commit)_ |
-| P1 | Startup log: no password path line | _(commit)_ |
-| P1 | Playwright CSP-safe + live chat ping + layout metrics | _(commit)_ |
-| P1 | `start.py` quit stale `svc-webchat` sessions before relaunch | _(commit)_ |
-| P2 | `compact_digest` every turn; handback log in snapshot | _(commit)_ |
-| P2 | `public_live_ops` structured `events` | _(commit)_ |
+| P0 | Failover preflight + `X-Bob-Webchat-Drills`; `start.py` env to screen | `6b31d10` |
+| P0 | Autopilot: `flock`, round auto-increment, wait for builders | `9c26ddc` |
+| P1 | Startup log: no password path line | `6b31d10` |
+| P1 | Playwright CSP-safe + live chat ping + layout metrics | `6b31d10` / evidence in `iphone-deep-assess` |
+| P1 | `start.py` quit stale `svc-webchat` sessions before relaunch | `9c26ddc` |
+| P2 | `compact_digest` every turn; handback log in snapshot | `6b31d10` |
+| P2 | `public_live_ops` structured `events` | `6b31d10` |
 
 **Council vote (defer):** inline phone council (#8); autopilot explicit `BOB_WEBCHAT_DRILLS=1` in agent prompt (documented in README instead).
 
