@@ -1,7 +1,7 @@
 # Web Bob READY-FOR-PHONE — Round 7 result (Cursor lane)
 
 **Branch:** `draft/webchat-failover-20260927`  
-**Round 6 base:** `b815ea35` · **Prior R7:** `00ddcc3f` · **This commit:** _(see git log after push)_  
+**Round 6 base:** `b815ea35` · **Prior R7:** `00ddcc3f` · **Round 7 commit:** `6b31d10c80b2d6cc9a52195ef9fa104461c0c14d`  
 **Design note:** `conductor/reviews/WEBCHAT-READY-R7-DESIGN.md` (research-first; sources in table)  
 **Council (no Grok):** `conductor/reviews/webchat-ready-r7-council/20260927-023408-635761.md` (Gemini, MiniMax, Claude, Codex synthesize; Cursor lane busy on propose). **Votes:** structured `events[]` + retained `log_tail`; bottom tabs stay tappable via `--bottom-tab-height`; idempotent `request_id` in handback; conductor chips = chat shortcuts (full round still confirm-in-chat).  
 **Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
