@@ -40,12 +40,14 @@
         <button type="button" class="chip" data-chip="council">Ask council</button>
         <button type="button" class="chip" data-chip="song">New song</button>
       </div>
+      <div id="attach-preview" class="attach-preview" hidden aria-label="Attachments to send"></div>
       <form id="composer" class="composer">
         <label class="sr-only" for="message">Message Bob</label>
-        <button type="button" id="attach-plus" class="composer-plus quiet icon-btn" aria-label="Attach file" title="Attach (coming soon)" disabled>+</button>
+        <input id="attach-input" type="file" class="sr-only" accept="image/*,video/*,.pdf,.txt,.md,.csv,.json" multiple>
+        <button type="button" id="attach-plus" class="composer-plus quiet icon-btn" aria-label="Attach photo or file" title="Attach photo, video, or file">+</button>
         <div class="composer-pill">
           <button type="button" id="mic" class="composer-mic quiet icon-btn" aria-label="Voice input" title="Voice input">🎤</button>
-          <textarea id="message" name="message" placeholder="Ask Bob…" rows="1" maxlength="6000" required enterkeyhint="send"></textarea>
+          <textarea id="message" name="message" placeholder="Ask Bob…" rows="1" maxlength="6000" enterkeyhint="send"></textarea>
         </div>
         <button type="button" id="speak" class="quiet icon-btn composer-speak" aria-label="Read last reply aloud" title="Read aloud">🔊</button>
         <button type="button" id="live-call" class="call-btn" aria-label="Live voice call" title="Live call">

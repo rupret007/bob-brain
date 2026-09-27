@@ -16,6 +16,9 @@ if ($("login-form")) {
   });
 } else {
   let csrf = "", current = "", busy = false, sending = false, revision = "", polling = false, draftRequest = null, pollFailures = 0;
+  let pendingAttachments = [];
+  const MEDIA_LIMITS = { image: 12 * 1024 * 1024, video: 35 * 1024 * 1024, file: 8 * 1024 * 1024 };
+  const MAX_PENDING_ATTACHMENTS = 6;
   let lastQuietHoursActive = null, lastQuietHoursFetchedAt = 0, lastBootstrapCommand = "";
   const providers = { codex: "Codex", cursor: "Cursor", gemini: "Gemini", minimax: "MiniMax", claude: "Claude" };
   function escapeHtml(text) {
@@ -75,10 +78,93 @@ if ($("login-form")) {
     if (!response.ok) throw new Error(result.error || "Request failed.");
     return result;
   }
+  function mediaKindFromFile(file) {
+    if (file.type.startsWith("image/")) return "image";
+    if (file.type.startsWith("video/")) return "video";
+    return "file";
+  }
+  function mediaLimitForKind(kind) {
+    return MEDIA_LIMITS[kind] || MEDIA_LIMITS.file;
+  }
+  function renderAttachmentStrip() {
+    const host = $("attach-preview");
+    if (!host) return;
+    host.replaceChildren();
+    if (!pendingAttachments.length) {
+      host.hidden = true;
+      return;
+    }
+    host.hidden = false;
+    for (const item of pendingAttachments) {
+      const chip = document.createElement("div");
+      chip.className = "attach-chip";
+      if (item.kind === "image" && item.previewUrl) {
+        const img = document.createElement("img");
+        img.src = item.previewUrl;
+        img.alt = item.filename || "Image preview";
+        chip.append(img);
+      } else if (item.kind === "video") {
+        const label = document.createElement("div");
+        label.className = "attach-file-label";
+        label.textContent = "Video";
+        chip.append(label);
+      } else {
+        const label = document.createElement("div");
+        label.className = "attach-file-label";
+        label.textContent = item.filename || "File";
+        chip.append(label);
+      }
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "attach-remove quiet";
+      remove.setAttribute("aria-label", "Remove attachment");
+      remove.textContent = "×";
+      remove.addEventListener("click", () => {
+        pendingAttachments = pendingAttachments.filter((row) => row.media_id !== item.media_id);
+        renderAttachmentStrip();
+        composerState();
+      });
+      chip.append(remove);
+      host.append(chip);
+    }
+  }
+  function appendMessageAttachments(parent, attachments) {
+    if (!attachments?.length) return;
+    const wrap = document.createElement("div");
+    wrap.className = "message-attachments";
+    for (const att of attachments) {
+      const url = att.url || `/api/media/${att.media_id}`;
+      if (att.kind === "image") {
+        const img = document.createElement("img");
+        img.src = url;
+        img.alt = att.filename || "Image";
+        img.loading = "lazy";
+        wrap.append(img);
+      } else if (att.kind === "video") {
+        const video = document.createElement("video");
+        video.src = url;
+        video.controls = true;
+        video.preload = "metadata";
+        wrap.append(video);
+      } else {
+        const link = document.createElement("a");
+        link.href = url;
+        link.className = "attach-download";
+        link.textContent = att.filename || "Download file";
+        link.download = att.filename || "";
+        wrap.append(link);
+      }
+    }
+    parent.append(wrap);
+  }
   function composerState() {
-    $("send").disabled = busy || sending || !current;
+    const hasText = Boolean($("message").value.trim());
+    const hasAttach = pendingAttachments.length > 0;
+    $("send").disabled = busy || sending || !current || (!hasText && !hasAttach);
     $("stop").hidden = !busy;
     $("message").disabled = !current;
+    const attachBtn = $("attach-plus");
+    if (attachBtn) attachBtn.disabled = !current || busy || sending;
     const dot = $("status-dot");
     if (dot) dot.classList.toggle("busy", busy || sending);
   }
@@ -101,7 +187,7 @@ if ($("login-form")) {
     if (!draftRequest || draftRequest.message !== text || draftRequest.conversation_id !== current) {
       draftRequest = { conversation_id: current, message: text, provider, request_id: crypto.randomUUID() };
     }
-    const payload = draftRequest;
+    const payload = { ...draftRequest, attachments: pendingAttachments.map((row) => row.media_id) };
     sending = true;
     composerState();
     $("notice").textContent = "";
@@ -241,6 +327,7 @@ if ($("login-form")) {
       else if (message.role === "assistant") body.innerHTML = renderMarkdown(message.content || "");
       else body.textContent = message.content;
       article.append(body);
+      appendMessageAttachments(article, message.attachments);
       {
         const raw = (message.content || "").trim();
         const copyBtn = document.createElement("button");
@@ -411,10 +498,12 @@ if ($("login-form")) {
   $("composer").addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = $("message").value.trim();
-    if (!message || busy || sending) return;
+    if ((!message && !pendingAttachments.length) || busy || sending) return;
     const provider = $("provider-choice").value;
-    if (!draftRequest || draftRequest.message !== message || draftRequest.conversation_id !== current || draftRequest.provider !== provider) {
-      draftRequest = { conversation_id: current, message, provider, request_id: crypto.randomUUID() };
+    const attachIds = pendingAttachments.map((row) => row.media_id);
+    if (!draftRequest || draftRequest.message !== message || draftRequest.conversation_id !== current || draftRequest.provider !== provider
+        || JSON.stringify(draftRequest.attachments || []) !== JSON.stringify(attachIds)) {
+      draftRequest = { conversation_id: current, message, provider, request_id: crypto.randomUUID(), attachments: attachIds };
     }
     sending = true; composerState(); $("notice").textContent = "";
     try {
@@ -424,10 +513,47 @@ if ($("login-form")) {
         $("message").value = "";
         $("message").style.height = "auto";
         draftRequest = null;
+        pendingAttachments = [];
+        renderAttachmentStrip();
       }
       render(conversation); await refreshList();
     } catch (error) { $("notice").textContent = error.message; }
     finally { sending = false; composerState(); $("message").focus(); }
+  });
+  $("attach-plus")?.addEventListener("click", () => $("attach-input")?.click());
+  $("attach-input")?.addEventListener("change", async (event) => {
+    const files = [...(event.target.files || [])];
+    event.target.value = "";
+    if (!files.length) return;
+    if (pendingAttachments.length + files.length > MAX_PENDING_ATTACHMENTS) {
+      $("notice").textContent = `At most ${MAX_PENDING_ATTACHMENTS} attachments per message.`;
+      return;
+    }
+    $("notice").textContent = "";
+    for (const file of files) {
+      const kind = mediaKindFromFile(file);
+      const limit = mediaLimitForKind(kind);
+      if (file.size > limit) {
+        $("notice").textContent = `${file.name} is too large for ${kind} uploads.`;
+        continue;
+      }
+      try {
+        const data_base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+          reader.onerror = () => reject(reader.error || new Error("Could not read file."));
+          reader.readAsDataURL(file);
+        });
+        const stored = await api("/api/media/upload", { filename: file.name, data_base64 });
+        let previewUrl = "";
+        if (kind === "image") previewUrl = URL.createObjectURL(file);
+        pendingAttachments.push({ ...stored, previewUrl });
+      } catch (error) {
+        $("notice").textContent = error.message;
+      }
+    }
+    renderAttachmentStrip();
+    composerState();
   });
   $("message").addEventListener("input", () => {
     $("message").style.height = "auto";

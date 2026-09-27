@@ -43,6 +43,14 @@ from music_notebook import get_project, list_projects, save_project, try_music_c
 from reply_guard import repair_hollow_progress
 from drill_fixture import try_bob_state_running_line
 from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
+from chat_media import (
+    load_meta,
+    public_attachment,
+    resolve_media,
+    store_media,
+    strip_assistant_attachment_markers,
+    validate_attachment_ids,
+)
 from ops_panel import conductor_snapshot, draft_head_sha, enrich_live_ops, load_live_ops, maybe_spawn_dashboard_refresh
 from quiet_hours import in_quiet_hours
 from task_dispatch import FOLLOW_UP, PREAMBLE, TaskDispatch, followup_work, needs_task_detail, parse_work, task_queue
@@ -58,6 +66,7 @@ COOKIE = "bob_session"
 SESSION_SECONDS = 12 * 60 * 60
 MAX_BODY = 32768
 MAX_AUDIO_BODY = 35 * 1024 * 1024
+MAX_MEDIA_BODY = 35 * 1024 * 1024
 
 
 def hard_rule_refusal(text):
@@ -284,26 +293,39 @@ class Chat(TaskDispatch):
             self.sessions[digest] = {"expires": now + SESSION_SECONDS, "csrf": secrets.token_urlsafe(32), "digest": digest}
             return token
 
-    def submit(self, identifier, text, request_id, provider="auto", worker=None):
+    def submit(self, identifier, text, request_id, provider="auto", worker=None, attachments=None):
         if provider not in ("auto", "minimax", "gemini", "codex", "claude", "cursor"):
             raise RequestError(400, "Choose auto, minimax, gemini, codex, claude, or cursor.")
-        if not isinstance(text, str) or not text.strip() or len(text) > 6000:
+        if not isinstance(text, str):
+            raise RequestError(400, "Write a message between 1 and 6,000 characters.")
+        text = text.strip()
+        raw_attachments = attachments if attachments is not None else []
+        try:
+            attachment_metas = validate_attachment_ids(self.root, raw_attachments) if raw_attachments else []
+        except ValueError as exc:
+            raise RequestError(400, str(exc)) from exc
+        except FileNotFoundError:
+            raise RequestError(404, "One or more attachments were not found.") from None
+        if not text and not attachment_metas:
+            raise RequestError(400, "Write a message or attach a file.")
+        if text and len(text) > 6000:
             raise RequestError(400, "Write a message between 1 and 6,000 characters.")
         if not isinstance(request_id, str) or not UUID.fullmatch(request_id):
             raise RequestError(400, "A valid request ID is required.")
-        text = text.strip()
         try:
             text.encode("utf-8")
         except UnicodeError:
             raise RequestError(400, "The message contains invalid text.") from None
-        if self.redact(text) != text:
+        if text and self.redact(text) != text:
             raise RequestError(400, "This message appears to contain a secret. Remove it before sending; it was not saved or sent to a model.")
+        public_attachments = [public_attachment(meta) for meta in attachment_metas]
         with self.lock:
             conversation = copy.deepcopy(self.get(identifier))
             for message in conversation["messages"]:
                 if message.get("request_id") == request_id:
                     if (message["content"] != text or message.get("preferred_provider", "auto") != provider
-                            or message.get("requested_worker") != worker):
+                            or message.get("requested_worker") != worker
+                            or message.get("attachments", []) != public_attachments):
                         raise RequestError(409, "That request ID was already used for a different message.")
                     return self.public(conversation)
             self.sweep_stuck()
@@ -312,14 +334,19 @@ class Chat(TaskDispatch):
             if conversation["messages"] and conversation["messages"][-1]["status"] == "waiting":
                 raise RequestError(409, "This conversation has a queued request. Stop it before sending another message.")
             conversation["preferred_provider"] = provider
+            user_message = {
+                "id": str(uuid.uuid4()), "request_id": request_id, "preferred_provider": provider, "role": "user",
+                "content": text, "status": "done", "created_at": time.time(), "requested_worker": worker,
+            }
+            if public_attachments:
+                user_message["attachments"] = public_attachments
             conversation["messages"] += [
-                {"id": str(uuid.uuid4()), "request_id": request_id, "preferred_provider": provider, "role": "user", "content": text,
-                 "status": "done", "created_at": time.time(), "requested_worker": worker},
+                user_message,
                 {"id": str(uuid.uuid4()), "request_id": request_id, "role": "assistant", "content": "", "status": "queued",
                  "provider": None, "attempts": [], "created_at": time.time()},
             ]
             if conversation["title"] == "New conversation":
-                conversation["title"] = text[:65]
+                conversation["title"] = (text or public_attachments[0].get("filename") or "Attachment")[:65]
             work, route = parse_work(text)
             started = parse_start(text)
             inbox_task = state_ledger.parse_inbox_message(text)
@@ -582,6 +609,22 @@ class Chat(TaskDispatch):
                 user_msg = next((m for m in reversed(value["messages"]) if m["role"] == "user"), {})
                 from reply_authority import enforce
                 answer["content"] = self.redact(enforce(self.ledger_root(identifier), user_msg.get("content", ""), answer))
+                cleaned, outbound = strip_assistant_attachment_markers(answer["content"])
+                if outbound:
+                    seen = set()
+                    resolved = []
+                    for item in outbound:
+                        mid = item.get("media_id")
+                        if not mid or mid in seen:
+                            continue
+                        seen.add(mid)
+                        try:
+                            resolved.append(public_attachment(load_meta(self.root, mid)))
+                        except (FileNotFoundError, OSError, ValueError):
+                            continue
+                    if resolved:
+                        answer["attachments"] = resolved
+                answer["content"] = cleaned
                 rid = user_msg.get("request_id")
                 value["messages"][-1].update(answer, status="done")
                 if rid:
@@ -1191,6 +1234,14 @@ class Handler(BaseHTTPRequestHandler):
                 raise RequestError(404, "Audio not found.") from None
             mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
             return self.send(200, path.read_bytes(), mime)
+        if route.startswith("/api/media/"):
+            media_id = route.removeprefix("/api/media/").strip("/")
+            try:
+                path = resolve_media(chat.root, media_id)
+            except (ValueError, FileNotFoundError):
+                raise RequestError(404, "Attachment not found.") from None
+            mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            return self.send(200, path.read_bytes(), mime)
         if route == "/api/lanes":
             identifier = parse_qs(urlsplit(self.path).query).get("conversation_id", [None])[0]
             if identifier:
@@ -1227,7 +1278,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(202, {"ok": True, "spawned": spawned})
         if route == "/api/messages":
             data = self.body()
-            return self.send(202, chat.submit(data.get("conversation_id"), data.get("message"), data.get("request_id"), data.get("provider", "auto"), worker=data.get("worker")))
+            return self.send(202, chat.submit(
+                data.get("conversation_id"), data.get("message", ""), data.get("request_id"),
+                data.get("provider", "auto"), worker=data.get("worker"), attachments=data.get("attachments"),
+            ))
         if route == "/api/cancel":
             chat.stop(self.body().get("conversation_id"))
             return self.send(202, {"ok": True})
@@ -1287,6 +1341,21 @@ class Handler(BaseHTTPRequestHandler):
             chat.record_turn(ask=f"audio upload {name}", provider=None, jobs=[], files=[stored["path"]],
                             commits=[], confirmations=[], refusals=[], open_items=[])
             return self.send(201, stored)
+        if route == "/api/media/upload":
+            data = self.body(limit=MAX_MEDIA_BODY)
+            name = data.get("filename") or "upload.bin"
+            raw = data.get("data_base64")
+            if not isinstance(raw, str):
+                raise RequestError(400, "Attachment payload required.")
+            try:
+                blob = base64.b64decode(raw, validate=True)
+            except ValueError:
+                raise RequestError(400, "Invalid attachment encoding.") from None
+            try:
+                stored = store_media(chat.root, blob, name)
+            except ValueError as exc:
+                raise RequestError(400, str(exc)) from exc
+            return self.send(201, public_attachment(stored))
         raise RequestError(404, "Not found.")
 
 
