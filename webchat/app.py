@@ -569,10 +569,13 @@ class Chat:
                 value["codex_thread_id"] = answer.pop("codex_thread_id", None)
                 value.pop("retry_prompt", None)
                 answer["content"] = repair_hollow_progress(self.redact(answer["content"]))
+                user_msg = next((m for m in reversed(value["messages"]) if m["role"] == "user"), {})
+                rid = user_msg.get("request_id")
                 value["messages"][-1].update(answer, status="done")
+                if rid:
+                    value["messages"][-1]["request_id"] = rid
                 value["messages"][-1].pop("retry_at", None)
                 self.save(value)
-                user_msg = next((m for m in reversed(value["messages"]) if m["role"] == "user"), {})
                 user = user_msg.get("content", "")
                 head = draft_head_sha(self.root)
                 commits = [head] if head else []
@@ -752,15 +755,19 @@ class Chat:
             try:
                 tail = log_path.read_text(errors="replace")[-4000:]
                 tail_lower = tail.lower()
+                recent_ok = False
                 for line in reversed(tail.splitlines()):
-                    if "self-improve tick" in line.lower():
-                        last_tick_outcome = line.strip()[:200]
-                        break
-                recent_ok = "self-improve tick" in tail_lower and "failed" not in tail_lower.split("self-improve")[-1][:280]
+                    if "self-improve tick" not in line.lower():
+                        continue
+                    last_tick_outcome = line.strip()[:200]
+                    low = line.lower()
+                    if re.search(r"self-improve tick ok\b|tick ok\b", low) and "failed" not in low:
+                        recent_ok = True
+                    elif "tick skipped" in low:
+                        recent_ok = True
+                    break
                 if "tests failed" in tail_lower[-800:]:
                     recent_ok = False
-                if "tick skipped" in tail_lower[-400:]:
-                    recent_ok = True
                 recent_age_seconds = max(0, time.time() - log_path.stat().st_mtime)
                 if recent_age_seconds > 48 * 3600:
                     recent_ok = False

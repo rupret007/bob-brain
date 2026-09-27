@@ -12,6 +12,7 @@ import threading
 import time
 import unittest
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -848,6 +849,50 @@ class HandbackJobTests(Fixture):
         self.assertEqual(job_card_log_lines(job), ["PASS 67 tests", "handback drill OK"])
         self.assertEqual(job_card_stall_state(job), "stalled")
 
+    def test_load_live_ops_does_not_spawn_refresh(self):
+        from ops_panel import load_live_ops
+
+        dash = self.root / "conductor/dashboard.json"
+        dash.parent.mkdir(parents=True, exist_ok=True)
+        old = time.time() - 3600
+        dash.write_text(
+            json.dumps({"live_ops": {"generated_at": "2020-01-01T00:00:00+00:00", "now_line": "stale"}})
+        )
+        os.utime(dash, (old, old))
+        with patch("ops_panel.subprocess.Popen") as popen:
+            with patch(
+                "ops_panel.inline_live_ops",
+                return_value={"generated_at": datetime.now(timezone.utc).isoformat(), "now_line": "fresh"},
+            ):
+                out = load_live_ops(self.root, max_age=120.0)
+        popen.assert_not_called()
+        self.assertFalse(out["meta"]["stale"])
+        self.assertEqual(out["meta"]["source"], "inline_snapshot")
+
+    def test_load_live_ops_stale_inline_keeps_stale_dashboard(self):
+        from ops_panel import load_live_ops
+
+        dash = self.root / "conductor/dashboard.json"
+        dash.parent.mkdir(parents=True, exist_ok=True)
+        dash.write_text(json.dumps({"live_ops": {"generated_at": "2020-01-01T00:00:00+00:00", "now_line": "cached"}}))
+        with patch("ops_panel.inline_live_ops", return_value={"generated_at": "2019-01-01T00:00:00+00:00"}):
+            out = load_live_ops(self.root, max_age=120.0)
+        self.assertTrue(out["meta"]["stale"])
+        self.assertEqual(out["live_ops"].get("now_line"), "cached")
+
+    def test_self_improve_start_line_not_loop_ready(self):
+        (self.root / "conductor/launchd").mkdir(parents=True, exist_ok=True)
+        (self.root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist").write_text("plist")
+        (self.root / "conductor/webchat/self_improve_tick.sh").write_text("#!/bin/bash\n")
+        (self.root / "logs").mkdir(parents=True, exist_ok=True)
+        (self.root / "logs/webchat-self-improve.log").write_text(
+            "[2026-09-27] self-improve tick started\n"
+        )
+        with patch.object(self.chat, "_cached_launchd_loaded", return_value=True):
+            status = self.chat.self_improve_status()
+        self.assertFalse(status.get("loop_ready"))
+        self.assertEqual(status.get("tick_ok_streak", 0), 0)
+
     def test_self_improve_healthy_flag(self):
         (self.root / "conductor/launchd").mkdir(parents=True, exist_ok=True)
         (self.root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist").write_text("plist")
@@ -867,6 +912,29 @@ class HandbackJobTests(Fixture):
         value = self.chat.submit(self.identifier, "status", request_id)
         assistant = next(m for m in value["messages"] if m["role"] == "assistant")
         self.assertEqual(assistant.get("request_id"), request_id)
+
+    def test_provider_reply_preserves_request_id(self):
+        self.fake.hold.clear()
+        request_id = str(uuid.uuid4())
+        self.chat.submit(self.identifier, "Please summarize this in one sentence.", request_id)
+        self.fake.hold.set()
+        self.wait()
+        assistant = self.chat.history(self.identifier)["messages"][-1]
+        self.assertEqual(assistant["status"], "done")
+        self.assertEqual(assistant.get("request_id"), request_id)
+        self.assertEqual(assistant.get("provider"), "codex")
+
+    def test_self_improve_failed_line_not_recent_ok(self):
+        (self.root / "conductor/launchd").mkdir(parents=True, exist_ok=True)
+        (self.root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist").write_text("plist")
+        (self.root / "conductor/webchat/self_improve_tick.sh").write_text("#!/bin/bash\n")
+        (self.root / "logs").mkdir(parents=True, exist_ok=True)
+        (self.root / "logs/webchat-self-improve.log").write_text(
+            "[2026-09-27] self-improve tick failed tests\n"
+        )
+        status = self.chat.self_improve_status()
+        self.assertFalse(status.get("recent_tick_ok"))
+        self.assertFalse(status.get("loop_ready"))
 
     def test_conductor_snapshot_plain_hints(self):
         from ops_panel import conductor_snapshot

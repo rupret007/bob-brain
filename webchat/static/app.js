@@ -623,14 +623,15 @@ if ($("login-form")) {
     speechSynthesis.cancel();
     try {
       const requestId = crypto.randomUUID();
+      const convId = current;
       const payload = {
-        conversation_id: current,
+        conversation_id: convId,
         message: transcript,
         provider: $("provider-choice").value,
         request_id: requestId,
       };
       await api("/api/messages", payload);
-      const value = await waitForReply(current, requestId);
+      const value = await waitForReply(convId, requestId);
       if (!callSession || callSession.id !== sessionId) return;
       const msg = value.messages.find((m) => m.role === "assistant" && m.request_id === requestId);
       const body = msg?.content || "No reply yet.";
@@ -900,7 +901,9 @@ if ($("login-form")) {
         const lines = jobLogLines(job);
         const sha = job.last_commit?.sha ? ` · ${job.last_commit.sha}` : "";
         const round = job.round ? ` · round ${job.round}` : "";
-        dd.textContent = `${jobHeadline(job)}${round}${sha}${lines.length ? "\n" + lines.join("\n") : ""}`;
+        const elapsed = job.elapsed_seconds != null ? ` · ${Math.round(job.elapsed_seconds / 60)}m elapsed` : "";
+        const stall = job.stall_state ? ` · ${job.stall_state}` : "";
+        dd.textContent = `${jobHeadline(job)}${round}${elapsed}${stall}${sha}${lines.length ? "\n" + lines.join("\n") : ""}`;
         dl.append(dt, dd);
       });
     }
@@ -1016,7 +1019,7 @@ if ($("login-form")) {
       const spendText = committed === undefined || committed === null ? "budget unknown" : `$${committed.toFixed(2)} of $${cap}`;
       const dashAge = ops.dashboard_freshness_seconds;
       const dashNote = dashAge === null || dashAge === undefined ? "" : ` · dashboard ${dashAge}s ago`;
-      const freshness = meta.stale ? "Refreshing dashboard…" : `Live${dashNote}`;
+      const freshness = meta.stale ? `Stale snapshot${dashNote}` : `Live${dashNote}`;
       const scoreStamp = ops.generated_at ? ` · scores ${ops.generated_at.replace("T", " ").slice(0, 16)} UTC` : "";
       const liveCards = jobs.filter((j) => j.live_screen && j.stall_state === "running");
       const jobLead = liveCards.length
@@ -1136,7 +1139,7 @@ if ($("login-form")) {
       const laneNote = cooling
         ? `${cooling} model${cooling === 1 ? "" : "s"} cooling down`
         : (busy ? `${busy} model${busy === 1 ? "" : "s"} busy` : (allReady ? "All lanes ready" : "Lane status updating"));
-      const stalePrefix = lastPanelMeta.stale ? "Refreshing dashboard… · " : "";
+      const stalePrefix = lastPanelMeta.stale ? "Stale snapshot · " : "";
       $("lanes-summary").textContent = `${stalePrefix}${opsLead} · ${laneNote}`;
       $("lanes").replaceChildren(...entries.map(([name, lane]) => {
         const card = document.createElement("article");

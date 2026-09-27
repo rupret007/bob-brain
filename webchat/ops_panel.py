@@ -110,16 +110,27 @@ def load_live_ops(root: Path, *, max_age: float = LIVE_OPS_MAX_AGE) -> dict:
                 meta.update(source="dashboard.json", stale=False)
                 return {"live_ops": live_ops, "meta": meta}
             meta["stale"] = True
-            maybe_spawn_dashboard_refresh(root)
         except (OSError, json.JSONDecodeError, ValueError):
             live_ops = {}
+    cached_ops = live_ops
     try:
-        live_ops = inline_live_ops(root)
-        meta.update(source="inline_snapshot", stale=False, generated_at=live_ops.get("generated_at"))
+        inline = inline_live_ops(root)
+        generated = _parse_generated_at(inline)
+        inline_age = time.time() - generated if generated else None
+        if inline and inline_age is not None and inline_age <= max_age:
+            meta.update(
+                source="inline_snapshot",
+                stale=False,
+                generated_at=inline.get("generated_at"),
+            )
+            return {"live_ops": inline, "meta": meta}
     except Exception:
-        meta["source"] = "dashboard_stale" if live_ops else "unavailable"
-        meta["stale"] = True
-    return {"live_ops": live_ops, "meta": meta}
+        pass
+    if cached_ops:
+        meta.update(source="dashboard.json", stale=True, generated_at=cached_ops.get("generated_at"))
+        return {"live_ops": cached_ops, "meta": meta}
+    meta.update(source="unavailable", stale=True)
+    return {"live_ops": {}, "meta": meta}
 
 
 def conductor_snapshot(root: Path) -> dict:
