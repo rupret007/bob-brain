@@ -160,16 +160,20 @@ def takeover():
     if "mini-conductor" in sessions:
         # Old run-conductor left this PID lock while its pass was active.
         old_lock = Path("/tmp/mini-conductor.lock")
-        if old_lock.exists():
-            try:
-                os.kill(int(old_lock.read_text().strip()), 0)
-                log("old conductor pass still active; takeover will retry")
-                return
-            except (ProcessLookupError, ValueError):
-                pass
-            except PermissionError:
-                log("cannot verify old pass PID; leaving it until the next check")
-                return
+        try:
+            if old_lock.exists():
+                try:
+                    os.kill(int(old_lock.read_text().strip()), 0)
+                    log("old conductor pass still active; takeover will retry")
+                    return
+                except (ProcessLookupError, ValueError):
+                    pass
+                except PermissionError:
+                    log("cannot verify old pass PID; leaving it until the next check")
+                    return
+        except PermissionError:
+            log("cannot probe /tmp/mini-conductor.lock; takeover will retry")
+            return
         stopped = run(["screen", "-S", sessions["mini-conductor"], "-X", "quit"], capture_output=True, timeout=15)
         if stopped.returncode:
             raise RuntimeError("old mini-conductor screen could not be stopped")
@@ -407,6 +411,9 @@ def cycle(name):
         try:
             takeover()
             alert("takeover")
+        except PermissionError:
+            log("takeover deferred: PermissionError probing legacy lock")
+            alert("takeover", "legacy takeover deferred: PermissionError")
         except Exception as exc:
             alert("takeover", "legacy takeover deferred: " + type(exc).__name__)
         status_report()

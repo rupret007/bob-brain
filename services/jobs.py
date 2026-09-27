@@ -246,6 +246,14 @@ def can_assign(spec, lane, active, health):
     return len(active) < 5
 
 
+def candidate_rank(spec, external_coder):
+    project = spec.get("project", "shelf")
+    if external_coder and project == "WebJam" and spec.get("kind") == "coding":
+        return (len(PROJECTS), spec.get("priority", 99), spec.get("job_id") or spec.get("id"))
+    return (PROJECTS.index(project) if project in PROJECTS else len(PROJECTS),
+            spec.get("priority", 99), spec.get("job_id") or spec.get("id"))
+
+
 def external_webjam_lease(sessions):
     """Honor the separately requested local test build without taking its worktree."""
     notice = CONDUCTOR / "reviews/WEBJAM-TEST-BUILD-SCHEDULER.md"
@@ -277,10 +285,11 @@ def tick():
         for spec in specs:
             if spec["id"] not in known:
                 candidates.append(spec)
-        candidates.sort(key=lambda r: (PROJECTS.index(r["project"]), r.get("priority", 99)))
+        if external_coder:
+            candidates = [c for c in candidates
+                          if not (c.get("project") == "WebJam" and c.get("kind") == "coding")]
+        candidates.sort(key=lambda r: candidate_rank(r, external_coder))
         for spec in candidates:
-            if external_coder and spec["project"] == "WebJam" and spec["kind"] == "coding":
-                continue
             lane_order = ("cursor", "codex") if spec["kind"] == "coding" else ("gemini", "minimax", "cursor", "codex", "claude")
             for lane in lane_order:
                 if not can_assign(spec, lane, active, health):

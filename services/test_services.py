@@ -258,4 +258,27 @@ class ServicesTest(unittest.TestCase):
         self.assertGreater(after['spent_usd'],before)
         self.assertEqual(after['reserved_usd'],0)
 
+    def test_stale_running_job_does_not_block_lane_for_council(self):
+        state.job_event('stale-cursor','running',engine='cursor',managed=True)
+        with patch.object(runtime,'screen_sessions',return_value={}),patch.object(lanes,'cli',return_value='Council answer with enough evidence to pass validation.'):
+            lanes.ask('cursor','critique prompt with enough context',purpose='council')
+
+    def test_external_lease_prioritizes_non_webjam_backlog(self):
+        webjam={'project':'WebJam','kind':'coding','priority':0,'id':'wj'}
+        story={'project':'StoryBoard','kind':'coding','priority':99,'id':'sb'}
+        self.assertLess(jobs.candidate_rank(story,True),jobs.candidate_rank(webjam,True))
+        held=[{'project':'WebJam','kind':'coding','job_id':'x'},{'project':'AdoptIQ','kind':'coding','job_id':'y'}]
+        filtered=[c for c in held if not (c.get('project')=='WebJam' and c.get('kind')=='coding')]
+        self.assertEqual([c['job_id'] for c in filtered],['y'])
+
+    def test_takeover_lock_permission_error_is_graceful(self):
+        sessions={name:'1.svc-'+name for name in runtime.INTERVALS}
+        sessions['mini-conductor']='9.mini-conductor'
+        old_lock=Path('/tmp/mini-conductor.lock')
+        real_exists=Path.exists
+        def exists(self):
+            return True if self==old_lock else real_exists(self)
+        with patch.object(runtime,'screen_sessions',return_value=sessions),patch.object(Path,'exists',exists),patch.object(Path,'read_text',side_effect=PermissionError()):
+            runtime.takeover()
+
 if __name__=='__main__':unittest.main(verbosity=2)

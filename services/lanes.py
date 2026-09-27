@@ -138,6 +138,23 @@ def cli(lane, prompt, cwd, coding, timeout):
     return answer
 
 
+def live_managed_worker(engine):
+    """True only when a managed job screen is actually running on this lane."""
+    try:
+        from runtime import screen_sessions
+        sessions = screen_sessions()
+    except Exception:
+        return False
+    for record in jobs().values():
+        if record.get("engine") != engine or not record.get("managed"):
+            continue
+        if record["state"] not in ("launched", "running"):
+            continue
+        if record["job_id"] in sessions:
+            return True
+    return False
+
+
 def ask(lane, prompt, *, cwd=None, coding=False, timeout=300, purpose="analysis", locked=False):
     if lane not in LANES:
         raise ValueError("unknown lane")
@@ -150,8 +167,7 @@ def ask(lane, prompt, *, cwd=None, coding=False, timeout=300, purpose="analysis"
         raise RuntimeError(lane + " rate-limit cooldown active")
     if not locked:
         with lock("lane-" + lane, blocking=False):
-            if any(r.get("engine") == lane and r["state"] in ("launched", "running")
-                   and r.get("managed") for r in jobs().values()):
+            if live_managed_worker(lane):
                 raise BlockingIOError("lane reserved for a scheduled worker")
             return ask(lane, prompt, cwd=cwd, coding=coding, timeout=timeout, purpose=purpose, locked=True)
     ok, reason = False, None
