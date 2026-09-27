@@ -22,6 +22,7 @@ async function box(page, selector) {
   for (const [tag, width, height] of [["iphone-14", 390, 844], ["iphone-14-pro-max", 430, 932]]) {
     const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 3 });
     const page = await context.newPage();
+    page.on("dialog", (dialog) => dialog.accept());
     await page.goto("http://127.0.0.1:8787/login");
     await page.locator("#password").fill(password);
     await page.locator("#login-form button").click();
@@ -37,6 +38,8 @@ async function box(page, selector) {
     layout.push({ tag, ...metrics });
     await page.screenshot({ path: path.join(evidence, `${tag}-chat.png`) });
     for (const tab of tabs.slice(1)) {
+      await page.locator('.bottom-tab[data-bottom="chat"]').click();
+      await page.locator("#view-chat.active").waitFor({ timeout: 10_000 });
       await page.locator(`.bottom-tab[data-bottom="${tab}"]`).click();
       await page.locator(`.bottom-tab[data-bottom="${tab}"].active`).waitFor({ timeout: 45_000 });
       await page.locator(`[data-view="${tab}"]:not([hidden])`).waitFor({ timeout: 45_000 });
