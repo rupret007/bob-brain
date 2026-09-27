@@ -236,6 +236,13 @@ class ServicesTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'cooldown'):lanes.ask('claude','review',purpose='review')
         cli.assert_not_called()
 
+    def test_claude_session_limit_on_stdout_preserves_the_reset_reason(self):
+        result=NS(returncode=1,stdout=json.dumps(dict(is_error=True,result="You've hit your session limit · resets 6:20pm (America/Chicago)")),stderr='')
+        with patch.object(lanes,'run',return_value=result),patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd,**kwargs:cmd):
+            with self.assertRaisesRegex(RuntimeError,'session limit.*6:20pm'):
+                lanes.cli('claude','review',self.root,False,120)
+        self.assertIn('6:20pm', state.read_json(self.core / 'lane-cooldowns.json')['claude']['detail'])
+
     def test_live_dashboard_snapshot_fields(self):
         import live_dashboard
         jobs_map = {"job-a": {"job_id": "job-a", "state": "running", "launched_at": time.time() - 120,

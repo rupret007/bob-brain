@@ -6,7 +6,9 @@ import threading
 from unittest.mock import patch
 
 from app import Server
-from live_redeploy_check import CHECKS, CheckFailure, Client, verify_four
+from live_redeploy_check import CHECKS, CheckFailure, Client, verify_four, follow_through
+from build_info import BUILD
+from task_dispatch import task_queue
 from test_webchat import Fixture
 
 
@@ -60,3 +62,14 @@ class ReleaseChecks(Fixture):
         self.assertFalse(result["checks"]["go"]["pass_check"])
         self.assertEqual(result["checks"]["go"]["error"], "HTTP 401 at /api/messages")
         self.assertTrue(all(result["checks"][name]["pass_check"] for name in CHECKS if name != "go"))
+
+    def test_async_failed_review_cannot_pass_on_its_queue_receipt(self):
+        result = self.verify()
+        job_id = result["checks"]["claude161"]["jobs"][0]["id"]
+        claim = task_queue.claim(self.root, "claude")
+        self.assertEqual(claim["id"], job_id)
+        task_queue.transition(self.root, job_id, claim["claim_token"], "rejected", error="session limit; no review")
+        result = follow_through(self.client, self.root, self.output, result, BUILD["sha"], timeout=0)
+        self.assertFalse(result["all_pass"])
+        self.assertIn("claude161:", result["failure"])
+        self.assertIn("session limit", result["failure"])

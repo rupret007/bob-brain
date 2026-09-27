@@ -9,6 +9,18 @@ from worker_activity import parse_processes
 
 
 class AuthorityTests(unittest.TestCase):
+    def test_services_and_fresh_log_observations_are_always_reported(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "logs").mkdir()
+            (root / "logs/job-runner.log").write_text("Claimed review job\n")
+            with patch("live_status_snapshot._screen_sessions", return_value={"svc-job-runner": "12.svc-job-runner"}):
+                answer = operational_reply(root, "server", "is it going now?")
+            self.assertIn("live service sessions", answer)
+            self.assertIn("Job runner: 0 claimed, 0 queued", answer)
+            self.assertIn("Recent logs: job runner updated", answer)
+            self.assertNotIn("I don't see active work", answer)
+
     def setUp(self):
         for name in ("_screen_sessions", "process_table"):
             sampler = patch("live_status_snapshot." + name, return_value={})

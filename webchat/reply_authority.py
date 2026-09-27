@@ -70,6 +70,8 @@ def format_operational_reply(snap, provider="server", text=""):
         lines = ["The worker processes are paused."]
     elif work:
         lines = ["There is work listed, but I can't confirm a live worker is running."]
+    elif snap["screen_lanes"]:
+        lines = ["There are live service sessions on the mini; no task worker is confirmed."]
     elif not all(inspection.values()):
         lines = ["I couldn't check all the live workers, so I can't confirm whether work is running."]
     elif any(row["state"] == "busy" for row in snap["lane_locks"].values()):
@@ -101,6 +103,7 @@ def format_operational_reply(snap, provider="server", text=""):
         items.append("- " + label + " — " + detail + ".")
     if items:
         lines.append("\n".join(items))
+    lines.append(f"Job runner: {counts['claimed']} claimed, {counts['queued']} queued.")
     if counts["queued"]:
         lines.append(f"{counts['queued']} " + ("more " if work else "") +
                      f"job{'s are' if counts['queued'] != 1 else ' is'} waiting in the queue.")
@@ -118,10 +121,18 @@ def format_operational_reply(snap, provider="server", text=""):
                   "cooldown": "temporarily unavailable", "recovery_due": "needs a retry"}
         lines.append("Chat health: " + "; ".join(WORKER_NAMES[name] + " — " + labels[row["state"]]
                      for name, row in snap["provider_health"].items()) + ".")
-    if detailed:
-        services = [row["screen"] for row in snap["screen_lanes"] if row["role"] == "service"]
-        if services:
-            lines.append("Service sessions: " + ", ".join(services) + ".")
+    services = [row["screen"] if detailed else row["screen"].removeprefix("svc-").replace("-", " ")
+                for row in snap["screen_lanes"] if row["role"] == "service"]
+    if services:
+        lines.append("Service sessions: " + ", ".join(services) + ".")
+    logs = snap.get("recent_logs", [])
+    if logs:
+        lines.append("Recent logs: " + "; ".join(row["name"] + " updated " + _duration(row["age_seconds"]) + " ago"
+                     for row in logs[:4]) + ".")
+        if detailed:
+            lines.extend(row["path"] + ": " + " / ".join(row["lines"]) for row in logs[:3] if row["lines"])
+    else:
+        lines.append("Recent logs: no readable lane or service logs found.")
     if re.search(r"\b(?:services?|resources?)\b", text, re.I):
         healthy = sum(row["healthy"] for row in snap["service_health"].values())
         lines.append(f"{healthy} of {len(snap['service_health'])} monitored services are healthy.")

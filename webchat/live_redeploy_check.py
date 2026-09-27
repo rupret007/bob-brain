@@ -161,7 +161,7 @@ def verify_four(client, root, output):
                     require(screen in details["content"], "Detailed status omitted screen: " + screen)
                 require(not [r for r in task_queue.tasks(root).values() if r["conversation_id"] == cid], "Status created a job")
             elif name in ("claude161", "push2"):
-                prompt = "have Claude review PR #161" if name == "claude161" else "push WebJam and AdoptIQ"
+                prompt = "Claude review PR #161" if name == "claude161" else "push WebJam and AdoptIQ"
                 request_id = str(uuid.uuid4())
                 _, answer = submit(case, cid, prompt, request_id)
                 rows = check_jobs(case, cid, answer, 1 if name == "claude161" else 2)
@@ -173,7 +173,7 @@ def verify_four(client, root, output):
                 check_jobs(case, cid, repeated, len(rows))
                 case["replay_no_duplicates"] = True
             else:
-                held, _ = submit(case, cid, "hold")
+                held, _ = submit(case, cid, "hold off")
                 require(bool(held["intent_state"]["holds"]), "Hold was not persisted")
                 resumed, answer = submit(case, cid, "go")
                 require(not resumed["intent_state"]["holds"], "Go did not clear the saved hold")
@@ -193,16 +193,77 @@ def verify_four(client, root, output):
     return evidence
 
 
+def follow_through(client, root, output, evidence, expected_sha, timeout=360):
+    """Queue acceptance alone is not a release pass; observe execution and delivery."""
+    redact = Redactor(root, client.password_file.read_text().strip())
+    evidence["initial_acceptance_all_pass"] = evidence["all_pass"]
+    evidence["all_pass"] = False
+    def save():
+        output.write_text(redact(json.dumps(evidence, indent=2)) + "\n")
+    save()
+    try:
+        require(evidence["initial_acceptance_all_pass"], "; ".join(
+            name + ": " + str(case.get("error")) for name, case in evidence["checks"].items() if not case["pass_check"]))
+        version = client.call("/api/version")
+        require(version["sha"] == expected_sha and version["short_sha"] == expected_sha[:7], "version: deployed SHA mismatch")
+        cid = client.new()
+        _, answer = client.submit(cid, "what version/build are you")
+        require(answer["content"] == expected_sha[:7], "version: chat did not return only its own SHA")
+        evidence["version"] = dict(pass_check=True, **version, chat_answer=answer["content"])
+        deadline = time.monotonic() + timeout
+        while True:
+            rows = task_queue.tasks(root)
+            ready = True
+            for name in ("claude161", "push2"):
+                case = evidence["checks"][name]
+                jobs = [rows[row["id"]] for row in case["jobs"]]
+                case["execution"] = [{key: job.get(key) for key in
+                    ("id", "requested_worker", "worker", "status", "attempts", "execution_started_at", "error", "acceptance", "review_source")}
+                    for job in jobs]
+                for job in jobs:
+                    require(job["status"] not in ("failed", "cancelled"), name + ": " + job["id"] + " " + str(job.get("error")))
+                if name == "claude161":
+                    job = jobs[0]
+                    if job["status"] != "succeeded":
+                        ready = False
+                    else:
+                        require(job.get("acceptance", {}).get("accepted"), "claude161: review was not accepted")
+                        require(job.get("review_source", {}).get("number") == 161, "claude161: no verified PR source")
+                        saved = client.call("/api/conversations/" + case["conversation_id"])
+                        delivered = [m for m in saved["messages"] if m.get("task_id") == job["id"] and m.get("task_status") == "succeeded"]
+                        require(bool(delivered) and job["result"] in delivered[-1]["content"], "claude161: final review not delivered")
+                        case["result"] = job["result"]
+                        case["actual_worker"] = job["worker"]
+                elif any(not job.get("execution_started_at") for job in jobs):
+                    ready = False
+            save()
+            if ready:
+                break
+            require(time.monotonic() < deadline, "execution: timed out waiting for PR review completion and both project jobs to execute")
+            time.sleep(2)
+        evidence["all_pass"] = True
+    except Exception as exc:
+        evidence["failure"] = str(exc)
+    evidence["finished_at"] = time.time()
+    save()
+    return evidence
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--url", default="http://127.0.0.1:8787")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--expected-sha", help="Required in live mode; full deployed git SHA")
     parser.add_argument("--isolated", action="store_true", help="Use a temporary listener/queue and forbid model calls")
     args = parser.parse_args()
     os.umask(0o077)
     if not args.isolated:
-        result = verify_four(Client(args.url, args.root / "conductor/webchat/.password"), args.root, args.output)
+        if not args.expected_sha:
+            parser.error("--expected-sha is required for live release verification")
+        client = Client(args.url, args.root / "conductor/webchat/.password")
+        result = verify_four(client, args.root, args.output)
+        result = follow_through(client, args.root, args.output, result, args.expected_sha)
     else:
         from app import Chat, Server
         class NoModels:

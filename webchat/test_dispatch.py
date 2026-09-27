@@ -10,6 +10,14 @@ from test_webchat import Fixture
 
 
 class ChatDispatchTests(Fixture):
+    def test_plain_review_phrases_start_real_jobs(self):
+        for text, worker in (("review PR 161", "auto"), ("Claude review PR #161", "claude")):
+            reply = self.chat.submit(self.identifier, text, str(uuid.uuid4()))
+            row = queue.tasks(self.root)[reply["messages"][-1]["task_id"]]
+            self.assertEqual(row["requested_worker"], worker)
+            self.assertIn("161", row["prompt"])
+        self.assertFalse(self.fake.calls)
+
     def submit(self, message="Review the supplied evidence: queued jobs have no consumer.", worker=None):
         return self.chat.submit(self.identifier, message, str(uuid.uuid4()), worker=worker)
 

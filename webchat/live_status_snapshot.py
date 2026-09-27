@@ -52,20 +52,22 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 
 def _screen_sessions(root: Path) -> dict[str, str] | None:
-    try:
-        result = subprocess.run(
-            ["/usr/bin/screen", "-ls"],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        text = (result.stdout or "") + (result.stderr or "")
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if "Sockets in" not in text and "No Sockets found" not in text:
-        return None
-    return {m.group(2): m.group(1) + "." + m.group(2) for m in _SCREEN_RE.finditer(text)}
+    for _ in range(2):
+        try:
+            result = subprocess.run(["/usr/bin/screen", "-ls"], cwd=root,
+                                    capture_output=True, text=True, timeout=5)
+            text = (result.stdout or "") + (result.stderr or "")
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if "No Sockets found" in text:
+            return {}
+        count = re.search(r"\b(\d+) Sockets? in\b", text)
+        sessions = {m.group(2): m.group(1) + "." + m.group(2) for m in _SCREEN_RE.finditer(text)}
+        if count and len(sessions) == int(count[1]):
+            return sessions
+        # Under concurrent screen probes a socket can be temporarily unreachable.
+        # Retry once; a partial listing cannot establish that the other lanes are idle.
+    return None
 
 
 def _latest_jobs(root: Path) -> dict[str, dict]:
@@ -296,7 +298,13 @@ def _tail_file(path: Path, count: int = 3) -> list[str]:
     if not path.is_file():
         return []
     try:
-        lines = [ln.strip() for ln in path.read_text(errors="replace").splitlines() if ln.strip()]
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            handle.seek(max(0, size - 16384))
+            if size > 16384:
+                handle.readline()
+            lines = [ln.strip() for ln in handle.read().decode("utf-8", "replace").splitlines() if ln.strip()]
     except OSError:
         return []
     return [_redact_line(ln) for ln in lines[-count:]]
@@ -322,6 +330,30 @@ def _lane_log_tails(root: Path, lanes: dict) -> dict[str, list[str]]:
         if lines:
             tails["svc-" + service] = lines
     return tails
+
+
+def recent_screen_logs(root, sessions, now):
+    """Read a bounded tail for each live lane/service, with freshness attached."""
+    rows = []
+    folder = root / "logs"
+    for screen in sessions:
+        if not screen.startswith(("lane-", "svc-")):
+            continue
+        name = re.sub(r"^(?:lane|svc)-", "", screen)
+        candidates = set(folder.glob(name + "*.log")) | set(folder.glob(screen + "*.log"))
+        if name == "webchat":
+            candidates.add(folder / "webchat-server.log")
+        available = []
+        for path in candidates:
+            try:
+                available.append((path.stat().st_mtime, path))
+            except OSError:
+                continue
+        if available:
+            modified, path = max(available)
+            rows.append(dict(screen=screen, name=name.replace("-", " "), path=str(path.relative_to(root)),
+                             age_seconds=max(0, int(now - modified)), lines=_tail_file(path, 2)))
+    return sorted(rows, key=lambda row: row["age_seconds"])
 
 
 def _plain_summary(
@@ -434,6 +466,7 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
             for lane in LANE_NAMES
         },
         "lane_log_tails": log_tails,
+        "recent_logs": recent_screen_logs(root, sessions, now),
         "service_health": services,
         "disk": disk,
         "instruction": (
@@ -468,6 +501,7 @@ def encode_snapshot(snapshot: dict, max_chars: int) -> tuple[str, bool]:
         # Trim history and logs before current workers. Counts retain totals.
         lists = [data["queue_jobs"][key] for key in ("failed", "done")]
         lists += list(data["lane_log_tails"].values())
+        lists += [data.get("recent_logs", [])]
         lists += [data["queue_jobs"][key] for key in ("queued", "claimed")]
         lists += [data["screen_lanes"], data["work"]]
         target = next((rows for rows in lists if rows), None)

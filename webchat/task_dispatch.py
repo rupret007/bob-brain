@@ -92,7 +92,9 @@ def parse_work(text):
     lane = re.fullmatch(r"(?:start|run)\s+(?:a\s+)?lane\s+(codex|cursor-agent|cursor|claude|gemini|minimax|grok)\s*:\s*(.+)", text.strip(), re.I | re.S)
     if lane:
         return lane[2].strip(), lane[1].lower()
-    routed = ROUTED.match(text.strip()) or PREFIX.match(text.strip())
+    routed = (ROUTED.match(text.strip()) or PREFIX.match(text.strip()) or
+              re.match(r"^" + POLITE + r"(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\s+"
+                       r"((?:review|audit|inspect|fix|build|write|research)\b.+)$", text.strip(), re.I | re.S))
     if routed:
         return routed.group(2).strip(), routed.group(1).lower()
     if WORK.match(text.strip()):
@@ -104,6 +106,9 @@ def task_receipt(row):
     names = {"codex": "Codex", "claude": "Claude", "cursor": "Cursor", "gemini": "Gemini", "minimax": "MiniMax", "mini": "mini"}
     if row["status"] in task_queue.ACTIVE:
         label = "Started on " + names[row["worker"]]
+        requested = row["requested_worker"]
+        if requested != "auto" and requested != row["worker"]:
+            label += " (" + names[requested] + " unavailable; fallback)"
     else:
         worker = row["requested_worker"]
         label = "Queued" + (" for " + names[worker] if worker != "auto" else "")

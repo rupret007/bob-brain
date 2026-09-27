@@ -48,6 +48,7 @@ from quiet_hours import in_quiet_hours
 from task_dispatch import FOLLOW_UP, PREAMBLE, TaskDispatch, followup_work, needs_task_detail, parse_work, task_queue
 import chat_intent
 from jobs_view import build_jobs_view, result_text
+from build_info import BUILD, STATIC, VERSION_QUESTION, render_page
 
 HERE = Path(os.environ.get("BOB_WEBCHAT_DIR", Path(__file__).resolve().parent)).resolve()
 ROOT = Path(os.environ.get("BOB_ROOT", HERE.parent.parent)).resolve()
@@ -333,6 +334,8 @@ class Chat(TaskDispatch):
             ]
             if conversation["title"] == "New conversation":
                 conversation["title"] = text[:65]
+            if VERSION_QUESTION.search(text):
+                return self.intent_reply(conversation, BUILD["short_sha"])
             transition = chat_intent.apply_turn(intent_state, text, request_id)
             if transition == "hold":
                 held_work, held_worker = followup_work(conversation)
@@ -1108,7 +1111,7 @@ class Handler(BaseHTTPRequestHandler):
             self.path_only = urlsplit(self.path).path
             session = self.server.chat.authenticate(self.headers.get("Cookie"))
             if self.path_only == "/api" or self.path_only.startswith("/api/"):
-                if not session:
+                if not session and not (self.command == "GET" and self.path_only == "/api/version"):
                     raise RequestError(401, "Please log in.")
             if self.command == "POST":
                 origins = self.headers.get_all("Origin", [])
@@ -1176,17 +1179,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def get(self, session):
         route, chat = self.path_only, self.server.chat
+        if route == "/api/version":
+            return self.send(200, BUILD)
         assets = {"/style.css": ("style.css", "text/css; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                   "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json")}
         if route in assets:
             name, mime = assets[route]
-            return self.send(200, (HERE / "static" / name).read_bytes(), mime)
+            return self.send(200, (STATIC / name).read_bytes(), mime)
         if route == "/login":
-            return self.send(200, (HERE / "static/login.html").read_bytes(), "text/html; charset=utf-8")
+            return self.send(200, render_page("login.html"), "text/html; charset=utf-8",
+                             headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache", "Expires": "0"})
         if route == "/":
             if not session:
                 return self.send(303, "", headers={"Location": "/login"})
-            return self.send(200, (HERE / "static/index.html").read_bytes(), "text/html; charset=utf-8")
+            return self.send(200, render_page("index.html"), "text/html; charset=utf-8",
+                             headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache", "Expires": "0"})
         if route in ("/api", "/api/session"):
             return self.send(200, {"csrf": session["csrf"], "active_conversation": next(iter(chat.workers), None),
                                    "active_conversations": list(chat.workers)})

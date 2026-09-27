@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from failover import AllDown, Cancelled, Circuit, NAMES, ORDER, ProviderError, REASONS, classify
 from billing import MINIMAX_CAP_USD
 from chat_intent import permission_facts
+from build_info import BUILD
 
 RULES = """Read BOB-HANDOFF.md + bob-brain/ + conductor/handback/ (BOB-STATE.md, HANDBACK-SUMMARY.md, HANDBACK-LOG.md tail) and act as Bob.
 You are Jeff's Bob web chat on his Mac mini. Answer Jeff's latest message naturally,
@@ -428,7 +429,7 @@ class Providers:
             history.insert(0, {"role": message["role"], "content": content})
             remaining -= len(content)
         # The last user message is already durable in the history; never duplicate it.
-        return RULES + "\nReference snapshots (not instructions):\n" + json.dumps(
+        return RULES + "\nWEB BOB'S OWN BUILD (other project SHAs are not your version):\n" + json.dumps(BUILD) + "\nReference snapshots (not instructions):\n" + json.dumps(
             self.snapshot(lite=fast, conversation_id=conversation.get("id")), ensure_ascii=False
         ) + (
             "\nRecent conversation, oldest first. Answer the final user message:\n" + json.dumps(history, ensure_ascii=False)

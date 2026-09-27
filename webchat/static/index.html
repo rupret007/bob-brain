@@ -7,10 +7,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Bob">
   <meta name="mobile-web-app-capable" content="yes">
-  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="manifest" href="/manifest.webmanifest?v=__WEBBOB_SHA__">
   <title>Bob · Chat</title>
-  <link rel="stylesheet" href="/style.css">
-  <script src="/app.js" defer></script>
+  <link rel="stylesheet" href="/style.css?v=__WEBBOB_SHA__">
+  <script src="/app.js?v=__WEBBOB_SHA__" defer></script>
 </head>
 <body>
   <div class="app">
@@ -19,8 +19,9 @@
       <div class="header-pill identity" role="banner">
         <span class="avatar" aria-hidden="true">b</span>
         <div class="titles">
-          <h1>Bob</h1>
+          <h1>Web Bob</h1>
           <span class="status-dot" id="status-dot" aria-label="Connection status"></span>
+          <span id="build-info" class="build-info"><span>__WEBBOB_SHA__</span> · <time datetime="__WEBBOB_BUILT_AT__">__WEBBOB_BUILT_AT__</time></span>
         </div>
         <p id="connection" class="sr-only">Connecting</p>
       </div>

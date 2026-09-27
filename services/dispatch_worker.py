@@ -15,8 +15,9 @@ from state import CONDUCTOR, ROOT, atomic_write, lock, read_json
 from lanes import ask, slot
 import mini_worker
 import result_acceptance
+import pr_evidence
 from result_acceptance import ResultRejected, blocked_answer
-from workspaces import prepare, git
+from workspaces import prepare, git, analysis_workspace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
 import task_queue
@@ -102,6 +103,8 @@ def execute(identifier, token):
 
             heartbeat = threading.Thread(target=renew, daemon=True)
             heartbeat.start()
+            review = (pr_evidence.load(row["prompt"], read_json(CONDUCTOR / "services/projects.json", {}))
+                      if row["kind"] == "analysis" else None)
             folder = CONDUCTOR / "state/task-runs" / identifier
             folder.mkdir(parents=True, exist_ok=True)
             branch, cwd = None, None
@@ -109,7 +112,12 @@ def execute(identifier, token):
             prompt = ("Web Bob assigned this task from Jeff. Complete it and return the actual result in your final answer. "
                       "Do not merely propose a plan or claim another worker will do it. If blocked, begin BLOCKER:. "
                       "Use the supplied evidence; do not invent observations.\n\n")
-            if not api_only and row["worker"] != "mini":
+            if review:
+                if not api_only:
+                    cwd = analysis_workspace(row["worker"])
+                atomic_write(folder / "PR-EVIDENCE.json", json.dumps(review["metadata"], indent=2) + "\n")
+                prompt += review["text"] + "\n\n"
+            elif not api_only and row["worker"] != "mini":
                 branch = "draft/" + identifier
                 record = dict(repo=str(repo), worktree=str(ROOT / "workspaces" / identifier),
                               branch=branch, job_dir=str(folder))
@@ -131,9 +139,15 @@ def execute(identifier, token):
                 return 0
             answer = redact(mini_worker.execute(row) if row["worker"] == "mini" else ask(row["worker"], prompt, cwd=cwd, coding=coding,
                                 timeout=90 if row["kind"] == "artifact" else 1800 if coding else 240,
-                                purpose="small-file" if row["kind"] == "artifact" else "small-review" if row["worker"] == "claude" else "webbob-" + identifier,
+                                purpose="pr-review" if review else "small-file" if row["kind"] == "artifact" else "small-review" if row["worker"] == "claude" else "webbob-" + identifier,
                                 locked=True)).strip()
             result_acceptance.check_answer(row["prompt"], answer)
+            if review:
+                metadata = review["metadata"]
+                if not any(file["path"] in answer for file in metadata["files"]):
+                    raise ResultRejected("PR review did not cite any changed file")
+                answer += ("\n\nReview source: [PR #" + str(metadata["number"]) + "](" + metadata["url"] +
+                           ") @ `" + metadata["headRefOid"][:7] + "`. Static diff review by " + row["worker"] + ".")
             if row["kind"] == "artifact":
                 if target.is_symlink() or not target.is_file() or target.read_text().rstrip("\n") != contents:
                     raise ResultRejected("Worker did not write the requested file contents")
@@ -159,7 +173,8 @@ def execute(identifier, token):
             acceptance["result_sha256"] = digest
             result = task_queue.transition(ROOT, identifier, token, "succeeded", result=answer,
                                            result_sha256=digest, worktree=str(cwd) if cwd else None,
-                                           branch=branch, acceptance=acceptance)
+                                           branch=branch, acceptance=acceptance,
+                                           review_source=review["metadata"] if review else None)
             stopped.set()
             if result:
                 atomic_write(folder / "RESULT.md", answer + "\n")
