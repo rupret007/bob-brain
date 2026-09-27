@@ -428,7 +428,7 @@ class Providers:
             raise ValueError("Unknown provider")
         prompt += "\nTransport format: wrap your entire final reply in <bob-webchat-reply> and </bob-webchat-reply>. Put only your answer inside; no text outside. These tags are removed before Jeff sees the reply."
         script = Path(__file__).with_name("api_call.py")
-        code, out, err = self.run([sys.executable, str(script), provider], cwd=self.root, env=self.env,
+        code, out, err = self.run([sys.executable, str(script), provider], cwd=self.root, env=dict(self.env, BOB_ROOT=str(self.root)),
                                   cancel=cancel, timeout=timeout, prompt=prompt)
         if code:
             raise failure(code, out + err)

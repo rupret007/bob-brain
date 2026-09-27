@@ -5,8 +5,9 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "conductor" / "services"))
+CODE_ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.environ.get("BOB_ROOT", CODE_ROOT.parent)).resolve()
+sys.path.insert(0, str(CODE_ROOT / "services"))
 
 
 def load_keys():
