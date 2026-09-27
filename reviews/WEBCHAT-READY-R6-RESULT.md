@@ -1,7 +1,7 @@
 # Web Bob READY-FOR-PHONE — Round 6 result (Cursor lane, iPhone-first)
 
 **Branch:** `draft/webchat-failover-20260927`  
-**Round 6 base (prior doc):** `f22a8872ce1230f9ec6202e7a2ac91628040b4c3` · **Round 6 commit:** `bd76d942d39e02ed92cb337074b05ee69cb535c1`
+**Round 6 base (prior doc):** `f22a8872ce1230f9ec6202e7a2ac91628040b4c3` · **Round 6 commit:** `16518b015950def23255daa26545f438f9139793`
 **Design note:** `conductor/reviews/WEBCHAT-READY-R6-DESIGN.md` (research-first; sources in table)  
 **Council (no Grok):** `conductor/reviews/webchat-ready-r6-council/20260927-024515-648921.md` (Gemini, MiniMax, Claude, Codex synthesize; Cursor lane busy on propose). **Vote:** council majority **self-improve probe + log freshness first**, then voice mic lifecycle; applied cache, `log_age_seconds` UI, recognition-instance guards, Jobs scores grid.  
 **Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
