@@ -116,6 +116,9 @@ h1 { font-size: 18px; letter-spacing: -.35px; }
 .view-title { font-size: 22px; font-weight: 600; letter-spacing: -0.4px; margin-bottom: 8px; }
 .view-subtitle { font-size: 15px; font-weight: 600; margin: 16px 0 6px; }
 .view-lead { font-size: 14px; line-height: 1.45; margin-bottom: 10px; }
+.now-line { font-size: 15px; line-height: 1.4; font-weight: 500; margin: 0 0 8px; color: var(--text); }
+.song-versions { list-style: none; padding: 0; margin: 8px 0 12px; font-size: 13px; }
+.song-versions li { padding: 6px 0; border-bottom: 1px solid var(--border); }
 .view-hint { font-size: 12px; line-height: 1.45; margin-top: 12px; }
 .field-label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
 .conductor-status { font-size: 14px; line-height: 1.45; margin: 0 0 10px; }

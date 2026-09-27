@@ -2,7 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { chromium } = require(process.env.BOB_PLAYWRIGHT_MODULE || "playwright");
-const evidence = path.join(__dirname, "evidence", "iphone-r6");
+const evidence = path.join(__dirname, "evidence", process.env.WEBCHAT_IPHONE_EVIDENCE || "iphone-r8");
 fs.mkdirSync(evidence, { recursive: true, mode: 0o700 });
 const layout = [];
 const tabs = ["chat", "ops", "song", "lanes", "settings"];

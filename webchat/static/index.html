@@ -51,6 +51,7 @@
     <section id="view-ops" class="main-view" data-view="ops" hidden>
       <div class="view-scroll">
         <h2 class="view-title">Jobs</h2>
+        <p id="now-line" class="now-line" hidden></p>
         <p id="status-summary" class="view-lead muted"></p>
         <div id="scores-table" class="scores-grid" aria-label="Latest Web Bob scores"></div>
         <div id="live-jobs" class="live-jobs" aria-live="polite"></div>
@@ -101,6 +102,7 @@
           <label class="upload-label"><input id="song-upload" type="file" accept="audio/*"> Upload audio</label>
         </div>
         <audio id="song-player" controls hidden></audio>
+        <ul id="song-versions" class="song-versions muted" hidden aria-label="Lyric versions"></ul>
         <p id="song-notice" class="muted"></p>
       </div>
     </section>

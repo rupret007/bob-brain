@@ -296,6 +296,8 @@ class Providers:
                 ("conductor/handback/BOB-STATE.md", 4000, False),
                 ("conductor/handback/HANDBACK-SUMMARY.md", 3500, True),
                 ("conductor/handback/HANDBACK-LOG.md", 1800, True),
+                ("conductor/state/NOW.md", 800, False),
+                ("conductor/state/BOB-CATCHUP.md", 2200, True),
                 ("next-prompts/INDEX.md", 2500, False),
             )
         else:
@@ -310,6 +312,9 @@ class Providers:
                 ("conductor/handback/BOB-STATE.md", 6000, False),
                 ("conductor/handback/HANDBACK-SUMMARY.md", 6000, True),
                 ("conductor/handback/HANDBACK-LOG.md", 4000, True),
+                ("conductor/state/NOW.md", 1200, False),
+                ("conductor/state/BOB-CATCHUP.md", 3500, True),
+                ("conductor/state/INBOX.md", 2000, False),
                 ("conductor/webchat/MUSIC-HANDOFF.md", 2500, False),
             )
         parts = self._read_parts(rows)

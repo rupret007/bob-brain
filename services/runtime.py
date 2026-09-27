@@ -250,6 +250,22 @@ def snapshot():
     spend = {lane: __import__("budget").totals(lane) for lane in __import__("lanes").LANES}
     lanes = read_json(CONDUCTOR / "lanes.json", {})
     live_ops = build_live_ops(sessions=sessions, jobs_map=jobs(), lanes=lanes, spend=spend)
+    try:
+        ledger_dir = str(CONDUCTOR / "state")
+        if ledger_dir not in sys.path:
+            sys.path.insert(0, ledger_dir)
+        import ledger as state_ledger
+
+        head = None
+        result = run(["git", "-C", str(CONDUCTOR), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            head = result.stdout.strip()
+        state_ledger.sync_from_live_ops(ROOT, live_ops, head_sha=head, webchat_round=live_ops.get("webchat_round"))
+        refreshed = state_ledger.read_now_line(ROOT)
+        if refreshed:
+            live_ops["now_line"] = refreshed
+    except Exception:
+        pass
     return {"generated_at": stamp(), "live_ops": live_ops, "services": health(sessions=sessions),
             "jobs": {"total": len(records), "launched": sum(r["state"] == "launched" for r in records),
                      "running": sum(r["state"] == "running" for r in records),

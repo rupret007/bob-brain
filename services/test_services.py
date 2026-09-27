@@ -245,6 +245,19 @@ class ServicesTest(unittest.TestCase):
         self.assertEqual(ops["minimax_spend"]["cap_usd"], 59.0)
         self.assertTrue(ops["running_jobs"][0]["plain_now"])
 
+    def test_state_ledger_catchup_and_now(self):
+        ledger_dir = str(HERE.parent / "state")
+        if ledger_dir not in sys.path:
+            sys.path.insert(0, ledger_dir)
+        import ledger as state_ledger
+
+        state_ledger.write_now(self.root, "Round 8 alignment pass", sha="deadbeef")
+        state_ledger.append_inbox(self.root, "re-read INBOX between steps", source="test")
+        state_ledger.write_catchup(self.root)
+        catchup = (self.root / "conductor/state/BOB-CATCHUP.md").read_text()
+        self.assertIn("INBOX", catchup)
+        self.assertTrue((self.root / "conductor/state/NOW.md").exists())
+
     def test_public_live_ops_allowlists_log_tail(self):
         import live_dashboard
         payload = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())

@@ -182,8 +182,16 @@ def build_live_ops(*, sessions: dict, jobs_map: dict, lanes: dict, spend: dict, 
     active_jobs.sort(key=lambda row: (0 if row["live_screen"] else 1, -row["elapsed_seconds"]))
     minimax = spend.get("minimax") or {}
     roles = _lane_roles(lanes, session_names)
+    now_line = None
+    now_path = CONDUCTOR / "state" / "NOW.md"
+    if now_path.is_file():
+        for line in now_path.read_text(errors="replace").splitlines():
+            if line.strip():
+                now_line = _redact_line(line.strip())[:240]
+                break
     return {
         "generated_at": datetime.fromtimestamp(now, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00"),
+        "now_line": now_line,
         "webchat_round": _webchat_round(),
         "scores": _scores_table(),
         "minimax_spend": {
@@ -243,6 +251,7 @@ def public_live_ops(live_ops: dict) -> dict:
         })
     return {
         "generated_at": live_ops.get("generated_at"),
+        "now_line": live_ops.get("now_line"),
         "webchat_round": live_ops.get("webchat_round"),
         "scores": live_ops.get("scores"),
         "minimax_spend": live_ops.get("minimax_spend"),

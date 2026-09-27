@@ -401,6 +401,22 @@ if ($("login-form")) {
       $("song-lyrics").value = project.lyrics || "";
       $("song-chords").value = project.chords || "";
       $("song-notes").value = project.notes || "";
+      const versions = $("song-versions");
+      if (versions) {
+        const rows = (project.versions || []).slice().reverse().slice(0, 6);
+        if (rows.length) {
+          versions.hidden = false;
+          versions.replaceChildren(...rows.map((v) => {
+            const li = document.createElement("li");
+            const when = v.at ? new Date(v.at * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+            li.textContent = `${when}${v.note ? " · " + v.note : ""}`;
+            return li;
+          }));
+        } else {
+          versions.hidden = true;
+          versions.replaceChildren();
+        }
+      }
       markSongClean();
     } catch (_) { $("song-notice").textContent = "Offline — edits stay on device until you save."; }
   }
@@ -554,6 +570,17 @@ if ($("login-form")) {
       const jobLead = liveCards.length
         ? `${liveCards.length} job${liveCards.length === 1 ? "" : "s"} running on screen`
         : (jobs.length ? `${jobs.length} tracked — none on screen right now` : "Nothing running on screen");
+      const nowHost = $("now-line");
+      const nowLine = ops.now_line || data.alignment?.now_line;
+      if (nowHost) {
+        if (nowLine) {
+          nowHost.hidden = false;
+          nowHost.textContent = nowLine;
+        } else {
+          nowHost.hidden = true;
+          nowHost.textContent = "";
+        }
+      }
       $("status-summary").textContent = `${freshness}${scoreStamp} · ${jobLead} · MiniMax ${spendText} · round ${ops.webchat_round || "?"}`;
       renderScoresTable(ops.scores);
       renderLiveJobs(jobs);

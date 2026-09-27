@@ -11,6 +11,12 @@ from pathlib import Path
 
 from handback import append_turn, refresh_summary
 from live_failover import Curl, HERE, ROOT
+
+import sys
+
+if str(ROOT / "conductor/state") not in sys.path:
+    sys.path.insert(0, str(ROOT / "conductor/state"))
+import ledger as state_ledger
 from live_ready_drill import origin_url
 
 HANDBACK_FILES = ("BOB-STATE.md", "HANDBACK-LOG.md", "HANDBACK-SUMMARY.md", ".bob-last-seen")
@@ -50,6 +56,8 @@ def ledger_round(root: Path, tag: str) -> dict:
     append_turn(root, ask=f"handback drill {tag}: queued review", provider="gemini", jobs=[f"drill-{tag}"],
                 files=[], commits=["abc1234"], confirmations=[], refusals=[], open_items=[])
     refresh_summary(root)
+    state_ledger.write_now(root, f"Handback drill {tag}: running screen drill-{tag}", sha="abc1234")
+    state_ledger.write_catchup(root)
     summary_path = folder / "HANDBACK-SUMMARY.md"
     log_path = folder / "HANDBACK-LOG.md"
     text = summary_path.read_text(errors="replace") if summary_path.exists() else ""

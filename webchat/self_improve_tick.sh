@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 LOG="$ROOT/conductor/handback/HANDBACK-LOG.md"
+SELF_LOG="$ROOT/logs/webchat-self-improve.log"
+mkdir -p "$ROOT/logs"
 STAMP="$(TZ=America/Chicago date '+%Y-%m-%d %H:%M:%S CT')"
 BRANCH="$(git -C "$ROOT/conductor" branch --show-current 2>/dev/null || echo unknown)"
 if [[ "$BRANCH" != draft/* ]]; then
@@ -30,6 +32,9 @@ SHA="$(git -C "$ROOT/conductor" rev-parse HEAD 2>/dev/null || echo unknown)"
 } >>"$LOG"
 python3 -c "import sys; from pathlib import Path; sys.path.insert(0, '$ROOT/conductor/webchat'); from handback import refresh_summary; refresh_summary(Path('$ROOT'))"
 if [[ "$WEBCHAT_RC" -ne 0 || "$FAILOVER_RC" -ne 0 ]]; then
+  echo "[$STAMP] self-improve tick tests failed webchat=$WEBCHAT_RC failover=$FAILOVER_RC sha=$SHA" >>"$SELF_LOG"
   echo "self-improve tests failed (webchat=$WEBCHAT_RC failover=$FAILOVER_RC)" >&2
   exit 1
 fi
+echo "[$STAMP] self-improve tick OK webchat=$WEBCHAT_RC failover=$FAILOVER_RC sha=$SHA" >>"$SELF_LOG"
+python3 -c "import sys; from pathlib import Path; sys.path.insert(0, '$ROOT/conductor/state'); import ledger; ledger.write_catchup(Path('$ROOT'))" || true

@@ -580,9 +580,33 @@ class HandbackJobTests(Fixture):
         self.chat.submit(self.identifier, "hello bob", str(uuid.uuid4()))
         self.assertNotIn("pending_job", self.chat.conversations[self.identifier])
 
+    def test_inbox_message_queues_builder_note(self):
+        request_id = str(uuid.uuid4())
+        value = self.chat.submit(self.identifier, "tell the builder: fix Jobs tab copy", request_id)
+        assistant = value["messages"][-1]
+        self.assertEqual(assistant["status"], "done")
+        self.assertEqual(assistant.get("provider"), "inbox")
+        inbox = (self.root / "conductor/state/INBOX.md").read_text()
+        self.assertIn("fix Jobs tab copy", inbox)
+
+    def test_status_chip_answers_from_state_without_model(self):
+        ledger_dir = Path(__file__).resolve().parent.parent / "state"
+        if str(ledger_dir) not in sys.path:
+            sys.path.insert(0, str(ledger_dir))
+        import ledger as state_ledger
+
+        state_ledger.write_now(self.root, "Idle on mini · tests running")
+        request_id = str(uuid.uuid4())
+        value = self.chat.submit(self.identifier, "status", request_id)
+        assistant = value["messages"][-1]
+        self.assertEqual(assistant["status"], "done")
+        self.assertEqual(assistant.get("provider"), "state")
+        self.assertIn("mini", assistant["content"].lower())
+
     def test_panel_and_handback_api_shape(self):
         data = self.chat.panel()
         self.assertIn("lanes", data)
+        self.assertIn("alignment", data)
         self.assertIn("handback", data)
         self.assertIn("recent_results", data)
         self.assertIn("live_ops", data)

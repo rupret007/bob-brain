@@ -190,6 +190,13 @@ def compact_digest(root: Path, *, limit: int = 900) -> str:
     refresh_summary(root)
     summary = read_slice(root, SUMMARY, 4000, tail=True)
     state = read_slice(root, STATE, 1200)
+    catchup_text = ""
+    catchup_path = root / "conductor/state/BOB-CATCHUP.md"
+    if catchup_path.exists():
+        try:
+            catchup_text = catchup_path.read_text(errors="replace")[-2200:]
+        except OSError:
+            catchup_text = ""
     parts: list[str] = []
     if state.get("available"):
         for line in state["text"].splitlines():
@@ -197,12 +204,19 @@ def compact_digest(root: Path, *, limit: int = 900) -> str:
             if stripped and not stripped.startswith("#"):
                 parts.append(stripped[:200])
                 break
+    if catchup_text:
+        for line in catchup_text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("- ") and "catch-up" not in stripped.lower():
+                parts.append(stripped[2:][:160])
+            if len(parts) >= 3:
+                break
     if summary.get("available"):
         for line in summary["text"].splitlines():
             stripped = line.strip()
             if stripped.startswith("- ") and not stripped.startswith("- _"):
                 parts.append(stripped[2:][:160])
-            if len(parts) >= 5:
+            if len(parts) >= 6:
                 break
     text = " · ".join(parts) if parts else "(no handback digest yet)"
     return text[:limit]

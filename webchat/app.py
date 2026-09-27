@@ -36,6 +36,10 @@ from ops_panel import conductor_snapshot, draft_head_sha, load_live_ops
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
+_STATE_LEDGER_DIR = ROOT / "conductor/state"
+if str(_STATE_LEDGER_DIR) not in sys.path:
+    sys.path.insert(0, str(_STATE_LEDGER_DIR))
+import ledger as state_ledger  # noqa: E402
 HOST, PORT = "127.0.0.1", 8787  # Deliberately no all-interface or port override.
 COOKIE = "bob_session"
 SESSION_SECONDS = 12 * 60 * 60
@@ -386,6 +390,40 @@ class Chat:
                 self.record_turn(ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
                             refusals=[refusal], open_items=[])
                 return self.public(conversation)
+            inbox_body = state_ledger.parse_inbox_message(text)
+            if inbox_body:
+                state_ledger.append_inbox(self.root, inbox_body, source="web-bob", request_id=request_id)
+                reply = (
+                    "Got it — I added that to the builder inbox on the mini. "
+                    "The next round will re-read INBOX.md before continuing."
+                )
+                conversation["messages"][-1].update(status="done", content=reply, provider="inbox")
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                self.record_turn(ask=text, provider="inbox", jobs=[], files=["conductor/state/INBOX.md"],
+                            commits=[], confirmations=[], refusals=[], open_items=[inbox_body[:200]],
+                            request_id=request_id)
+                state_ledger.record_webchat_turn(self.root, ask=text, provider="inbox", request_id=request_id)
+                return self.public(conversation)
+            try:
+                state_ledger.sync_from_live_ops(
+                    self.root, load_live_ops(self.root).get("live_ops") or {},
+                    head_sha=draft_head_sha(self.root),
+                    webchat_round=(load_live_ops(self.root).get("live_ops") or {}).get("webchat_round"),
+                )
+            except OSError:
+                pass
+            local_status = state_ledger.try_status_reply(self.root, text)
+            if local_status:
+                conversation["messages"][-1].update(status="done", content=local_status, provider="state")
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                head = draft_head_sha(self.root)
+                self.record_turn(ask=text, provider="state", jobs=[], files=["conductor/state/STATE.json"],
+                            commits=[head] if head else [], confirmations=[], refusals=[], open_items=[],
+                            request_id=request_id)
+                state_ledger.record_webchat_turn(self.root, ask=text, provider="state", request_id=request_id)
+                return self.public(conversation)
             self.launch(identifier)
             return self.public(conversation)
 
@@ -429,6 +467,12 @@ class Chat:
                             jobs=[], files=[], commits=commits, confirmations=[], refusals=[],
                             open_items=[user[:200]] if user else [],
                             request_id=user_msg.get("request_id"))
+                try:
+                    state_ledger.record_webchat_turn(
+                        self.root, ask=user, provider=answer.get("provider"), request_id=user_msg.get("request_id"),
+                    )
+                except OSError:
+                    pass
         except AllDown as exc:
             with self.lock:
                 value = self.get(identifier)
@@ -551,6 +595,7 @@ class Chat:
         log_path = root / "logs/webchat-self-improve.log"
         label = "com.jeff.bob-webchat-self-improve"
         last_tick = None
+        last_tick_outcome = None
         handback = root / "conductor/handback/HANDBACK-LOG.md"
         if handback.exists():
             try:
@@ -568,8 +613,17 @@ class Chat:
         recent_age_seconds = None
         if log_path.exists():
             try:
-                tail = log_path.read_text(errors="replace")[-4000:].lower()
-                recent_ok = "self-improve" in tail and "failed" not in tail.split("self-improve")[-1][:240]
+                tail = log_path.read_text(errors="replace")[-4000:]
+                tail_lower = tail.lower()
+                for line in reversed(tail.splitlines()):
+                    if "self-improve tick" in line.lower():
+                        last_tick_outcome = line.strip()[:200]
+                        break
+                recent_ok = "self-improve tick" in tail_lower and "failed" not in tail_lower.split("self-improve")[-1][:280]
+                if "tests failed" in tail_lower[-800:]:
+                    recent_ok = False
+                if "tick skipped" in tail_lower[-400:]:
+                    recent_ok = True
                 recent_age_seconds = max(0, time.time() - log_path.stat().st_mtime)
                 if recent_age_seconds > 48 * 3600:
                     recent_ok = False
@@ -592,6 +646,7 @@ class Chat:
             "launchd_files_ok": files_ok,
             "launchd_loaded": launchd_loaded,
             "last_logged": last_tick,
+            "last_tick_log_line": last_tick_outcome,
             "recent_log_ok": recent_ok,
             "log_age_seconds": recent_age_seconds,
             "summary": summary,
@@ -609,13 +664,26 @@ class Chat:
         loaded = load_live_ops(self.root)
         live_ops = loaded.get("live_ops") or {}
         meta = loaded.get("meta") or {}
+        alignment: dict = {}
+        try:
+            state_ledger.sync_from_live_ops(
+                self.root, live_ops, head_sha=draft_head_sha(self.root), webchat_round=live_ops.get("webchat_round"),
+            )
+            alignment = state_ledger.public_slice(self.root)
+            now_line = alignment.get("now_line")
+            if now_line and not live_ops.get("now_line"):
+                live_ops = {**live_ops, "now_line": now_line}
+        except OSError:
+            alignment = state_ledger.public_slice(self.root)
         dashboard_age = meta.get("dashboard_modified_at")
         if dashboard_age is None:
             status_path = self.root / "conductor/STATUS.md"
             dashboard_age = status_path.stat().st_mtime if status_path.exists() else None
         return {"lanes": lanes, "jobs": jobs, "recent_results": results, "dashboard_modified_at": dashboard_age,
                 "live_ops": live_ops, "live_ops_meta": meta, "conductor": conductor_snapshot(self.root),
-                "handback": self.handback(), "self_improve": self.self_improve_status(), "read_at": time.time()}
+                "handback": self.handback(), "self_improve": self.self_improve_status(),
+                "alignment": alignment,
+                "read_at": time.time()}
 
     def jobs(self):
         try:
