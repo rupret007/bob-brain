@@ -382,8 +382,14 @@ select option { background: var(--surface-2); color: var(--text); }
   position: absolute;
   top: 2px;
   right: 2px;
-  width: 22px;
-  height: 22px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 50%;
   font-size: 14px;
   line-height: 1;
@@ -395,6 +401,7 @@ select option { background: var(--surface-2); color: var(--text); }
   gap: 8px;
   margin-top: 8px;
 }
+.message-attachment { min-width: 0; max-width: 100%; }
 .message-attachments img,
 .message-attachments video {
   max-width: min(100%, 280px);
@@ -412,6 +419,9 @@ select option { background: var(--surface-2); color: var(--text); }
   font-size: 13px;
   text-decoration: none;
   color: var(--text);
+  min-height: 44px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 .composer-pill {
   flex: 1;

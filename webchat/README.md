@@ -321,3 +321,58 @@ Restart normally afterward so drills are disabled. The broader
 but affects the entire process; prefer the scoped script on a live phone server.
 
 Final failover evidence and architecture review: `reviews/WEBCHAT-FAILOVER-RESULT.md`.
+
+## Photos, videos, and files
+
+The composer supports six attachments per message: photos up to 12 MiB, videos
+up to 35 MiB, and PDF/UTF-8 text files up to 8 MiB. Upload progress and failures
+appear above the composer. Quick actions leave the text and attachments staged;
+switching conversations preserves each draft until the page is reloaded. Replies
+can return existing attachments from the same conversation, with previews and
+original-file download links.
+
+The browser uploads the `File` directly to `POST /api/media/upload` as
+`application/octet-stream`, with `X-Filename` (percent-encoded),
+`X-Conversation-Id`, and the usual `X-CSRF-Token`. JSON clients may send
+`{conversation_id, filename, data_base64}`; the request cap includes base64
+expansion. Submit returned IDs in `POST /api/messages` as `attachments: [...]`.
+Use the returned attachment URL for GET/HEAD; it contains `conversation_id`.
+Media endpoints require login and matching conversation ownership. Video serving
+supports byte ranges, and `&download=1` returns the original filename.
+Unbound uploads from the initial draft must be reattached; orphaned or invalid
+metadata never grants access to a blob.
+
+Media preparation runs in the existing asynchronous reply worker, with two
+preparations at a time and a shared 20-second processing budget per turn. Each
+subprocess has a shorter deadline and Stop terminates its process group. Images
+are normalized before model input; videos provide up to four sampled frames from
+the first two minutes. `ffmpeg` and `ffprobe` provide decoding; macOS `sips` handles
+HEIC/HEIF. Local `tesseract` scans normalized images/frames for known secrets
+before remote vision. Failed safety checks withhold the visual payload and show
+an explanation. This detects recognized secrets, not every possible credential.
+Text files, PDF excerpts, and transcripts are redacted before model input.
+
+PDF text extraction uses `pdftotext` when available or native PDFKit on macOS;
+only the first 20 pages and a bounded text excerpt enter context. Scanned PDFs
+without extractable text ask for page images or a text export. Optional audio
+transcription uses the Python `whisper` CLI only with an already cached tiny
+model, samples up to 30 seconds, and never downloads model weights in chat.
+Unavailable audio, decoding failures, and missing dependencies are visible in
+the reply. Unsupported browser video codecs retain the original download link.
+
+Auto mode prefers Gemini for images/video. The configured MiniMax M2.7 and CLI
+providers receive extracted text only; their replies disclose that limitation.
+Assistant attachment markers must resolve to this conversation's stored media;
+missing/foreign IDs produce an explicit attachment failure notice.
+
+Offline regression commands (disposable data and stubbed providers):
+
+```sh
+python3 -m unittest discover -s webchat -p 'test_*.py'
+python3 -m unittest discover -s services -p 'test_*.py'
+python3 webchat/media_browser_test.py --screenshots reviews
+```
+
+The browser test uses installed Playwright WebKit and Chromium, local fixture
+media, and an ephemeral loopback listener. Set `BOB_PLAYWRIGHT_MODULE` if needed.
+See `reviews/MEDIA-FIXED-0927.md` for finding dispositions and test limits.

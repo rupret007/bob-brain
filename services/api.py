@@ -9,7 +9,6 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from urllib.parse import quote
 
 from command import run
 from state import CONDUCTOR, alert, append_event, atomic_write, log, read_json, stamp, write_json
@@ -86,20 +85,12 @@ def model_call(model, prompt, max_tokens=8192, purpose="api", vision=None):
     if model == "minimax":
         url = "https://api.minimax.io/v1/text/chatcompletion_v2"
         if vision:
-            content = [{"type": "text", "text": prompt}]
-            for part in vision:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": "data:" + part["mime"] + ";base64," + part["data_base64"]},
-                })
-            message_content = content
-        else:
-            message_content = prompt
-        payload = {"model": MODELS[model], "messages": [{"role": "user", "content": message_content}],
+            raise ValueError("The configured MiniMax M2.7 model accepts text only.")
+        payload = {"model": MODELS[model], "messages": [{"role": "user", "content": prompt}],
                    "max_tokens": max_tokens, "temperature": 0.2, "reasoning_split": True}
         headers = {"Authorization": "Bearer " + key}
     else:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/" + MODELS[model] + ":generateContent?key=" + quote(key, safe="")
+        url = "https://generativelanguage.googleapis.com/v1beta/models/" + MODELS[model] + ":generateContent"
         parts = []
         for part in vision:
             parts.append({"inline_data": {"mime_type": part["mime"], "data": part["data_base64"]}})
@@ -107,7 +98,7 @@ def model_call(model, prompt, max_tokens=8192, purpose="api", vision=None):
         payload = {"contents": [{"role": "user", "parts": parts}],
                    "generationConfig": {"maxOutputTokens": min(max_tokens, 4096), "temperature": 0.2,
                                         "thinkingConfig": {"thinkingBudget": 0}}}
-        headers = {}
+        headers = {"x-goog-api-key": key}
     return http_json(url, "POST", payload, headers, lambda data: extract(model, data),
                      lane=model, prompt=prompt, max_tokens=max_tokens, purpose=purpose)
 

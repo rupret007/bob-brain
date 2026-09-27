@@ -31,7 +31,7 @@ function arg(name, fallback = "") {
     await page.locator(".message.user .message-attachments img").waitFor({ timeout: 60000 });
     await page.screenshot({ path: arg("--out-chat"), fullPage: true });
     const png = Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABPmXiEAAAAEklEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC",
       "base64",
     );
     await page.locator("#attach-input").setInputFiles({

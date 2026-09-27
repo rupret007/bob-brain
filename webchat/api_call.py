@@ -32,22 +32,29 @@ def strip_reply_tags(text):
 
 
 def split_transport(raw):
-    marker = "\n---BOB_VISION_JSON---\n"
-    if marker not in raw:
-        return raw, []
-    head, prompt = raw.split(marker, 1)
     try:
-        vision = json.loads(head).get("vision") or []
-    except (json.JSONDecodeError, AttributeError):
-        vision = []
-    return prompt, vision
+        payload = json.loads(raw)
+        prompt, vision = payload["prompt"], payload.get("vision", [])
+        if not isinstance(prompt, str) or not isinstance(vision, list) or len(vision) > 24:
+            raise ValueError()
+        for part in vision:
+            if (not isinstance(part, dict) or part.get("mime") not in ("image/jpeg", "image/png", "image/webp")
+                    or not isinstance(part.get("data_base64"), str)):
+                raise ValueError()
+        return prompt, vision
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise ValueError("Invalid chat transport payload.") from None
 
 
 def main():
     lane = sys.argv[1]
     if lane not in ("gemini", "minimax"):
         return 2
-    prompt, vision = split_transport(sys.stdin.read())
+    try:
+        prompt, vision = split_transport(sys.stdin.read())
+    except ValueError:
+        print("invalid transport payload", file=sys.stderr)
+        return 1
     if not prompt.strip():
         print("empty prompt", file=sys.stderr)
         return 1
@@ -63,6 +70,8 @@ def main():
         kwargs = {"purpose": "webchat"}
         if "vision" in inspect.signature(model_call).parameters:
             kwargs["vision"] = vision or None
+        elif vision:
+            raise RuntimeError("This API helper does not support vision.")
         answer = strip_reply_tags(model_call(lane, prompt, **kwargs))
     print(answer)
     return 0

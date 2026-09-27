@@ -49,7 +49,7 @@ class StubProviders:
             content = "Media proof server is up."
         return {"content": content, "provider": "gemini", "codex_thread_id": None, "attempts": []}
 PNG_1PX = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC"
 )
 
 
@@ -83,12 +83,12 @@ def main():
     )
     opener.open(login, timeout=15).read()
     csrf = call("/api/session")["csrf"]
+    conv = call("/api/conversations", {}, {"X-CSRF-Token": csrf})
     uploaded = call(
         "/api/media/upload",
-        {"filename": "parity-dot.png", "data_base64": base64.b64encode(PNG_1PX).decode()},
+        {"conversation_id": conv["id"], "filename": "parity-dot.png", "data_base64": base64.b64encode(PNG_1PX).decode()},
         {"X-CSRF-Token": csrf},
     )
-    conv = call("/api/conversations", {}, {"X-CSRF-Token": csrf})
     request_id = str(uuid.uuid4())
     call(
         "/api/messages",
