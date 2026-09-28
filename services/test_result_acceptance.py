@@ -1,13 +1,39 @@
 """Task-aware acceptance: deterministic failures and strict semantic verdicts."""
 import json
+from pathlib import Path
 import unittest
 from unittest.mock import Mock
 
-from result_acceptance import ResultRejected, accept, check_answer
+from result_acceptance import ResultRejected, accept, check_answer, check_coding_answer
 from dispatch_worker import task_queue
 
 
 class AcceptanceTests(unittest.TestCase):
+    def test_0810_captured_incomplete_verification_cannot_be_overridden(self):
+        fixture = json.loads(Path(__file__).with_name("fixtures").joinpath("texting_verification_0810.json").read_text())
+        review = Mock(return_value='{"accepted": true, "reason": "Claims pass"}')
+        with self.assertRaisesRegex(ResultRejected, "verification is incomplete"):
+            accept(fixture["prompt"], fixture["answer"], review, coding_evidence={"sha": fixture["claimed_sha"]})
+        review.assert_not_called()
+
+    def test_coding_promises_and_pending_tests_are_not_completion(self):
+        for answer in ("Fixed and committed. Tests pending.", "Will run API tests next. Status: Pass.",
+                       "Shared tests pass, API tests not run.", "Committed. Verification is incomplete."):
+            with self.subTest(answer=answer), self.assertRaises(ResultRejected):
+                check_coding_answer(answer)
+        check_coding_answer("Fixed and committed abc1234. pnpm test: 343 passed, exit 0; pnpm build: exit 0.")
+
+    def test_coding_reviewer_gets_change_scope_and_fresh_check_evidence(self):
+        review = Mock(return_value='{"accepted": true, "reason": "The fix and required tests completed."}')
+        evidence = dict(sha="abc1234", changed_paths=["apps/api/src/module.ts"],
+                        validation=dict(all_pass=True, checks=[dict(command=["pnpm", "test"], exit=0)]))
+        result = accept("Fix the API", "API fixed. pnpm test: 343 pass, exit 0; commit abc1234.",
+                        review, coding_evidence=evidence)
+        self.assertTrue(result["accepted"])
+        instructions = review.call_args.args[0]
+        self.assertIn("Shared tests, prepare smoke, stale runs, or plans alone", instructions)
+        self.assertEqual(json.loads(instructions.split("\n\n", 1)[1])["coding_evidence"], evidence)
+
     def test_malformed_cursor_review_retries_validation_once_without_accepting_prose(self):
         review = Mock(side_effect=["Checking the changes.\nThe result satisfies the task.",
                                    '{"accepted": true, "reason": "The requested fix was committed and tested."}'])

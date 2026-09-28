@@ -131,7 +131,7 @@ def execute(identifier, token):
                       if row["kind"] in ("analysis", "review") else None)
             folder = CONDUCTOR / "state/task-runs" / identifier
             folder.mkdir(parents=True, exist_ok=True)
-            branch, cwd = None, None
+            branch, cwd, base_sha = None, None, None
             coding = row["kind"] in ("coding", "artifact")
             evidence_metadata = None
             prompt = ("Web Bob assigned this task from Jeff. Complete it and return the actual result in your final answer. "
@@ -153,9 +153,17 @@ def execute(identifier, token):
                 record = dict(repo=str(repo), worktree=str(ROOT / "workspaces" / identifier),
                               branch=branch, job_dir=str(folder))
                 cwd = prepare_task(record, coding)
+                if row["kind"] == "coding":
+                    base_sha = git(cwd, "rev-parse", "HEAD")
                 prompt += ("Keep all work local: never push or create/modify a PR. "
                            "Use only the assigned worktree " + str(cwd) + " on " + branch + ". "
                            "For code changes, commit locally and report the SHA, changed paths and tests.\n\n")
+                if row["kind"] == "coding":
+                    prompt += result_acceptance.CODING_REQUIREMENTS + "\n"
+                    checks = mini_worker.coding_commands(project)
+                    if checks:
+                        prompt += ("Before accepting or publishing your commit, the server will independently re-run: "
+                                   + json.dumps(checks) + ". Leave the checkout ready to run these commands.\n")
             prompt += "TASK:\n" + row["prompt"]
             if row.get("publish_project"):
                 prompt += ("\nThe server has Jeff's explicit authorization to push this project's assigned draft branch. "
@@ -202,6 +210,26 @@ def execute(identifier, token):
                     raise ResultRejected("Worker changed its assigned draft branch")
                 if git(cwd, "status", "--porcelain", "--untracked-files=normal"):
                     raise ResultRejected("Worker left uncommitted changes; task is not complete")
+            coding_evidence = None
+            if row["kind"] == "coding":
+                result_acceptance.check_coding_answer(answer)
+                head = git(cwd, "rev-parse", "HEAD")
+                changed = git(cwd, "diff", "--name-only", base_sha, head).splitlines()
+                diff = git(cwd, "diff", "--no-ext-diff", base_sha, head)
+                if len(diff) > 60000:
+                    raise ResultRejected("Coding diff exceeds bounded acceptance review; choose a smaller fix")
+                validation = mini_worker.verify_coding(cwd, project, folder, redact)
+                coding_evidence = dict(base_sha=base_sha, sha=head, changed_paths=changed, diff=diff,
+                                       validation=validation)
+                # Read test definitions from the assigned commit, with the existing safe evidence reader.
+                definitions = {}
+                for path in git(cwd, "ls-files").splitlines():
+                    if (Path(path).name in ("AGENTS.md", "package.json", "pyproject.toml", "Makefile")
+                            and api_worker.safe_source(cwd, path)):
+                        definitions[path] = api_worker.read_source(cwd, path, 12000).decode("utf-8", "replace")
+                coding_evidence["test_definitions"] = definitions
+                coding_evidence = json.loads(redact(json.dumps(coding_evidence)))
+                atomic_write(folder / "CODING-EVIDENCE.json", json.dumps(coding_evidence, indent=2) + "\n")
             if row["worker"] == "mini" or row["kind"] == "artifact":
                 acceptance = dict(accepted=True, method="verified-execution")
             else:
@@ -212,8 +240,17 @@ def execute(identifier, token):
                 acceptance = result_acceptance.accept(
                     acceptance_task, answer,
                     lambda instructions: ask(row["worker"], instructions, cwd=cwd, coding=False,
-                                             timeout=120, purpose="result-acceptance", locked=True))
+                                             timeout=120, purpose="result-acceptance", locked=True),
+                    coding_evidence=coding_evidence)
                 acceptance = json.loads(redact(json.dumps(acceptance)))
+                if coding_evidence is not None:
+                    if (git(cwd, "rev-parse", "HEAD") != coding_evidence["sha"]
+                            or git(cwd, "branch", "--show-current") != branch
+                            or git(cwd, "status", "--porcelain")):
+                        raise ResultRejected("Coding checkout changed after verification")
+                    acceptance["coding_evidence"] = dict(
+                        sha=coding_evidence["sha"], base_sha=base_sha, changed_paths=changed,
+                        validation=validation, path=str(folder / "CODING-EVIDENCE.json"))
             publication = None
             if row.get("publish_project"):
                 if not task_queue.transition(ROOT, identifier, token, "heartbeat"):
