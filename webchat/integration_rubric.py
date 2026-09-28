@@ -26,9 +26,7 @@ def style_errors(text, dispatch_count=0):
     errors = []
     if not prose.strip():
         errors.append("empty reply")
-    # Detailed all-worker status can grow with actual assignments. No filler or
-    # raw diagnostics are permitted, and every task is checked below.
-    if len(prose.split()) > 450:
+    if len(prose.split()) > 220:
         errors.append("overlong reply")
     if len([s for s in re.split(r"[.!?](?:\s+|$)", prose) if s.strip()]) > max(4, dispatch_count):
         errors.append("too many sentences")

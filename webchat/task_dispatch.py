@@ -184,6 +184,41 @@ def project_receipt(rows):
     return "\n".join(task_receipt(row) for row in sorted(rows, key=lambda row: row.get("group_index") or 0))
 
 
+def result_receipt(row):
+    """Keep full evidence in the authenticated Jobs result, not a chat dump."""
+    from worker_activity import WORKER_NAMES
+    from worker_evidence import clean
+    worker = WORKER_NAMES.get(row.get("worker") or row.get("requested_worker"), "The worker")
+    title = clean(row.get("title") or row["prompt"].splitlines()[0], 100).strip(" .?!")
+    succeeded = row["status"] == "succeeded"
+    body = row.get("result") if succeeded else row.get("error")
+    # A completed API report is an artifact, not a new dispatch or an executed
+    # patch. Cite the saved report instead of reprinting model instructions.
+    if succeeded and row.get("result_path"):
+        summary = "report saved"
+    else:
+        body = (body or "No result text was recorded").strip()
+        line = next((line.strip().lstrip("# ") for line in body.splitlines() if line.strip()), "")
+        sentence = re.split(r"[.!?](?:\s|$)", line, maxsplit=1)[0]
+        summary = clean(sentence, 180).strip(" .?!")
+        from dispatch_receipts import claims_dispatch
+        if claims_dispatch(summary):
+            summary = "verified result saved" if succeeded else "the task failed; see the saved error"
+    lead = (worker + " finished “" + title + "”" if succeeded else
+            "“" + title + "” failed after " + str(row.get("attempts", 0)) + " attempts on " + worker)
+    return (lead + " (job `" + row["id"] +
+            "`): " + summary + "; [full result](/api/jobs/result?id=" + row["id"] + ").")
+
+
+def group_result_receipt(rows, label):
+    ordered = sorted(rows, key=lambda row: row["group_index"])
+    if all(row["status"] == "succeeded" and row.get("publication") for row in ordered):
+        return max_mode.merge_text(ordered, label)
+    succeeded = sum(row["status"] == "succeeded" for row in ordered)
+    return (label + " completed: " + str(succeeded) + "/" + str(len(ordered)) + ".\n" +
+            "\n".join(result_receipt(row) for row in ordered))
+
+
 class TaskDispatch:
     def submit_council(self, conversation, topic, request_id):
         # Council has the same journal and receipt contract as every other job.
@@ -387,12 +422,11 @@ class TaskDispatch:
                 message_id = str(uuid.uuid5(uuid.NAMESPACE_URL, row["id"] + ":result"))
                 if not any(m["id"] == message_id for m in value["messages"]):
                     success = row["status"] == "succeeded"
-                    content = ("Job `" + row["id"] + "` finished on " + row["worker"] + ":\n\n" + row["result"] if success else
-                               "Job `" + row["id"] + "` failed after " + str(row["attempts"]) + " attempts on " + str(row["worker"]) + ": " + row.get("error", "Unknown worker failure"))
+                    content = result_receipt(row)
                     value["messages"].append(dict(id=message_id, request_id=row["request_id"], task_id=row["id"],
                                                   role="assistant", status="done", provider=row["worker"],
                                                   content=self.redact(content), created_at=time.time(),
-                                                  task_status=row["status"], claimed_at=row["claimed_at"],
+                                                  task_status=row["status"], claimed_at=row.get("claimed_at"),
                                                   started_at=row.get("started_at"), finished_at=row["finished_at"]))
                     for message in value["messages"]:
                         if message.get("task_id") == row["id"] and message.get("action_card"):
@@ -423,7 +457,7 @@ class TaskDispatch:
                 value["messages"].append(dict(id=message_id, request_id=first["request_id"].rsplit(":", 1)[0],
                                               group_id=group, task_ids=[r["id"] for r in members], role="assistant",
                                               status="done", provider="dispatcher" if assignment else "max-mode",
-                                              content=self.redact(max_mode.merge_text(members, "Worker assignments" if assignment else "Max mode")),
+                                              content=self.redact(group_result_receipt(members, "Worker assignments" if assignment else "Max mode")),
                                               created_at=time.time(), task_status="succeeded" if success else "partial",
                                               subtasks=[{k: r.get(k) for k in ("id", "title", "worker", "status", "claimed_at", "started_at", "execution_started_at", "finished_at", "result_sha256")} for r in members]))
                 for message in value["messages"]:

@@ -170,3 +170,23 @@ class IntegratedSessions(SessionFixture):
         self.assertIn("Codex has CLI activity, but no recorded task", reply["content"])
         self.assertNotIn("running for", reply["content"])
         self.assertNotIn("Worker process", reply["content"])
+
+    def test_verbose_completion_is_concise_with_full_report_available(self):
+        from integration_rubric import style_errors
+        from jobs_view import result_text
+        self.seed()
+        answer = self.send("Fix Web Bob queue recovery")
+        identifier = answer["task_id"]
+        row = queue.claim(self.root, "codex", identifier=identifier)
+        queue.transition(self.root, identifier, row["claim_token"], "running")
+        report = ("Fixed a verified quiet-hours bypass.\n\nReproduced with a failing test. Tests pass.\n\n"
+                  "Changed paths: app.js. test_quiet_hours_js.mjs.\n\nWorktree is clean. No push or deployment.\n" * 10)
+        queue.transition(self.root, identifier, row["claim_token"], "succeeded", result=report)
+        self.chat.reconcile_tasks()
+        completion = self.chat.history(self.identifier)["messages"][-1]
+        self.assertFalse(style_errors(completion["content"]))
+        self.assertIn("Fixed a verified quiet-hours bypass", completion["content"])
+        self.assertIn("/api/jobs/result?id=" + identifier, completion["content"])
+        self.assertEqual(result_text(self.root, identifier)["text"], report)
+        original = next(m for m in self.chat.get(self.identifier)["messages"] if m["id"] == answer["id"])
+        self.assertEqual(original["content"], answer["content"])

@@ -210,7 +210,7 @@ def main():
                 require(receipt["content"] == exchange["after"], "Original reply was rewritten after dispatch")
             for message in messages:
                 if message.get("task_status"):
-                    errors = [] if any(r.get("result_path") for r in rows if r["id"] in message.get("task_ids", [message.get("task_id")])) else style_errors(message["content"])
+                    errors = style_errors(message["content"], 1 + len(message.get("task_ids", [])))
                     source["completions"].append(dict(content=message["content"], status=message["task_status"], errors=errors))
                     require(not errors, "Completion reply: " + "; ".join(errors))
         require(client.call("/api/version")["sha"] == sha, "Live version changed during replay")

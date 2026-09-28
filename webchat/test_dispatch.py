@@ -112,7 +112,7 @@ class ChatDispatchTests(Fixture):
             results = [message for message in messages if message.get("task_status")]
             self.assertEqual(len(results), 1)
             self.assertEqual(results[0]["task_status"], "failed")
-            self.assertIn("failed after 1 attempts on minimax", results[0]["content"])
+            self.assertIn("failed after 1 attempts on MiniMax", results[0]["content"])
             self.assertIn("unrelated answer", results[0]["content"])
             self.assertNotIn("finished on", results[0]["content"])
             card = next(message["action_card"] for message in messages if message.get("action_card"))
@@ -297,7 +297,9 @@ class ChatDispatchTests(Fixture):
             messages = replacement.history(original)["messages"]
             results = [m for m in messages if m.get("task_status") == "succeeded"]
             self.assertEqual(len(results), 1)
-            self.assertIn(task["result"], results[0]["content"])
+            self.assertIn(task["result"].rstrip("."), results[0]["content"])
+            from jobs_view import result_text
+            self.assertEqual(result_text(self.root, task["id"])["text"], task["result"])
             self.assertEqual(replacement.history(second)["messages"], [])
             self.assertIsNotNone(queue.tasks(self.root)[task["id"]]["delivered_at"])
         finally:
