@@ -173,6 +173,7 @@ def execute(identifier, token):
             else:
                 prompt += "TASK:\n" + row["prompt"]
                 prompt += "\n" + result_acceptance.deliverable_requirements(row["prompt"], row["kind"])
+                prompt += api_worker.report_serialization(row["prompt"], row["kind"])
             if row.get("publish_project"):
                 prompt += ("\nThe server has Jeff's explicit authorization to push this project's assigned draft branch. "
                            "Your part is one useful, bounded improvement: inspect, fix, test and commit locally. "
@@ -200,6 +201,7 @@ def execute(identifier, token):
                                 timeout=90 if row["kind"] == "artifact" else 1800 if coding else 240,
                                 purpose=("api-worker-research" if kind == "research" else "api-worker") if api_only else "pr-review" if review else "small-file" if row["kind"] == "artifact" else "small-review" if row["worker"] == "claude" else "webbob-" + identifier,
                                 locked=True)).strip()
+            answer = api_worker.render_report(row["prompt"], answer, row["kind"])
             result_acceptance.check_answer(row["prompt"], answer, kind=row["kind"])
             if review:
                 metadata = review["metadata"]

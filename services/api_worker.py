@@ -10,7 +10,7 @@ from pathlib import Path
 
 from state import atomic_write
 from workspaces import git
-from result_acceptance import deliverable_requirements, needs_test_drafts
+from result_acceptance import deliverable_requirements, needs_test_drafts, plan_heading, ResultRejected
 
 TEXT_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".md", ".txt",
                  ".json", ".toml", ".yaml", ".yml", ".sh", ".html", ".css", ".sql", ".go", ".rs"}
@@ -58,7 +58,90 @@ def report_prompt(task, body, kind=None):
     """Keep the assignment visible before the snapshot and the contract after it."""
     contract = deliverable_requirements(task, kind)
     return (RULES + "TASK:\n" + task + "\n\n" + contract + "\n" + body +
-            "\n\nEND OF REPOSITORY EVIDENCE. Return the assigned report now.\n" + contract)
+            "\n\nEND OF REPOSITORY EVIDENCE. Return the assigned report now.\n" + contract +
+            report_serialization(task, kind))
+
+
+def report_serialization(task, kind=None):
+    """Separate nested test inputs from the outer fields without inventing content."""
+    if kind in ("coding", "artifact") or not (needs_test_drafts(task, kind) and plan_heading(task)):
+        return ""
+    return (
+        "\nREPORT SERIALIZATION: return ONLY the following JSON object, without a Markdown fence or prose. "
+        "This serialization replaces the presentation layout above: the server renders each field into its "
+        "own report line, then runs the same deterministic and independent semantic acceptance checks. "
+        "The plan heading will be '" + plan_heading(task) + ":'. You must supply every substantive value; "
+        "the server never fills missing content. Keep nested test input strings solely in setup. "
+        "Do not place outer Action/Expected or plan fields inside setup. Use the assigned number of cases. "
+        "Replace all bracketed values; completion describes your work and is not the server's verdict.\n"
+        '{"regression_tests": [{"name": "[failure case]", "target": "[file/symbol]", '
+        '"setup": "[literal input/state or supplied fixture fields]", "action": "[exact call]", '
+        '"expected": "[observable failure assertion]"}, {"name": "[control case]", '
+        '"target": "[file/symbol]", "setup": "[valid input/state or supplied fixture fields]", '
+        '"action": "[exact call]", "expected": "[observable successful assertion]"}], '
+        '"plan": {"change": "[grounded change or validation of existing coverage]", '
+        '"validation": "[supported command and passing result]", '
+        '"exit_condition": "[actual named task result and gates required to pass; otherwise retain hold]"}, '
+        '"completion": {"accepted": true, "reason": "[task-specific delivered findings and limits]"}, '
+        '"findings_limits": "[concrete finding; drafts unexecuted and missing evidence]"}\n')
+
+
+def render_report(task, answer, kind=None):
+    """Render worker-supplied values only; absent/invalid content still fails closed."""
+    if not report_serialization(task, kind):
+        return answer
+    raw = answer.strip()
+    if raw.startswith('```json\n') and raw.endswith('\n```'):
+        raw = raw[len('```json\n'):-len('\n```')]
+    if not raw.startswith('{'):
+        return answer  # Existing Markdown reports still face the same checks.
+
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate report field")
+            result[key] = value
+        return result
+
+    try:
+        report = json.loads(raw, object_pairs_hook=unique)
+    except ValueError as exc:
+        raise ResultRejected("Malformed structured regression report") from exc
+    if not isinstance(report, dict):
+        raise ResultRejected("Invalid structured regression report")
+    plan = report.get('plan')
+    plan_error = "Missing actionable " + plan_heading(task).lower() + " (change, validation and exit condition required)"
+    if not isinstance(plan, dict) or set(plan) != {'change', 'validation', 'exit_condition'}:
+        raise ResultRejected(plan_error)
+    if set(report) != {'regression_tests', 'plan', 'completion', 'findings_limits'}:
+        raise ResultRejected("Missing or unknown structured regression report fields")
+
+    def line(value, error):
+        if not isinstance(value, str) or not value.strip():
+            raise ResultRejected(error)
+        # Preserve literal input line breaks as escaped text, never report labels.
+        return value.strip().replace('\r\n', '\n').replace('\r', '\n').replace('\n', r'\n')
+
+    cases = report['regression_tests']
+    if not isinstance(cases, list) or not cases:
+        raise ResultRejected("Missing concrete regression test drafts (setup, action and expected assertion required)")
+    rendered = []
+    for case in cases:
+        if not isinstance(case, dict) or set(case) != {'name', 'target', 'setup', 'action', 'expected'}:
+            raise ResultRejected("Missing concrete regression test draft fields")
+        for label, key in (('Regression test', 'name'), ('Target', 'target'), ('Setup', 'setup'),
+                           ('Action', 'action'), ('Expected', 'expected')):
+            rendered.append(label + ': ' + line(case[key], 'Missing concrete regression test draft ' + key))
+        rendered.append('')
+    rendered.append(plan_heading(task) + ':')
+    for label, key in (('Change', 'change'), ('Validation', 'validation'), ('Exit condition', 'exit_condition')):
+        rendered.append(label + ': ' + line(plan[key], plan_error))
+    # The completion object is copied verbatim as JSON data; check_answer still
+    # validates its exact keys, boolean, reason and accepted=true requirement.
+    rendered.extend(['', '```json', json.dumps(report['completion'], ensure_ascii=False), '```',
+                     'Findings/limits: ' + line(report['findings_limits'], 'Missing concrete Findings/limits closing sentence')])
+    return '\n'.join(rendered)
 
 
 def evidence(repo, worker, task, redact, kind=None):

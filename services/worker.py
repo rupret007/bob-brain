@@ -42,6 +42,7 @@ def execute(job):
                 purpose = "api-worker-research" if record["engine"] == "gemini" and report_kind(task) == "research" else "api-worker"
                 answer = redact(ask(record["engine"], api_worker.report_prompt(task, body, record.get("kind")),
                                     purpose=purpose, locked=True))
+                answer = api_worker.render_report(task, answer, record.get("kind"))
                 check_answer(task, answer, kind=record.get("kind"))
                 acceptance = accept(task, answer, lambda instructions: ask(record["engine"], instructions,
                                       purpose="result-acceptance", locked=True), report_evidence=body, kind=record.get("kind"))
@@ -62,6 +63,7 @@ def execute(job):
             from result_acceptance import check_answer, deliverable_requirements
             task = (folder / "PROMPT.txt").read_text()
             prompt = task + "\n" + deliverable_requirements(task, record.get("kind"))
+            prompt += api_worker.report_serialization(task, record.get("kind"))
             prompt = ("ASSIGNED WORKTREE: " + str(cwd) + "\nBRANCH: " + record["branch"] +
                       "\nThis job specification replaces every legacy shared-worktree instruction in the task. "
                       "Do not switch branches or use other checkout paths. "
@@ -73,6 +75,7 @@ def execute(job):
                 prompt += "\nSUPPLIED EVIDENCE:\n" + evidence.read_text()
             answer = ask(record["engine"], prompt, cwd=cwd, coding=coding, timeout=5400 if coding else 300,
                          purpose="small-review" if record["engine"] == "claude" else "job-" + job, locked=True)
+            answer = api_worker.render_report(task, answer, record.get("kind"))
             atomic_write(folder / (record["engine"] + ".log"), answer + "\n")
             if re.search(r"(?im)^\s*(?:\*\*)?BLOCKER\s*:", answer):
                 raise RuntimeError(answer[:1000])

@@ -21,7 +21,49 @@ DATA = json.loads((REPO / FIXTURE).read_text())
 ERROR = 'Missing actionable action plan (change, validation and exit condition required)'
 
 
+def structured_fixture():
+    # Encode the captured complete control for the transport, including the
+    # exact worker-provided content. No content is supplied by the renderer.
+    answer = DATA['complete_answer']
+    cases = []
+    for part in answer.split('Regression test: ')[1:]:
+        case = {'name': part.splitlines()[0]}
+        for key in ('target', 'setup', 'action', 'expected'):
+            case[key] = re.search(r'(?m)^' + key.title() + r': (.+)$', part)[1]
+        cases.append(case)
+    return dict(regression_tests=cases,
+                plan={key: re.search(r'(?m)^' + label + r': (.+)$', answer)[1]
+                      for key, label in (('change', 'Change'), ('validation', 'Validation'), ('exit_condition', 'Exit condition'))},
+                completion=json.loads(re.search(r'```json\n(.*?)\n```', answer, re.S)[1]),
+                findings_limits=re.search(r'(?m)^Findings/limits: (.+)$', answer)[1])
+
+
 class ActionPlanTests(unittest.TestCase):
+    def test_structured_report_requires_worker_content_and_preserves_nested_inputs(self):
+        data = structured_fixture()
+        data['regression_tests'][0]['setup'] += '\nAction plan:\nChange: inner input only'
+        rendered = api_worker.render_report(DATA['prompt'], json.dumps(data), DATA['kind'])
+        acceptance.check_answer(DATA['prompt'], rendered, kind=DATA['kind'])
+        self.assertEqual(rendered.count('\nAction plan:\n'), 1)
+        self.assertIn(r'\nChange: inner input only', rendered)
+        del data['plan']
+        with self.assertRaisesRegex(acceptance.ResultRejected, re.escape(ERROR)):
+            api_worker.render_report(DATA['prompt'], json.dumps(data), DATA['kind'])
+
+    def test_structured_invalid_fields_and_false_completion_fail_closed(self):
+        for field in ('change', 'validation', 'exit_condition'):
+            data = structured_fixture()
+            data['plan'][field] = ''
+            with self.assertRaisesRegex(acceptance.ResultRejected, re.escape(ERROR)):
+                api_worker.render_report(DATA['prompt'], json.dumps(data), DATA['kind'])
+        for completion in ({'accepted': False, 'reason': 'Incomplete'}, {'accepted': 'true', 'reason': 'Wrong type'}):
+            data = structured_fixture()
+            data['completion'] = completion
+            with self.assertRaises(acceptance.ResultRejected):
+                acceptance.check_answer(DATA['prompt'], api_worker.render_report(DATA['prompt'], json.dumps(data), DATA['kind']), kind=DATA['kind'])
+        with self.assertRaisesRegex(acceptance.ResultRejected, 'Malformed structured'):
+            api_worker.render_report(DATA['prompt'], '{"plan": {}, "plan": {}}', DATA['kind'])
+
     def test_captured_nested_report_inputs_have_independent_inner_and_outer_plans(self):
         data = json.loads((REPO / 'services/fixtures/texting_action_plan_control_1605.json').read_text())
         self.assertEqual(hashlib.sha256(data['answer'].encode()).hexdigest(), data['answer_sha256'])
@@ -96,6 +138,34 @@ class ActionPlanTests(unittest.TestCase):
 class WorkerActionPlanTests(unittest.TestCase):
     setUp = dispatch_fixture.DispatchTests.setUp
     tearDown = dispatch_fixture.DispatchTests.tearDown
+
+    def test_structured_transport_on_all_workers_never_invents_a_missing_plan(self):
+        self.acceptance.stop()
+        for engine in ('gemini', 'minimax', 'claude', 'codex', 'cursor'):
+            for valid in (False, True):
+                with self.subTest(engine=engine, valid=valid):
+                    data = structured_fixture()
+                    if not valid:
+                        del data['plan']
+                    raw = json.dumps(data)
+                    kind = DATA['kind'] if engine in dispatch.task_queue.API_WORKERS else 'analysis'
+                    job = dispatch.task_queue.enqueue(self.root, 'schema', engine + str(valid), DATA['prompt'], worker=engine, kind=kind)
+                    claim = dispatch.task_queue.claim(self.root, engine, identifier=job['id'])
+                    with patch.object(dispatch, 'prepare_task', return_value=self.root), \
+                         patch.object(api_worker, 'evidence', return_value=('Captured evidence', {})), \
+                         patch.object(dispatch, 'ask', side_effect=[raw, '{"accepted": true, "reason": "Grounded report"}']) as ask:
+                        self.assertEqual(dispatch.execute(job['id'], claim['claim_token']), 0 if valid else 1)
+                    self.assertIn('REPORT SERIALIZATION:', ask.call_args_list[0].args[1])
+                    self.assertEqual(ask.call_count, 2 if valid else 1)
+                    row = dispatch.task_queue.tasks(self.root)[job['id']]
+                    self.assertEqual(row['acceptance']['accepted'], valid)
+                    if valid:
+                        acceptance.check_answer(DATA['prompt'], row['result'], kind=kind)
+                        self.assertIn('\nAction plan:\nChange:', row['result'])
+                        self.assertIn('```json\n', row['result'])
+                    else:
+                        self.assertEqual(row['error'], ERROR)
+                        self.assertNotIn('result_path', row)
 
     def test_dispatch_all_workers_enforce_outer_plan_before_publication(self):
         self.acceptance.stop()
