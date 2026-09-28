@@ -22,7 +22,7 @@ NO_JOB_NOTICE = re.compile(
 STATUS_QUESTION = re.compile(
     r"\b(?:status|resources?|workers? doing|each (?:worker|model)|all (?:workers|models|LLMs)|"
     r"work being performed|what about (?:Gemini|MiniMax|Codex|Claude|Cursor)|"
-    r"(?:what(?:['’]s| is) (?:working on what|going on)|each llm)|"
+    r"(?:what(?:['’]s| is) (?:working on what|going on)|what are you working on|each llm)|"
     r"everything (?:going|running)|how(?:['’]s| is| we)? (?:everything|it going|we doing)|"
     r"(?:is|are) (?:it|anything|everything|things|the (?:work|jobs?|workers?)) "
     r"(?:going(?: now)?|moving(?: along)?|running|making progress)|(?:any|making) progress|"

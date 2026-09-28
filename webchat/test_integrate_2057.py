@@ -20,7 +20,7 @@ class IntegratedSessions(SessionFixture):
         return queue.enqueue(self.root, "external-project-work", str(uuid.uuid4()),
                              "Improve WebJam recording reliability", kind="coding", worker="codex", title="WebJam")
 
-    def test_all_17_original_messages_in_conversation_order(self):
+    def test_all_19_captured_messages_in_conversation_order(self):
         self.seed()
         checked = 0
         for source in SESSIONS:
@@ -44,6 +44,9 @@ class IntegratedSessions(SessionFixture):
                         elif index == 6:
                             self.assertEqual(len(identifiers), 1)
                             self.assertEqual(records[identifiers[0]]["kind"], "coding")
+                        elif index == 7:
+                            self.assertEqual(answer["content"], "Hi Jeff!")
+                            self.assertFalse(identifiers)
                         else:
                             self.assertEqual(answer["provider"], "state")
                             self.assertFalse(identifiers)
@@ -72,7 +75,7 @@ class IntegratedSessions(SessionFixture):
             self.assertEqual(replacement.get(self.identifier)["messages"][-1]["content"], answer["content"])
         finally:
             replacement.close()
-        self.assertEqual(checked, 17)
+        self.assertEqual(checked, 19)
 
     def test_unsupported_promises_cannot_escape_the_model_boundary(self):
         claims = [

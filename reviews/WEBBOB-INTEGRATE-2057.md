@@ -16,8 +16,8 @@ fix request creates a coding task. No-job status says idle, and pending assignme
 show their task and waiting-to-run state. Council uses the same durable dispatcher.
 
 Regression source: the original sessions b33fac25, 8126301c and 65a5d782 named
-in the failed replyq report. All 17 user messages are frozen verbatim in
-webchat/fixtures/integrate_sessions_0927.json. Automated replay conversations are
+in the failed replyq report. All 19 current user messages are frozen verbatim in
+webchat/fixtures/integrate_sessions_0927.json (9 + 9 + 1). Automated replay conversations are
 excluded. The optional MiniMax eval/grade and Gemini 2020 audit files were absent.
 
 The integration gate verifies authenticated replies against the rubric, checks
@@ -66,3 +66,18 @@ the protected code directory correctly blocked its commit/push fixture.
 three rollbacks remain failures. Full live replay, completion review and the
 authenticated report-link browser check still require a separately authorized
 release. This is not a LIVE PASS.
+
+## Frozen capture repair, 0058 (offline only)
+
+The b33fac25 capture now includes Jeff's two appended live turns, "Hi" and
+"What are you working on?", with their original replies retained as historical
+evidence. The greeting must not dispatch work or introduce an operations report.
+The current-work question now routes through the authoritative status path and
+must pass the existing saved-observation rubric. The first seven expectations,
+the other two sessions, receipt checks, and lane-only API-worker dispatch checks
+remain unchanged. Session comparison still rejects added, removed, rewritten,
+or reordered asks and never rewrites the live session files.
+
+LIVE Gemini and MiniMax reviews must be re-run on the new tip before deployment.
+Offline validation and the pushed SHA are recorded in
+conductor/reviews/INTEGRATE-FIXED-0058.md.

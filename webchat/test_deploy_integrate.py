@@ -8,12 +8,48 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from deploy_integrate import main
+from deploy_integrate import latest_sessions, main
 from integration_rubric import check_reply, style_errors, sessions
 from task_dispatch import task_queue
 
 
 class IntegrationGate(unittest.TestCase):
+    def test_current_capture_matches_without_rewriting_sessions_and_rejects_drift(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            saved_sessions = root / "conductor/webchat/sessions"
+            saved_sessions.mkdir(parents=True)
+            captured = sessions()
+            original = {}
+            for source in captured:
+                path = saved_sessions / (source["source_id"] + ".json")
+                messages = []
+                for exchange in source["exchanges"]:
+                    messages.extend([dict(role="user", content=exchange["message"]),
+                                     dict(role="assistant", content=exchange["before"])])
+                path.write_text(json.dumps(dict(messages=messages)))
+                original[path] = path.read_bytes()
+            self.assertEqual(latest_sessions(root), captured)
+            self.assertEqual({p: p.read_bytes() for p in original}, original)
+            for path, payload in original.items():
+                saved = json.loads(payload)
+                messages = saved["messages"]
+                for change, changed in (
+                    ("appended ask", messages + [dict(role="user", content="Any updates?")]),
+                    ("removed ask", messages[2:]),
+                    ("rewritten ask", [dict(role="user", content="A different ask"), *messages[1:]]),
+                    ("reordered asks", messages[2:] + messages[:2]),
+                ):
+                    if changed == messages:
+                        continue  # A single-ask session has no alternate user order.
+                    with self.subTest(session=path.stem, change=change):
+                        path.write_text(json.dumps(dict(messages=changed)))
+                        before = {p: p.read_bytes() for p in original}
+                        with self.assertRaisesRegex(RuntimeError, "Original Jeff session changed"):
+                            latest_sessions(root)
+                        self.assertEqual({p: p.read_bytes() for p in original}, before)
+                        path.write_bytes(payload)
+
     def test_rubric_rejects_all_failed_deployment_promises(self):
         for text in ("I'll make sure they're utilized.", "The system is actively adding work for them.",
                      "I'll focus on getting everything running.", "All LLMs are healthy and ready."):

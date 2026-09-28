@@ -10,7 +10,7 @@ from dispatch_receipts import NO_DISPATCH, claims_dispatch, receipt_errors
 def sessions():
     rows = json.loads(Path(__file__).with_name("fixtures").joinpath("integrate_sessions_0927.json").read_text())["sessions"]
     for session in rows:
-        kinds = (["assign", "assign", "status", "status", "status", "assign", "fix"]
+        kinds = (["assign", "assign", "status", "status", "status", "assign", "fix", "greeting", "status"]
                  if session["source_id"].startswith("b33fac") else
                  ["missing", "status", "status", "status", "status", "projects4", "greeting", "status", "status"]
                  if session["source_id"].startswith("8126301c") else ["projects2"])
