@@ -31,7 +31,7 @@ ALLOWED_IMAGE = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif"}
 ALLOWED_VIDEO = {".mp4", ".mov", ".webm", ".m4v", ".mkv"}
 ALLOWED_FILE = {".pdf", ".txt", ".md", ".csv", ".json", ".log"}
 ATTACHMENT_TAG = re.compile(r'<bob-webchat-attachment\b[^>]*(?:>|$)', re.I)
-MEDIA_LINK = re.compile(r'!?\[[^\]]*\]\(/api/media/([^\s)]+)\)')
+MEDIA_LINK = re.compile(r'!?\[[^\]]*\]\(/api/media/([^\s)]+)\)', re.I)
 
 
 def _upload_dir(root: Path) -> Path:
@@ -92,7 +92,7 @@ def _check_signature(data: bytes, suffix: str):
         raise ValueError("File content does not match its type, or is not UTF-8 text.")
 
 
-def store_media(root: Path, data: bytes, filename: str, *, conversation_id: str, redact=None) -> dict:
+def store_media(root: Path, data: bytes, filename: str, *, conversation_id: str, redact) -> dict:
     from providers import UUID
     if not isinstance(conversation_id, str) or not UUID.fullmatch(conversation_id):
         raise ValueError("A conversation is required for attachments.")
@@ -107,16 +107,17 @@ def store_media(root: Path, data: bytes, filename: str, *, conversation_id: str,
     _check_signature(data, suffix)
     # Scan the complete upload, not just the eventual prompt excerpt. No secrets
     # in a text file, filename, or embedded metadata are persisted through HTTP.
-    if redact:
-        text = data.decode("utf-8", errors="replace")
-        if redact(name) != name or redact(text) != text:
-            raise ValueError("This attachment appears to contain a secret. Remove it before uploading.")
-        if kind == "image":
-            with tempfile.TemporaryDirectory() as tmp:
-                probe = Path(tmp) / ("upload" + suffix)
-                probe.write_bytes(data)
-                blob, _ = prompt_image_bytes(probe, MediaBudget(seconds=5))
-                scan_image(blob, MediaBudget(seconds=5), redact)
+    if redact is None:
+        raise ValueError("Secret scanning requires a redact callable.")
+    text = data.decode("utf-8", errors="replace")
+    if redact(name) != name or redact(text) != text:
+        raise ValueError("This attachment appears to contain a secret. Remove it before uploading.")
+    if kind == "image":
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / ("upload" + suffix)
+            probe.write_bytes(data)
+            blob, _ = prompt_image_bytes(probe, MediaBudget(seconds=5))
+            scan_image(blob, MediaBudget(seconds=5), redact)
     token = secrets.token_hex(16)
     path = _upload_dir(root) / (token + suffix)
     meta = {"media_id": token, "conversation_id": conversation_id, "filename": name,
@@ -124,7 +125,7 @@ def store_media(root: Path, data: bytes, filename: str, *, conversation_id: str,
     try:
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as out:
             out.write(data)
-        with os.fdopen(os.open(_meta_path(root, token), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as out:
+        with os.fdopen(os.open(_meta_path(root, token), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as out:
             json.dump(meta, out)
     except Exception:
         path.unlink(missing_ok=True)
@@ -307,7 +308,9 @@ def scan_image(blob: bytes, budget: MediaBudget, redact) -> str:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "scan.jpg"
         path.write_bytes(blob)
-        text = budget.run([ocr, str(path), "stdout", "--psm", "11"], timeout=3)
+        text = (budget.run([ocr, str(path), "stdout", "--psm", "11"], timeout=3) or "").strip()
+    if not text:
+        return ""
     if redact(text) != text or redact(re.sub(r'\s+', '', text)) != re.sub(r'\s+', '', text):
         raise ValueError("Image analysis blocked: visible text appears to contain a secret. Remove it and reattach.")
     return text[:4000].strip()

@@ -598,7 +598,7 @@ class ProviderTests(Fixture):
         png = base64.b64decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC"
         )
-        stored = store_media(self.root, png, "dot.png", conversation_id=self.identifier)
+        stored = store_media(self.root, png, "dot.png", conversation_id=self.identifier, redact=self.chat.redact)
         provider = self.provider()
         value = self.chat.conversations[self.identifier]
         value["messages"] = [{

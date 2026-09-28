@@ -64,6 +64,8 @@ class ChatMediaTests(unittest.TestCase):
         loaded = media.validate_attachment_ids(self.root, [stored['media_id']] * 2, conversation_id=self.cid)
         self.assertEqual(len(loaded), 1)
         self.assertEqual((self.root / stored['path']).stat().st_mode & 0o777, 0o600)
+        sidecar = self.root / media.UPLOADS / (stored['media_id'] + '.meta.json')
+        self.assertEqual(sidecar.stat().st_mode & 0o777, 0o600)
         self.assertEqual((self.root / media.UPLOADS).stat().st_mode & 0o777, 0o700)
         self.assertIn('conversation_id=' + self.cid, media.public_attachment(stored)['url'])
 
@@ -112,7 +114,7 @@ class ChatMediaTests(unittest.TestCase):
     def test_store_rejects_mismatched_signature(self):
         png_data = b'\x89PNG\r\n\x1a\n' + b'fake png content'
         with self.assertRaises(ValueError) as ctx:
-            media.store_media(self.root, png_data, 'fake.jpg', conversation_id=self.cid)
+            media.store_media(self.root, png_data, 'fake.jpg', conversation_id=self.cid, redact=self.redact)
         self.assertIn('does not match', str(ctx.exception))
 
     def test_whitespace_filename_rejected(self):
@@ -128,7 +130,9 @@ class ChatMediaTests(unittest.TestCase):
 
     def test_file_and_transcript_redacted_before_model(self):
         secret = 'sk-' + 'b' * 25
-        stored = media.store_media(self.root, secret.encode(), 'legacy.txt', conversation_id=self.cid)
+        stored = self.store(b'placeholder', 'legacy.txt')
+        (self.root / stored['path']).write_bytes(secret.encode())
+        stored = media.load_meta(self.root, stored['media_id'], conversation_id=self.cid)
         bundle = self.enrich([stored])
         self.assertNotIn(secret, json.dumps(bundle))
         self.assertIn('[secret removed]', bundle['text'])
@@ -241,6 +245,10 @@ class ChatMediaTests(unittest.TestCase):
         self.assertIn('PDF text extraction is unavailable', bundle['warnings'][0])
         self.assertNotIn('%PDF', bundle['text'])
 
+    def test_store_requires_redact_callable(self):
+        with self.assertRaisesRegex(ValueError, 'redact'):
+            media.store_media(self.root, b'hello', 'notes.txt', conversation_id=self.cid, redact=None)
+
     def test_marker_stripping_including_invalid_markdown(self):
         text = ('Here <bob-webchat-attachment media_id="bad" /> '
                 '![photo](/api/media/abcdabcdabcdabcd) [file](/api/media/0123456789abcdef?conversation_id=test) '
@@ -248,6 +256,10 @@ class ChatMediaTests(unittest.TestCase):
         cleaned, items = media.strip_assistant_attachment_markers(text)
         self.assertEqual(cleaned, 'Here')
         self.assertEqual([x['media_id'] for x in items], ['bad', '', 'abcdabcdabcdabcd', '0123456789abcdef'])
+        upper, upper_items = media.strip_assistant_attachment_markers(
+            'See ![x](/API/MEDIA/0123456789ABCDEF0123456789ABCDEF)')
+        self.assertEqual(upper, 'See')
+        self.assertEqual(upper_items[0]['media_id'], '0123456789ABCDEF0123456789ABCDEF')
 
     @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('tesseract'), 'local media tools unavailable')
     def test_real_png_normalization_and_local_ocr(self):
@@ -266,7 +278,9 @@ class ChatMediaTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('pdftotext') or (sys.platform == 'darwin' and shutil.which('osascript')), 'PDF reader unavailable')
     def test_real_pdf_extraction_and_redaction(self):
         secret = 'sk-' + 'p' * 25
-        stored = media.store_media(self.root, pdf_fixture('Offline PDF text ' + secret), 'notes.pdf', conversation_id=self.cid)
+        stored = self.store(pdf_fixture('Offline PDF text'), 'notes.pdf')
+        (self.root / stored['path']).write_bytes(pdf_fixture('Offline PDF text ' + secret))
+        stored = media.load_meta(self.root, stored['media_id'], conversation_id=self.cid)
         bundle = self.enrich([stored])
         self.assertEqual(bundle['warnings'], [])
         self.assertIn('Offline PDF text', bundle['text'])

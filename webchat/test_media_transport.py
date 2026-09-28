@@ -14,6 +14,13 @@ from test_chat_media import png_fixture
 
 
 class MediaTransportTests(unittest.TestCase):
+    def test_split_transport_rejects_part_limit_and_overflow(self):
+        parts = [{'mime': 'image/jpeg', 'data_base64': 'YQ=='} for _ in range(25)]
+        with self.assertRaises(ValueError):
+            split_transport(json.dumps({'prompt': 'test', 'vision': parts}))
+        with self.assertRaises(ValueError):
+            split_transport(json.dumps({'prompt': 'test', 'vision': [{'mime': 'video/mp4', 'data_base64': 'YQ=='}]}))
+
     def test_json_round_trip_preserves_old_delimiter_unicode_and_quotes(self):
         prompt = 'Before\n---BOB_VISION_JSON---\nAfter "quotes" and 📎\n{"vision": []}'
         vision = [{'mime': 'image/jpeg', 'data_base64': 'YQ==', 'caption': 'photo'}]
@@ -43,7 +50,7 @@ class MediaTransportTests(unittest.TestCase):
                     cid = str(uuid.uuid4())
                     msg = {'role': 'user', 'status': 'done', 'content': 'Before\n---BOB_VISION_JSON---\nAfter'}
                     if name != 'text':
-                        meta = store_media(root, png_fixture(), name + '.png', conversation_id=cid)
+                        meta = store_media(root, png_fixture(), name + '.png', conversation_id=cid, redact=provider.redact)
                         msg['attachments'] = [public_attachment(meta)]
                     prompt = provider.prompt({'id': cid, 'messages': [msg]})
                     gate.wait(timeout=5)
@@ -68,7 +75,7 @@ class MediaTransportTests(unittest.TestCase):
             root = Path(tmp)
             provider = Providers(root, Redactor(root, 'fixture-password'))
             cid = str(uuid.uuid4())
-            meta = store_media(root, png_fixture(), 'photo.png', conversation_id=cid)
+            meta = store_media(root, png_fixture(), 'photo.png', conversation_id=cid, redact=provider.redact)
             conversation = {'id': cid, 'preferred_provider': 'minimax', 'messages': [
                 {'role': 'user', 'status': 'done', 'content': 'Describe this', 'attachments': [public_attachment(meta)]}]}
             bundle = {'text': 'File could not be read.', 'vision': [{'mime': 'image/jpeg', 'data_base64': 'YQ=='}],
