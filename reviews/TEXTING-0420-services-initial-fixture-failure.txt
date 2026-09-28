@@ -1,0 +1,93 @@
+2026-09-28T09:26:54+00:00 Web Bob claimed webchat-77353f54d8805a23928821ec3650f0b2 worker=gemini group=max-46ea9310e44758778aca5a79c2bbd96f
+2026-09-28T09:26:54+00:00 Web Bob claimed webchat-1278f90297b858c1b20a95fba623436d worker=minimax group=max-46ea9310e44758778aca5a79c2bbd96f
+..2026-09-28T09:26:55+00:00 Web Bob claimed webchat-1fc7a6fc5a915f178a2c9174c2cb4da0 worker=gemini group=max-0ec0f307a4c955dfae23604a7d971ac5
+2026-09-28T09:26:55+00:00 Web Bob claimed webchat-159403ca3d1e57c5b0500577aa960afc worker=minimax group=max-0ec0f307a4c955dfae23604a7d971ac5
+...........2026-09-28T09:26:55+00:00 council propose codex ok
+2026-09-28T09:26:55+00:00 council propose cursor ok
+2026-09-28T09:26:55+00:00 council propose minimax ok
+2026-09-28T09:26:55+00:00 council propose gemini ok
+2026-09-28T09:26:55+00:00 council critique codex ok
+2026-09-28T09:26:55+00:00 council critique cursor ok
+2026-09-28T09:26:55+00:00 council critique minimax ok
+2026-09-28T09:26:55+00:00 council critique gemini ok
+2026-09-28T09:26:55+00:00 council critique claude ok
+2026-09-28T09:26:55+00:00 council synthesize cursor ok
+..2026-09-28T09:26:55+00:00 council propose codex ok
+2026-09-28T09:26:55+00:00 council propose cursor ok
+2026-09-28T09:26:55+00:00 council propose minimax ok
+2026-09-28T09:26:55+00:00 council propose gemini ok
+..2026-09-28T09:26:55+00:00 council propose codex ok
+2026-09-28T09:26:55+00:00 council propose cursor ok
+2026-09-28T09:26:55+00:00 council propose minimax ok
+2026-09-28T09:26:55+00:00 council propose gemini ok
+2026-09-28T09:26:55+00:00 council critique codex FAILED: critique transport failed
+2026-09-28T09:26:55+00:00 council critique cursor FAILED: critique transport failed
+2026-09-28T09:26:55+00:00 council critique minimax FAILED: critique transport failed
+2026-09-28T09:26:55+00:00 council critique gemini FAILED: critique transport failed
+2026-09-28T09:26:55+00:00 council critique claude FAILED: critique transport failed
+.2026-09-28T09:26:55+00:00 council propose codex ok
+2026-09-28T09:26:55+00:00 council propose cursor FAILED: provider unavailable
+2026-09-28T09:26:55+00:00 council propose minimax FAILED: provider unavailable
+2026-09-28T09:26:55+00:00 council propose gemini FAILED: provider unavailable
+.2026-09-28T09:26:55+00:00 council propose codex ok
+2026-09-28T09:26:55+00:00 council propose cursor ok
+2026-09-28T09:26:55+00:00 council propose minimax ok
+2026-09-28T09:26:55+00:00 council propose gemini FAILED: failure [REDACTED]
+2026-09-28T09:26:55+00:00 council critique codex ok
+2026-09-28T09:26:55+00:00 council critique cursor ok
+2026-09-28T09:26:55+00:00 council critique minimax ok
+2026-09-28T09:26:55+00:00 council critique claude ok
+2026-09-28T09:26:55+00:00 council synthesize cursor ok
+.2026-09-28T09:26:55+00:00 council propose codex ok
+2026-09-28T09:26:55+00:00 council propose cursor ok
+2026-09-28T09:26:55+00:00 council propose minimax ok
+2026-09-28T09:26:55+00:00 council propose gemini ok
+2026-09-28T09:26:55+00:00 council critique codex ok
+2026-09-28T09:26:55+00:00 council critique cursor ok
+2026-09-28T09:26:55+00:00 council critique minimax ok
+2026-09-28T09:26:55+00:00 council critique gemini ok
+2026-09-28T09:26:55+00:00 council critique claude ok
+2026-09-28T09:26:55+00:00 council synthesize cursor FAILED: synthesizer unavailable
+2026-09-28T09:26:55+00:00 council synthesize codex ok
+......2026-09-28T09:26:55+00:00 assessment complete: synthesized
+....2026-09-28T09:26:55+00:00 Web Bob claimed webchat-27479a1d8b215a1f96834e51b2483318 worker=claude group=None
+.....2026-09-28T09:26:55+00:00 Web Bob claimed webchat-27479a1d8b215a1f96834e51b2483318 worker=gemini group=None
+2026-09-28T09:26:55+00:00 Web Bob claimed webchat-343e2493afed594f841b1b9c1ed84bd6 worker=minimax group=None
+....2026-09-28T09:26:55+00:00 Web Bob claimed webchat-27479a1d8b215a1f96834e51b2483318 worker=cursor group=None
+......2026-09-28T09:26:55+00:00 Web Bob claimed webchat-61ef860e60ef5f1b8b09fc70640d38f1 worker=claude group=None
+2026-09-28T09:26:55+00:00 Web Bob claimed webchat-cc0aef2fd8545c26802ad4c9fc9d07a4 worker=gemini group=None
+2026-09-28T09:26:55+00:00 Web Bob claimed webchat-236627485e9a506b80774361ef4ed87f worker=claude group=None
+2026-09-28T09:26:55+00:00 Web Bob claimed webchat-7684f1d4070c55b68dee3549bc9a2c61 worker=claude group=None
+2026-09-28T09:26:55+00:00 Web Bob claimed webchat-68c7588196f55ccab1c0f0258b9be7bc worker=claude group=None
+..2026-09-28T09:26:55+00:00 Reaped expired Web Bob worker webchat-task
+...2026-09-28T09:26:55+00:00 Web Bob claimed webchat-61ef860e60ef5f1b8b09fc70640d38f1 worker=codex group=group
+2026-09-28T09:26:55+00:00 Web Bob claimed webchat-cc0aef2fd8545c26802ad4c9fc9d07a4 worker=claude group=group
+2026-09-28T09:26:55+00:00 Web Bob claimed webchat-236627485e9a506b80774361ef4ed87f worker=cursor group=group
+2026-09-28T09:26:55+00:00 Web Bob claimed webchat-7684f1d4070c55b68dee3549bc9a2c61 worker=gemini group=group
+2026-09-28T09:26:55+00:00 Web Bob claimed webchat-68c7588196f55ccab1c0f0258b9be7bc worker=minimax group=group
+2026-09-28T09:26:55+00:00 Web Bob claimed webchat-201f21f8e4575c3680ed6632b3fdd7f3 worker=codex group=None
+...2026-09-28T09:26:55+00:00 Web Bob claimed webchat-27479a1d8b215a1f96834e51b2483318 worker=gemini group=None
+2026-09-28T09:26:55+00:00 Web Bob claimed webchat-f1fe7bd78b865cb2bd4e9faf2df99190 worker=minimax group=None
+..............2026-09-28T09:26:56+00:00 Web Bob claimed webchat-27479a1d8b215a1f96834e51b2483318 worker=minimax group=None
+..............................E......2026-09-28T09:27:00+00:00 HTTP attempt 1/3 failed: HTTP 503 curl_rc=0
+.........................2026-09-28T09:27:01+00:00 restarted svc-reviewer verified=True
+2026-09-28T09:27:01+00:00 restarted svc-reviewer verified=True
+2026-09-28T09:27:01+00:00 restarted svc-reviewer verified=True
+2026-09-28T09:27:01+00:00 reviewer restart capped at 3/hour
+..
+======================================================================
+ERROR: test_coding_boundary_allows_real_commit_and_normal_push (test_services.ServicesTest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/services/test_services.py", line 208, in test_coding_boundary_allows_real_commit_and_normal_push
+    command.run(workspaces.sandbox_command(['git','-C',str(repo),*args],repo),capture_output=True,timeout=10,check=True)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/services/command.py", line 60, in run
+    result.check_returncode()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/subprocess.py", line 460, in check_returncode
+    raise CalledProcessError(self.returncode, self.args, self.stdout,
+subprocess.CalledProcessError: Command '['/usr/bin/sandbox-exec', '-p', '(version 1) (allow default) (deny file-write* (subpath "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420") (subpath "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/reviews/.texting-proof-0420-runtime/tmp/harden-test-f9vmgxnh/conductor") (subpath "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/reviews/.texting-proof-0420-runtime/tmp/harden-test-f9vmgxnh/bin") (subpath "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/reviews/.texting-proof-0420-runtime/tmp/harden-test-f9vmgxnh/next-prompts") (subpath "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/reviews/.texting-proof-0420-runtime/tmp/harden-test-f9vmgxnh/BOB-HANDOFF.md")) (deny file-read-data (literal "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/reviews/.texting-proof-0420-runtime/tmp/harden-test-f9vmgxnh/conductor/keys.env"))', 'git', '-C', '/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/reviews/.texting-proof-0420-runtime/tmp/harden-test-f9vmgxnh/repo', 'add', 'proof.txt']' returned non-zero exit status 128.
+
+----------------------------------------------------------------------
+Ran 131 tests in 6.747s
+
+FAILED (errors=1)

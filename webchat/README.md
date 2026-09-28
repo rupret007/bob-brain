@@ -305,6 +305,69 @@ being stored or forwarded. Avoid pasting credentials into chat.
 
 ## Verification
 
+### Text threads and reply drafts
+
+The **Texts** chip lists recent threads. Chat supports `read texts from Alex`,
+`summarize texts from Alex`, and `draft reply to Alex: I’ll bring the charts at 6.`
+Use a full name, address, or exact thread ID when several threads match. Web Bob
+does not guess between matching recipients or SMS/iMessage duplicates. Summaries
+are local, extractive snapshots of at most 30 messages with counts, dates, and
+recent excerpts. Draft cards preserve the supplied body and display all recipient
+addresses plus the thread ID. Thread content and draft history stay out of model
+requests and the shared handback ledger.
+
+Send the displayed `yes wbtxt-…` as a **separate chat message** to record consent
+to that exact card. Merely filling the composer does not confirm anything. Tokens
+expire after five minutes and are bound to the conversation, login, recipient,
+body and revision. Editing clears the token before the editor opens; reviewing
+the edit creates a new card/token. Cancellation, another turn or draft, logout,
+and server restart invalidate consent. An unrelated conversation’s work controls
+keep their normal behavior. Consent and its exact recipient/body audit are saved
+in the private conversation file (mode 600), with duplicate requests handled once.
+
+**Production delivery remains blocked by the installed Andrea bridge.** The installed Andrea
+control API rejects both direct sends and message-action `send`/`send_again`.
+A valid Web Bob yes produces **“Not sent”**, consumes the token, and records only
+local consent when the bridge is unavailable. With credentials configured, a
+valid confirmation probes Andrea’s `/web-bob/send` once; the unavailable bridge
+returns an honest blocked receipt. No direct BlueBubbles send, delivery queue or
+automatic retry is used. Andrea currently
+requires a fresh approval on its own registered Telegram chat or Messages
+self-thread; Web Bob cannot impersonate that owner message. An independently
+approved Andrea bridge is still required to finish outbound texting parity.
+
+BlueBubbles reads use its existing
+`~/Library/Application Support/bluebubbles-server/config.db`, opened read-only
+for `socket_port` and `password`; `chat.db` and Andrea’s filesystem are not used
+by Web Bob. A test/development instance can set `BOB_BLUEBUBBLES_CONFIG_DB` to a
+separate config database. Only `POST /api/v1/chat/query` (a read query) and
+`GET /api/v1/chat/<guid>/message` are allowed. Requests use loopback, disable
+proxies/redirects, have a five-second timeout, and bound response size.
+
+Optional `texting status` uses authenticated `GET /health` at
+`BOB_ANDREA_CONTROL_URL` (default `http://127.0.0.1:4315`) with
+`BOB_ANDREA_CONTROL_TOKEN` provisioned by the operator. The URL must be literal
+`127.0.0.1`; neither credentials nor URLs can be set from chat. Only a separate,
+exact confirmation permits the Andrea bridge probe. Consent is durably consumed
+before handoff; if recording the result fails, the saved draft says delivery is
+unconfirmed and the token cannot be reused, including after restart. No environment or running service
+configuration is changed by this feature or its verification scripts.
+
+Run `python3 webchat/texting_proof.py` from this checkout for an isolated browser
+proof of the **blocked “Not sent” path**, with mock BlueBubbles and synthetic
+contacts only. Set `BOB_PLAYWRIGHT_MODULE`
+and `BOB_CHROMIUM_PATH` to an existing Playwright/Chromium installation as needed.
+It creates a private data root inside `reviews/`, binds two spare loopback ports,
+uses the actual login/chat UI, writes screenshots plus JSON evidence to `reviews/`,
+and closes only its own fixtures. It never uses the live services or models.
+The JSON evidence and five screenshots describe this same blocked path: one
+rejected mock Andrea probe, zero mock deliveries and zero real sends. Mock success
+(“Sent via Andrea”) is covered separately by the HTTP E2E and Python unit tests.
+Use `--output-dir <directory>` for scratch evidence; the optional browser unittest
+uses its temporary directory so routine tests do not rewrite committed artifacts.
+
+### General checks
+
 ```bash
 python3 conductor/webchat/test_webchat.py
 python3 -m unittest discover -s conductor/webchat -p 'test_*.py' -v

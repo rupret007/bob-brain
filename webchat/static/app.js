@@ -16,7 +16,7 @@ if ($("login-form")) {
   });
 } else {
   let csrf = "", current = "", busy = false, sending = false, revision = "", polling = false, draftRequest = null, pollFailures = 0;
-  const providers = { codex: "Codex", cursor: "Cursor", gemini: "Gemini", minimax: "MiniMax", claude: "Claude" };
+  const providers = { codex: "Codex", cursor: "Cursor", gemini: "Gemini", minimax: "MiniMax", claude: "Claude", texting: "Texts · private" };
   function escapeHtml(text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
@@ -127,6 +127,10 @@ if ($("login-form")) {
     const key = event.target.closest("[data-chip]")?.dataset.chip;
     if (key === "song") { setBottomTab("song"); $("song-new").click(); }
     if (key === "status") setBottomTab("ops");
+    if (key === "texts") {
+      setBottomTab("chat");
+      submitChatText("texts");
+    }
   });
   $("provider-choice").addEventListener("change", () => remember("bob.provider", $("provider-choice").value));
   function render(conversation) {
@@ -153,15 +157,17 @@ if ($("login-form")) {
       const pending = ["queued", "running"].includes(message.status);
       const article = document.createElement("article");
       article.className = `message ${message.role} ${pending ? "pending" : ""} ${message.status === "error" ? "error" : ""}`;
+      if (message.texting) article.classList.add("texting");
       if (message.role === "user") article.setAttribute("aria-label", "You");
       else article.setAttribute("aria-label", message.provider ? `Assistant, ${providers[message.provider] || "Bob"}` : "Assistant");
       const body = document.createElement("div"); body.className = "body";
       if (pending) body.textContent = providers[message.provider] ? `${providers[message.provider]} is replying…` : "One moment…";
-      else if (message.role === "assistant") body.innerHTML = renderMarkdown(message.content || "");
+      else if (message.role === "assistant" && !message.texting) body.innerHTML = renderMarkdown(message.content || "");
       else body.textContent = message.content;
       article.append(body);
       const messageTools = document.createElement("div");
       messageTools.className = "message-tools";
+      if (message.text_draft) article.append(textDraftCard(message.text_draft));
       {
         const raw = (message.content || "").trim();
         const copyBtn = document.createElement("button");
@@ -249,6 +255,71 @@ if ($("login-form")) {
     }
     panel.replaceChildren(fragment);
     if (nearBottom || sending) panel.scrollTop = panel.scrollHeight;
+  }
+  function textDraftCard(draft) {
+    const card = document.createElement("section");
+    card.className = "text-draft-card";
+    card.dataset.draftId = draft.id;
+    card.dataset.state = draft.state;
+    card.setAttribute("aria-label", "Text draft");
+    const title = document.createElement("h3");
+    title.textContent = "Text draft · " + ({ pending: "not sent", editing: "editing", expired: "confirmation expired",
+      superseded: "replaced", cancelled: "cancelled", confirmed_not_sent: "confirmed here, not sent",
+      sent: "sent via Andrea", delivery_unconfirmed: "delivery unconfirmed" }[draft.state] || "not sent");
+    const recipient = document.createElement("p");
+    recipient.className = "text-recipient";
+    recipient.textContent = `To: ${draft.recipient.name}\n${draft.recipient.addresses.join(", ")}\nThread: ${draft.recipient.guid}`;
+    const body = document.createElement("pre");
+    body.className = "text-draft-body"; body.textContent = draft.body;
+    card.append(title, recipient, body);
+    if (draft.state === "editing") {
+      const form = document.createElement("form");
+      const toLabel = document.createElement("label");
+      toLabel.textContent = "Recipient or exact thread ID";
+      const to = document.createElement("input");
+      to.value = draft.recipient.guid; to.required = true; to.maxLength = 500;
+      toLabel.append(to);
+      const bodyLabel = document.createElement("label"); bodyLabel.textContent = "Text body";
+      const field = document.createElement("textarea");
+      field.value = draft.body; field.required = true; field.maxLength = 4000; field.rows = 4;
+      bodyLabel.append(field);
+      const review = document.createElement("button"); review.type = "submit"; review.textContent = "Review new draft";
+      form.append(toLabel, bodyLabel, review);
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        submitChatText(`replace text draft ${draft.id} to ${to.value}: ${field.value}`);
+      });
+      card.append(form);
+    }
+    if (draft.confirm_message) {
+      const hint = document.createElement("p");
+      hint.textContent = `To confirm this exact draft, send separately in chat by ${new Date(draft.expires_at * 1000).toLocaleTimeString()}:`;
+      const code = document.createElement("code"); code.className = "text-confirmation"; code.textContent = draft.confirm_message;
+      const prepare = document.createElement("button"); prepare.type = "button"; prepare.textContent = "Put confirmation in chat";
+      prepare.addEventListener("click", () => {
+        $("message").value = draft.confirm_message;
+        $("message").dispatchEvent(new Event("input")); $("message").focus();
+      });
+      card.append(hint, code, prepare);
+    }
+    if (["pending", "expired", "confirmed_not_sent"].includes(draft.state)) {
+      const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "Edit draft";
+      // Clear consent on the server before exposing editable fields, including in other tabs.
+      edit.addEventListener("click", () => submitChatText(`edit text draft ${draft.id}`));
+      const cancel = document.createElement("button"); cancel.type = "button"; cancel.textContent = "Cancel draft";
+      cancel.addEventListener("click", () => submitChatText(`cancel text draft ${draft.id}`));
+      card.append(edit, cancel);
+    }
+    const status = document.createElement("p"); status.className = "text-delivery-status";
+    status.textContent = draft.state === "sent"
+      ? "Sent through Andrea’s BlueBubbles bridge."
+      : draft.state === "delivery_unconfirmed"
+        ? "Delivery is unconfirmed. Check the recipient’s thread before preparing another draft."
+        : draft.state === "confirmed_not_sent"
+          ? "Not sent. Andrea could not accept this delivery; this confirmation cannot be reused."
+          : "Nothing has been sent until you confirm with the exact yes + token in chat.";
+    card.append(status);
+    return card;
   }
   async function refreshList() {
     const data = await api("/api/conversations");
@@ -345,6 +416,12 @@ if ($("login-form")) {
       setTimeout(() => { btn.textContent = "Copy"; }, 1200);
     } catch (_) { $("notice").textContent = "Could not copy — select the code manually."; }
   });
+  function submitChatText(text) {
+    if (!current || busy || sending) return;
+    $("message").value = text;
+    $("message").dispatchEvent(new Event("input"));
+    $("composer").requestSubmit();
+  }
   $("composer").addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = $("message").value.trim();

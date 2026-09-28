@@ -1,8 +1,18 @@
-# Web Bob reply-quality eval suite (WEBBOB-EVALS-0927)
+# Web Bob reply-quality and texting eval notes (WEBBOB-EVALS-0927)
 
-Created as part of WEBBOB-REPLYQ-1856. No prior version of this file existed
-in the repo, so this establishes the rubric and wires it into the existing
-offline eval harness (`webchat/bob_parity_eval.py`).
+This file preserves the integrate notes from `a777736` and the historical
+texting evidence carried by `9751346`. The earlier 24-, 31-, and 33-case
+counts describe earlier stages of the harness, not a score for this combined
+tip. Integrate's current regression test expects 96 offline cases. Fresh
+combined-tip validation is recorded separately in `TEXTING-FIXED-0420.md`
+and `TEXTING-READY-0420.md` (or `TEXTING-STILL-FAIL-0420.md`) in the conductor
+review directory. Prior LIVE approvals do not approve this combined SHA;
+fresh LIVE Gemini and MiniMax reviews are required before any deployment.
+
+## Integrate reply-quality rubric and gate history
+
+Originally created as part of WEBBOB-REPLYQ-1856, this rubric was wired into
+the existing offline eval harness (`webchat/bob_parity_eval.py`).
 
 ## Why
 
@@ -40,8 +50,8 @@ vibe:
 
 ## Automated checks (`webchat/bob_parity_eval.py`)
 
-Seven rubric checks were added to the existing 24-case offline eval (now 31
-cases, run via `python3 webchat/bob_parity_eval.py`):
+Seven rubric checks were added to the existing 24-case offline eval (31
+cases at that stage, run via `python3 webchat/bob_parity_eval.py`):
 
 | case | what it guards |
 | --- | --- |
@@ -77,9 +87,61 @@ python3 -m pytest webchat -q                  # full suite
 
 ## Cross-vendor gate corrections
 
-The suite now has 33 cases, requires 33/33, and initializes isolated data in
-any worktree. Three always-true assertions were repaired; the directory check
+At this gate the suite grew to 33 cases, required 33/33, and initialized isolated
+data in any worktree. Three always-true assertions were repaired; the directory check
 was replaced with a real song save/reload. New cases cover complete, bounded
 status sentences and ID-free task/worker receipts. A green offline score is
 not a claim that Web Bob beat another model. See `WEBBOB-REPLYQ-GATE-0927.md`
 and the actual live gate evidence for the final deployment decision.
+
+## Historical offline Web Bob eval evidence — 1841 texting gate
+
+The recorded result at the isolated texting gate was **24/24 existing offline
+checks passed**, plus **3/3 stricter status checks**. This is not a run or score
+for the combined tip. Raw cases, run time and source hashes are preserved in
+[WEBBOB-EVALS-0927.json](WEBBOB-EVALS-0927.json).
+
+This ran `webchat/bob_parity_eval.py::run_eval` in a fresh synthetic data root
+inside this worktree. It did not call live services, live models or messaging.
+It covers work routing, worker allowlisting, job/council parsing, handback state,
+status and music hooks. It does not replace same-tip LIVE cross-vendor reviews or
+prove production message delivery, voice, media, or full live parity.
+
+The status fixture explicitly writes `Synthetic texting validation job` and a
+synthetic `deadbeef` SHA using `state_ledger.write_now`. An initial run against an
+empty root returned 23/24 because status correctly has no answer without evidence;
+the runner expects populated state. The seeded run is recorded here. No runtime
+code or expected eval result was changed to obtain the passing count.
+
+Three eval rows in that version used permissive `or True` checks. The additional
+checks required the actual replies to “what’s running?”, “quick status”, and
+“anything I need to do?” to contain the seeded job text. Integrate subsequently
+repaired these assertions as described above. The runner’s generated score and
+`web_bob_vs_bob` label in the JSON are not a live comparison verdict.
+
+Historical reproduction command for the isolated texting tree (`9751346`):
+the 24-case assertion below does not apply to the combined integrate harness.
+
+```sh
+python3 - <<'PYCODE'
+import sys
+import tempfile
+from pathlib import Path
+sys.path.insert(0, str(Path.cwd() / 'webchat'))
+from bob_parity_eval import run_eval, state_ledger
+with tempfile.TemporaryDirectory(prefix='.texting-proof-eval-', dir='reviews') as tmp:
+    root = Path(tmp)
+    (root / 'conductor/webchat').mkdir(parents=True)
+    (root / 'conductor/state').mkdir(parents=True)
+    assert state_ledger.try_status_reply(root, 'status') is None
+    state_ledger.write_now(root, 'Synthetic texting validation job', sha='deadbeef')
+    result = run_eval(root)
+    assert result['passed'] == result['total'] == 24
+    for prompt in ("what's running?", 'quick status', 'anything I need to do?'):
+        assert 'Synthetic texting validation job' in (state_ledger.try_status_reply(root, prompt) or '')
+    print('24/24 offline checks and 3/3 strict status checks passed')
+PYCODE
+```
+
+The conductor must assess this limited offline evidence against its deployment
+eval requirement; no unrun LIVE eval is claimed.

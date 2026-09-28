@@ -49,6 +49,7 @@ from task_dispatch import FOLLOW_UP, PREAMBLE, TaskDispatch, followup_work, need
 import chat_intent
 from jobs_view import build_jobs_view, result_text
 from build_info import BUILD, STATIC, VERSION_QUESTION, render_page
+from texting import Texting
 
 HERE = Path(os.environ.get("BOB_WEBCHAT_DIR", Path(__file__).resolve().parent)).resolve()
 ROOT = Path(os.environ.get("BOB_ROOT", HERE.parent.parent)).resolve()
@@ -114,7 +115,7 @@ def password_at(folder):
 
 
 class Chat(TaskDispatch):
-    def __init__(self, folder=HERE, root=ROOT, providers=None):
+    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None):
         self.folder, self.root = folder, root
         folder.mkdir(parents=True, exist_ok=True)
         self.password = password_at(folder)
@@ -136,6 +137,7 @@ class Chat(TaskDispatch):
         self.providers = providers or Providers(
             root, self.redact, overlay_roots=self.overlay_roots, overlay_pins=self.overlay_pins,
         )
+        self.texting = texting or Texting()
         for path in self.state.glob("*.json"):
             if not UUID.fullmatch(path.stem):
                 continue
@@ -216,7 +218,10 @@ class Chat(TaskDispatch):
             return self.public(value)
 
     def public(self, value):
-        return {k: copy.deepcopy(v) for k, v in value.items() if k not in ("codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job")}
+        excluded = {"codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job"}
+        # Extensions never see core-private state or mutable conversation objects.
+        filtered = {k: copy.deepcopy(v) for k, v in value.items() if k not in excluded}
+        return {k: v for k, v in self.texting.public(filtered).items() if k not in excluded}
 
     def intent_reply(self, conversation, content, provider="dispatcher"):
         conversation["messages"][-1].update(status="done", provider=provider, content=content)
@@ -308,7 +313,7 @@ class Chat(TaskDispatch):
             self.sessions[digest] = {"expires": now + SESSION_SECONDS, "csrf": secrets.token_urlsafe(32), "digest": digest}
             return token
 
-    def submit(self, identifier, text, request_id, provider="auto", worker=None):
+    def submit(self, identifier, text, request_id, provider="auto", worker=None, actor=None):
         if provider not in ("auto", "minimax", "gemini", "codex", "claude", "cursor"):
             raise RequestError(400, "Choose auto, minimax, gemini, codex, claude, or cursor.")
         if not isinstance(text, str) or not text.strip() or len(text) > 6000:
@@ -348,6 +353,14 @@ class Chat(TaskDispatch):
                 conversation["title"] = text[:65]
             if VERSION_QUESTION.search(text):
                 return self.intent_reply(conversation, BUILD["short_sha"])
+            # Text intent and confirmations never enter generic job/provider routing.
+            def persist_texting(value):
+                for key in ("pending_job", "pending_job_id", "pending_council", "pending_council_id"):
+                    value.pop(key, None)
+                self.save(value)
+                self.conversations[identifier] = copy.deepcopy(value)
+            if self.texting.handle(conversation, text, actor, request_id, persist_texting, self.redact):
+                return self.public(conversation)
             from reply_authority import correcting_status
             if correcting_status(text, conversation):
                 return self.status_reply(conversation, text)
@@ -612,7 +625,7 @@ class Chat(TaskDispatch):
                 value["messages"][-1].update(status="running", provider=provider, attempts=attempts)
                 self.save(value)
         try:
-            answer = self.providers.reply(conversation, cancel, progress)
+            answer = self.providers.reply(self.texting.provider_view(conversation), cancel, progress)
             if cancel.is_set():
                 raise Cancelled("Reply stopped.")
             with self.lock:
@@ -1296,7 +1309,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(202, {"ok": True, "spawned": spawned})
         if route == "/api/messages":
             data = self.body()
-            return self.send(202, chat.submit(data.get("conversation_id"), data.get("message"), data.get("request_id"), data.get("provider", "auto"), worker=data.get("worker")))
+            return self.send(202, chat.submit(data.get("conversation_id"), data.get("message"), data.get("request_id"), data.get("provider", "auto"), worker=data.get("worker"), actor=session["digest"]))
         if route == "/api/cancel":
             chat.stop(self.body().get("conversation_id"))
             return self.send(202, {"ok": True})
