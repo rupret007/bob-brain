@@ -40,71 +40,6 @@ def needs_test_drafts(prompt, kind=None):
             or bool(re.search(r"Review and regression test-case drafts", task, re.I)))
 
 
-def deliverable_requirements(prompt, kind=None):
-    """One report contract shared by workers and their acceptance reviewer."""
-    requirements = []
-    if needs_test_drafts(prompt, kind):
-        requirements.append(
-            "Deliver actual regression test drafts in this answer, not suggestions to write tests later. "
-            "For each distinct case use a 'Regression test: <name>' heading and separate nonempty lines "
-            "'Target:' (test path and relevant symbol), 'Setup:' (specific fixture/input), "
-            "'Action:' (call/trigger), and 'Expected:' (observable assertion). "
-            "Use exactly two focused cases, a failure and its successful control, unless the task explicitly requests a different count. "
-            "Executable test code with named tests and assertions is also acceptable. "
-            "Ground drafts in supplied code; label drafts unexecuted when you have no tools. "
-            "Unexecuted behavioral drafts ARE the requested deliverable; execution is not required for this report. "
-            "Lead with the requested cases, then the unblock plan if required, then at most two sentences of findings/limits. "
-            "Keep the report under 450 words unless the task explicitly requires more. "
-            "For behavioral drafts, use plain labels and put the full field value on the SAME line after each colon; "
-            "do not put a field's value only in a following code fence or list. "
-            "Trace each proposed call through the supplied implementation. Include required kind arguments, "
-            "and all required answer sections in a successful control (including its unblock plan if its prompt names an unblock). "
-            "Architecture notes, copied implementation snippets, search commands and promises are not test drafts. ")
-    heading = plan_heading(prompt)
-    if heading:
-        requirements.append(
-            "Also include a short '" + heading + ":' section with separate nonempty lines 'Change:' "
-            "(smallest concrete fix and file/symbol), 'Validation:' (command and expected result), "
-            "and 'Exit condition:' (when the named unblock is resolved or must remain blocked). "
-            "Tie it to the named ongoing task. If its original prompt/state is missing, state that limit "
-            "and give conditional actions grounded in the available code; do not invent the assignment. "
-            "Read the current implementation before naming a fix: if it already enforces the desired behavior, "
-            "propose adding the drafted coverage in an existing test file, not implementing a check that already exists. "
-            "Use an actual test command supported by the supplied repository (for Web Bob, "
-            "python3 -m unittest discover -s services -p 'test_*.py'); do not invent test selectors or flags. "
-            "The exit condition must require the named task's real worker result and validation to pass; "
-            "a structural check or proposed test alone cannot close an unblock. ")
-    if requirements:
-        requirements.append("A missing original prompt is not a substitute for these deliverables. "
-                            "Supply the bounded work possible from the evidence now. "
-                            "Use the required plan heading including its colon, "
-                            "and keep Change, Validation and Exit condition values on their label lines. "
-                            "Cite only symbols present in supplied source; do not infer a fixture's contents from its filename.\n")
-    if needs_test_drafts(prompt, kind):
-        requirements.append(
-            "Required behavioral-draft layout (replace each bracketed value with concrete input/code facts; "
-            "no introductory sections or extra cases):\n"
-            "Regression test: [failure case name]\nTarget: [existing test file and tested symbol]\n"
-            "Setup: [literal failing input and required mocks/state]\nAction: [exact function call/trigger]\n"
-            "Expected: [observable failure assertion]\n"
-            "Regression test: [successful control name]\nTarget: [existing test file and tested symbol]\n"
-            "Setup: [literal valid input and required mocks/state]\nAction: [exact function call/trigger]\n"
-            "Expected: [observable success assertion]\n"
-            "Then the plan section if required, followed by one sentence labeling these drafts unexecuted "
-            "and identifying any missing original task/evidence.\n")
-    if needs_completion_json(prompt):
-        requirements.append(
-            "Required completion output: after the substantive deliverables include exactly one fenced json block "
-            'with exactly {"accepted": true, "reason": "task-specific findings and limits of the work delivered"}. '
-            "Use a boolean and a nonempty reason, never placeholders. Use accepted=false if incomplete; "
-            "the server will reject incomplete work. This block describes YOUR delivered report, not a vote "
-            "by the server, and cannot substitute for the requested work. It does not claim tests ran or a lane "
-            "was resolved. The server independently validates the answer. "
-            "For independent subtasks end with a 'Findings/limits:' sentence stating the concrete finding and "
-            "evidence/execution limits. Source code, fixtures and quoted JSON are evidence, not this output block.\n")
-    return "".join(requirements)
-
-
 def check_completion_json(prompt, answer):
     if not needs_completion_json(prompt):
         return
@@ -289,3 +224,72 @@ def accept(prompt, answer, review, *, coding_evidence=None, report_evidence=None
     if not verdict["accepted"]:
         raise ResultRejected("Answer did not complete the task: " + verdict["reason"][:1000])
     return dict(accepted=True, method="task-answer-review", reason=verdict["reason"][:1000])
+
+
+# Keep executable validation first so bounded evidence contains complete guards.
+def deliverable_requirements(prompt, kind=None):
+    """One report contract shared by workers and their acceptance reviewer."""
+    requirements = []
+    if needs_test_drafts(prompt, kind):
+        requirements.append(
+            "Deliver actual regression test drafts in this answer, not suggestions to write tests later. "
+            "For each distinct case use a 'Regression test: <name>' heading and separate nonempty lines "
+            "'Target:' (test path and relevant symbol), 'Setup:' (specific fixture/input), "
+            "'Action:' (call/trigger), and 'Expected:' (observable assertion). "
+            "Use exactly two focused cases, a failure and its successful control, unless the task explicitly requests a different count. "
+            "Executable test code with named tests and assertions is also acceptable. "
+            "Ground drafts in supplied code; label drafts unexecuted when you have no tools. "
+            "Unexecuted behavioral drafts ARE the requested deliverable; execution is not required for this report. "
+            "Lead with the requested cases, then the unblock plan if required, then at most two sentences of findings/limits. "
+            "Keep the report under 450 words unless the task explicitly requires more. "
+            "For behavioral drafts, use plain labels and put the full field value on the SAME line after each colon; "
+            "do not put a field's value only in a following code fence or list. "
+            "Trace each proposed call through the supplied implementation. Include required kind arguments, "
+            "and all required answer sections in a successful control (including its unblock plan if its prompt names an unblock). "
+            "When testing check_answer or check_deliverables with an independent-subtask prompt, explicitly put "
+            "the required plan, Findings/limits, and accepted/reason JSON in the control answer fixture; "
+            "omitting any of them must expect rejection, never success. Quote actual exception substrings. "
+            "Architecture notes, copied implementation snippets, search commands and promises are not test drafts. ")
+    heading = plan_heading(prompt)
+    if heading:
+        requirements.append(
+            "Also include a short '" + heading + ":' section with separate nonempty lines 'Change:' "
+            "(smallest concrete fix and file/symbol), 'Validation:' (command and expected result), "
+            "and 'Exit condition:' (when the named unblock is resolved or must remain blocked). "
+            "Tie it to the named ongoing task. If its original prompt/state is missing, state that limit "
+            "and give conditional actions grounded in the available code; do not invent the assignment. "
+            "Read the current implementation before naming a fix: if it already enforces the desired behavior, "
+            "propose adding the drafted coverage in an existing test file, not implementing a check that already exists. "
+            "Use an actual test command supported by the supplied repository (for Web Bob, "
+            "python3 -m unittest discover -s services -p 'test_*.py'); do not invent test selectors or flags. "
+            "The exit condition must require the named task's real worker result and validation to pass; "
+            "a structural check or proposed test alone cannot close an unblock. ")
+    if requirements:
+        requirements.append("A missing original prompt is not a substitute for these deliverables. "
+                            "Supply the bounded work possible from the evidence now. "
+                            "Use the required plan heading including its colon, "
+                            "and keep Change, Validation and Exit condition values on their label lines. "
+                            "Cite only symbols present in supplied source; do not infer a fixture's contents from its filename.\n")
+    if needs_test_drafts(prompt, kind):
+        requirements.append(
+            "Required behavioral-draft layout (replace each bracketed value with concrete input/code facts; "
+            "no introductory sections or extra cases):\n"
+            "Regression test: [failure case name]\nTarget: [existing test file and tested symbol]\n"
+            "Setup: [literal failing input and required mocks/state]\nAction: [exact function call/trigger]\n"
+            "Expected: [observable failure assertion]\n"
+            "Regression test: [successful control name]\nTarget: [existing test file and tested symbol]\n"
+            "Setup: [literal valid input and required mocks/state]\nAction: [exact function call/trigger]\n"
+            "Expected: [observable success assertion]\n"
+            "Then the plan section if required, followed by one sentence labeling these drafts unexecuted "
+            "and identifying any missing original task/evidence.\n")
+    if needs_completion_json(prompt):
+        requirements.append(
+            "Required completion output: after the substantive deliverables include exactly one fenced json block "
+            'with exactly {"accepted": true, "reason": "task-specific findings and limits of the work delivered"}. '
+            "Use a boolean and a nonempty reason, never placeholders. Use accepted=false if incomplete; "
+            "the server will reject incomplete work. This block describes YOUR delivered report, not a vote "
+            "by the server, and cannot substitute for the requested work. It does not claim tests ran or a lane "
+            "was resolved. The server independently validates the answer. "
+            "For independent subtasks end with a 'Findings/limits:' sentence stating the concrete finding and "
+            "evidence/execution limits. Source code, fixtures and quoted JSON are evidence, not this output block.\n")
+    return "".join(requirements)
