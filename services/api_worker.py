@@ -58,7 +58,8 @@ def evidence(repo, worker, task, redact):
     repo = Path(repo).resolve()
     paths = git(repo, "ls-files", "-z").split("\0")
     paths = sorted({name for name in paths if name and safe_source(repo, name)},
-                   key=lambda name: (name not in task, name))
+                   key=lambda name: (name not in task,
+                                     not (Path(name).name.startswith("test_") or "/tests/" in name), name))
     if not paths:
         raise RuntimeError("No eligible tracked repository evidence is available for this report")
     limit = 700000 if worker == "gemini" else 220000

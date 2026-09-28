@@ -179,6 +179,19 @@ def run_eval(root: Path | None = None) -> dict:
         rejected = True
     rows.append(_case("0810 incomplete API verification cannot claim pass", rejected))
 
+    from result_acceptance import check_answer
+    completion = json.loads((HERE.parent / "services/fixtures/texting_jobcompletion_1035.json").read_text())
+    for label, answer, expect_rejection in (
+            ("1035 exploratory report cannot complete test-writing", completion["answer"], True),
+            ("1035 concrete drafts and conditional plan reach review", completion["complete_answer"], False),
+            ("1035 drafts alone cannot unblock", completion["complete_answer"].split("Unblock plan:")[0], True)):
+        rejected = False
+        try:
+            check_answer(completion["prompt"], answer, kind=completion["kind"])
+        except ResultRejected:
+            rejected = True
+        rows.append(_case(label, rejected == expect_rejection))
+
     passed = sum(1 for r in rows if r["pass"])
     return {
         "total": len(rows),
