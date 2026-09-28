@@ -74,6 +74,7 @@ COOKIE = "bob_session"
 SESSION_SECONDS = 12 * 60 * 60
 MAX_BODY = 32768
 MAX_AUDIO_BODY = 35 * 1024 * 1024
+# Base64 expands 3 bytes to 4 characters: ceil(video_limit * 4 / 3) + JSON overhead
 MAX_MEDIA_BODY = 4 * ((MAX_VIDEO_BYTES + 2) // 3) + MAX_BODY
 
 
@@ -1123,7 +1124,7 @@ class Handler(BaseHTTPRequestHandler):
         for key, value in {
             "Content-Type": content_type, "Content-Length": str(len(data)), "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
-            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; manifest-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; manifest-src 'self'; connect-src 'self'; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
             "X-Bob-Webchat": "1", **extra, **(headers or {}),
         }.items():
             self.send_header(key, value)
@@ -1351,8 +1352,8 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(urlsplit(self.path).query)
             conversation_id = query.get("conversation_id", [None])[0]
             try:
-                meta = load_meta(chat.root, media_id, conversation_id=conversation_id)
                 chat.get(conversation_id)
+                meta = load_meta(chat.root, media_id, conversation_id=conversation_id)
                 path = resolve_media(chat.root, media_id, conversation_id=conversation_id)
             except (ValueError, FileNotFoundError):
                 raise RequestError(404, "Attachment not found.") from None
@@ -1496,6 +1497,12 @@ class Handler(BaseHTTPRequestHandler):
                     blob = base64.b64decode(raw, validate=True)
                 except ValueError:
                     raise RequestError(400, "Invalid attachment encoding.") from None
+                try:
+                    limit = media_limit(name)
+                except ValueError as exc:
+                    raise RequestError(400, str(exc)) from exc
+                if len(blob) > limit:
+                    raise RequestError(413, f"Attachment too large ({limit // (1024 * 1024)}MB max).")
             try:
                 stored = store_media(chat.root, blob, name, conversation_id=conversation_id, redact=chat.redact)
             except ValueError as exc:

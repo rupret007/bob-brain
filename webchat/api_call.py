@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Metered Gemini/MiniMax calls for web chat without conductor lane locks."""
 import base64
-import inspect
 import json
 import os
 import re
@@ -75,13 +74,16 @@ def main():
     from api import model_call
     from lanes import slot
 
+    vision_params = getattr(model_call, "__code__", None)
+    supports_vision = vision_params is not None and "vision" in vision_params.co_varnames
+    if vision and not supports_vision:
+        raise RuntimeError("model_call does not support vision parameter. Upgrade services/api.py.")
+
     with slot(lane):
         budget.check(lane)
         kwargs = {"purpose": "webchat"}
-        if "vision" in inspect.signature(model_call).parameters:
+        if supports_vision:
             kwargs["vision"] = vision or None
-        elif vision:
-            raise RuntimeError("This API helper does not support vision.")
         answer = strip_reply_tags(model_call(lane, prompt, **kwargs))
     print(answer)
     return 0

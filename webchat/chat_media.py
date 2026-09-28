@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 UPLOADS = Path("conductor/webchat/uploads")
-MEDIA_ID_RE = re.compile(r"^[0-9a-f]{16}$")
+MEDIA_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 MAX_ATTACHMENTS_PER_MESSAGE = 6
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_VIDEO_BYTES = 35 * 1024 * 1024
@@ -59,7 +59,10 @@ def classify_suffix(suffix: str) -> str:
 def media_limit(filename: str) -> int:
     if not isinstance(filename, str) or not filename or len(filename) > 240 or re.search(r'[\x00-\x1f\x7f]', filename):
         raise ValueError("Invalid attachment filename.")
-    kind = classify_suffix(Path(filename).suffix)
+    name = filename.strip()
+    if not name or name != filename:
+        raise ValueError("Invalid attachment filename.")
+    kind = classify_suffix(Path(name).suffix)
     return {"image": MAX_IMAGE_BYTES, "video": MAX_VIDEO_BYTES, "file": MAX_FILE_BYTES}[kind]
 
 
@@ -108,7 +111,13 @@ def store_media(root: Path, data: bytes, filename: str, *, conversation_id: str,
         text = data.decode("utf-8", errors="replace")
         if redact(name) != name or redact(text) != text:
             raise ValueError("This attachment appears to contain a secret. Remove it before uploading.")
-    token = secrets.token_hex(8)
+        if kind == "image":
+            with tempfile.TemporaryDirectory() as tmp:
+                probe = Path(tmp) / ("upload" + suffix)
+                probe.write_bytes(data)
+                blob, _ = prompt_image_bytes(probe, MediaBudget(seconds=5))
+                scan_image(blob, MediaBudget(seconds=5), redact)
+    token = secrets.token_hex(16)
     path = _upload_dir(root) / (token + suffix)
     meta = {"media_id": token, "conversation_id": conversation_id, "filename": name,
             "suffix": suffix, "kind": kind, "bytes": len(data), "path": str(path.relative_to(root))}
@@ -307,7 +316,7 @@ def scan_image(blob: bytes, budget: MediaBudget, redact) -> str:
 def enrich_for_model(root: Path, metas: list[dict], *, redact, cancel=None) -> dict:
     """One shared deadline and at most two preparations, on reply workers only."""
     text_blocks, vision, warnings = [], [], []
-    if not PROCESS_SLOTS.acquire(blocking=False):
+    if not PROCESS_SLOTS.acquire(timeout=0.1):
         return {"text": "Media preparation busy. No attachment content was read.", "vision": [],
                 "warnings": ["Attachments could not be analyzed because media processing is busy. Please retry."]}
     budget = MediaBudget(cancel)
@@ -367,6 +376,7 @@ def strip_assistant_attachment_markers(content: str) -> tuple[str, list[dict]]:
 
 
 def public_attachment(meta: dict) -> dict:
-    url = f"/api/media/{meta['media_id']}?conversation_id={meta['conversation_id']}"
+    from urllib.parse import quote
+    url = f"/api/media/{meta['media_id']}?conversation_id={quote(meta['conversation_id'], safe='')}"
     return {"media_id": meta["media_id"], "filename": meta.get("filename") or meta["media_id"],
             "kind": meta.get("kind", "file"), "url": url, "bytes": meta.get("bytes", 0)}

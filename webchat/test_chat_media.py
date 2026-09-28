@@ -105,9 +105,19 @@ class ChatMediaTests(unittest.TestCase):
             self.assertEqual(stored['bytes'], size)
             with self.assertRaisesRegex(ValueError, 'too large'):
                 self.store(data + b'a', name)
-        for ids in ('', {}, ['bad'], ['a' * 16] * 7):
+        for ids in ('', {}, ['bad'], ['a' * 16] * 7, ['a' * 32] * 7):
             with self.assertRaises(ValueError):
                 media.validate_attachment_ids(self.root, ids, conversation_id=self.cid)
+
+    def test_store_rejects_mismatched_signature(self):
+        png_data = b'\x89PNG\r\n\x1a\n' + b'fake png content'
+        with self.assertRaises(ValueError) as ctx:
+            media.store_media(self.root, png_data, 'fake.jpg', conversation_id=self.cid)
+        self.assertIn('does not match', str(ctx.exception))
+
+    def test_whitespace_filename_rejected(self):
+        with self.assertRaises(ValueError):
+            media.media_limit('   ')
 
     def test_secret_uploads_rejected_before_persistence(self):
         secret = 'sk-' + 'a' * 25
