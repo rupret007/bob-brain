@@ -143,6 +143,11 @@ class APIWorkerTests(unittest.TestCase):
                 if lane == "minimax":
                     self.assertIn("Deliver actual regression test drafts", json.dumps(payload))
                     answer = draft_report(evidence_file)
+                answer += ("\nAction plan:\nChange: Add duplicate-enqueue coverage for " + evidence_file +
+                           ".\nValidation: Run python3 -m unittest discover -s services -p 'test_*.py'; require zero failures."
+                           "\nExit condition: Actual worker results and project validation must pass before closing the lane."
+                           '\n```json\n{"accepted": true, "reason": "Delivered grounded findings and a conditional test plan."}\n```'
+                           "\nFindings/limits: Duplicate-enqueue coverage is missing; drafts are unexecuted and lane activity is unverified.\n")
                 if lane == "gemini":
                     self.assertIn("gemini-2.5-pro:generateContent", config)
                     result = dict(candidates=[dict(finishReason="STOP", content=dict(parts=[dict(text=answer)]))],
@@ -311,6 +316,23 @@ class APIWorkerTests(unittest.TestCase):
         self.assertEqual([row["path"] for row in metadata["files"]][:2], ["queue.py", "test_queue.py"])
         self.assertIn("FILE test_queue.py", body)
         self.assertTrue(metadata["omitted"])
+
+    def test_1403_named_snapshot_contains_complete_completion_guards(self):
+        import inspect
+        import result_acceptance
+        from test_replay_completion import ReportRepositoryTests
+        repo = Path(__file__).resolve().parents[1]
+        fixture = json.loads((repo / "services/fixtures/texting_jobcompletion_1403.json").read_text())
+        body, metadata = api_worker.evidence(repo, "minimax", fixture["prompt"], lambda text: text, kind=fixture["kind"])
+        self.assertIn(fixture["complete_answer"].splitlines()[0], body)
+        captured = "services/fixtures/texting_jobcompletion_1403.json"
+        self.assertIn("FILE " + captured, body)
+        self.assertNotIn(captured, metadata["truncated"])
+        self.assertIn(inspect.getsource(ReportRepositoryTests).strip(), body)
+        section = body.split("FILE services/result_acceptance.py\n", 1)[1].split("\n\nFILE ", 1)[0]
+        for guard in (result_acceptance.check_completion_json, result_acceptance.check_deliverables):
+            self.assertIn(inspect.getsource(guard).strip(), section)
+        self.assertLessEqual(metadata["source_bytes"], 64000)
 
     def test_transport_loads_keys_uses_exact_models_and_search_without_secret_logs(self):
         (self.core / "keys.env").write_text("export GEMINI_API_KEY='gemini-fixture-key'\nMINIMAX_API_KEY=minimax-fixture-key\n")
