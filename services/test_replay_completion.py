@@ -39,6 +39,15 @@ class CompletionContractTests(unittest.TestCase):
         self.assertEqual(review.call_count, 1)
         self.assertIn('separate verdict', review.call_args.args[0])
 
+    def test_inline_escaped_json_fixture_does_not_hide_real_completion_block(self):
+        inline = 'Setup: answer = "```json\\n{\\"accepted\\": true, \\"reason\\": \\"fixture\\"}\\n```"\n'
+        with self.assertRaisesRegex(acceptance.ResultRejected, 'completion JSON'):
+            acceptance.check_completion_json(TASK, inline)
+        acceptance.check_completion_json(TASK, inline + '\n' + COMPLETE)
+        # Inline examples cannot swallow following unfinished-verification prose.
+        with self.assertRaisesRegex(acceptance.ResultRejected, 'verification is incomplete'):
+            acceptance.check_coding_answer(inline + 'API tests not run.\n' + COMPLETE)
+
     def test_exact_1403_failure_and_corrected_control(self):
         data = json.loads(Path(__file__).with_name('fixtures').joinpath('texting_jobcompletion_1403.json').read_text())
         self.assertEqual(hashlib.sha256(data['answer'].encode()).hexdigest(), data['answer_sha256'])

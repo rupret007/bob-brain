@@ -10,6 +10,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
 from api_tasks import report_kind
 
 
+# Inline fixture strings containing escaped fences are not Markdown blocks.
+FENCED_BLOCK = re.compile(r"^[ \t]{0,3}```([^\n]*)\n(.*?)^[ \t]{0,3}```[ \t]*$", re.M | re.S)
+
+
 class ResultRejected(RuntimeError):
     pass
 
@@ -44,7 +48,7 @@ def check_completion_json(prompt, answer):
     if not needs_completion_json(prompt):
         return
     unquoted = re.sub(r"(?m)^[ \t]*>[^\n]*$", "", answer)
-    blocks = re.findall(r"```([^\n]*)\n(.*?)```", unquoted, re.S)
+    blocks = FENCED_BLOCK.findall(unquoted)
     # Only standalone JSON fences count; Python examples and quoted evidence do not.
     candidates = [body for label, body in blocks if label.strip().lower() == "json"]
     if not blocks and unquoted.strip().startswith("{"):
@@ -73,7 +77,7 @@ def check_completion_json(prompt, answer):
 
 def check_deliverables(prompt, answer, kind=None):
     """Reject absent deliverables before voting; semantics still require review."""
-    prose = re.sub(r"```.*?```", "", answer, flags=re.S)
+    prose = FENCED_BLOCK.sub("", answer)
     prose = re.sub(r"(?m)^[ \t]*>[^\n]*$", "", prose)
     def fields(text, names):
         for name in names:
@@ -87,7 +91,7 @@ def check_deliverables(prompt, answer, kind=None):
         cases = re.split(r"(?im)^\s*(?:#{1,6}\s*)?(?:\*\*)?Regression test\s*:", prose)[1:]
         structured = any(fields(case, ("Target", "Setup", "Action", "Expected")) for case in cases)
         # Support actual proposed tests as well as behavioral test-case drafts.
-        blocks = re.findall(r"```[^\n]*\n(.*?)```", answer, re.S)
+        blocks = [body for _, body in FENCED_BLOCK.findall(answer)]
         code = any(re.search(r"\b(?:def test_\w+|(?:test|it)\s*\(\s*['\"])", block)
                    and re.search(r"\b(?:assert\s+|self\.assert\w+\(|expect\s*\()", block)
                    for block in blocks)
@@ -119,7 +123,7 @@ CODING_REQUIREMENTS = (
 
 def check_coding_answer(answer):
     """An explicit admission of unfinished validation cannot win an acceptance vote."""
-    prose = re.sub(r"```.*?```", "", answer, flags=re.S)
+    prose = FENCED_BLOCK.sub("", answer)
     prose = re.sub(r"(?m)^[ \t]*>[^\n]*$", "", prose)
     if re.search(r"\b(?:not|never)\s+(?:re[- ]?)?run\b|\b(?:did(?:n't| not)|haven['’]t|have not)\s+"
                  r"(?:re[- ]?)?run\b|\b(?:tests?|verification|validation)\s+(?:are |is |were )?"
@@ -141,7 +145,7 @@ def check_answer(prompt, answer, *, kind=None):
     if blocked_answer(answer):
         raise ResultRejected("Worker reported a blocker: " + answer[:1000])
     # Ignore quoted evidence/code; a review may legitimately discuss refusals.
-    prose = re.sub(r"```.*?```", "", answer, flags=re.S)
+    prose = FENCED_BLOCK.sub("", answer)
     prose = re.sub(r"(?m)^\s*>.*$", "", prose)
     refusal = (r"(?:^|[.!?]\s+|\n)\s*(?:\*\*)?(?:(?:unfortunately|sorry|i(?:'m| am) sorry)[,:]?\s+)?"
                r"(?:as an? (?:ai|language model)[^\n,]*,\s*)?"
