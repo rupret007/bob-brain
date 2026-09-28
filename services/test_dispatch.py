@@ -391,7 +391,7 @@ class DispatchTests(unittest.TestCase):
                 self.assertEqual(result["rejected_result"], answer)
                 self.assertFalse((self.core / "state/task-runs" / row["id"] / "RESULT.md").exists())
 
-    def test_file_inspection_routes_to_tools_and_api_selection_explains_limit(self):
+    def test_file_inspection_routes_to_tools_and_named_api_produces_report(self):
         prompt = "Read services/dispatch_worker.py and summarize the failure path."
         row = queue.enqueue(self.root, "conversation", "inspection", prompt)
         self.assertEqual(row["kind"], "inspection")
@@ -399,8 +399,9 @@ class DispatchTests(unittest.TestCase):
             self.assertIsNone(queue.claim(self.root, worker))
         self.assertIsNotNone(queue.claim(self.root, "codex"))
         for worker in queue.API_WORKERS:
-            with self.assertRaisesRegex(ValueError, "API-only"):
-                queue.enqueue(self.root, "conversation", worker, prompt, worker=worker)
+            report = queue.enqueue(self.root, "conversation", worker, prompt, worker=worker)
+            self.assertEqual(report["kind"], "review")
+            self.assertIsNotNone(queue.claim(self.root, worker))
 
     def test_old_misclassified_file_task_fails_before_an_api_call(self):
         task = self.enqueue(worker="minimax")

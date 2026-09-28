@@ -62,7 +62,23 @@ Named multi-project requests create one durable job per project. For example,
 to the max and fix anything you find` queues four project jobs. Each receipt sentence
 names the project and requested worker; job IDs stay in structured job data. Assignment prefers ready
 compatible lanes and accounts for existing claims and queued work. Coding jobs
-use Codex/Cursor; API-only workers keep their existing capability limits.
+use Codex/Cursor; Gemini and MiniMax produce repository reports and proposed patches.
+
+“Remember you can use Gemini and MiniMax for the ongoing jobs” now assigns real
+jobs: Gemini gets a whole-repository audit and plan, and MiniMax gets a review
+with regression test drafts. The server names each task, worker and durable job
+ID after saving it. Existing coding claims continue unchanged. Missing work,
+holds, maintenance or unavailable lanes get an honest explanation, never a
+readiness-only acknowledgement. A queued receipt means waiting for runner
+capacity; a started receipt requires a recorded worker claim.
+
+Named API requests also support audits, planning, research, repository reviews,
+test-case writing and eval grading. Gemini job calls use `gemini-2.5-pro`;
+research enables `google_search`. MiniMax uses `MiniMax-M2.7`. The runner supplies
+bounded tracked repository evidence, omitting credentials, links and private
+runtime files. Accepted reports and fenced proposed patches are saved under
+`conductor/reviews/api-workers/`; API workers never deploy, apply changes or
+resolve conflicts. Status and Jobs show the task and exact executing model.
 
 Conversation files also save explicit holds and the latest permission transition.
 `hold off on Web Bob` blocks new submissions for that project; `go`, `resume`, or
@@ -106,7 +122,8 @@ Max mode: review this design and supplied evidence ...
 [mini] Run services/test_services.py.
 ```
 
-API and Claude analysis packages need evidence in the request; they cannot inspect files.
+API report packages receive a server-collected repository snapshot. Claude and
+answer-only analysis packages still need evidence in the request.
 Coding packages own separate production/test files on private draft branches.
 Local commits are reported for review; max mode does not integrate or publish
 them. Mini accepts existing `services/test_*.py` or `webchat/test_*.py` suites,

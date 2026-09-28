@@ -9,6 +9,7 @@ import re
 import time
 import uuid
 from pathlib import Path
+from api_tasks import REPORT_KINDS, normalize_kind
 
 MODEL_WORKERS = ("codex", "claude", "cursor", "gemini", "minimax")
 API_WORKERS = ("gemini", "minimax")
@@ -68,9 +69,12 @@ def task_kind(kind, prompt):
 
 def validate_worker(worker, kind):
     if worker != "auto" and worker not in worker_order(kind):
+        if worker == "minimax" and kind == "research":
+            raise ValueError("Research with google_search requires Gemini. MiniMax can review evidence, draft tests and grade evals.")
         if worker in API_WORKERS:
-            raise ValueError(worker + " is API-only and cannot read or write local files or run commands. "
-                             "Choose codex or cursor-agent, or supply the evidence for an answer-only task.")
+            raise ValueError(worker + " is API-only: it can audit, plan, research, review, draft tests or grade evals "
+                             "into reviews/. It cannot edit project files, deploy, resolve conflicts or run commands. "
+                             "Choose codex or cursor-agent for that work.")
         raise ValueError("This task needs a compatible tool worker: " + ", ".join(worker_order(kind)) + ".")
 
 
@@ -137,6 +141,8 @@ def tasks(root):
 
 
 def worker_order(kind):
+    if kind in REPORT_KINDS:
+        return ("gemini",) if kind == "research" else (("gemini", "minimax") if kind in ("audit", "planning") else ("minimax", "gemini"))
     return {"coding": ("codex", "cursor"), "artifact": ("codex", "cursor", "claude"), "local": ("mini",),
             "inspection": ("codex", "cursor"),
             "analysis": ("claude", "gemini", "minimax", "codex", "cursor")}[kind]
@@ -159,12 +165,12 @@ def group_complete(members):
 
 def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="analysis", source_file=None,
             group_id=None, group_size=None, group_index=None, group_goal=None, title=None, local_suite=None,
-            publish_project=None, draft_pr=False):
+            publish_project=None, draft_pr=False, source_job_id=None):
     worker = worker_name(worker)
     if worker == "mini":
         kind = "local"
-    kind = task_kind(kind, prompt)
-    if kind not in ("analysis", "inspection", "coding", "artifact", "local") or not prompt.strip():
+    kind = normalize_kind(worker, task_kind(kind, prompt), prompt)
+    if kind not in ("analysis", "inspection", "coding", "artifact", "local", *REPORT_KINDS) or not prompt.strip():
         raise ValueError("Task needs a description and a supported kind")
     if kind == "artifact" and not file_request(prompt):
         raise ValueError("Small file tasks require an explicit text and /tmp file destination")
@@ -183,8 +189,8 @@ def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="a
         if identifier in rows:
             row = rows[identifier]
             if (row["prompt"], row["requested_worker"], row["kind"], row.get("group_id"), row.get("group_size"),
-                row.get("group_index"), row.get("group_goal"), row.get("title"), row.get("local_suite"), row.get("publish_project"), row.get("draft_pr", False)) != (
-                    prompt, worker, kind, group_id, group_size, group_index, group_goal, title, local_suite, publish_project, draft_pr):
+                row.get("group_index"), row.get("group_goal"), row.get("title"), row.get("local_suite"), row.get("publish_project"), row.get("draft_pr", False), row.get("source_job_id")) != (
+                    prompt, worker, kind, group_id, group_size, group_index, group_goal, title, local_suite, publish_project, draft_pr, source_job_id):
                 raise ValueError("This request ID already belongs to a different task")
             return row
         for member in (r for r in rows.values() if group_id and r.get("group_id") == group_id):
@@ -197,6 +203,7 @@ def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="a
                                  status="queued", attempts=0, created_at=time.time(), delivered_at=None,
                                  group_id=group_id, group_size=group_size, group_index=group_index,
                                  group_goal=group_goal, title=title, local_suite=local_suite, publish_project=publish_project, draft_pr=draft_pr,
+                                 source_job_id=source_job_id,
                                  tried_workers=[], max_attempts=max(MAX_ATTEMPTS, len(worker_order(kind))),
                                  worker=None, claim_token=None, lease_until=0, retry_at=0), "enqueued")
 

@@ -12,12 +12,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
 import task_queue
 import max_mode
+from api_tasks import normalize_kind
 from chat_intent import (POLITE, PREAMBLE, PUSH, blocked_scopes, command, hold_reply,
                          project_targets, projects, PROJECT, PROJECT_NAMES, state_for, normalize_projects, project_start)
 
 WORK = re.compile(
     r"^" + POLITE +
-    r"(?:review|analy[sz]e|audit|research|investigate|inspect|check|compare|summari[sz]e|calculate|"
+    r"(?:plan|grade|score|evaluate|review|analy[sz]e|audit|research|investigate|inspect|check|compare|summari[sz]e|calculate|"
     r"read|open|save|append|write|draft|create|build|implement|fix|repair|debug|test|trace|update|refactor|add|remove|"
     r"diagnose|figure out|find out|look into|work on|improve|make)\b.*", re.I | re.S)
 ROUTED = re.compile(r"^" + POLITE + r"(?:have|get|ask|use|assign(?:\s+to)?|delegate(?:\s+to)?)\s+"
@@ -96,7 +97,7 @@ def parse_work(text):
         return lane[2].strip(), lane[1].lower()
     routed = (ROUTED.match(text.strip()) or PREFIX.match(text.strip()) or
               re.match(r"^" + POLITE + r"(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\s+"
-                       r"((?:review|audit|inspect|fix|build|write|research)\b.+)$", text.strip(), re.I | re.S))
+                       r"((?:plan|grade|score|evaluate|review|audit|inspect|fix|build|write|research)\b.+)$", text.strip(), re.I | re.S))
     if routed:
         return routed.group(2).strip(), routed.group(1).lower()
     if WORK.match(text.strip()):
@@ -140,7 +141,7 @@ def project_plan(root, description, names, worker):
     starting = project_start(description)
     improve = bool(starting or PUSH.match(command(description)) or (max_mode.MAX_MODE.match(command(description)) and not WORK.match(goal)))
     publish = bool(re.fullmatch(r"push\s+" + PROJECT_LIST + r"[.!]*", command(description), re.I))
-    kind = "coding" if improve else task_kind(goal)
+    kind = normalize_kind(worker, "coding" if improve else task_kind(goal), goal)
     eligible = task_queue.worker_order(kind)
     if worker != "auto":
         task_queue.validate_worker(worker, kind)
@@ -168,7 +169,9 @@ def project_plan(root, description, names, worker):
         assignment = ("Improve " + project + ": inspect the project, choose one useful bounded fix, implement it, and run relevant tests."
                       if improve else "Carry out this request for " + project + " only.")
         prompt = ("Project: " + project + "\n" + assignment + "\nJeff's request: " + scoped +
-                  "\nWork only on this project in your assigned worktree and draft branch. Report actual results. "
+                  ("\nReturn a report or proposed patch for this project; the server saves it under reviews/. "
+                   "Never deploy, apply changes or resolve conflicts. " if lane in task_queue.API_WORKERS else
+                   "\nWork only on this project in your assigned worktree and draft branch. Report actual results. ") +
                   "Never merge, undraft, force-push, use Grok/xAI, send texts, or start other workers.")
         if project == "Fantasy Football":
             prompt += "\nESPN access is read-only. Jeff makes all lineup and roster moves himself."
@@ -182,6 +185,31 @@ def project_receipt(rows):
 
 
 class TaskDispatch:
+    def submit_worker_assignment(self, conversation, description, request_id, workers):
+        from worker_assignment import plan
+        message = conversation["messages"][-1]
+        try:
+            if self.ledger_root(conversation["id"]) != self.root:
+                raise ValueError("Worker dispatch is disabled in a drill overlay.")
+            if (self.root / "conductor/MAINTENANCE").exists():
+                raise ValueError("Scheduling is paused for maintenance; no assignments were queued.")
+            packages = plan(self.root, conversation, description, workers)
+        except ValueError as exc:
+            return self.intent_reply(conversation, str(exc))
+        intent = dict(prompt=description, request_id=request_id, goal=description,
+                      worker_assignment=True, project_batch=True,
+                      assignment_projects=list(dict.fromkeys(name for package in packages
+                                               for name in projects(package["prompt"].splitlines()[0]))))
+        if len(packages) > 1:
+            intent["subtasks"] = packages
+        else:
+            intent.update(packages[0])
+        message.update(status="done", content="Saving worker assignments…", dispatch_intent=intent)
+        self.save(conversation)
+        self.conversations[conversation["id"]] = conversation
+        self.reconcile_tasks()
+        return self.public(self.conversations[conversation["id"]])
+
     def submit_max_task(self, conversation, description, request_id):
         return self.submit_task(conversation, description, request_id, worker="max")
 
@@ -213,6 +241,7 @@ class TaskDispatch:
             project_batch = len(names) >= 2
             worker = "auto" if maximum else task_queue.worker_name(worker)
             kind = task_kind(max_mode.MAX_MODE.sub("", description).strip(" :,-\n") if maximum else description)
+            kind = normalize_kind(worker, kind, description)
             if not maximum:
                 task_queue.validate_worker(worker, "local" if worker == "mini" else kind)
             refusal = hard_rule_refusal(description)
@@ -263,7 +292,7 @@ class TaskDispatch:
                     if not intent or message.get("task_id") or message.get("group_id"):
                         continue
                     state = state_for(value)
-                    scopes = blocked_scopes(state, project_targets(intent["prompt"], state))
+                    scopes = blocked_scopes(state, intent.get("assignment_projects", project_targets(intent["prompt"], state)))
                     if scopes:
                         content = hold_reply(scopes)
                         if message["content"] != content:
@@ -281,9 +310,10 @@ class TaskDispatch:
                         continue
                     row = task_queue.enqueue(self.root, identifier, intent["request_id"], intent["prompt"],
                                              worker=intent["worker"], kind=intent["kind"], publish_project=intent.get("publish_project"),
-                                             draft_pr=intent.get("draft_pr", False))
+                                             draft_pr=intent.get("draft_pr", False), title=intent.get("title"),
+                                             source_job_id=intent.get("source_job_id"))
                     message.update(task_id=row["id"], status="done", provider="dispatcher",
-                                   content=task_receipt(row),
+                                   content=(row["title"] + ": " if intent.get("worker_assignment") else "") + task_receipt(row),
                                    action_card={"id": message["request_id"], "state": "queued", "executable": False,
                                                 "queue_id": row["id"], "task_id": row["id"], "goal_text": row["prompt"][:160]})
                     changed = True
@@ -375,9 +405,12 @@ class TaskDispatch:
             message_id = str(uuid.uuid5(uuid.NAMESPACE_URL, group + ":result"))
             if not any(m["id"] == message_id for m in value["messages"]):
                 success = all(row["status"] == "succeeded" for row in members)
+                assignment = any(m.get("group_id") == group and m.get("dispatch_intent", {}).get("worker_assignment")
+                                 for m in value["messages"])
                 value["messages"].append(dict(id=message_id, request_id=first["request_id"].rsplit(":", 1)[0],
                                               group_id=group, task_ids=[r["id"] for r in members], role="assistant",
-                                              status="done", provider="max-mode", content=self.redact(max_mode.merge_text(members)),
+                                              status="done", provider="dispatcher" if assignment else "max-mode",
+                                              content=self.redact(max_mode.merge_text(members, "Worker assignments" if assignment else "Max mode")),
                                               created_at=time.time(), task_status="succeeded" if success else "partial",
                                               subtasks=[{k: r.get(k) for k in ("id", "title", "worker", "status", "claimed_at", "started_at", "execution_started_at", "finished_at", "result_sha256")} for r in members]))
                 for message in value["messages"]:

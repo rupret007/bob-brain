@@ -19,6 +19,7 @@ from workspaces import analysis_workspace, sandbox_command
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
 import task_queue
+from api_tasks import MODELS as WORKER_MODELS
 
 LANES = task_queue.WORKERS
 CURSOR = Path.home() / ".local/bin/cursor-agent"
@@ -221,7 +222,10 @@ def ask(lane, prompt, *, cwd=None, coding=False, timeout=300, purpose="analysis"
             from api import model_call
             if coding:
                 raise RuntimeError("API lanes accept evidence/research jobs, not tool execution")
-            answer = model_call(lane, API_RULES + prompt, purpose=purpose)
+            options = dict(model_id=WORKER_MODELS[lane]) if purpose.startswith(("webbob-", "job-", "api-worker")) else {}
+            if purpose == "api-worker-research":
+                options["google_search"] = True
+            answer = model_call(lane, API_RULES + prompt, purpose=purpose, **options)
         else:
             workspace = cwd or analysis_workspace(lane)
             answer = cli(lane, RULES + prompt, workspace, coding, timeout)
