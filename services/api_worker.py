@@ -77,7 +77,11 @@ def evidence(repo, worker, task, redact, kind=None):
     # omit the concrete failure/control fixture. Reserve a fair share for that
     # tracked example too; it is evidence, never a replacement worker answer.
     replay_fixture = "services/fixtures/texting_jobcompletion_1403.json"
-    examples = {replay_fixture, "services/test_replay_completion.py"} if preferred and "services/result_acceptance.py" in task else set()
+    examples = {"services/fixtures/texting_action_plan_1605.json"} if preferred else set()
+    if preferred and "services/result_acceptance.py" in task:
+        examples.update((replay_fixture, "services/test_replay_completion.py"))
+    elif preferred:
+        examples.add("services/fixtures/texting_jobcompletion_1035.json")
     paths = sorted({name for name in paths if name and safe_source(repo, name)},
                    key=lambda name: (name not in examples, name not in task, preferred.get(name, len(preferred)),
                                      not (Path(name).name.startswith("test_") or "/tests/" in name), name))

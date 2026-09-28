@@ -215,6 +215,22 @@ def run_eval(root: Path | None = None) -> dict:
             rejected = True
         rows.append(_case(label, rejected == expect_rejection))
 
+    action_plan = json.loads((HERE.parent / "services/fixtures/texting_action_plan_1605.json").read_text())
+    complete = action_plan["complete_answer"]
+    for label, answer, expect_rejection in (
+            ("1605 exact f2c47 inline-fixture plan fails closed", action_plan["answer"], True),
+            ("1605 complete outer Action plan reaches review", complete, False),
+            ("1605 missing Action plan fails closed", complete.split("Action plan:")[0], True),
+            ("1605 next-line Change value fails closed", complete.replace("Change: ", "Change:\n"), True),
+            ("1605 next-line Validation value fails closed", complete.replace("Validation: ", "Validation:\n"), True),
+            ("1605 next-line Exit condition value fails closed", complete.replace("Exit condition: ", "Exit condition:\n"), True)):
+        rejected = False
+        try:
+            check_answer(action_plan["prompt"], answer, kind=action_plan["kind"])
+        except ResultRejected:
+            rejected = True
+        rows.append(_case(label, rejected == expect_rejection))
+
     passed = sum(1 for r in rows if r["pass"])
     return {
         "total": len(rows),

@@ -244,7 +244,7 @@ def deliverable_requirements(prompt, kind=None):
             "Executable test code with named tests and assertions is also acceptable. "
             "Ground drafts in supplied code; label drafts unexecuted when you have no tools. "
             "Unexecuted behavioral drafts ARE the requested deliverable; execution is not required for this report. "
-            "Lead with the requested cases, then the unblock plan if required, then at most two sentences of findings/limits. "
+            "Lead with the requested cases, then the required plan, completion JSON and Findings/limits. "
             "Keep the report under 450 words unless the task explicitly requires more. "
             "For behavioral drafts, use plain labels and put the full field value on the SAME line after each colon; "
             "do not put a field's value only in a following code fence or list. "
@@ -290,8 +290,20 @@ def deliverable_requirements(prompt, kind=None):
             "Regression test: [successful control name]\nTarget: [existing test file and tested symbol]\n"
             "Setup: [literal valid input and required mocks/state]\nAction: [exact function call/trigger]\n"
             "Expected: [observable success assertion]\n"
-            "Then the plan section if required, followed by one sentence labeling these drafts unexecuted "
-            "and identifying any missing original task/evidence.\n")
+            "Label these drafts unexecuted in Findings/limits and identify missing original task/evidence.\n")
+    if heading:
+        requirements.append(
+            "MANDATORY report section: regression drafts, code blocks and completion JSON do not replace this plan. "
+            "Copy the following heading and labels literally into your final answer, outside code fences/quotes. "
+            "Replace every bracketed value with concrete task-specific content on the SAME label line. "
+            "Do not rename the heading or put the values on following lines.\n"
+            + heading + ":\n"
+            "Change: [smallest grounded file/symbol change, or validate existing coverage if already implemented]\n"
+            "Validation: [supported command and observable passing result; distinguish proposed from executed checks]\n"
+            "Exit condition: [named task's actual worker result and validation required to pass; otherwise keep it blocked]\n"
+            "Before returning, check your OUTER report contains all four literal lines above with nonempty values, "
+            "even when a regression fixture inside the report already contains a plan. "
+            "A missing plan is rejected before review or publication. Never claim the task finished without it.\n")
     if needs_completion_json(prompt):
         requirements.append(
             "Required completion output: after the substantive deliverables include exactly one fenced json block "
