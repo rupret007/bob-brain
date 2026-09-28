@@ -18,7 +18,7 @@ _HOME = re.compile(r"/Users/[^\s\"']+")
 
 def _stamp(now: float | None = None) -> str:
     ts = now if now is not None else time.time()
-    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="microseconds")
 
 
 def _read_json(path: Path, default=None):
@@ -407,7 +407,6 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
     now = time.time() if now is None else now
     observed = observe_work(root, now=now)
     sessions, jobs_map = observed["sessions"], observed["records"]
-    processes = process_table(root)
     session_names = set(sessions)
     lanes = _read_json(root / "conductor/lanes.json", {})
     live_ops: dict = {}
@@ -446,7 +445,7 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
     try:
         from lane_collector import collect_bob_lanes
 
-        bob_lanes = collect_bob_lanes(root, now=now, sessions=sessions, processes=processes)
+        bob_lanes = collect_bob_lanes(root, now=now, observed=observed)
     except Exception:
         bob_lanes = dict(live=[], finished_recent=[], inspection=dict(screens_available=False, processes_available=False))
 
@@ -465,7 +464,7 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
         "inspection": observed["inspection"],
         "screen_lanes": screens,
         "queue_counts": queue_counts,
-        "queue_jobs": {key: rows[:24] for key, rows in queue.items()},
+        "queue_jobs": {key: rows if key in ("queued", "claimed") else rows[:24] for key, rows in queue.items()},
         "provider_health": provider_health(root, now),
         "provider_health_sources": ["conductor/webchat/sessions/provider-health.json", "logs/webchat-failover.log"],
         "lane_locks": {

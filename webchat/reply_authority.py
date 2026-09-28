@@ -1,5 +1,6 @@
 """Server-owned operational statements; model prose cannot acknowledge effects."""
 import re
+import time
 
 from live_status_snapshot import build_live_status_snapshot
 from chat_intent import PROJECT, blocked_scopes, hold_reply, projects, state_for
@@ -310,11 +311,20 @@ def correcting_status(text, conversation):
     return bool(previous and STATUS_QUESTION.search(previous[-1]))
 
 
-def operational_reply(root, provider, text=""):
-    return format_operational_reply(build_live_status_snapshot(root), provider, text)
+def operational_reply(root, provider, text="", *, observation=None, redact=lambda value: value):
+    from status_observation import redact_snapshot, snapshot_digest
+    started = time.time()
+    snap = redact_snapshot(build_live_status_snapshot(root, now=started), redact)
+    finished = time.time()
+    content = format_operational_reply(snap, provider, text)
+    if observation is not None:
+        observation.update(schema_version=1, observed_from=started, observed_until=finished,
+                           question=text, renderer_provider=provider,
+                           snapshot=snap, snapshot_sha256=snapshot_digest(snap))
+    return content
 
 
-def enforce(root, text, answer, conversation=None):
+def enforce(root, text, answer, conversation=None, *, observation=None, redact=lambda value: value):
     content = answer["content"]
     from worker_assignment import requested_workers
     if requested_workers(text, conversation):
@@ -330,7 +340,7 @@ def enforce(root, text, answer, conversation=None):
     if CHAT_STYLE.match(PREAMBLE.sub("", text.strip())):
         return "Got it."
     if STATUS_QUESTION.search(text) or correcting_status(text, conversation):
-        content = operational_reply(root, answer["provider"], text)
+        return operational_reply(root, answer["provider"], text, observation=observation, redact=redact)
     else:
         from dispatch_receipts import claims_dispatch, NO_DISPATCH
         sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)

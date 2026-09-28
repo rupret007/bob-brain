@@ -31,3 +31,38 @@ job kinds. Original sessions, completed results and draft worktrees are preserve
 Validation and live results are recorded under conductor/reviews/WEBBOB-INTEGRATE-*
 and conductor/LOOP-INTEGRATE-LIVE-0927.txt after the gate and reply review succeed.
 No merges, undrafts, force-pushes or STOP-WEBBOB files are part of this release.
+
+## Status observation repair, 2143 (offline only)
+
+Status replies now save a `status_observation` with the exact redacted snapshot
+used to render their text. The versioned record includes observation start/end
+times, the snapshot's microsecond UTC timestamp and SHA-256, rendering inputs,
+and conversation/request/message IDs. It shares the reply's private, fsynced
+atomic conversation write and authenticated history response. Retries, restart,
+and later worker transitions preserve the original record; historical replies
+without observations are not backfilled. Model metadata cannot supply it.
+
+Worker rows and lane details share one process/journal sample, including failed
+inspections. All pending and claimed assignments remain in the saved evidence;
+prompt encoding still applies its existing size limit. The integration gate
+checks the saved observation's identity, timestamps, digest, rendered text,
+counts, tasks, models and process evidence. Before/after samples are timestamped
+diagnostics. The gate preserves the reply observation in its artifact and checks
+that authenticated history still contains the same record after jobs finish.
+Receipt ownership and actual execution/completion checks remain strict.
+
+Offline validation: **319 webchat tests, 129 services tests, 56/56 evals** passed.
+JavaScript quiet-hours and result-dialog checks, JavaScript syntax, Python
+compilation and whitespace checks passed. Regressions cover the 1→3→5 startup
+race, queued/claimed/running transitions, reused PIDs, redaction, malformed or
+foreign evidence, write failure, restart/retry, correction/fallback replies,
+and the existing bounded lane greeting and concise linked completion behavior.
+Services tests ran from a hash-verified source copy inside this worktree, with
+temporary repositories beside that copy so the real macOS sandbox continued to
+protect the code directory. An initial run with temporary repositories under
+the protected code directory correctly blocked its commit/push fixture.
+
+**READY for review of this code repair.** No new live attempt ran; the prior
+three rollbacks remain failures. Full live replay, completion review and the
+authenticated report-link browser check still require a separately authorized
+release. This is not a LIVE PASS.

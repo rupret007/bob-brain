@@ -180,6 +180,7 @@ def collect_bob_lanes(
     now: float | None = None,
     sessions: dict[str, str] | None = None,
     processes: dict | None = None,
+    observed: dict | None = None,
     finished_window: float = FINISHED_WINDOW_SECONDS,
 ) -> dict:
     """Parse lane-* screens and ps, map prompts/logs/reviews; include recent finished lanes."""
@@ -187,15 +188,22 @@ def collect_bob_lanes(
 
     root = Path(root).resolve()
     now = time.time() if now is None else now
-    screen_sample = sessions if sessions is not None else _screen_sessions(root)
-    sessions_map = screen_sample or {}
-    if processes is None:
-        from worker_activity import process_table
+    if observed is not None:
+        # A status reply and its lane details must share one worker sample,
+        # including failed inspections; never retry into a different state.
+        sessions_map, work = observed["sessions"], observed["work"]
+        inspection = {key: observed["inspection"][key] for key in ("screens_available", "processes_available")}
+    else:
+        screen_sample = sessions if sessions is not None else _screen_sessions(root)
+        sessions_map = screen_sample or {}
+        if processes is None:
+            from worker_activity import process_table
 
-        processes = process_table(root)
-    jobs_map, _ = read_job_journals(root)
-    claimed = _queue_jobs(jobs_map, set(sessions_map))["claimed"]
-    work = collect_work(sessions_map, claimed, processes, now, root=root)
+            processes = process_table(root)
+        jobs_map, _ = read_job_journals(root)
+        claimed = _queue_jobs(jobs_map, set(sessions_map))["claimed"]
+        work = collect_work(sessions_map, claimed, processes, now, root=root)
+        inspection = dict(screens_available=screen_sample is not None, processes_available=processes is not None)
     work_by_screen = {row["screen"]: row for row in work if (row.get("screen") or "").startswith("lane-")}
     prompts = list((root / "logs").glob("*prompt*.txt"))
     logs = [path for path in (root / "logs").glob("*.log") if "prompt" not in path.name.lower()]
@@ -247,10 +255,7 @@ def collect_bob_lanes(
     finished_recent.sort(key=lambda row: row.get("finished_at") or 0, reverse=True)
     return dict(
         captured_at=now,
-        inspection=dict(
-            screens_available=screen_sample is not None,
-            processes_available=processes is not None,
-        ),
+        inspection=inspection,
         live=live,
         finished_recent=finished_recent,
     )

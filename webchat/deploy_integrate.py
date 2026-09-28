@@ -167,10 +167,12 @@ def main():
                 api_jobs = {r["id"]: r for r in client.call("/api/jobs")["dispatch"]}
                 require(all(i in api_jobs for i in ids), "Receipt jobs missing from authenticated Jobs API")
                 exchange.update(after=answer["content"], provider=answer["provider"], request_id=answer["request_id"],
+                                message_id=answer["id"],
                                 task_ids=ids, errors=errors, pass_check=not errors, turn_started_at=turn_started,
                                 receipts=[task_queue.tasks(root)[i] for i in ids],
-                                observations={"before": {k: before[k] for k in ("work", "work_counts", "queue_counts", "queue_jobs", "inspection")},
-                                              "after": {k: after[k] for k in ("work", "work_counts", "queue_counts", "queue_jobs", "inspection")}})
+                                observations={"reply": answer.get("status_observation"),
+                                              "before": {k: before[k] for k in ("captured_at", "work", "work_counts", "queue_counts", "queue_jobs", "inspection")},
+                                              "after": {k: after[k] for k in ("captured_at", "work", "work_counts", "queue_counts", "queue_jobs", "inspection")}})
                 save()
                 require(not errors, source["source_id"] + " turn " + str(index + 1) + ": " + "; ".join(errors))
                 verify_executions(root, evidence["task_ids"])
@@ -208,6 +210,9 @@ def main():
             for exchange in source["exchanges"]:
                 receipt = next(m for m in messages if m.get("request_id") == exchange["request_id"] and m.get("role") == "assistant")
                 require(receipt["content"] == exchange["after"], "Original reply was rewritten after dispatch")
+                require(receipt["id"] == exchange["message_id"] and
+                        receipt.get("status_observation") == exchange["observations"]["reply"],
+                        "Original status observation was rewritten or lost")
             for message in messages:
                 if message.get("task_status"):
                     errors = style_errors(message["content"], 1 + len(message.get("task_ids", [])))

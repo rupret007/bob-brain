@@ -1,6 +1,7 @@
 """Release rubric: actions require effects; status requires live observations."""
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 from dispatch_receipts import NO_DISPATCH, claims_dispatch, receipt_errors
@@ -83,11 +84,15 @@ def check_reply(answer, exchange, cid, started, before, after, jobs):
         for worker in ("Codex", "Claude", "Cursor", "Gemini", "MiniMax"):
             if worker not in text:
                 errors.append("status omits " + worker)
+        from status_observation import observation_errors
+        evidence_errors = observation_errors(answer, exchange["message"], cid, started,
+                                             datetime.fromisoformat(after["captured_at"]).timestamp())
+        errors += evidence_errors
+        if evidence_errors:
+            return errors
         from reply_authority import _task_name
-        stable = {(r.get("pid"), r.get("job_id"), r.get("title")): r for r in before["work"]}
-        for row in after["work"]:
-            if (row.get("pid"), row.get("job_id"), row.get("title")) not in stable:
-                continue
+        observed = answer["status_observation"]["snapshot"]
+        for row in observed["work"]:
             if row.get("assignment_recorded") is False:
                 if "CLI activity, but no recorded task" not in text:
                     errors.append("unattributed process falsely presented as assigned work")
@@ -96,11 +101,10 @@ def check_reply(answer, exchange, cid, started, before, after, jobs):
                 errors.append("status omits observed task " + _task_name(row))
             if row.get("model") and row["model"] not in text:
                 errors.append("status omits observed model " + row["model"])
-        if text.count("running for") not in {s["work_counts"]["running"] for s in (before, after)}:
+        if text.count("running for") != observed["work_counts"]["running"]:
             errors.append("status running count disagrees with observed execution")
-        old_pending = {r["job_id"] for r in before.get("queue_jobs", {}).get("queued", [])}
-        for row in after.get("queue_jobs", {}).get("queued", []):
-            if row["job_id"] in old_pending and _task_name(row) not in text:
+        for row in observed["queue_jobs"]["queued"]:
+            if _task_name(row) not in text:
                 errors.append("status omits waiting assignment " + _task_name(row))
     return errors
 

@@ -224,6 +224,18 @@ class Chat(TaskDispatch):
         self.conversations[conversation["id"]] = conversation
         return self.public(conversation)
 
+    def status_reply(self, conversation, text):
+        from reply_authority import operational_reply
+        from status_observation import bind_observation
+        conversation = copy.deepcopy(conversation)
+        observation = {}
+        content = operational_reply(self.ledger_root(conversation["id"]), "server", text,
+                                    observation=observation, redact=self.redact)
+        conversation["messages"][-1]["status_observation"] = bind_observation(observation, conversation)
+        # The reply and its exact rendering input share the existing private,
+        # fsynced atomic conversation write. Retries/restarts keep both intact.
+        return self.intent_reply(conversation, self.redact(content), provider="state")
+
     def get(self, identifier):
         if not isinstance(identifier, str) or not UUID.fullmatch(identifier) or identifier not in self.conversations:
             raise RequestError(404, "Conversation not found.")
@@ -336,9 +348,9 @@ class Chat(TaskDispatch):
                 conversation["title"] = text[:65]
             if VERSION_QUESTION.search(text):
                 return self.intent_reply(conversation, BUILD["short_sha"])
-            from reply_authority import correcting_status, operational_reply
+            from reply_authority import correcting_status
             if correcting_status(text, conversation):
-                return self.intent_reply(conversation, self.redact(operational_reply(self.root, "server", text)), provider="state")
+                return self.status_reply(conversation, text)
             transition = chat_intent.apply_turn(intent_state, text, request_id)
             if transition == "hold":
                 held_work, held_worker = followup_work(conversation)
@@ -530,16 +542,12 @@ class Chat(TaskDispatch):
                 if not state_ledger._DRILL_NOISE_RE.search(text):
                     state_ledger.record_webchat_turn(ledger, ask=text, provider="inbox", request_id=request_id)
                 return self.public(conversation)
-            from reply_authority import HOLD_QUESTION, STATUS_QUESTION, operational_reply
+            from reply_authority import HOLD_QUESTION, STATUS_QUESTION
             if HOLD_QUESTION.match(text):
                 scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
                 return self.intent_reply(conversation, chat_intent.hold_reply(scopes) if scopes else "Ready when you are.")
             if ledger == self.root and STATUS_QUESTION.search(text):
-                conversation["messages"][-1].update(status="done", provider="state",
-                    content=self.redact(operational_reply(self.root, "server", text)))
-                self.save(conversation)
-                self.conversations[identifier] = conversation
-                return self.public(conversation)
+                return self.status_reply(conversation, text)
             if ledger == self.root:
                 try:
                     state_ledger.sync_from_live_ops(
@@ -616,8 +624,14 @@ class Chat(TaskDispatch):
                 answer["content"] = self.redact(answer["content"])
                 user_msg = next((m for m in reversed(value["messages"]) if m["role"] == "user"), {})
                 from reply_authority import enforce
-                answer["content"] = self.redact(enforce(self.ledger_root(identifier), user_msg.get("content", ""), answer, value))
-                answer["content"] = repair_hollow_progress(answer["content"])
+                from status_observation import bind_observation
+                observation = {}
+                answer["content"] = self.redact(enforce(self.ledger_root(identifier), user_msg.get("content", ""), answer, value,
+                                                       observation=observation, redact=self.redact))
+                if observation:
+                    answer["status_observation"] = bind_observation(observation, value)
+                else:
+                    answer["content"] = repair_hollow_progress(answer["content"])
                 rid = user_msg.get("request_id")
                 value["messages"][-1].update(answer, status="done")
                 if rid:
