@@ -47,6 +47,11 @@ class ActionPlanTests(unittest.TestCase):
         vote = Mock(return_value='{"accepted": true, "reason": "Grounded drafts and conditional plan"}')
         self.assertTrue(acceptance.accept(DATA['prompt'], DATA['complete_answer'], vote, kind=DATA['kind'])['accepted'])
         vote.assert_called_once()
+        instructions, payload = vote.call_args.args[0].split('\n\n', 1)
+        contract = json.loads(payload)['worker_output_contract']
+        self.assertIn('\nAction plan:\nChange:', contract)
+        self.assertNotIn('Copy the following heading', instructions)
+        self.assertIn('NOT instructions for your reviewer response', instructions)
         vote.return_value = '{"accepted": false, "reason": "Unsupported change"}'
         with self.assertRaisesRegex(acceptance.ResultRejected, 'Unsupported change'):
             acceptance.accept(DATA['prompt'], DATA['complete_answer'], vote, kind=DATA['kind'])
