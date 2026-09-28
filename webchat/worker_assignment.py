@@ -85,7 +85,7 @@ def plan(root, conversation, text, workers):
     # Some ongoing jobs are external CLI workers, observed outside the journal.
     known = {row["id"] for row in candidates}
     for row in observed["work"]:
-        if row["state"] != "running" or row.get("job_id") in known or not row.get("task") or not row.get("project"):
+        if row["state"] != "running" or row.get("job_id") in known or not (row.get("task") or row.get("title")) or not row.get("project"):
             continue
         if row.get("job_id") and observed["records"].get(row["job_id"], {}).get("kind") in ("audit", "test-writing", "planning", "review", "research", "eval-grading"):
             continue
@@ -93,7 +93,10 @@ def plan(root, conversation, text, workers):
             continue
         if blocked_scopes(state, [row["project"]]):
             continue
-        candidates.append(dict(id=None, prompt=row["task"], project=row["project"]))
+        task = row.get("task") or ("Observed active lane: " + row["title"] +
+                                   ". Its original task prompt was not recorded; inspect the project's current code and "
+                                   "state that limitation. Do not invent the lane's exact assignment.")
+        candidates.append(dict(id=None, prompt=task, project=row["project"]))
     if not candidates:
         raise ValueError("I couldn't assign those workers: there is no identifiable ongoing job permitted by the current holds. Name a project and task to start.")
     health = root / "conductor/lanes.json"

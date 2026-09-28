@@ -141,3 +141,15 @@ class IntegratedSessions(SessionFixture):
         records = queue.tasks(self.root)
         self.assertEqual([records[i]["requested_worker"] for i in answer["task_ids"]], list(queue.MODEL_WORKERS))
         self.assertFalse(self.fake.calls)
+
+    def test_observed_active_project_lane_can_supply_missing_prompt_context(self):
+        observed = dict(records={}, work=[dict(state="running", worker="codex", project="Web Bob",
+                                               title="Web Bob integration", task=None)])
+        with patch("worker_assignment.observe_work", return_value=observed):
+            answer = self.send("Use Gemini and MiniMax for ongoing jobs")
+        records = queue.tasks(self.root)
+        self.assertEqual(len(answer["task_ids"]), 2)
+        for identifier in answer["task_ids"]:
+            self.assertIn("original task prompt was not recorded", records[identifier]["prompt"])
+            self.assertIn("Project: Web Bob", records[identifier]["prompt"])
+            self.assertIn(identifier, answer["content"])
