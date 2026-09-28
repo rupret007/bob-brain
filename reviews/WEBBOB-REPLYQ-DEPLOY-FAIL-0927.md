@@ -31,7 +31,7 @@ fixtures did not cover. These are actual authenticated live replies:
 
 The “all LLMs now” answers also substituted readiness for actual utilization,
 then omitted tasks for several named workers. The simple automated style
-checker printed PASS for these; human rubric review overruled those results.
+checker printed PASS for these; Codex's rubric review overruled those results.
 Those automatic checks were insufficient and are not a release approval.
 
 ## Rollback and scope
@@ -42,7 +42,7 @@ and job-runner were restarted for deployment and rollback; unrelated screen
 identities were unchanged in both restart records. Local and public
 /api/version both show dff84e3 after rollback.
 
-The replay was interrupted when human review found the failure: 12 of 17 turns
+The replay was interrupted when Codex found the rubric failure: 12 of 17 turns
 had returned, and 5 were not attempted. No replay jobs were created. Original
 conversations were preserved; replay conversation IDs are in the evidence.
 No LOOP-REPLYQ-LIVE-0927.txt PASS handoff was written. No password was printed,
