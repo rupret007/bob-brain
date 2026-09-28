@@ -1,0 +1,111 @@
+{
+  "source": "WEBBOB-TEXTING-DEPLOYMENT-0927-attempt1.json",
+  "session_id": "b33fac25-3c8a-452d-8673-47d3a99dd92c",
+  "turn": 3,
+  "message": "Ok great works on all LLMs now?",
+  "bad_reply": "Codex is on \u201cWeb Bob: # lane-webbob-texting-deploy-0702\u201d (model not reported; running for 7 min); Gemini is on \u201cWeb Bob \u2014 Whole-repo audit and implementation plan\u201d (2 jobs waiting to run). MiniMax is on \u201cWeb Bob \u2014 Review and regression test-case drafts\u201d (2 jobs waiting to run). Claude and Cursor are idle. The job runner has 0 claimed and 4 queued jobs.",
+  "snapshot": {
+    "work": [
+      {
+        "title": "# lane-webbob-texting-deploy-0702",
+        "worker": "codex",
+        "model": null,
+        "state": "running",
+        "elapsed_seconds": 422,
+        "project": "Web Bob",
+        "task": "# lane-webbob-texting-deploy-0702"
+      }
+    ],
+    "work_counts": {
+      "running": 1,
+      "paused": 0,
+      "claimed": 0,
+      "unverified": 0
+    },
+    "inspection": {
+      "screens_available": true,
+      "processes_available": true,
+      "queue_available": true
+    },
+    "queue_counts": {
+      "queued": 4,
+      "claimed": 0,
+      "done": 218,
+      "failed": 41
+    },
+    "lane_locks": {
+      "codex": {
+        "state": "busy",
+        "cached_state": "ready",
+        "detail": "available"
+      },
+      "claude": {
+        "state": "ready",
+        "cached_state": "ready",
+        "detail": "available"
+      },
+      "cursor": {
+        "state": "ready",
+        "cached_state": "ready",
+        "detail": "available"
+      },
+      "gemini": {
+        "state": "ready",
+        "cached_state": "ready",
+        "detail": "available"
+      },
+      "minimax": {
+        "state": "ready",
+        "cached_state": "ready",
+        "detail": "available"
+      },
+      "mini": {
+        "state": "ready",
+        "cached_state": "ready",
+        "detail": "available"
+      }
+    },
+    "provider_health": {},
+    "screen_lanes": [],
+    "disk": {},
+    "queue_jobs": {
+      "queued": [
+        {
+          "state": "queued",
+          "bucket": "queued",
+          "worker": "minimax",
+          "model": null,
+          "title": "Web Bob \u2014 Review and regression test-case drafts",
+          "project": null
+        },
+        {
+          "state": "queued",
+          "bucket": "queued",
+          "worker": "gemini",
+          "model": null,
+          "title": "Web Bob \u2014 Whole-repo audit and implementation plan",
+          "project": null
+        },
+        {
+          "state": "queued",
+          "bucket": "queued",
+          "worker": "minimax",
+          "model": null,
+          "title": "Web Bob \u2014 Review and regression test-case drafts",
+          "project": null
+        },
+        {
+          "state": "queued",
+          "bucket": "queued",
+          "worker": "gemini",
+          "model": null,
+          "title": "Web Bob \u2014 Whole-repo audit and implementation plan",
+          "project": null
+        }
+      ],
+      "claimed": [],
+      "done": [],
+      "failed": []
+    }
+  }
+}

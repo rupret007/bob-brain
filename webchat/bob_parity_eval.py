@@ -106,9 +106,16 @@ def run_eval(root: Path | None = None) -> dict:
                         "lane_locks": {}, "provider_health": {}}
     status_line = format_operational_reply(status_snapshot, "server", "how's it going?")
     rows.append(_case("status reply skips robotic 'Yes —' prefix", not status_line.startswith("Yes")
-                       and "Codex is on “Review Web Bob replies” (gpt-fixture; running for 1 min)" in status_line))
+                       and "Codex is working on Review Web Bob replies" in status_line))
     rows.append(_case("status uses bounded sentences without dumps", len(status_line.split(". ")) <= 4
                        and "logs/" not in status_line and "lane-" not in status_line and " | " not in status_line))
+    from integration_rubric import style_errors
+    fixture = json.loads(Path(__file__).with_name("fixtures").joinpath("texting_diagdump_0810.json").read_text())
+    fixed = format_operational_reply(fixture["snapshot"], text=fixture["message"])
+    rows.append(_case("failed live texting status snapshot uses natural prose", fixed ==
+        "Codex is working on Web Bob. Gemini and MiniMax have work waiting to run. Claude and Cursor are idle."))
+    rows.append(_case("failed live diagnostic reply is rejected", "raw diagnostic dump" in style_errors(fixture["bad_reply"])))
+    rows.append(_case("fixed live status clears release style gate", not style_errors(fixed)))
     from task_dispatch import project_receipt
     receipt = project_receipt([dict(id="webchat-private-id", title="WebJam", status="queued", group_index=0, requested_worker="codex")])
     rows.append(_case("dispatch receipt cites task, worker and job ID", receipt == "I queued “WebJam” for Codex (job `webchat-private-id`)."))

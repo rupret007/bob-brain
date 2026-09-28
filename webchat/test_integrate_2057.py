@@ -331,8 +331,8 @@ class IntegratedSessions(SessionFixture):
         self.seed()
         self.send("Use Gemini and MiniMax for ongoing jobs")
         answer = self.send("What about Gemini and MiniMax?")
-        self.assertIn("Gemini is on", answer["content"])
-        self.assertIn("MiniMax is on", answer["content"])
+        self.assertIn("Gemini", answer["content"])
+        self.assertIn("MiniMax", answer["content"])
         self.assertIn("waiting to run", answer["content"])
         self.assertNotIn("ready", answer["content"])
 
@@ -429,7 +429,7 @@ class IntegratedSessions(SessionFixture):
         self.assertFalse(rows[0]["assignment_recorded"])
         with patch("live_status_snapshot.process_table", return_value=table):
             reply = self.send("What is working on what?")
-        self.assertIn("Codex has CLI activity, but no recorded task", reply["content"])
+        self.assertIn("Codex has activity I can't confirm yet", reply["content"])
         self.assertNotIn("running for", reply["content"])
         self.assertNotIn("Worker process", reply["content"])
 

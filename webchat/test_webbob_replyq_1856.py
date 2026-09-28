@@ -131,7 +131,8 @@ class Session8126301cTests(SessionFixture):
             reply = self.send("How’s it going?")
         self.assertEqual(reply["provider"], "state")
         self.assertFalse(reply["content"].startswith("Yes"))
-        self.assertEqual(reply["content"].count("running for"), 4)
+        self.assertIn("working on", reply["content"])
+        self.assertNotIn("running for", reply["content"])
 
 
 class Session65a5d782Tests(SessionFixture):
@@ -205,14 +206,14 @@ class OperationalReplyFormattingTests(unittest.TestCase):
 
     def test_running_workers_line_has_no_yes_prefix(self):
         text = format_operational_reply(self._snapshot(running=2), "server", "how's it going?")
-        self.assertTrue(text.startswith("Codex is on “Review Web Bob replies"))
-        self.assertEqual(text.count("running for 1 min"), 2)
+        self.assertTrue(text.startswith("Codex is working on Review Web Bob replies"))
+        self.assertNotIn("running for", text)
         self.assertNotIn("Yes", text)
 
     def test_single_running_worker_uses_singular_verb_with_no_yes_prefix(self):
         text = format_operational_reply(self._snapshot(running=1), "server", "how's it going?")
-        self.assertTrue(text.startswith("Codex is on “Review Web Bob replies"))
-        self.assertEqual(text.count("running for 1 min"), 1)
+        self.assertTrue(text.startswith("Codex is working on Review Web Bob replies"))
+        self.assertNotIn("running for", text)
 
     def test_fallback_task_has_no_log_dump_and_diagnostics_are_opt_in(self):
         snap = self._snapshot()
@@ -220,7 +221,7 @@ class OperationalReplyFormattingTests(unittest.TestCase):
                                log_path="logs/replies.log", last_log_line="Raw output " * 100)
         casual = format_operational_reply(snap, text="How's it going?")
         self.assertIn("Web Bob replies", casual)
-        self.assertIn("gpt-fixture", casual)
+        self.assertNotIn("gpt-fixture", casual)
         for value in ("logs/", "lane-", "8912", "Raw output", " | "):
             self.assertNotIn(value, casual)
         self.assertLessEqual(len(re.split(r"[.!?]\s+", casual)), 4)
@@ -233,8 +234,8 @@ class OperationalReplyFormattingTests(unittest.TestCase):
         snap["inspection"]["queue_available"] = False
         snap["lane_locks"]["claude"] = dict(state="busy")
         reply = format_operational_reply(snap, text="What's working on what?")
-        self.assertIn("Claude's last lane check was busy", reply)
-        self.assertIn("couldn't read the job queue", reply)
+        self.assertIn("Claude has activity I can't confirm yet", reply)
+        self.assertIn("A live check failed", reply)
         self.assertNotIn("idle", reply)
         self.assertNotIn("0 queued", reply)
 

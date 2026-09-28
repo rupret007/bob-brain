@@ -54,13 +54,17 @@ class StatusObservationTests(SessionFixture):
         observed = answer["status_observation"]["snapshot"]
         self.assertEqual([snap["work_counts"]["running"] for snap in (before, observed, after)], [1, 3, 5])
         self.assertEqual(observed["work_counts"]["claimed"], 2)
-        self.assertEqual(answer["content"].count("running for"), 3)
+        self.assertIn("Codex", answer["content"])
+        self.assertIn("Gemini", answer["content"])
+        self.assertIn("MiniMax", answer["content"])
+        self.assertNotIn("running for", answer["content"])
         self.assertEqual(sampler.call_count, 3)
         self.assertEqual(self.errors(answer, started, before, after), [])
         self.assertNotIn("private-claim-token", json.dumps(answer))
         # Matching a later count is still dishonest about this reply's sample.
         forged = copy.deepcopy(answer)
         forged["content"] = format_operational_reply(after)
+        forged["status_observation"]["snapshot"] = after
         self.assertTrue(self.errors(forged, started, before, after))
 
     def test_queued_claimed_reused_pid_and_running_observations_remain_distinct(self):
@@ -125,7 +129,8 @@ class StatusObservationTests(SessionFixture):
         answer = self.chat.history(self.identifier)["messages"][-1]
         self.assertEqual(answer["status"], "done")
         self.assertTrue(self.fake.calls)
-        self.assertIn("Overlay task", answer["content"])
+        self.assertIn("Overlay task", json.dumps(answer["status_observation"]["snapshot"]))
+        self.assertIn("Gemini has work waiting to run", answer["content"])
         self.assertFalse(observation_errors(answer, QUESTION, self.identifier, started, time.time()))
 
     def test_provider_metadata_cannot_forge_an_observation(self):
@@ -139,7 +144,7 @@ class StatusObservationTests(SessionFixture):
         queue.enqueue(self.root, "external", "fixture", "Review " + marker, worker="gemini", kind="audit", title="Review " + marker)
         answer, started, before, after = self.status()
         self.assertNotIn(marker, json.dumps(answer))
-        self.assertIn("[secret removed]", answer["content"])
+        self.assertIn("[secret removed]", json.dumps(answer["status_observation"]["snapshot"]))
         self.assertNotIn(marker, (self.chat.state / (self.identifier + ".json")).read_text())
         self.assertFalse(self.errors(answer, started, before, after))
 

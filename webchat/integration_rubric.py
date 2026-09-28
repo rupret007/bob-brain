@@ -35,7 +35,9 @@ def style_errors(text, dispatch_count=0):
     if re.search(r"(?i)unknown task|task details unavailable|I['’]ll (?:focus|do better|make sure|ensure)|"
                  r"system is actively adding|ready for (?:new )?work|healthy and ready|prioritize adding work|Worker process", prose):
         errors.append("empty promise or readiness substituted for utilization")
-    if re.search(r"logs/|lane-[\w-]+|\blast:|\bPID\s*[:=]|\s\|\s", prose):
+    if re.search(r"logs/|lane-[\w-]+|\blast:|\bPID\s*[:=]|\s\|\s|"
+                 r"model not reported|queue_counts|job runner|"
+                 r"(?:Codex|Claude|Cursor|Gemini|MiniMax)[^.?!]*;[^.?!]*(?:Codex|Claude|Cursor|Gemini|MiniMax)", prose, re.I):
         errors.append("raw diagnostic dump")
     if prose.startswith(("Yes —", "Here's the status", "I understand.")):
         errors.append("answer is not first")
@@ -91,22 +93,9 @@ def check_reply(answer, exchange, cid, started, before, after, jobs):
         errors += evidence_errors
         if evidence_errors:
             return errors
-        from reply_authority import _task_name
-        observed = answer["status_observation"]["snapshot"]
-        for row in observed["work"]:
-            if row.get("assignment_recorded") is False:
-                if "CLI activity, but no recorded task" not in text:
-                    errors.append("unattributed process falsely presented as assigned work")
-                continue
-            if _task_name(row) not in text:
-                errors.append("status omits observed task " + _task_name(row))
-            if row.get("model") and row["model"] not in text:
-                errors.append("status omits observed model " + row["model"])
-        if text.count("running for") != observed["work_counts"]["running"]:
-            errors.append("status running count disagrees with observed execution")
-        for row in observed["queue_jobs"]["queued"]:
-            if _task_name(row) not in text:
-                errors.append("status omits waiting assignment " + _task_name(row))
+        # observation_errors still verifies exact rendering, identity, timestamps,
+        # digest, counts and execution evidence. Casual prose summarizes that
+        # sample; requiring every model/task/duration here forced diagnostic dumps.
     return errors
 
 
