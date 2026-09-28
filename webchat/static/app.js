@@ -41,8 +41,6 @@ if ($("login-form")) {
       return `<pre class="code-block" tabindex="0"><button type="button" class="copy-code" aria-label="Copy code">Copy</button><code>${inner}</code></pre>`;
     });
     html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-    html = html.replace(/\[([^\]\n]+)\]\(\/api\/jobs\/result\?id=(webchat-[a-f0-9]{32})\)/g,
-      '<button type="button" class="job-result-link" data-job-id="$2">$1</button>');
     html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" rel="noopener noreferrer" target="_blank">$1</a>');
     html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     html = html.replace(/^### (.+)$/gm, "<h4 class=\"md-h\">$1</h4>");
@@ -67,18 +65,6 @@ if ($("login-form")) {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Request failed.");
     return result;
-  }
-  async function showJobResult(url, project = "Job result", task = "") {
-    $("report-title").textContent = project;
-    $("report-date").textContent = task;
-    $("report-body").textContent = "Loading…";
-    $("report").showModal();
-    try {
-      const result = await api(url);
-      $("report-title").textContent = result.project || project;
-      $("report-date").textContent = result.task || task;
-      $("report-body").textContent = result.text;
-    } catch (_) { $("report-body").textContent = "This result could not be loaded. Please try again."; }
   }
   function composerState() {
     $("send").disabled = busy || sending || !current;
@@ -331,11 +317,6 @@ if ($("login-form")) {
     setTimeout(() => document.addEventListener("click", close, true), 0);
   });
   $("messages")?.addEventListener("click", async (event) => {
-    const result = event.target.closest(".job-result-link[data-job-id]");
-    if (result) {
-      await showJobResult("/api/jobs/result?id=" + result.dataset.jobId);
-      return;
-    }
     const btn = event.target.closest(".copy-code");
     if (!btn) return;
     const code = btn.parentElement?.querySelector("code")?.textContent || "";
@@ -974,7 +955,14 @@ if ($("login-form")) {
         const result = jobElement("button", "job-result-link", "View result");
         result.type = "button";
         result.setAttribute("aria-label", `View result for ${job.project}: ${job.task}`);
-        result.addEventListener("click", () => showJobResult(job.result_url, job.project, job.task));
+        result.addEventListener("click", async () => {
+          $("report-title").textContent = job.project;
+          $("report-date").textContent = job.task;
+          $("report-body").textContent = "Loading…";
+          $("report").showModal();
+          try { $("report-body").textContent = (await api(job.result_url)).text; }
+          catch (_) { $("report-body").textContent = "This result could not be loaded. Please try again."; }
+        });
         footer.append(result);
       }
       const external = jobLink(job.external_result_url, "View result");

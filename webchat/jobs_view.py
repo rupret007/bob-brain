@@ -8,9 +8,8 @@ import time
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
-from lane_collector import collect_bob_lanes
 from live_status_snapshot import _job_bucket, _latest_jobs, observe_work, provider_health
-from worker_activity import WORKER_NAMES, process_table
+from worker_activity import WORKER_NAMES
 
 PROJECTS = ((r"web\s*bob|bob-brain", "Web Bob"), (r"web\s*jam", "WebJam"),
             (r"adopt\s*iq", "AdoptIQ"), (r"story\s*board|\bsb\b", "StoryBoard"), (r"\bshelf\b", "Shelf"))
@@ -145,36 +144,9 @@ def costs(root):
     return result
 
 
-def _lane_model_label(lane: dict) -> str:
-    worker = WORKER_NAMES.get(lane.get("llm")) or lane.get("llm_label") or "Model not reported"
-    model = plain(lane.get("model"), 80)
-    return f"{worker} · {model}" if model else worker
-
-
-def _lane_card(lane: dict) -> dict:
-    project = plain(lane.get("project"), 60) or "Project not specified"
-    task = plain(lane.get("task")) or plain(lane.get("screen", "").removeprefix("lane-").replace("-", " "))
-    task = task[:1].upper() + task[1:] if task else "Task details unavailable"
-    models = [_lane_model_label(lane)]
-    card = dict(
-        key=lane["screen"],
-        project=project,
-        task=task,
-        models=models,
-        state=lane.get("state") or "unverified",
-        elapsed_seconds=number(lane.get("elapsed_seconds")),
-        lane=True,
-    )
-    if lane.get("result_path"):
-        card["external_result_url"] = "/" + lane["result_path"]
-    return card
-
-
 def build_jobs_view(root: Path, *, now=None):
     now = time.time() if now is None else now
     observed = observe_work(root, now=now)
-    processes = process_table(root)
-    bob = collect_bob_lanes(root, now=now, sessions=observed["sessions"], processes=processes)
     records = {key: row for key, row in observed["records"].items() if not is_drill(row)}
     grouped = {}
     unconfirmed = 0
@@ -188,7 +160,6 @@ def build_jobs_view(root: Path, *, now=None):
                 continue
         key = work.get("screen") or work.get("job_id") or str(work.get("pid"))
         grouped.setdefault(key, []).append(work)
-    lane_cards = {lane["screen"]: _lane_card(lane) for lane in (bob.get("live") or [])}
     working = []
     for key, group in grouped.items():
         work = next((row for row in group if row["state"] == "running"), group[0])
@@ -201,23 +172,8 @@ def build_jobs_view(root: Path, *, now=None):
             if label not in models:
                 models.append(label)
         durations = [row["elapsed_seconds"] for row in group if number(row.get("elapsed_seconds")) is not None]
-        card = lane_cards.get(key)
-        if card:
-            card = dict(card)
-            if models:
-                card["models"] = models
-            card["state"] = work["state"]
-            if durations:
-                card["elapsed_seconds"] = round(max(durations))
-            if card.get("task") == "Task details unavailable" or record.get("title"):
-                card.update(labels(record, work))
-            working.append(card)
-        else:
-            working.append(dict(key=key, **labels(record, work), models=models, state=work["state"],
-                                elapsed_seconds=round(max(durations)) if durations else None))
-    for key, card in lane_cards.items():
-        if key not in grouped:
-            working.append(card)
+        working.append(dict(key=key, **labels(record, work), models=models, state=work["state"],
+                            elapsed_seconds=round(max(durations)) if durations else None))
     working.sort(key=lambda row: (row["state"] != "running", row["project"] == "Project not specified", row["project"], row["task"], row["key"]))
     finished = [row for row in records.values() if _job_bucket(row) in ("done", "failed", "cancelled", "canceled")]
     finished.sort(key=lambda row: number(row.get("finished_at")) or number(row.get("updated_at")) or number(row.get("timestamp")) or 0,
@@ -231,17 +187,6 @@ def build_jobs_view(root: Path, *, now=None):
                            result_url="/api/jobs/result?id=" + quote(record["job_id"], safe="") if has_result else None,
                            pr_url=safe_url(record.get("replacement_pr_url")) or safe_url(record.get("pr_url")),
                            external_result_url=safe_url(record.get("result_url"))))
-    for lane in bob.get("finished_recent") or []:
-        recent.append(dict(
-            key=lane["screen"],
-            project=plain(lane.get("project"), 60) or "Project not specified",
-            task=plain(lane.get("task")) or lane["screen"].removeprefix("lane-").replace("-", " "),
-            state="done",
-            finished_at=lane.get("finished_at"),
-            external_result_url=("/" + lane["result_path"]) if lane.get("result_path") else None,
-        ))
-    recent.sort(key=lambda row: number(row.get("finished_at")) or 0, reverse=True)
-    recent = recent[:5]
     health = provider_health(root, now)
     return dict(checked_at=now, inspection=observed["inspection"], working=working, recently_finished=recent,
                 details=dict(queued=sum(_job_bucket(row) == "queued" for row in records.values()),

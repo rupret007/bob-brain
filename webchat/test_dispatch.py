@@ -10,14 +10,6 @@ from test_webchat import Fixture
 
 
 class ChatDispatchTests(Fixture):
-    def test_plain_review_phrases_start_real_jobs(self):
-        for text, worker in (("review PR 161", "auto"), ("Claude review PR #161", "claude")):
-            reply = self.chat.submit(self.identifier, text, str(uuid.uuid4()))
-            row = queue.tasks(self.root)[reply["messages"][-1]["task_id"]]
-            self.assertEqual(row["requested_worker"], worker)
-            self.assertIn("161", row["prompt"])
-        self.assertFalse(self.fake.calls)
-
     def submit(self, message="Review the supplied evidence: queued jobs have no consumer.", worker=None):
         return self.chat.submit(self.identifier, message, str(uuid.uuid4()), worker=worker)
 
@@ -42,15 +34,12 @@ class ChatDispatchTests(Fixture):
         row = queue.tasks(self.root)[receipt["task_id"]]
         self.assertEqual(row["status"], "queued")
         self.assertIn(row["id"], receipt["content"])
-        self.assertEqual(receipt["task_id"], row["id"])
-        original = receipt["content"]
         self.assertFalse(self.fake.calls)
         claim = queue.claim(self.root, "gemini")
         queue.transition(self.root, claim["id"], claim["claim_token"], "running")
         self.chat.reconcile_tasks()
         receipt = self.chat.history(self.identifier)["messages"][-1]
-        self.assertEqual(receipt["content"], original)
-        self.assertEqual(receipt["action_card"]["state"], "running")
+        self.assertEqual(receipt["content"], "Started on Gemini — job " + row["id"] + ".")
         self.assertEqual(receipt["action_card"]["worker"], "gemini")
 
     def test_explicit_file_write_uses_a_tool_worker(self):
@@ -59,9 +48,9 @@ class ChatDispatchTests(Fixture):
         self.assertEqual(row["kind"], "artifact")
         self.assertIsNotNone(queue.claim(self.root, "claude"))
 
-    def test_api_writes_and_outside_reads_are_refused_before_saving_dispatch_intent(self):
+    def test_api_file_requests_are_refused_before_saving_dispatch_intent(self):
         for worker in ("minimax", "gemini"):
-            for prompt in ("write hello to /tmp/wb-proof.txt", "Read /tmp/evidence.txt"):
+            for prompt in ("write hello to /tmp/wb-proof.txt", "Review services/dispatch_worker.py"):
                 with self.subTest(worker=worker, prompt=prompt):
                     value = self.submit("start a job: " + prompt, worker=worker)
                     message = value["messages"][-1]
@@ -93,9 +82,8 @@ class ChatDispatchTests(Fixture):
                 row = queue.tasks(self.root)[value["messages"][-1]["task_id"]]
                 self.assertEqual(row["kind"], "inspection")
                 value = self.submit(prompt, worker="minimax")
-                report = queue.tasks(self.root)[value["messages"][-1]["task_id"]]
-                self.assertEqual(report["kind"], "review")
-                self.assertEqual(report["requested_worker"], "minimax")
+                self.assertEqual(value["messages"][-1]["action_card"]["state"], "refused")
+                self.assertNotIn("dispatch_intent", value["messages"][-1])
 
     def test_answer_rejection_delivers_one_failed_result_after_restart(self):
         self.submit(worker="minimax")
@@ -112,7 +100,7 @@ class ChatDispatchTests(Fixture):
             results = [message for message in messages if message.get("task_status")]
             self.assertEqual(len(results), 1)
             self.assertEqual(results[0]["task_status"], "failed")
-            self.assertIn("failed after 1 attempts on MiniMax", results[0]["content"])
+            self.assertIn("failed after 1 attempts on minimax", results[0]["content"])
             self.assertIn("unrelated answer", results[0]["content"])
             self.assertNotIn("finished on", results[0]["content"])
             card = next(message["action_card"] for message in messages if message.get("action_card"))
@@ -121,11 +109,11 @@ class ChatDispatchTests(Fixture):
         finally:
             replacement.close()
 
-    def test_max_mode_api_file_package_queues_a_repository_report(self):
+    def test_max_mode_api_file_package_is_rejected_before_any_enqueue(self):
         value = self.submit("Max mode: review.\n[minimax] Read services/worker.py.\n[gemini] Analyze supplied evidence.")
-        self.assertEqual(value["messages"][-1]["action_card"]["state"], "queued")
-        rows = list(queue.tasks(self.root).values())
-        self.assertEqual({r["requested_worker"]: r["kind"] for r in rows}, {"minimax": "review", "gemini": "analysis"})
+        self.assertEqual(value["messages"][-1]["action_card"]["state"], "refused")
+        self.assertIn("API-only", value["messages"][-1]["content"])
+        self.assertFalse(queue.tasks(self.root))
 
     def test_natural_requests_have_short_server_confirmed_receipts(self):
         for text, prompt, worker in (
@@ -138,10 +126,8 @@ class ChatDispatchTests(Fixture):
                 receipt = self.submit(text)["messages"][-1]
                 row = queue.tasks(self.root)[receipt["task_id"]]
                 self.assertEqual((row["prompt"], row["requested_worker"]), (prompt, worker))
-                self.assertTrue(receipt["content"].startswith("I queued “"))
-                self.assertIn(prompt.strip(" .?!"), receipt["content"])
-                self.assertIn("Claude" if worker == "claude" else "next available worker", receipt["content"])
-                self.assertIn(row["id"], receipt["content"])
+                label = "Queued for Claude" if worker == "claude" else "Queued"
+                self.assertEqual(receipt["content"], label + " — job " + row["id"] + ".")
         self.assertEqual(len(queue.tasks(self.root)), 5)
         self.assertFalse(self.fake.calls)
 
@@ -297,9 +283,7 @@ class ChatDispatchTests(Fixture):
             messages = replacement.history(original)["messages"]
             results = [m for m in messages if m.get("task_status") == "succeeded"]
             self.assertEqual(len(results), 1)
-            self.assertIn(task["result"].rstrip("."), results[0]["content"])
-            from jobs_view import result_text
-            self.assertEqual(result_text(self.root, task["id"])["text"], task["result"])
+            self.assertIn(task["result"], results[0]["content"])
             self.assertEqual(replacement.history(second)["messages"], [])
             self.assertIsNotNone(queue.tasks(self.root)[task["id"]]["delivered_at"])
         finally:

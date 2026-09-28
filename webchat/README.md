@@ -59,47 +59,10 @@ tools; success requires the server to verify the changed file and its contents.
 
 Named multi-project requests create one durable job per project. For example,
 `prioritize Web Bob, WebJam, AdoptIQ, StoryBoard` saves the order; `push everything
-to the max and fix anything you find` queues four project jobs. Each receipt sentence
-names the project and requested worker; job IDs stay in structured job data. Assignment prefers ready
+to the max and fix anything you find` queues four project jobs. Each reply line
+names the project, requested worker and real job ID. Assignment prefers ready
 compatible lanes and accounts for existing claims and queued work. Coding jobs
-use Codex/Cursor; Gemini and MiniMax produce repository reports and proposed patches.
-
-“Remember you can use Gemini and MiniMax for the ongoing jobs” now assigns real
-jobs: Gemini gets a whole-repository audit and plan, and MiniMax gets a review
-with regression test drafts. The server names each task, worker and durable job
-ID after saving it. Existing coding claims continue unchanged. Missing work,
-holds, maintenance or unavailable lanes get an honest explanation, never a
-readiness-only acknowledgement. A queued receipt means waiting for runner
-capacity; a started receipt requires a recorded worker claim.
-
-When no permitted ongoing job or identified project lane remains, matching
-webchat and dispatcher deployment pins can identify the running Web Bob Git
-checkout for these API reports. The assignments explicitly say no current task
-or execution is confirmed. This fallback only supplies Web Bob repository
-context to API workers; project/global holds, maintenance and provider
-availability still apply. Missing or mismatched pins cannot supply context.
-`webchat/build_info.py` is a tracked source module: `CODE_ROOT` comes from its
-resolved `__file__`, never a generated manifest or the persistent `BOB_ROOT`.
-Git must resolve a real checkout and find that module in HEAD. Normal checkouts,
-linked worktrees (`.git` files), and tracked nested code directories are supported;
-an untracked rollback/archive under another repository cannot borrow its identity.
-The pins at `conductor/state/webchat-code-root` and `dispatch-code-root` must
-both contain absolute paths resolving to that running code directory (including
-the code subdirectory in a nested layout). Deployment writes absolute paths with
-a trailing newline; absolute symlink aliases are accepted, relative paths are
-rejected because the services can start from different working directories.
-An unverified `lane-integrate-deploy-0204` screen with no project, repository or
-task does not supply project context or block this fallback. The attempt2
-regressions assert those observed fields before checking real Gemini `audit`
-and MiniMax `test-writing` jobs, while preserving Barker and Wildflower holds.
-
-Named API requests also support audits, planning, research, repository reviews,
-test-case writing and eval grading. Gemini job calls use `gemini-2.5-pro`;
-research enables `google_search`. MiniMax uses `MiniMax-M2.7`. The runner supplies
-bounded tracked repository evidence, omitting credentials, links and private
-runtime files. Accepted reports and fenced proposed patches are saved under
-`conductor/reviews/api-workers/`; API workers never deploy, apply changes or
-resolve conflicts. Status and Jobs show the task and exact executing model.
+use Codex/Cursor; API-only workers keep their existing capability limits.
 
 Conversation files also save explicit holds and the latest permission transition.
 `hold off on Web Bob` blocks new submissions for that project; `go`, `resume`, or
@@ -118,7 +81,7 @@ are excluded. Open screens without a confirmed worker and unavailable checks are
 reported as unverified. A running process proves activity, not forward progress;
 an exact model variant is shown only when present in the process arguments.
 Task labels come from queue titles/projects or readable screen names, never raw
-process prompts. Missing task details use a readable project or lane label; missing exact model metadata stays unreported. Internal job IDs, screen
+process prompts. Unknown task details stay unknown. Internal job IDs, screen
 names, PIDs and finished-job history are shown only when requested. Ordinary chat
 never recommends special job syntax.
 
@@ -143,8 +106,7 @@ Max mode: review this design and supplied evidence ...
 [mini] Run services/test_services.py.
 ```
 
-API report packages receive a server-collected repository snapshot. Claude and
-answer-only analysis packages still need evidence in the request.
+API and Claude analysis packages need evidence in the request; they cannot inspect files.
 Coding packages own separate production/test files on private draft branches.
 Local commits are reported for review; max mode does not integrate or publish
 them. Mini accepts existing `services/test_*.py` or `webchat/test_*.py` suites,
@@ -192,10 +154,9 @@ CLI slot falls through to the next provider. Handback: `conductor/handback/`
 `review PR #161`, and `have Claude review this design` queue durable tasks without
 a second confirmation. `go` accepts the most recent clear work proposal; an
 ambiguous request gets one short question. Ordinary answers have no job footer.
-Receipts say, for example, `I queued “Review PR #161” for Claude.` only after
-the durable write. They remain unchanged at their original timestamps.
-Structured job data records actual claims and execution; a separate completion
-message names the actual worker and links verified project results.
+Receipts say `Queued — job <id>.` after the durable write, or
+`Queued for Claude — job <id>.` for a named worker. They update to
+`Started on Claude — job <id>.` only after the queue records that worker's claim.
 The job runner launches work as capacity becomes available; nothing merges
 automatically. Retransmitting the same request ID does
 not duplicate work. The server saves intent before queue writes and acknowledges

@@ -62,47 +62,6 @@ class DispatchTests(unittest.TestCase):
             queue.enqueue(self.root, "conversation", "one", "Different request")
         self.assertEqual(len(queue.tasks(self.root)), 1)
 
-    def test_project_workers_persist_separate_repositories_and_draft_branches_before_execution(self):
-        catalog = {}
-        names = ("WebJam", "AdoptIQ", "StoryBoard", "Fantasy Football")
-        def git(repo, *args):
-            return subprocess.check_output(["git", "-C", str(repo), *args], text=True, stderr=subprocess.DEVNULL).strip()
-        for name in names:
-            repo = self.root / name
-            repo.mkdir()
-            git(repo, "init", "-b", "main")
-            (repo / "project.txt").write_text(name)
-            git(repo, "add", "project.txt")
-            git(repo, "-c", "user.name=Test", "-c", "user.email=test@localhost", "commit", "-m", "Initial")
-            catalog[name] = dict(repo=str(repo), remote="owner/project")
-        (self.core / "services").mkdir()
-        (self.core / "services/projects.json").write_text(json.dumps(catalog))
-        seen = []
-        def work(worker, prompt, **kwargs):
-            current = next(row for row in queue.tasks(self.root).values() if row["status"] == "running")
-            self.assertTrue(current["execution_started_at"])
-            self.assertEqual(current["worktree"], str(kwargs["cwd"]))
-            self.assertEqual(current["branch"], "draft/" + current["id"])
-            self.assertEqual(Path(current["repo"]), Path(catalog[current["project"]]["repo"]).resolve())
-            self.assertEqual((kwargs["cwd"] / "project.txt").read_text(), current["project"])
-            seen.append(current["worktree"])
-            return "Inspected the isolated fixture and verified the requested project."
-        with patch.object(dispatch_worker, "ask", side_effect=work), \
-                patch("jobs.external_webjam_lease", return_value=False):
-            for i, name in enumerate(names):
-                row = queue.enqueue(self.root, "conversation", name, "Improve " + name, kind="coding")
-                claim = queue.claim(self.root, ("codex", "cursor")[i % 2], identifier=row["id"])
-                self.assertEqual(dispatch_worker.execute(row["id"], claim["claim_token"]), 0,
-                                 queue.tasks(self.root)[row["id"]].get("error"))
-                self.assertEqual(queue.tasks(self.root)[row["id"]]["status"], "succeeded")
-        self.assertEqual(len(set(seen)), 4)
-
-    def test_queue_replay_cannot_add_publication_authority(self):
-        queue.enqueue(self.root, "conversation", "one", "Improve WebJam", kind="coding")
-        with self.assertRaises(ValueError):
-            queue.enqueue(self.root, "conversation", "one", "Improve WebJam", kind="coding", publish_project="WebJam")
-        self.assertIsNone(next(iter(queue.tasks(self.root).values()))["publish_project"])
-
     def test_only_allowed_workers_and_tool_routing(self):
         for worker in ("grok", "unknown", "Grok"):
             with self.assertRaises(ValueError):
@@ -383,7 +342,7 @@ class DispatchTests(unittest.TestCase):
                 answer = "Tomatoes grow best with enough sunlight and regular watering."
                 with patch.object(dispatch_worker, "ask", side_effect=[answer, review]) as ask:
                     self.assertEqual(dispatch_worker.execute(row["id"], row["claim_token"]), 1)
-                self.assertEqual(ask.call_count, 3 if review == "Not JSON" else 2)
+                self.assertEqual(ask.call_count, 2)
                 self.assertEqual(ask.call_args.kwargs["purpose"], "result-acceptance")
                 result = queue.tasks(self.root)[row["id"]]
                 self.assertEqual(result["status"], "failed")
@@ -391,7 +350,7 @@ class DispatchTests(unittest.TestCase):
                 self.assertEqual(result["rejected_result"], answer)
                 self.assertFalse((self.core / "state/task-runs" / row["id"] / "RESULT.md").exists())
 
-    def test_file_inspection_routes_to_tools_and_named_api_produces_report(self):
+    def test_file_inspection_routes_to_tools_and_api_selection_explains_limit(self):
         prompt = "Read services/dispatch_worker.py and summarize the failure path."
         row = queue.enqueue(self.root, "conversation", "inspection", prompt)
         self.assertEqual(row["kind"], "inspection")
@@ -399,9 +358,8 @@ class DispatchTests(unittest.TestCase):
             self.assertIsNone(queue.claim(self.root, worker))
         self.assertIsNotNone(queue.claim(self.root, "codex"))
         for worker in queue.API_WORKERS:
-            report = queue.enqueue(self.root, "conversation", worker, prompt, worker=worker)
-            self.assertEqual(report["kind"], "review")
-            self.assertIsNotNone(queue.claim(self.root, worker))
+            with self.assertRaisesRegex(ValueError, "API-only"):
+                queue.enqueue(self.root, "conversation", worker, prompt, worker=worker)
 
     def test_old_misclassified_file_task_fails_before_an_api_call(self):
         task = self.enqueue(worker="minimax")

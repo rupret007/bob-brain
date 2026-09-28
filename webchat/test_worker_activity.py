@@ -71,7 +71,7 @@ class WorkerActivityTests(unittest.TestCase):
         work = collect_work({}, [], processes, 10000)
         self.assertEqual([row["worker"] for row in work], ["codex", "cursor"])
         self.assertEqual(work[0]["model"], "gpt-fixture")
-        self.assertEqual(work[0]["title"], "Worker process")
+        self.assertEqual(work[0]["title"], "Task details unavailable")
 
     def test_open_screens_stopped_workers_and_zombies_do_not_claim_progress(self):
         processes = parse_processes(PS.replace("24:00 S+", "24:00 T+").replace("08:00 S+", "08:00 Z+"))

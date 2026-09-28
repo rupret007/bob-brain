@@ -56,22 +56,12 @@ def accept(prompt, answer, review):
         "BLOCKER: none means no blocker, not a failure. Evaluate only the assigned subtask in a max-mode package. "
         'Return only JSON with exactly {"accepted": true or false, "reason": "brief task-specific reason"}.\n\n'
         + json.dumps({"task": prompt, "answer": answer}, ensure_ascii=False))
-    for attempt in range(2):
-        try:
-            raw = review(instructions).strip()
-            raw = re.sub(r"\A```(?:json)?\s*\n(.*?)\n```\Z", r"\1", raw, flags=re.S)
-            verdict = json.loads(raw)
-            break
-        except json.JSONDecodeError as exc:
-            # Retry only the review format, never the coding task or an
-            # explicit rejection. A second malformed vote still fails closed.
-            if attempt:
-                raise ResultRejected("Result acceptance could not be verified (JSONDecodeError)") from exc
-            instructions = ("Your previous review did not return parseable JSON. Do not use tools, inspect files, "
-                            "or narrate progress. Evaluate the supplied task and answer again. "
-                            "Return ONLY a JSON object with accepted (boolean) and reason (string).\n\n" + instructions)
-        except Exception as exc:
-            raise ResultRejected("Result acceptance could not be verified (" + type(exc).__name__ + ")") from exc
+    try:
+        raw = review(instructions).strip()
+        raw = re.sub(r"\A```(?:json)?\s*\n(.*?)\n```\Z", r"\1", raw, flags=re.S)
+        verdict = json.loads(raw)
+    except Exception as exc:
+        raise ResultRejected("Result acceptance could not be verified (" + type(exc).__name__ + ")") from exc
     if (not isinstance(verdict, dict) or set(verdict) != {"accepted", "reason"}
             or type(verdict["accepted"]) is not bool or not isinstance(verdict["reason"], str)
             or not verdict["reason"].strip()):

@@ -18,7 +18,7 @@ _HOME = re.compile(r"/Users/[^\s\"']+")
 
 def _stamp(now: float | None = None) -> str:
     ts = now if now is not None else time.time()
-    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="microseconds")
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
 
 def _read_json(path: Path, default=None):
@@ -52,22 +52,20 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 
 def _screen_sessions(root: Path) -> dict[str, str] | None:
-    for _ in range(2):
-        try:
-            result = subprocess.run(["/usr/bin/screen", "-ls"], cwd=root,
-                                    capture_output=True, text=True, timeout=5)
-            text = (result.stdout or "") + (result.stderr or "")
-        except (OSError, subprocess.TimeoutExpired):
-            return None
-        if "No Sockets found" in text:
-            return {}
-        count = re.search(r"\b(\d+) Sockets? in\b", text)
-        sessions = {m.group(2): m.group(1) + "." + m.group(2) for m in _SCREEN_RE.finditer(text)}
-        if count and len(sessions) == int(count[1]):
-            return sessions
-        # Under concurrent screen probes a socket can be temporarily unreachable.
-        # Retry once; a partial listing cannot establish that the other lanes are idle.
-    return None
+    try:
+        result = subprocess.run(
+            ["/usr/bin/screen", "-ls"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        text = (result.stdout or "") + (result.stderr or "")
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if "Sockets in" not in text and "No Sockets found" not in text:
+        return None
+    return {m.group(2): m.group(1) + "." + m.group(2) for m in _SCREEN_RE.finditer(text)}
 
 
 def _latest_jobs(root: Path) -> dict[str, dict]:
@@ -189,7 +187,6 @@ def _queue_jobs(jobs_map: dict[str, dict], sessions: set[str], *, limit: int = 2
             "state": record.get("status") or record.get("state"),
             "bucket": bucket,
             "worker": _job_worker(record, sessions),
-            "model": record.get("model"),
             "recovery": (record.get("recovery") or "")[:160] or None,
             "journal": record.get("_journal"),
             "updated_at": record.get("updated_at") or record.get("timestamp"),
@@ -198,9 +195,6 @@ def _queue_jobs(jobs_map: dict[str, dict], sessions: set[str], *, limit: int = 2
             "started_at": record.get("started_at"),
             "claimed_at": record.get("claimed_at"),
             "launched_at": record.get("launched_at"),
-            "prompt": record.get("prompt"),
-            "project": record.get("project"),
-            "repo": record.get("repo"),
         }
         buckets[bucket].append(entry)
     for key in buckets:
@@ -302,13 +296,7 @@ def _tail_file(path: Path, count: int = 3) -> list[str]:
     if not path.is_file():
         return []
     try:
-        with path.open("rb") as handle:
-            handle.seek(0, 2)
-            size = handle.tell()
-            handle.seek(max(0, size - 16384))
-            if size > 16384:
-                handle.readline()
-            lines = [ln.strip() for ln in handle.read().decode("utf-8", "replace").splitlines() if ln.strip()]
+        lines = [ln.strip() for ln in path.read_text(errors="replace").splitlines() if ln.strip()]
     except OSError:
         return []
     return [_redact_line(ln) for ln in lines[-count:]]
@@ -334,30 +322,6 @@ def _lane_log_tails(root: Path, lanes: dict) -> dict[str, list[str]]:
         if lines:
             tails["svc-" + service] = lines
     return tails
-
-
-def recent_screen_logs(root, sessions, now):
-    """Read a bounded tail for each live lane/service, with freshness attached."""
-    rows = []
-    folder = root / "logs"
-    for screen in sessions:
-        if not screen.startswith(("lane-", "svc-")):
-            continue
-        name = re.sub(r"^(?:lane|svc)-", "", screen)
-        candidates = set(folder.glob(name + "*.log")) | set(folder.glob(screen + "*.log"))
-        if name == "webchat":
-            candidates.add(folder / "webchat-server.log")
-        available = []
-        for path in candidates:
-            try:
-                available.append((path.stat().st_mtime, path))
-            except OSError:
-                continue
-        if available:
-            modified, path = max(available)
-            rows.append(dict(screen=screen, name=name.replace("-", " "), path=str(path.relative_to(root)),
-                             age_seconds=max(0, int(now - modified)), lines=_tail_file(path, 2)))
-    return sorted(rows, key=lambda row: row["age_seconds"])
 
 
 def _plain_summary(
@@ -395,7 +359,7 @@ def observe_work(root: Path, *, now: float | None = None) -> dict:
     jobs_map, queue_meta = read_job_journals(root)
     queue = _queue_jobs(jobs_map, set(sessions), limit=len(jobs_map))
     return dict(records=jobs_map, sessions=sessions, queue=queue,
-                work=collect_work(sessions, queue["claimed"], processes, now, root=root),
+                work=collect_work(sessions, queue["claimed"], processes, now),
                 inspection=dict(screens_available=screen_sample is not None,
                                 processes_available=processes is not None,
                                 queue_available=queue_meta["available"]))
@@ -441,14 +405,6 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
     if now_line and re.search(r"\b(?:handback|ready) drill\b|\bdrill-[\w-]+", now_line, re.I):
         now_line = None
 
-    bob_lanes: dict = {}
-    try:
-        from lane_collector import collect_bob_lanes
-
-        bob_lanes = collect_bob_lanes(root, now=now, observed=observed)
-    except Exception:
-        bob_lanes = dict(live=[], finished_recent=[], inspection=dict(screens_available=False, processes_available=False))
-
     return {
         "captured_at": _stamp(now),
         "live_ops_source": live_ops_meta.get("source"),
@@ -459,12 +415,11 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
             processes_available=observed["inspection"]["processes_available"]
         ),
         "work": work,
-        "bob_lanes": bob_lanes,
         "work_counts": work_counts,
         "inspection": observed["inspection"],
         "screen_lanes": screens,
         "queue_counts": queue_counts,
-        "queue_jobs": {key: rows if key in ("queued", "claimed") else rows[:24] for key, rows in queue.items()},
+        "queue_jobs": {key: rows[:24] for key, rows in queue.items()},
         "provider_health": provider_health(root, now),
         "provider_health_sources": ["conductor/webchat/sessions/provider-health.json", "logs/webchat-failover.log"],
         "lane_locks": {
@@ -479,14 +434,11 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
             for lane in LANE_NAMES
         },
         "lane_log_tails": log_tails,
-        "recent_logs": recent_screen_logs(root, sessions, now),
         "service_health": services,
         "disk": disk,
         "instruction": (
             "When Jeff asks what workers, lanes, jobs, or services are doing, answer from this "
-            "snapshot in short plain English: list each bob_lanes.live row (lane screen, llm/model, project, task, "
-            "elapsed_seconds, result_path) and bob_lanes.finished_recent for the last 12 hours with result_path. "
-            "Also say what is moving, the worker/model, and elapsed time from work. "
+            "snapshot in short plain English: say what is moving, the worker/model, and elapsed time from work. "
             "Live process observations in work include lane screens and workers outside the queue. "
             "Running means a live worker process, not proof of forward progress or completion. "
             "An unverified screen has no confirmed worker; a claimed entry is only a queue record. "
@@ -495,8 +447,7 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
             "Queue counts include all jobs; lists show recent examples. Done/failed jobs are history, not active work. "
             "Lane lock reports are cached at checked_at; current queue claims and screen presence take precedence. "
             "active_jobs only covers journaled queue claims. Background work may hold a busy lane without a claim; "
-            "an empty active_jobs list does not prove an idle or stale lock. For unidentified work use its readable project or lane label; "
-            "keep log paths, raw log lines and internal IDs out unless diagnostics are requested, "
+            "an empty active_jobs list does not prove an idle or stale lock. Report unidentified work as unknown, "
             "and do not infer that all workers are idle from an empty queue. "
             "Do not tell Jeff to use special job syntax. Do not say you cannot see workers if this block lists them."
             " Chat provider health comes only from provider_health, not old messages or lane locks. "
@@ -516,12 +467,7 @@ def encode_snapshot(snapshot: dict, max_chars: int) -> tuple[str, bool]:
             return payload, clipped
         # Trim history and logs before current workers. Counts retain totals.
         lists = [data["queue_jobs"][key] for key in ("failed", "done")]
-        lists += [data.get("bob_lanes", {}).get("finished_recent", [])]
         lists += list(data["lane_log_tails"].values())
-        lists += [data.get("recent_logs", [])]
-        # Lane cards duplicate work observations and may contain long task/log
-        # fields. They must participate in the same bounded snapshot policy.
-        lists += [data.get("bob_lanes", {}).get("live", [])]
         lists += [data["queue_jobs"][key] for key in ("queued", "claimed")]
         lists += [data["screen_lanes"], data["work"]]
         target = next((rows for rows in lists if rows), None)

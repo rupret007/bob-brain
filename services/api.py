@@ -9,36 +9,21 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 from command import run
 from state import CONDUCTOR, alert, append_event, atomic_write, log, read_json, stamp, write_json
 import budget
 import re
-import shlex
 
 MODELS = {"minimax": "MiniMax-M2.7", "gemini": "gemini-2.5-flash"}
 
 
-def load_worker_keys():
-    path = CONDUCTOR / "keys.env"
-    if not path.is_file():
-        return
-    for line in path.read_text().splitlines():
-        name, sep, value = line.strip().removeprefix("export ").partition("=")
-        if sep and name.strip() in ("GEMINI_API_KEY", "MINIMAX_API_KEY"):
-            try:
-                parts = shlex.split(value, comments=True)
-            except ValueError:
-                raise RuntimeError("Invalid API credential configuration") from None
-            os.environ[name.strip()] = parts[0] if len(parts) == 1 else ""
-
-
 def http_json(url, method="GET", payload=None, headers=None, validate=None, allowed=(200, 201),
-              lane=None, prompt="", max_tokens=0, purpose="api", attempts=3, model_id=None, google_search=False):
+              lane=None, prompt="", max_tokens=0, purpose="api", attempts=3):
     last = "request did not run"
     for attempt in range(attempts):
-        reservation = budget.reserve(lane, prompt, max_tokens, purpose, model_id=model_id,
-                                     google_search=google_search) if lane else None
+        reservation = budget.reserve(lane, prompt, max_tokens, purpose) if lane else None
         try:
             with tempfile.TemporaryDirectory(prefix="bob-api-") as directory:
                 request, response, config_path = [Path(directory) / n for n in ("request", "response", "curl.conf")]
@@ -48,12 +33,11 @@ def http_json(url, method="GET", payload=None, headers=None, validate=None, allo
                     config += "header = " + json.dumps(name + ": " + value) + "\n"
                 config_path.write_text(config)
                 config_path.chmod(0o600)
-                seconds = 180 if model_id == "gemini-2.5-pro" else 60
-                cmd = ["curl", "-sS", "-m", str(seconds), "--connect-timeout", "10", "--config", str(config_path),
+                cmd = ["curl", "-sS", "-m", "60", "--connect-timeout", "10", "--config", str(config_path),
                        "-X", method, "-o", str(response), "-w", "%{http_code}"]
                 if payload is not None:
                     cmd += ["-H", "Content-Type: application/json", "--data-binary", "@" + str(request)]
-                result = run(cmd, text=True, capture_output=True, timeout=seconds + 5)
+                result = run(cmd, text=True, capture_output=True, timeout=65)
                 code = int(result.stdout.strip()) if result.stdout.strip().isdigit() else 0
                 if result.returncode or code not in allowed:
                     raise RuntimeError("HTTP %s curl_rc=%s" % (code, result.returncode))
@@ -73,8 +57,7 @@ def extract(model, data):
     if model == "minimax":
         base = data.get("base_resp", {})
         if base.get("status_code", 0) != 0:
-            code = base.get("status_code")
-            raise RuntimeError("MiniMax status_code=" + (str(code) if isinstance(code, int) else "invalid"))
+            raise RuntimeError("MiniMax status_code=" + str(base.get("status_code")))
         choices = data.get("choices") or []
         if not choices or choices[0].get("finish_reason") != "stop":
             raise RuntimeError("MiniMax missing or truncated final answer")
@@ -88,51 +71,30 @@ def extract(model, data):
             raise RuntimeError("Gemini missing, blocked, or truncated final answer")
         text = "\n".join(p.get("text", "") for p in candidates[0].get("content", {}).get("parts", [])
                          if not p.get("thought")).strip()
-        if len(text) < 20:
-            raise RuntimeError("empty or unusably short final answer")
-        sources = []
-        for chunk in candidates[0].get("groundingMetadata", {}).get("groundingChunks", []):
-            url = chunk.get("web", {}).get("uri", "")
-            if re.fullmatch(r"https?://[^\s<>\[\]()]+", url) and url not in sources:
-                sources.append(url)
-        if sources:
-            text += "\n\nSearch sources:\n" + "\n".join("- " + url for url in sources)
     if len(text) < 20:
         raise RuntimeError("empty or unusably short final answer")
     return text
 
 
 
-def model_call(model, prompt, max_tokens=8192, purpose="api", *, model_id=None, google_search=False):
-    if model not in MODELS:
-        raise ValueError("Unsupported API worker; Grok/xAI is never allowed")
-    model_id = model_id or MODELS[model]
-    if model_id not in ({"gemini-2.5-flash", "gemini-2.5-pro"} if model == "gemini" else {"MiniMax-M2.7"}):
-        raise ValueError("Unsupported API model")
-    if google_search and model != "gemini":
-        raise ValueError("Google Search requires Gemini")
-    load_worker_keys()
+def model_call(model, prompt, max_tokens=8192, purpose="api"):
     key_name = "MINIMAX_API_KEY" if model == "minimax" else "GEMINI_API_KEY"
     key = os.environ.get(key_name)
     if not key:
         raise RuntimeError(key_name + " missing")
     if model == "minimax":
         url = "https://api.minimax.io/v1/text/chatcompletion_v2"
-        payload = {"model": model_id, "messages": [{"role": "user", "content": prompt}],
+        payload = {"model": MODELS[model], "messages": [{"role": "user", "content": prompt}],
                    "max_tokens": max_tokens, "temperature": 0.2, "reasoning_split": True}
         headers = {"Authorization": "Bearer " + key}
     else:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/" + model_id + ":generateContent"
-        pro = model_id == "gemini-2.5-pro"
+        url = "https://generativelanguage.googleapis.com/v1beta/models/" + MODELS[model] + ":generateContent?key=" + quote(key, safe="")
         payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                   "generationConfig": {"maxOutputTokens": max_tokens if pro else min(max_tokens, 4096), "temperature": 0.2,
-                                        "thinkingConfig": {"thinkingBudget": 1024 if pro else 0}}}
-        if google_search:
-            payload["tools"] = [{"google_search": {}}]
-        headers = {"x-goog-api-key": key}
+                   "generationConfig": {"maxOutputTokens": min(max_tokens, 4096), "temperature": 0.2,
+                                        "thinkingConfig": {"thinkingBudget": 0}}}
+        headers = {}
     return http_json(url, "POST", payload, headers, lambda data: extract(model, data),
-                     lane=model, prompt=prompt, max_tokens=max_tokens, purpose=purpose,
-                     model_id=model_id, google_search=google_search)
+                     lane=model, prompt=prompt, max_tokens=max_tokens, purpose=purpose)
 
 
 def critique(model, prompt, output):

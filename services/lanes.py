@@ -19,7 +19,6 @@ from workspaces import analysis_workspace, sandbox_command
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
 import task_queue
-from api_tasks import MODELS as WORKER_MODELS
 
 LANES = task_queue.WORKERS
 CURSOR = Path.home() / ".local/bin/cursor-agent"
@@ -165,21 +164,16 @@ def cli(lane, prompt, cwd, coding, timeout):
             answers.append(row["result"])
     budget.record_cli(lane, events, result.returncode == 0, "coding" if coding else "analysis")
     output = (result.stdout + result.stderr).lower()
-    limited = any(marker in output for marker in ("rate_limit_error", "rate limit", "usage limit", "hit your limit", "hit your session limit", "usage exceeded"))
+    limited = any(marker in output for marker in ("rate_limit_error", "rate limit", "usage limit", "hit your limit", "usage exceeded"))
     if (result.returncode or any(e.get("is_error") for e in events)) and limited:
-        reason = next((e["result"] for e in events if e.get("is_error") and isinstance(e.get("result"), str)), "usage/rate limit")
-        from dispatch_worker import redact
-        reason = redact(reason)[:250]
-        defer_lane(lane, lane + ": " + reason)
-        raise RuntimeError(lane + " rate limit; cooldown recorded: " + reason)
+        defer_lane(lane, lane + " usage/rate limit")
+        raise RuntimeError(lane + " rate limit; cooldown recorded")
     if result.returncode:
         if "not logged in" in output or "authentication required" in output:
             raise RuntimeError(lane + " needs_login")
         if "usage limit" in output or "rate limit" in output or "out of" in output:
             raise RuntimeError(lane + " usage limit")
-        detail = next((e["result"] for e in events if e.get("is_error") and isinstance(e.get("result"), str)), result.stderr[-250:])
-        from dispatch_worker import redact
-        raise RuntimeError(lane + " CLI exit " + str(result.returncode) + "; " + redact(detail)[:250])
+        raise RuntimeError(lane + " CLI exit " + str(result.returncode) + "; " + result.stderr[-250:])
     if any(e.get("is_error") for e in events):
         raise RuntimeError(lane + " reported an error result")
     # Codex emits progress messages as well as the final answer. Only the last
@@ -194,12 +188,9 @@ def ask(lane, prompt, *, cwd=None, coding=False, timeout=300, purpose="analysis"
     if lane not in task_queue.MODEL_WORKERS:
         raise ValueError("unknown lane")
     if lane == "claude":
-        if (coding and purpose != "small-file") or purpose not in ("review", "council-critique", "smoke", "small-review", "small-file", "pr-review", "result-acceptance"):
+        if (coding and purpose != "small-file") or purpose not in ("review", "council-critique", "smoke", "small-review", "small-file", "result-acceptance"):
             raise RuntimeError("Claude is reserved for short critiques and small reviews")
-        if purpose == "pr-review":
-            if len(prompt) > 180000:
-                raise RuntimeError("PR exceeds Claude's bounded diff-review context")
-        elif purpose == "result-acceptance":
+        if purpose == "result-acceptance":
             if len(prompt) > 12000:
                 raise RuntimeError("Task and answer exceed Claude's bounded result-review context")
         else:
@@ -222,10 +213,7 @@ def ask(lane, prompt, *, cwd=None, coding=False, timeout=300, purpose="analysis"
             from api import model_call
             if coding:
                 raise RuntimeError("API lanes accept evidence/research jobs, not tool execution")
-            options = dict(model_id=WORKER_MODELS[lane]) if purpose.startswith(("webbob-", "job-", "api-worker")) else {}
-            if purpose == "api-worker-research":
-                options["google_search"] = True
-            answer = model_call(lane, API_RULES + prompt, purpose=purpose, **options)
+            answer = model_call(lane, API_RULES + prompt, purpose=purpose)
         else:
             workspace = cwd or analysis_workspace(lane)
             answer = cli(lane, RULES + prompt, workspace, coding, timeout)
