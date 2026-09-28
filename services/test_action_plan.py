@@ -67,7 +67,8 @@ class ActionPlanTests(unittest.TestCase):
     def test_captured_nested_report_inputs_have_independent_inner_and_outer_plans(self):
         data = json.loads((REPO / 'services/fixtures/texting_action_plan_control_1605.json').read_text())
         self.assertEqual(hashlib.sha256(data['answer'].encode()).hexdigest(), data['answer_sha256'])
-        acceptance.check_answer(data['prompt'], data['answer'], kind=data['kind'])
+        with self.assertRaisesRegex(acceptance.ResultRejected, 'contradicts literal guard outcome'):
+            acceptance.check_answer(data['prompt'], data['answer'], kind=data['kind'])
         inputs = []
         for line in data['answer'].splitlines():
             if line.startswith('Setup: '):
@@ -76,7 +77,10 @@ class ActionPlanTests(unittest.TestCase):
         self.assertEqual(len(inputs), 2)
         with self.assertRaisesRegex(acceptance.ResultRejected, 'Missing actionable unblock plan'):
             acceptance.check_deliverables(**inputs[0])
-        acceptance.check_deliverables(**inputs[1])
+        # This historical inner control has only one draft. Preserve the exact
+        # capture, but the strengthened two-case contract now rejects it.
+        with self.assertRaisesRegex(acceptance.ResultRejected, 'Missing concrete regression'):
+            acceptance.check_deliverables(**inputs[1])
         # Valid inner fields never substitute for a missing outer plan.
         with self.assertRaisesRegex(acceptance.ResultRejected, 'Missing actionable unblock plan'):
             acceptance.check_answer(data['prompt'], data['answer'].split('\nUnblock plan:')[0], kind=data['kind'])
@@ -122,14 +126,15 @@ class ActionPlanTests(unittest.TestCase):
             acceptance.accept(DATA['prompt'], DATA['complete_answer'], vote, kind=DATA['kind'])
 
     def test_snapshot_preserves_plan_example_and_complete_guards(self):
+        example_path = 'services/fixtures/texting_regression_drafts_1658.json'
+        example = json.loads((REPO / example_path).read_text())
         for prompt in (DATA['prompt'], json.loads((REPO / 'services/fixtures/texting_jobcompletion_1035.json').read_text())['prompt']):
             body, meta = api_worker.evidence(REPO, 'minimax', prompt, lambda text: text, kind='test-writing')
-            self.assertNotIn(FIXTURE, meta['truncated'])
-            self.assertIn(DATA['complete_answer'], body)
-            self.assertTrue(body.endswith(DATA['complete_answer']))
-            self.assertNotIn(DATA['answer'], body)
-            rendered = next(row for row in meta['files'] if row['path'] == FIXTURE)
-            self.assertEqual(rendered['rendered_fields'], ['evidence_limits', 'complete_answer'])
+            self.assertNotIn(example_path, meta['truncated'])
+            self.assertTrue(body.endswith(json.dumps(example['complete_report'], ensure_ascii=False, indent=2)))
+            self.assertNotIn(example['answer'], body)
+            rendered = next(row for row in meta['files'] if row['path'] == example_path)
+            self.assertEqual(rendered['rendered_fields'], ['evidence_limits', 'complete_report'])
             for guard in (acceptance.plan_heading, acceptance.check_completion_json, acceptance.check_deliverables):
                 self.assertIn(inspect.getsource(guard).strip(), body)
             self.assertLessEqual(meta['source_bytes'], 64000)

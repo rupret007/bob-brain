@@ -1,6 +1,7 @@
 """Reject unusable closeouts before they enter the successful result outbox."""
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -16,6 +17,9 @@ FENCED_BLOCK = re.compile(r"^[ \t]{0,3}```([^\n]*)\n(.*?)^[ \t]{0,3}```[ \t]*$",
 
 class ResultRejected(RuntimeError):
     pass
+
+
+DRAFT_ERROR = "Missing concrete regression test drafts (setup, action and expected assertion required)"
 
 
 def assigned_task(prompt):
@@ -81,14 +85,16 @@ def check_deliverables(prompt, answer, kind=None):
     prose = re.sub(r"(?m)^[ \t]*>[^\n]*$", "", prose)
     def fields(text, names):
         for name in names:
-            match = re.search(r"(?im)^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?" + name +
+            match = re.search(r"(?im)^[ \t]{0,3}(?:[-*][ \t]+)?(?:\*\*)?" + name +
                               r"[ \t]*:(?:\*\*)?[ \t]*([^\n]+)", text)
             if not match or not match[1].strip(" *`\t") or re.fullmatch(
                     r"(?i)(?:TBD|TODO|N/A|none|\.\.\.)[.!]?", match[1].strip(" *`\t")):
                 return False
         return True
     if needs_test_drafts(prompt, kind):
-        cases = re.split(r"(?im)^\s*(?:#{1,6}\s*)?(?:\*\*)?Regression test\s*:", prose)[1:]
+        # Indented code, quoted history and escaped Setup inputs are not outer
+        # report sections. Split before testing fields so cases cannot borrow.
+        cases = re.split(r"(?im)^[ \t]{0,3}(?:#{1,6}[ \t]*)?(?:\*\*)?Regression test[ \t]*:", prose)[1:]
         structured = any(fields(case, ("Target", "Setup", "Action", "Expected")) for case in cases)
         # Support actual proposed tests as well as behavioral test-case drafts.
         blocks = [body for _, body in FENCED_BLOCK.findall(answer)]
@@ -96,15 +102,82 @@ def check_deliverables(prompt, answer, kind=None):
                    and re.search(r"\b(?:assert\s+|self\.assert\w+\(|expect\s*\()", block)
                    for block in blocks)
         if not (structured or code):
-            raise ResultRejected("Missing concrete regression test drafts (setup, action and expected assertion required)")
+            raise ResultRejected(DRAFT_ERROR)
     heading = plan_heading(prompt)
     if heading:
         plan = re.split(r"(?im)^\s*(?:#{1,6}\s*)?(?:\*\*)?" + heading + r"\s*:", prose, maxsplit=1)
         if len(plan) != 2 or not fields(plan[1], ("Change", "Validation", "Exit condition")):
             raise ResultRejected("Missing actionable " + heading.lower() + " (change, validation and exit condition required)")
+    if needs_test_drafts(prompt, kind) and (kind == "test-writing" or "Your independent subtask:" in prompt):
+        if len(cases) != 2 or not all(case.splitlines()[0].strip(" *\t") and
+                                     fields(case, ("Target", "Setup", "Action", "Expected")) for case in cases):
+            raise ResultRejected(DRAFT_ERROR)
     check_completion_json(prompt, answer)
     if "Your independent subtask:" in prompt and not fields(prose, ("Findings/limits",)):
         raise ResultRejected("Missing concrete Findings/limits closing sentence")
+
+
+def check_literal_guard_drafts(answer):
+    """Check known pure guards on literal data, never execute model code.
+
+    General tests and fixture references still need independent semantic review.
+    This catches the observed false controls that even a positive vote missed.
+    """
+    prose = re.sub(r"(?m)^[ \t]*>[^\n]*$", "", FENCED_BLOCK.sub("", answer))
+    guards = {"check_completion_json": check_completion_json, "check_deliverables": check_deliverables}
+    for case in re.split(r"(?m)^Regression test:", prose)[1:]:
+        fields = {name: re.search(r"(?m)^" + name + r": (.+)$", case)
+                  for name in ("Setup", "Action", "Expected")}
+        if not all(fields.values()):
+            continue
+        call = re.search(r"\b(check_completion_json|check_deliverables)\(([^()\n]*)\)", fields["Action"][1])
+        if not call:
+            continue
+        try:
+            # Only plain literal assignments; no expressions, imports, calls,
+            # attributes or mutation from the worker can run here.
+            values = {}
+            try:
+                statements = ast.parse(fields["Setup"][1]).body
+            except SyntaxError:
+                # The older drafts use keyword-list notation instead of
+                # semicolon-separated assignments. This is parsed, never called.
+                fixture = ast.parse("fixture(" + fields["Setup"][1] + ")", mode="eval").body
+                if not isinstance(fixture, ast.Call) or fixture.args:
+                    raise ValueError("Not literal keyword data")
+                values = {key.arg: ast.literal_eval(key.value) for key in fixture.keywords}
+            else:
+                for statement in statements:
+                    if (not isinstance(statement, ast.Assign) or len(statement.targets) != 1
+                            or not isinstance(statement.targets[0], ast.Name)):
+                        raise ValueError("Not a literal fixture")
+                    values[statement.targets[0].id] = ast.literal_eval(statement.value)
+            invocation = ast.parse(call[0], mode="eval").body
+            if ([arg.id if isinstance(arg, ast.Name) else None for arg in invocation.args] != ["prompt", "answer"]
+                    or any(key.arg != "kind" for key in invocation.keywords)):
+                continue
+            kwargs = {key.arg: values[key.value.id] if isinstance(key.value, ast.Name) else ast.literal_eval(key.value)
+                      for key in invocation.keywords}
+            prompt, inner = values["prompt"], values["answer"]
+            if not isinstance(prompt, str) or not isinstance(inner, str):
+                continue
+            if kwargs and call[1] != "check_deliverables":
+                continue
+        except (ValueError, SyntaxError, KeyError, RecursionError):
+            continue  # Nonliteral/mock-based drafts belong to semantic review.
+        expected = fields["Expected"][1]
+        success = bool(re.search(r"(?i)returns?\s+None\b|no exception|without raising|does not raise", expected))
+        failure = not success and bool(re.search(r"\bResultRejected\b", expected))
+        if not (success or failure):
+            continue
+        error = None
+        try:
+            guards[call[1]](prompt, inner, **kwargs)
+        except ResultRejected as exc:
+            error = str(exc)
+        if (success and error is not None) or (failure and error is None):
+            raise ResultRejected("Regression draft contradicts literal guard outcome: " + call[1] +
+                                 (" raised " + error if error else " returned successfully"))
 
 
 CODING_REQUIREMENTS = (
@@ -159,6 +232,8 @@ def check_answer(prompt, answer, *, kind=None):
         if match[2] not in answer:
             raise ResultRejected("Answer omitted required exact text: " + match[2][:200])
     check_deliverables(prompt, answer, kind)
+    if needs_test_drafts(prompt, kind):
+        check_literal_guard_drafts(answer)
 
 
 def accept(prompt, answer, review, *, coding_evidence=None, report_evidence=None, kind=None):
@@ -204,6 +279,10 @@ def accept(prompt, answer, review, *, coding_evidence=None, report_evidence=None
            "For a draft testing check_answer/check_deliverables, the answer input is itself a report fixture. "
            "Decode literal escaped newlines when checking that input: its required plan, JSON and Findings/limits "
            "belong INSIDE the fixture string. A supplied fixture field is also a concrete input; inspect its contents. "
+           "For an expected successful check_answer/check_deliverables call, count the complete cases in that "
+           "literal input answer: test-writing/independent-subtask reports require TWO, plus their own required "
+           "plan, completion JSON and Findings/limits. Outer report fields cannot repair an incomplete inner "
+           "control. Reject a claimed success when any inner requirement is absent, even if the outer report is valid. "
            "Separately check the worker's outer draft fields and plan. Never count inner labels as outer labels, "
            "or reject a valid control merely because its own required sections are inside its input string. "
            "A proposed regression draft does not need execution, and adding coverage for an existing correct check "
@@ -255,7 +334,9 @@ def deliverable_requirements(prompt, kind=None):
             "'Target:' (test path and relevant symbol), 'Setup:' (specific fixture/input), "
             "'Action:' (call/trigger), and 'Expected:' (observable assertion). "
             "Use exactly two focused cases, a failure and its successful control, unless the task explicitly requests a different count. "
-            "Executable test code with named tests and assertions is also acceptable. "
+            "Executable test code with named tests and assertions may accompany the cases. "
+            "Test-writing and independent-subtask reports must have exactly two outer cases with all four fields; "
+            "nested fixtures, historical quoted/fenced examples and code alone do not count as those drafts. "
             "Ground drafts in supplied code; label drafts unexecuted when you have no tools. "
             "Unexecuted behavioral drafts ARE the requested deliverable; execution is not required for this report. "
             "Lead with the requested cases, then the required plan, completion JSON and Findings/limits. "

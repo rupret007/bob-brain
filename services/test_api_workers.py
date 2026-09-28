@@ -28,7 +28,8 @@ from web_dispatch import task_queue as queue
 def draft_report(target):
     return ("Unexecuted regression draft.\nRegression test: enqueue retains input\nTarget: " + target +
             "\nSetup: job = {'id': 'one'} in an isolated fixture.\nAction: call enqueue(job).\n"
-            "Expected: the returned job equals the input.\n```diff\n+def test_enqueue():\n"
+            "Expected: the returned job equals the input.\nRegression test: empty input is retained\nTarget: " + target +
+            "\nSetup: job = {} in an isolated fixture.\nAction: call enqueue(job).\nExpected: returns {}.\n```diff\n+def test_enqueue():\n"
             "+    job = {'id': 'one'}\n+    assert enqueue(job) == job\n```\n")
 
 

@@ -62,8 +62,7 @@ def execute(job):
             job_event(job, "running", recovery="worker executing")
             from result_acceptance import check_answer, deliverable_requirements
             task = (folder / "PROMPT.txt").read_text()
-            prompt = task + "\n" + deliverable_requirements(task, record.get("kind"))
-            prompt += api_worker.report_serialization(task, record.get("kind"))
+            prompt = task + "\n" + api_worker.report_instructions(task, record.get("kind"))
             prompt = ("ASSIGNED WORKTREE: " + str(cwd) + "\nBRANCH: " + record["branch"] +
                       "\nThis job specification replaces every legacy shared-worktree instruction in the task. "
                       "Do not switch branches or use other checkout paths. "
