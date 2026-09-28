@@ -1,4 +1,5 @@
 """The attempt8 inline-fixture plan cannot substitute for the outer report."""
+import ast
 import hashlib
 import inspect
 import json
@@ -21,6 +22,23 @@ ERROR = 'Missing actionable action plan (change, validation and exit condition r
 
 
 class ActionPlanTests(unittest.TestCase):
+    def test_captured_nested_report_inputs_have_independent_inner_and_outer_plans(self):
+        data = json.loads((REPO / 'services/fixtures/texting_action_plan_control_1605.json').read_text())
+        self.assertEqual(hashlib.sha256(data['answer'].encode()).hexdigest(), data['answer_sha256'])
+        acceptance.check_answer(data['prompt'], data['answer'], kind=data['kind'])
+        inputs = []
+        for line in data['answer'].splitlines():
+            if line.startswith('Setup: '):
+                call = ast.parse('fixture(' + line[len('Setup: '):] + ')', mode='eval').body
+                inputs.append({field.arg: ast.literal_eval(field.value) for field in call.keywords})
+        self.assertEqual(len(inputs), 2)
+        with self.assertRaisesRegex(acceptance.ResultRejected, 'Missing actionable unblock plan'):
+            acceptance.check_deliverables(**inputs[0])
+        acceptance.check_deliverables(**inputs[1])
+        # Valid inner fields never substitute for a missing outer plan.
+        with self.assertRaisesRegex(acceptance.ResultRejected, 'Missing actionable unblock plan'):
+            acceptance.check_answer(data['prompt'], data['answer'].split('\nUnblock plan:')[0], kind=data['kind'])
+
     def test_exact_f2c47_failure_and_missing_plan_cannot_win_a_positive_vote(self):
         self.assertEqual(hashlib.sha256(DATA['answer'].encode()).hexdigest(), DATA['answer_sha256'])
         missing = DATA['complete_answer'].split('Action plan:')[0] + DATA['complete_answer'].split('Exit condition:')[1].split('\n', 1)[1]
