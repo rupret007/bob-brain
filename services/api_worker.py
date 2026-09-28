@@ -10,7 +10,8 @@ from pathlib import Path
 
 from state import atomic_write
 from workspaces import git
-from result_acceptance import deliverable_requirements, needs_test_drafts, plan_heading, ResultRejected, DRAFT_ERROR
+from result_acceptance import (deliverable_requirements, needs_test_drafts, plan_heading, ResultRejected,
+                               DRAFT_ERROR, guard_draft_expected, check_literal_guard_drafts, render_guard_expected)
 
 TEXT_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".md", ".txt",
                  ".json", ".toml", ".yaml", ".yml", ".sh", ".html", ".css", ".sql", ".go", ".rs"}
@@ -67,6 +68,22 @@ def report_instructions(task, kind=None):
     return report_serialization(task, kind) or deliverable_requirements(task, kind)
 
 
+def completion_guard_examples(*, structured=False):
+    """Generate truthful draft examples from the running guard, never stale prose."""
+    prompt = 'Return JSON with accepted/reason fields.'
+    answers = ('Findings only.', json.dumps(dict(accepted=True, reason='Delivered bounded unexecuted drafts.')))
+    names = ('missing completion JSON fails closed', 'complete accepted/reason JSON passes the completion guard')
+    cases = [dict(name=name, target='services/result_acceptance.py::check_completion_json',
+                 setup='prompt=' + repr(prompt) + '; answer=' + repr(answer),
+                 action='check_completion_json(prompt, answer)',
+                 expected=guard_draft_expected('check_completion_json', prompt, answer))
+            for name, answer in zip(names, answers)]
+    if structured:
+        for case in cases:
+            case['expected'] = {'guard_outcome': 'pass' if case['expected'] == 'returns None' else 'reject'}
+    return cases
+
+
 def report_serialization(task, kind=None):
     """Separate nested test inputs from the outer fields without inventing content."""
     if kind in ("coding", "artifact") or not needs_test_drafts(task, kind):
@@ -84,6 +101,8 @@ def report_serialization(task, kind=None):
                   exit_condition="[actual named task result and gates required to pass; otherwise retain hold]") if heading else None,
         completion=dict(accepted=True, reason="[task-specific delivered findings and limits]"),
         findings_limits="[concrete finding; drafts unexecuted and missing evidence]")
+    if 'Web Bob' in task:
+        schema['regression_tests'] = completion_guard_examples(structured=True)
     return (
         "\nREPORT SERIALIZATION: return ONLY the following JSON object, without a Markdown fence or prose. "
         "Use readable indented JSON, one field per line. Check commas between every property, including "
@@ -93,7 +112,7 @@ def report_serialization(task, kind=None):
         "You must supply every substantive value; "
         "the server never fills missing content. Keep nested test input strings solely in setup. "
         "Do not place outer Action/Expected or plan fields inside setup. Supply exactly two cases, a failure "
-        "and its successful control. Each has its OWN name, target, setup, action and expected string; "
+        "and its successful control. Each has its OWN name, target, setup, action and expected value; "
         "the renderer puts Target:, Setup:, Action:, Expected: on the SAME line as each value. "
         "Use literal inputs or exact supplied fixture fields; trace calls and assertions through supplied code. "
         "Descriptions like 'prompt contains' or 'answer contains' are not concrete inputs. "
@@ -104,6 +123,18 @@ def report_serialization(task, kind=None):
         "transport envelope. That envelope goes through render_report first; it is not completion JSON. "
         "Prefer a small direct function/state fixture over a long escaped report; never copy historical rejected answers. "
         "Cite existing paths/symbols, actual exception text and required kind arguments. "
+        "For direct acceptance-guard calls, use literal prompt/answer assignments in setup. "
+        'For a direct guard case use expected={"guard_outcome":"reject"} or {"guard_outcome":"pass"}. '
+        "This explicit outcome is checked against the literal inputs; only then is Expected rendered from "
+        "the guard's actual error text or returns None. Wrong outcomes are rejected, never repaired. "
+        "Other cases use an expected string. Any string for a guard must quote its full exact ResultRejected "
+        "error; paraphrased errors and wrong error classes are rejected. "
+        "The Web Bob guard examples below are derived from the running guard; preserve their literal inputs "
+        "and expectations when using them. For this supplied dispatch/completion regression assignment, "
+        "use both supplied narrow guard cases unchanged and adapt the plan/findings to the named ongoing task. "
+        "A missing JSON answer NEVER has a pass outcome. "
+        "Do not write an intentionally false OUTER expectation to test the draft auditor. To test the auditor, "
+        "the false draft belongs inside setup and Action must call the auditor, not the inner guard. "
         "Drafts are unexecuted; no tools or execution claims. Disclose missing original task/evidence. "
         "Completion describes YOUR delivered report, not a server vote or lane closure. "
         "Use accepted=false if incomplete; missing drafts cannot claim completion. Replace every bracketed value. "
@@ -162,6 +193,10 @@ def render_report(task, answer, kind=None):
     for case in cases:
         if not isinstance(case, dict) or set(case) != {'name', 'target', 'setup', 'action', 'expected'}:
             raise ResultRejected(DRAFT_ERROR)
+        case = dict(case)
+        if isinstance(case['expected'], dict):
+            case['expected'] = render_guard_expected(line(case['setup'], DRAFT_ERROR),
+                                                    line(case['action'], DRAFT_ERROR), case['expected'])
         for label, key in (('Regression test', 'name'), ('Target', 'target'), ('Setup', 'setup'),
                            ('Action', 'action'), ('Expected', 'expected')):
             rendered.append(label + ': ' + line(case[key], DRAFT_ERROR))
@@ -174,7 +209,9 @@ def render_report(task, answer, kind=None):
     # validates its exact keys, boolean, reason and accepted=true requirement.
     rendered.extend(['', '```json', json.dumps(report['completion'], ensure_ascii=False), '```',
                      'Findings/limits: ' + line(report['findings_limits'], 'Missing concrete Findings/limits closing sentence')])
-    return '\n'.join(rendered)
+    answer = '\n'.join(rendered)
+    check_literal_guard_drafts(answer)  # Never repair a worker's contradictory expectation.
+    return answer
 
 
 def evidence(repo, worker, task, redact, kind=None):
@@ -211,7 +248,7 @@ def evidence(repo, worker, task, redact, kind=None):
     named_limit = max(1, limit // len(named)) if worker == "minimax" and drafts and named else 48000
     sections, examples_rendered, included, omitted, truncated = [], [], [], [], []
     remaining = limit
-    for name in paths:
+    for index, name in enumerate(paths):
         path = repo / name
         try:
             # Refuse traversal through a link even when Git happens to track it.
@@ -222,10 +259,16 @@ def evidence(repo, worker, task, redact, kind=None):
             if name == plan_example:
                 share = 48000  # A partial JSON example is unusable.
             elif preferred and name == "services/result_acceptance.py":
-                share = 10000  # Complete guards; prose contracts are supplied separately.
+                share = 14000  # Complete guards/audit; prose contracts are supplied separately.
+            elif preferred and name == "services/dispatch_worker.py" and name not in task:
+                share = 12000  # Preserve report_repository and execute; reserve the source selector too.
             elif preferred and name == "services/test_replay_completion.py":
                 share = 6000  # Complete ReportRepositoryTests; leave room for implementation.
-            size = min(48000, remaining, share)
+            # A reserved full guard must not evict a later explicitly named
+            # build/assignment file. Keep a visible, disclosed slice of each.
+            reserve = (512 * sum(other in named for other in paths[index + 1:])
+                       if worker == "minimax" and drafts else 0)
+            size = min(48000, max(0, remaining - reserve), share)
             raw = read_source(repo, name, max(0, size) + 1)
             if b"\0" in raw or remaining <= 0:
                 omitted.append(name)
@@ -239,8 +282,10 @@ def evidence(repo, worker, task, redact, kind=None):
                 # with JSON instructions and induced malformed nested drafts.
                 example = json.loads(text)
                 rendered_fields = ["evidence_limits", "complete_report"]
+                example["complete_report"]["regression_tests"] = completion_guard_examples(structured=True)
                 text = ("Rendered fixture fields: evidence_limits and complete_report only. "
-                        "Unexecuted JSON transport example; adapt values to YOUR assigned task.\n"
+                        "regression_tests regenerated from the running completion guard (literal inputs and exact outcomes). "
+                        "Unexecuted JSON transport example; adapt the plan and findings to YOUR assigned task.\n"
                         + example["evidence_limits"] + "\n\n" + json.dumps(example["complete_report"], ensure_ascii=False, indent=2))
             elif preferred and name == "services/fixtures/texting_jobcompletion_1035.json" and len(raw) <= size:
                 # Historical answer/layout text induced paraphrased inputs and
@@ -258,6 +303,9 @@ def evidence(repo, worker, task, redact, kind=None):
             # their malformed historical answers are not the last example.
             (examples_rendered if name == plan_example and rendered_fields else sections).append("FILE " + name + "\n" + text)
             included.append(dict(path=name, sha256=hashlib.sha256(raw[:size]).hexdigest(),
+                                 **({"derived_fields": ["complete_report.regression_tests"],
+                                     "derived_from": "result_acceptance.check_completion_json"}
+                                    if name == plan_example and rendered_fields else {}),
                                  **({"rendered_fields": rendered_fields} if rendered_fields else {})))
         except OSError:
             omitted.append(name)

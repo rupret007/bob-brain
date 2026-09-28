@@ -49,7 +49,7 @@ class RegressionDraftTests(unittest.TestCase):
     def test_literal_guard_audit_never_runs_model_expressions(self):
         malicious = DATA['complete_answer'].replace("prompt='Return JSON with accepted/reason fields.'",
                     "prompt=__import__('os').system('touch /must-never-run')")
-        with patch('os.system') as system:
+        with patch('os.system') as system, self.assertRaisesRegex(acceptance.ResultRejected, 'Unverifiable literal guard draft'):
             acceptance.check_literal_guard_drafts(malicious)
         system.assert_not_called()
 
