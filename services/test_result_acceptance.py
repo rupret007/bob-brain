@@ -52,6 +52,12 @@ class AcceptanceTests(unittest.TestCase):
             check_answer("Whole-repo audit and implementation plan for Web Bob unblock 1035", "The queue has three states.", kind="audit")
         check_answer("Summarize supplied architecture", "The queue has three states.", kind="analysis")
 
+    def test_quoted_limitation_cannot_hide_following_deliverables_or_pending_verification(self):
+        fixture = self.completion_fixture()
+        check_answer(fixture["prompt"], "> Original assignment unavailable.\n\n" + fixture["complete_answer"])
+        with self.assertRaisesRegex(ResultRejected, "verification is incomplete"):
+            check_coding_answer("> Previous baseline passed.\n\nFixed and committed. API tests not run.")
+
     def test_0810_captured_incomplete_verification_cannot_be_overridden(self):
         fixture = json.loads(Path(__file__).with_name("fixtures").joinpath("texting_verification_0810.json").read_text())
         review = Mock(return_value='{"accepted": true, "reason": "Claims pass"}')

@@ -49,7 +49,8 @@ def deliverable_requirements(prompt, kind=None):
 
 def check_deliverables(prompt, answer, kind=None):
     """Reject absent deliverables before voting; semantics still require review."""
-    prose = re.sub(r"```.*?```|(?m:^\s*>.*$)", "", answer, flags=re.S)
+    prose = re.sub(r"```.*?```", "", answer, flags=re.S)
+    prose = re.sub(r"(?m)^[ \t]*>[^\n]*$", "", prose)
     def fields(text, names):
         for name in names:
             match = re.search(r"(?im)^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?" + name +
@@ -90,7 +91,8 @@ CODING_REQUIREMENTS = (
 
 def check_coding_answer(answer):
     """An explicit admission of unfinished validation cannot win an acceptance vote."""
-    prose = re.sub(r"```.*?```|(?m:^\s*>.*$)", "", answer, flags=re.S)
+    prose = re.sub(r"```.*?```", "", answer, flags=re.S)
+    prose = re.sub(r"(?m)^[ \t]*>[^\n]*$", "", prose)
     if re.search(r"\b(?:not|never)\s+(?:re[- ]?)?run\b|\b(?:did(?:n't| not)|haven['’]t|have not)\s+"
                  r"(?:re[- ]?)?run\b|\b(?:tests?|verification|validation)\s+(?:are |is |were )?"
                  r"(?:pending|incomplete|not run)\b|\b(?:will|plan to|need to|still need to)\s+"
