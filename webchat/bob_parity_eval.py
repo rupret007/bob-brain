@@ -168,6 +168,8 @@ def run_eval(root: Path | None = None) -> dict:
         for result in integration_eval(**scenario):
             rows.append(_case(result["name"], result["pass_check"], "; ".join(result["errors"])))
 
+    # This runner is also invoked directly from webchat, outside the service launcher.
+    sys.path.insert(0, str(HERE.parent / "services"))
     from result_acceptance import check_coding_answer, ResultRejected
     verification = json.loads((HERE.parent / "services/fixtures/texting_verification_0810.json").read_text())
     rejected = False
