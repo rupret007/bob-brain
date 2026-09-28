@@ -167,6 +167,10 @@ def plan(root, conversation, text, workers):
                    "Each needs Regression test:, Target:, Setup:, Action: and Expected: lines with concrete values "
                    "on the same line as each label. Keep findings brief. "
                    if kind == "test-writing" else "") +
+                  "Include a separate '" + ("Unblock plan" if re.search(r"\bunblock\b", source["prompt"], re.I)
+                                             else "Action plan") + ":' section after the deliverables with "
+                  "Change:, Validation: and Exit condition: on separate lines, each with its concrete value "
+                  "on the SAME line. Test drafts do not replace this required plan. " +
                   "Never deploy or resolve conflicts.\n" +
                   context.capitalize() + ":\n" + source["prompt"][:8000])
         if source["project"] == "Web Bob":
