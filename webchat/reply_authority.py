@@ -73,6 +73,37 @@ def _cooldown(snap, name):
     return "; cooling down"
 
 
+def _lane_line(row, detailed=False):
+    label = row.get("screen") or "lane"
+    llm = row.get("llm_label") or WORKER_NAMES.get(row.get("llm")) or row.get("llm") or "worker unconfirmed"
+    if row.get("model"):
+        llm += " (" + row["model"] + ")"
+    project = row.get("project")
+    task = row.get("task") or row.get("screen", "").removeprefix("lane-").replace("-", " ")
+    body = (project + ": " if project else "") + task
+    duration = _duration(row.get("elapsed_seconds"))
+    state = row.get("state") or "running"
+    if state == "finished":
+        line = f"{label} — {llm}, finished {duration} ago — {body}"
+    else:
+        prefix = {"running": "running ", "paused": "paused ", "unverified": "session open ", "claimed": "claimed "}.get(state, "")
+        line = f"{label} — {llm}, {prefix}{duration} — {body}"
+    if row.get("result_path"):
+        line += " — " + row["result_path"]
+    elif row.get("log_path") and (not row.get("prompt_path") or not row.get("task")):
+        line += "; " + row["log_path"]
+        if row.get("last_log_line"):
+            line += "; last: " + row["last_log_line"]
+    if detailed:
+        ids = [str(row[key]) for key in ("screen", "pid") if row.get(key)]
+        if ids:
+            line += " (" + ", ".join(ids) + ")"
+        for key in ("prompt_path", "log_path"):
+            if row.get(key):
+                line += f"; {row[key]}"
+    return line
+
+
 def _work_line(row, detailed=False):
     project = row.get("project")
     repo = row.get("repo")
@@ -176,6 +207,9 @@ def _casual_status(snap):
 def format_operational_reply(snap, provider="server", text=""):
     """Live worker facts in casual sentences; diagnostics are opt-in."""
     counts, work, inspection = snap["queue_counts"], snap["work"], snap["inspection"]
+    bob = snap.get("bob_lanes") or {}
+    live_lanes = bob.get("live") or []
+    finished_lanes = bob.get("finished_recent") or []
     running = snap["work_counts"]["running"]
     detailed = bool(DETAILS.search(text) and not HIDE_DETAILS.search(text))
     if not detailed:
@@ -186,6 +220,28 @@ def format_operational_reply(snap, provider="server", text=""):
         if re.search(r"\b(?:disk|storage)\b", text, re.I) and snap["disk"].get("available"):
             answer += f" Disk space: {snap['disk']['avail_gb']} GB free."
         return answer
+    if live_lanes:
+        running_count = sum(1 for row in live_lanes if row.get("state") == "running")
+        first = f"{running_count or len(live_lanes)} Bob lane{'s' if len(live_lanes) != 1 else ''} on screen."
+        lines = [first]
+        lines.extend(_lane_line(row, detailed) for row in live_lanes)
+        if finished_lanes and re.search(r"\b(?:finished|done|recent|last)\b", text, re.I):
+            lines.append("Finished (last 12h): " + " | ".join(_lane_line(row, detailed) for row in finished_lanes[:6]))
+        other = [row for row in work if row.get("state") == "running" and row.get("screen") not in {lane["screen"] for lane in live_lanes}]
+        if other:
+            lines.append("Other sessions: " + " | ".join(_work_line(row, detailed) for row in other))
+        lines.append(f"Job runner: {counts['claimed']} claimed, {counts['queued']} queued.")
+        for name in ("codex", "claude", "cursor", "gemini", "minimax"):
+            rows = [row for row in work if row.get("worker") == name]
+            if rows:
+                continue
+            state = "idle" if all(inspection.values()) else "activity unconfirmed"
+            cooldown = _cooldown(snap, name)
+            if cooldown or (snap.get("lane_locks", {}).get(name, {}).get("cached_state") == "cooldown"):
+                lines.append(WORKER_NAMES[name] + ": " + state + cooldown + ".")
+        if IDENTITY.search(text):
+            lines.append(WORKER_NAMES[provider] + " answered this message." if provider in WORKER_NAMES else "This answer comes from live checks.")
+        return "\n".join(lines)
     if running:
         first = f"{running} worker{'s are' if running != 1 else ' is'} running."
     elif work:
