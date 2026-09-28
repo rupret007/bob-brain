@@ -65,10 +65,13 @@ def memory_confirm_prompt(fact: str) -> str:
 
 
 def _trim_profile_lines(lines: list[str], max_bytes: int = PROFILE_MAX_BYTES) -> list[str]:
-    trimmed = list(lines)
-    while trimmed and sum(len(entry) for entry in trimmed) > max_bytes:
-        trimmed.pop(0)
-    return trimmed
+    sizes = [len(entry.encode("utf-8")) for entry in lines]
+    total = sum(sizes)
+    start = 0
+    while start < len(lines) and total > max_bytes:
+        total -= sizes[start]
+        start += 1
+    return lines[start:]
 
 
 def _prune_captures(folder: Path, max_count: int = CAPTURE_MAX_COUNT, max_age_days: int = CAPTURE_MAX_AGE_DAYS) -> None:
@@ -93,11 +96,24 @@ def append_profile_memory(root: Path, fact: str, when: datetime | None = None) -
     line = f"[{stamp}] {fact.strip()}\n"
     path = profile_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with (path.parent / "profile.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        existing = path.read_text(encoding="utf-8") if path.is_file() else ""
-        lines = _trim_profile_lines(existing.splitlines(keepends=True) + [line])
-        atomic_text(path, "".join(lines))
+    lock_path = path.parent / "profile.lock"
+    try:
+        lock_file = lock_path.open("a")
+    except OSError as exc:
+        raise OSError(f"Could not open profile lock file {lock_path}: {exc}") from exc
+    try:
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+        except OSError as exc:
+            raise OSError(f"Could not acquire profile lock {lock_path}: {exc}") from exc
+        try:
+            existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+            lines = _trim_profile_lines(existing.splitlines(keepends=True) + [line])
+            atomic_text(path, "".join(lines))
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+    finally:
+        lock_file.close()
     return line.strip()
 
 

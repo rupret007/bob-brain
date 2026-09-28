@@ -32,6 +32,7 @@ from bob_gaps import (
     web_search,
     _macos_window_id,
     _prune_captures,
+    _trim_profile_lines,
 )
 
 
@@ -290,6 +291,26 @@ class UnitTests(unittest.TestCase):
             for i in range(thread_count):
                 self.assertIn(f"concurrent fact {i}", body)
             self.assertEqual(len(body.splitlines()), thread_count)
+
+    def test_trim_profile_lines_keeps_newest_under_budget(self):
+        lines = [f"line-{i:05d}\n" for i in range(5000)]
+        max_bytes = sum(len(entry.encode("utf-8")) for entry in lines[-100:])
+        trimmed = _trim_profile_lines(lines, max_bytes=max_bytes)
+        self.assertEqual(trimmed, lines[-100:])
+        self.assertLessEqual(sum(len(e.encode("utf-8")) for e in trimmed), max_bytes)
+
+    def test_trim_profile_lines_noop_when_under_budget(self):
+        lines = ["a\n", "b\n", "c\n"]
+        self.assertEqual(_trim_profile_lines(lines, max_bytes=1000), lines)
+
+    def test_append_profile_memory_lock_open_failure_raises_oserror(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_path = root / "bob-brain/memory/profile.lock"
+            lock_path.mkdir(parents=True)
+            with self.assertRaises(OSError) as ctx:
+                append_profile_memory(root, "should not save")
+            self.assertIn(str(lock_path), str(ctx.exception))
 
     def test_prune_captures_enforces_max_count(self):
         with tempfile.TemporaryDirectory() as tmp:
