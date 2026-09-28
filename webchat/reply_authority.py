@@ -153,9 +153,13 @@ def _casual_status(snap):
     for name in WORKER_NAMES:
         rows = [row for row in work if row.get("worker") == name]
         pending = [row for row in snap.get("queue_jobs", {}).get("queued", []) if row.get("worker") == name]
+        unattributed = [row for row in rows if row.get("assignment_recorded") is False]
+        rows = [row for row in rows if row.get("assignment_recorded") is not False]
         if name == "mini" and not rows:
             continue
         display = WORKER_NAMES[name]
+        if unattributed:
+            extra.append(display + " has CLI activity, but no recorded task")
         if rows or pending:
             tasks = []
             for row in rows:
@@ -169,6 +173,8 @@ def _casual_status(snap):
             for label, count in Counter(_task_name(row) for row in pending).items():
                 tasks.append("“" + label + "” (" + (str(count) + " jobs " if count > 1 else "") + "waiting to run)")
             active.append(display + " is on " + _join(tasks) + _cooldown(snap, name))
+        elif unattributed:
+            pass
         elif snap.get("lane_locks", {}).get(name, {}).get("state") == "busy":
             extra.append(display + "'s last lane check was busy, but its task isn't recorded")
         elif _cooldown(snap, name):

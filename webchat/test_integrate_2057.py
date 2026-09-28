@@ -153,3 +153,20 @@ class IntegratedSessions(SessionFixture):
             self.assertIn("original task prompt was not recorded", records[identifier]["prompt"])
             self.assertIn("Project: Web Bob", records[identifier]["prompt"])
             self.assertIn(identifier, answer["content"])
+
+    def test_health_probes_and_unattributed_processes_are_not_task_execution(self):
+        from worker_activity import collect_work, parse_processes
+        table = parse_processes("10 1 01:00 S cursor-agent status\n"
+                                "20 1 01:00 S codex exec resume --help\n"
+                                "30 1 01:00 S claude --version\n"
+                                "40 1 01:00 S codex exec -\n")
+        rows = collect_work({}, [], table, time.time(), root=self.root)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["worker"], "codex")
+        self.assertEqual(rows[0]["state"], "unverified")
+        self.assertFalse(rows[0]["assignment_recorded"])
+        with patch("live_status_snapshot.process_table", return_value=table):
+            reply = self.send("What is working on what?")
+        self.assertIn("Codex has CLI activity, but no recorded task", reply["content"])
+        self.assertNotIn("running for", reply["content"])
+        self.assertNotIn("Worker process", reply["content"])

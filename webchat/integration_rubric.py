@@ -33,7 +33,7 @@ def style_errors(text, dispatch_count=0):
     if len([s for s in re.split(r"[.!?](?:\s+|$)", prose) if s.strip()]) > max(4, dispatch_count):
         errors.append("too many sentences")
     if re.search(r"(?i)unknown task|task details unavailable|I['’]ll (?:focus|do better|make sure|ensure)|"
-                 r"system is actively adding|ready for (?:new )?work|healthy and ready|prioritize adding work", prose):
+                 r"system is actively adding|ready for (?:new )?work|healthy and ready|prioritize adding work|Worker process", prose):
         errors.append("empty promise or readiness substituted for utilization")
     if re.search(r"logs/|lane-[\w-]+|\blast:|\bPID\s*[:=]|\s\|\s", prose):
         errors.append("raw diagnostic dump")
@@ -89,6 +89,10 @@ def check_reply(answer, exchange, cid, started, before, after, jobs):
         stable = {(r.get("pid"), r.get("job_id"), r.get("title")): r for r in before["work"]}
         for row in after["work"]:
             if (row.get("pid"), row.get("job_id"), row.get("title")) not in stable:
+                continue
+            if row.get("assignment_recorded") is False:
+                if "CLI activity, but no recorded task" not in text:
+                    errors.append("unattributed process falsely presented as assigned work")
                 continue
             if _task_name(row) not in text:
                 errors.append("status omits observed task " + _task_name(row))

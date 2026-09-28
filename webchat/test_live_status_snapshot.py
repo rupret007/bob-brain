@@ -110,6 +110,8 @@ class SnapshotTests(unittest.TestCase):
         self.queue.write_text(json.dumps(dict(id="current-task", status="running", worker="codex")) + "\n")
         snap = self.snapshot()
         snap["queue_jobs"]["done"] = [dict(job_id="old-job-" + str(i), recovery="x" * 160) for i in range(100)]
+        snap["bob_lanes"] = dict(live=[dict(task="active duplicate " + "x" * 16000)],
+                                 finished_recent=[dict(task="finished " + "x" * 16000)])
         payload, clipped = encode_snapshot(snap, 8000)
         parsed = json.loads(payload)
         self.assertTrue(clipped)

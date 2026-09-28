@@ -317,5 +317,7 @@ def cancel_replay(root, conversation_ids, reason):
             if row.get("conversation_id") not in conversation_ids or row["status"] in TERMINAL:
                 continue
             row.update(status="failed", claim_token=None, lease_until=0, finished_at=time.time(), error=reason)
+            row.setdefault("claimed_at", None)
+            row.setdefault("started_at", None)
             cancelled.append(_append(path, row, "replay_cancelled"))
     return cancelled

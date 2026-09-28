@@ -78,7 +78,7 @@ def _identity(command):
     if worker not in ("codex", "claude", "cursor", "gemini") or executable == "cursor":
         return None, None
     # Desktop app-server/MCP/login processes are infrastructure, not jobs.
-    if any(word in parts[1:3] for word in ("app-server", "mcp-server", "login", "logout")):
+    if any(word in parts[1:4] for word in ("app-server", "mcp-server", "login", "logout", "status", "--help", "--version")):
         return None, None
     model = None
     execution = worker != "codex"
@@ -209,5 +209,9 @@ def collect_work(sessions, claimed_jobs, processes, now, root=None):
                                  screen=name, pid=screen_pid, source="screen"))
     if root is not None:
         from worker_evidence import enrich_work
-        return enrich_work(root, activity, claimed_jobs, table)
+        activity = enrich_work(root, activity, claimed_jobs, table)
+        for row in activity:
+            if row["title"] == "Worker process" and not row.get("task") and not row.get("job_id"):
+                row.update(state="unverified", assignment_recorded=False,
+                           title=WORKER_NAMES.get(row.get("worker"), "Worker") + " CLI activity")
     return activity

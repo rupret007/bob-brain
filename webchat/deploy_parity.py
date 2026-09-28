@@ -23,7 +23,7 @@ def write(path, value):
     temporary.replace(path)
 
 
-def restart(root, pins):
+def restart(root, pins, expected_exits=()):
     # Use the same supervisor lock as watchdog; no competing automatic restart.
     from state import lock
     from runtime import screen_sessions, stop_service_process, service_lock_held
@@ -74,8 +74,10 @@ def restart(root, pins):
         else:
             raise RuntimeError("restart: webchat or job-runner did not become healthy")
         after = screen_sessions()
-    unrelated = {name: identity for name, identity in before.items() if name not in ("svc-webchat", "svc-job-runner")}
+    unrelated = {name: identity for name, identity in before.items()
+                 if name not in ("svc-webchat", "svc-job-runner") and name not in expected_exits}
     return dict(before=before, after=after, restarted_services=["webchat", "job-runner"],
+                permitted_replay_exits=list(expected_exits),
                 other_screens_unchanged=all(after.get(name) == identity for name, identity in unrelated.items()))
 
 

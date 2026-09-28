@@ -73,9 +73,10 @@ def main():
     client = Client("http://127.0.0.1:8787", password_file)
     if args.rollback:
         release = json.loads((args.rollback / "release.json").read_text())
-        task_queue.cancel_replay(root, {s["replay_id"] for s in release.get("sessions", []) if s.get("replay_id")},
-                                 "Integration live replay cancelled for release rollback.")
-        restored = restart(root, {key: Path(path) for key, path in release["snapshots"].items()})
+        cancelled = task_queue.cancel_replay(root, {s["replay_id"] for s in release.get("sessions", []) if s.get("replay_id")},
+                                            "Integration live replay cancelled for release rollback.")
+        expected = set(release.get("cancelled_replay_jobs", [])) | {r["id"] for r in cancelled}
+        restored = restart(root, {key: Path(path) for key, path in release["snapshots"].items()}, expected_exits=expected)
         client.login()
         require(client.call("/api/version")["sha"] == release["previous_version"]["sha"], "Rollback version mismatch")
         require(restored["other_screens_unchanged"], "Unrelated screens changed during rollback")
@@ -226,7 +227,8 @@ def main():
                 evidence["cancelled_replay_jobs"] = [row["id"] for row in task_queue.cancel_replay(
                     root, {s["replay_id"] for s in evidence["sessions"] if s.get("replay_id")},
                     "Integration live replay failed; claim revoked before release rollback.")]
-                evidence["rollback_result"] = restart(root, {key: Path(path) for key, path in evidence["snapshots"].items()})
+                evidence["rollback_result"] = restart(root, {key: Path(path) for key, path in evidence["snapshots"].items()},
+                                                     expected_exits=evidence["cancelled_replay_jobs"])
                 client = Client(client.url, password_file)
                 client.login()
                 evidence["restored_version"] = client.call("/api/version")

@@ -517,8 +517,12 @@ def encode_snapshot(snapshot: dict, max_chars: int) -> tuple[str, bool]:
             return payload, clipped
         # Trim history and logs before current workers. Counts retain totals.
         lists = [data["queue_jobs"][key] for key in ("failed", "done")]
+        lists += [data.get("bob_lanes", {}).get("finished_recent", [])]
         lists += list(data["lane_log_tails"].values())
         lists += [data.get("recent_logs", [])]
+        # Lane cards duplicate work observations and may contain long task/log
+        # fields. They must participate in the same bounded snapshot policy.
+        lists += [data.get("bob_lanes", {}).get("live", [])]
         lists += [data["queue_jobs"][key] for key in ("queued", "claimed")]
         lists += [data["screen_lanes"], data["work"]]
         target = next((rows for rows in lists if rows), None)
