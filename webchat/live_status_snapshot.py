@@ -406,6 +406,7 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
     now = time.time() if now is None else now
     observed = observe_work(root, now=now)
     sessions, jobs_map = observed["sessions"], observed["records"]
+    processes = process_table(root)
     session_names = set(sessions)
     lanes = _read_json(root / "conductor/lanes.json", {})
     live_ops: dict = {}
@@ -440,6 +441,14 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
     if now_line and re.search(r"\b(?:handback|ready) drill\b|\bdrill-[\w-]+", now_line, re.I):
         now_line = None
 
+    bob_lanes: dict = {}
+    try:
+        from lane_collector import collect_bob_lanes
+
+        bob_lanes = collect_bob_lanes(root, now=now, sessions=sessions, processes=processes)
+    except Exception:
+        bob_lanes = dict(live=[], finished_recent=[], inspection=dict(screens_available=False, processes_available=False))
+
     return {
         "captured_at": _stamp(now),
         "live_ops_source": live_ops_meta.get("source"),
@@ -450,6 +459,7 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
             processes_available=observed["inspection"]["processes_available"]
         ),
         "work": work,
+        "bob_lanes": bob_lanes,
         "work_counts": work_counts,
         "inspection": observed["inspection"],
         "screen_lanes": screens,
@@ -474,7 +484,9 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
         "disk": disk,
         "instruction": (
             "When Jeff asks what workers, lanes, jobs, or services are doing, answer from this "
-            "snapshot in short plain English: say what is moving, the worker/model, and elapsed time from work. "
+            "snapshot in short plain English: list each bob_lanes.live row (lane screen, llm/model, project, task, "
+            "elapsed_seconds, result_path) and bob_lanes.finished_recent for the last 12 hours with result_path. "
+            "Also say what is moving, the worker/model, and elapsed time from work. "
             "Live process observations in work include lane screens and workers outside the queue. "
             "Running means a live worker process, not proof of forward progress or completion. "
             "An unverified screen has no confirmed worker; a claimed entry is only a queue record. "

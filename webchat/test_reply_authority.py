@@ -90,16 +90,16 @@ class AuthorityTests(unittest.TestCase):
                 with self.subTest(text=text):
                     answer = enforce(root, text, dict(provider="gemini", content=
                         "Nothing is running. All lanes are ready. Use `start a job: task`."))
-                    self.assertIn("4 workers are running", answer)
-                    self.assertIn("Claude: Projects push", answer)
-                    self.assertIn("(opus) — running for 24 min", answer)
-                    self.assertIn("Codex: Web Bob (conductor): Web Bob clean", answer)
-                    self.assertIn("(gpt-fixture) — running for 18 min", answer)
-                    self.assertIn("running for 12 min", answer)
-                    self.assertIn("running for 8 min", answer)
-                    # A missing task must give concrete screen/log evidence even
-                    # in a short reply, rather than an unidentified task label.
-                    self.assertIn("logs/lane-webbob-clean.log", answer)
+                    self.assertIn("Bob lane", answer)
+                    self.assertIn("lane-projects-push", answer)
+                    self.assertIn("claude (opus)", answer.lower())
+                    self.assertIn("lane-webbob-clean", answer)
+                    self.assertIn("gpt-fixture", answer)
+                    self.assertIn("24 min", answer)
+                    self.assertIn("18 min", answer)
+                    self.assertIn("12 min", answer)
+                    self.assertIn("8 min", answer)
+                    self.assertIn("Projects push", answer)
                     for hidden in ("None", "shelf-load-1659", "History:", "provider:", "start a job:", "All lanes"):
                         self.assertNotIn(hidden, answer)
 

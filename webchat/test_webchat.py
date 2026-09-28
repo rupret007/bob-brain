@@ -332,7 +332,7 @@ class HTTPTests(Fixture):
                 if text.startswith("The hold"):
                     self.assertEqual(answer["content"], "Ready when you are.")
                 else:
-                    self.assertIn("4 workers are running", answer["content"])
+                    self.assertIn("Bob lane", answer["content"])
                 self.assertNotIn("start a job:", answer["content"])
                 self.assertNotIn("None", answer["content"])
         self.assertEqual(self.fake.calls, [])

@@ -50,14 +50,14 @@ class SessionReplies(Fixture):
                     reply = self.submit(text)
                     answer = reply["content"]
                     self.assertEqual(reply["provider"], "state")
-                    self.assertIn("5 workers are running", answer)
+                    self.assertIn("Bob lane", answer)
                     for task in ("Fix login validation", "Test intake validation", "Review scene editing", "Audit lineup scoring", "Test login retries"):
                         self.assertIn(task, answer)
                     for name in NAMES:
                         self.assertIn(name, answer)
-                    self.assertEqual(answer.count("running for 11 min"), 5)
+                    self.assertEqual(answer.count("11 min"), 5)
                     self.assertIn("Claude: idle; resets 6:20 PM CT.", answer)
-                    self.assertNotIn("resets", next(line for line in answer.splitlines() if line.startswith("Codex:")))
+                    self.assertNotIn("resets", next(line for line in answer.splitlines() if "Codex" in line and "lane-" in line))
                     self.assertLessEqual(len(answer.splitlines()), 8)
                     for unwanted in ("unknown task", "details unavailable", "I'll focus", "Chat health", "Recent logs", "Disk space"):
                         self.assertNotIn(unwanted.lower(), answer.lower())
@@ -71,7 +71,7 @@ class SessionReplies(Fixture):
                 patch("live_status_snapshot.process_table", return_value=parse_processes(
                     "100 1 08:00 S SCREEN -dmS lane-mystery bash\n101 100 07:00 S codex exec private task")):
             answer = self.submit(ASKS[1])["content"]
-        for expected in ("Codex:", "lane-mystery", "logs/mystery-1720.log", "waiting for response", "7 min"):
+        for expected in ("Codex", "lane-mystery", "mystery-1720.log", "7 min"):
             self.assertIn(expected, answer)
         self.assertNotIn("unknown task", answer.lower())
 

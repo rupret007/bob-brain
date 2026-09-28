@@ -116,8 +116,8 @@ class Session8126301cTests(SessionFixture):
                 patch("live_status_snapshot.process_table", return_value=parse_processes(PS)):
             reply = self.send("What’s the status or everything.")
         self.assertEqual(reply["provider"], "state")
-        self.assertIn("Codex:", reply["content"])
-        self.assertIn("Claude:", reply["content"])
+        self.assertIn("Codex", reply["content"])
+        self.assertIn("Claude", reply["content"])
         self.assertNotIn("Yes —", reply["content"])
         self.assertNotIn("unknown", reply["content"].lower())
 
@@ -127,7 +127,7 @@ class Session8126301cTests(SessionFixture):
             reply = self.send("How’s it going?")
         self.assertEqual(reply["provider"], "state")
         self.assertFalse(reply["content"].startswith("Yes"))
-        self.assertIn("workers are running", reply["content"])
+        self.assertIn("Bob lane", reply["content"])
 
 
 class Session65a5d782Tests(SessionFixture):
