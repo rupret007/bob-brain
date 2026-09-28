@@ -5,7 +5,7 @@ from pathlib import Path
 
 import task_queue
 from api_tasks import ROLES
-from build_info import CODE_ROOT
+from build_info import CODE_ROOT, git_checkout_root
 from chat_intent import blocked_scopes, command, project_targets, state_for
 from live_status_snapshot import observe_work
 
@@ -67,8 +67,6 @@ def deployed_project_context(root):
     # Deployments can have no active jobs and no identifiable project screen.
     # Both services must select this running checkout; an arbitrary/stale pin
     # or a rollback copy without Git evidence is not enough to assign a report.
-    if not (CODE_ROOT / ".git").exists():
-        return None
     try:
         for name in ("webchat", "dispatch"):
             value = (root / "conductor/state" / (name + "-code-root")).read_text().strip()
@@ -77,10 +75,13 @@ def deployed_project_context(root):
                 return None
     except (OSError, ValueError, RuntimeError):
         return None
+    if git_checkout_root(CODE_ROOT) is None:
+        return None
     return dict(id=None, project="Web Bob", context="project context", prompt=(
         "The Web Bob checkout is selected by matching deployment pins for this server and its dispatcher; "
         "no current task or worker execution is confirmed. Inspect the supplied repository snapshot for "
-        "concrete dispatch findings and regression test drafts, including webchat/worker_assignment.py, "
+        "concrete dispatch findings and regression test drafts, including webchat/build_info.py, "
+        "webchat/worker_assignment.py, "
         "webchat/task_dispatch.py, state/task_queue.py and services/dispatch_worker.py. "
         "Do not infer active work, progress or results from deployment metadata."))
 

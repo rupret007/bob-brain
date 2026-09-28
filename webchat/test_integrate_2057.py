@@ -1,6 +1,7 @@
 """Every original Jeff turn, plus forged effects and failed dispatches."""
 import copy
 import json
+import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -19,11 +20,15 @@ class PinnedDeploymentAssignments(SessionFixture):
     def setUp(self):
         super().setUp()
         from build_info import CODE_ROOT
-        self.code_root = CODE_ROOT
+        self.code_root = Path(__file__).resolve().parents[1]
+        self.assertEqual(CODE_ROOT, self.code_root)
+        self.assertEqual(Path(subprocess.check_output(
+            ["git", "-C", str(self.code_root), "rev-parse", "--show-toplevel"], text=True).strip()).resolve(),
+            self.code_root)
         self.pins = self.root / "conductor/state"
         self.pins.mkdir(parents=True, exist_ok=True)
         for name in ("webchat", "dispatch"):
-            (self.pins / (name + "-code-root")).write_text(str(CODE_ROOT) + "\n")
+            (self.pins / (name + "-code-root")).write_text(str(self.code_root) + "\n")
         # Attempt 0204 had this screen only: no identifiable project lane.
         sampler = patch("live_status_snapshot._screen_sessions", return_value={
             "lane-integrate-deploy-0204": "53678.lane-integrate-deploy-0204"})
@@ -39,7 +44,12 @@ class PinnedDeploymentAssignments(SessionFixture):
         self.assertEqual(before["queue_counts"]["claimed"], 0)
         self.assertEqual(before["work_counts"]["running"], 0)
         self.assertEqual(len(before["work"]), 1)
-        self.assertIsNone(before["work"][0]["project"])
+        lane = before["work"][0]
+        self.assertEqual(lane["screen"], "lane-integrate-deploy-0204")
+        self.assertEqual(lane["state"], "unverified")
+        self.assertEqual(lane["source"], "screen")
+        for field in ("project", "repo", "task", "job_id", "worker"):
+            self.assertIsNone(lane.get(field), field)
         started = time.time()
         answer = self.send(exchange["message"])
         records = queue.tasks(self.root)
@@ -139,6 +149,51 @@ class PinnedDeploymentAssignments(SessionFixture):
         with patch("worker_assignment.CODE_ROOT", rollback):
             self.assertIn("couldn't assign", self.send(SESSIONS[0]["exchanges"][0]["message"])["content"])
         self.assertFalse(queue.tasks(self.root))
+
+    def test_git_marker_without_a_repository_cannot_authorize_jobs(self):
+        for marker in ("file", "directory"):
+            with self.subTest(marker=marker):
+                code = self.root / marker
+                code.mkdir()
+                (code / "webchat").mkdir()
+                (code / "webchat/build_info.py").write_text("# Untracked identity fixture.\n")
+                if marker == "file":
+                    (code / ".git").write_text("not a git checkout\n")
+                else:
+                    (code / ".git").mkdir()
+                for name in ("webchat", "dispatch"):
+                    (self.pins / (name + "-code-root")).write_text(str(code) + "\n")
+                with patch("worker_assignment.CODE_ROOT", code):
+                    answer = self.send(SESSIONS[0]["exchanges"][0]["message"])
+                self.assertFalse(answer.get("task_ids"))
+                self.assertFalse(queue.tasks(self.root))
+
+    def test_nested_tracked_code_uses_its_git_root_with_pins_to_the_running_code(self):
+        repo = self.root / "monorepo"
+        code = repo / "apps/webbob"
+        module = code / "webchat/build_info.py"
+        module.parent.mkdir(parents=True)
+        module.write_text("# Tracked identity module for the nested fixture.\n")
+        def git(*args):
+            return subprocess.check_output(["git", "-C", str(repo), *args], stderr=subprocess.STDOUT)
+        git("init", "-b", "main")
+        git("add", ".")
+        git("-c", "user.name=Test", "-c", "user.email=test@localhost", "commit", "-m", "Nested fixture")
+        for name in ("webchat", "dispatch"):
+            (self.pins / (name + "-code-root")).write_text(str(code) + "\n")
+        with patch("worker_assignment.CODE_ROOT", code):
+            answer = self.send(SESSIONS[0]["exchanges"][0]["message"])
+        records = queue.tasks(self.root)
+        self.assertEqual([records[key]["requested_worker"] for key in answer.get("task_ids", [])],
+                         ["gemini", "minimax"])
+        self.assertTrue(all("matching deployment pins" in row["prompt"] for row in records.values()))
+
+    def test_absolute_symlink_pins_resolve_to_the_running_checkout(self):
+        alias = self.root / "release-link"
+        alias.symlink_to(self.code_root, target_is_directory=True)
+        for name in ("webchat", "dispatch"):
+            (self.pins / (name + "-code-root")).write_text(str(alias) + "\n")
+        self.assertEqual(len(self.send(SESSIONS[0]["exchanges"][0]["message"]).get("task_ids", [])), 2)
 
     def test_pinned_context_does_not_displace_a_permitted_ongoing_job(self):
         source = queue.enqueue(self.root, "external", "source", "Improve WebJam recording", kind="coding")

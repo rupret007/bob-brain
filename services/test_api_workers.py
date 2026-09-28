@@ -1,5 +1,6 @@
 """Offline API job execution through the real scheduler, transport and ledger."""
 import hashlib
+import copy
 import json
 import os
 import sys
@@ -56,11 +57,16 @@ class APIWorkerTests(unittest.TestCase):
             from deploy_integrate import submit
             from dispatch_receipts import receipt_errors
             from integration_rubric import sessions
+            from live_status_snapshot import observe_work
 
             if deployed_checkout:
                 # Match restart()'s real pin layout. No project mapping or
                 # report_repository mock: workers must inspect the pinned code.
-                repo = CODE_ROOT
+                repo = Path(__file__).resolve().parents[1]
+                self.assertEqual(CODE_ROOT, repo)
+                self.assertEqual(Path(workspaces.git(repo, "rev-parse", "--show-toplevel")).resolve(), repo)
+                self.assertEqual(workspaces.git(repo, "ls-files", "--error-unmatch", "webchat/build_info.py"),
+                                 "webchat/build_info.py")
                 (self.core / "state").mkdir()
                 for name in ("webchat", "dispatch"):
                     (self.core / "state" / (name + "-code-root")).write_text(str(repo) + "\n")
@@ -80,6 +86,10 @@ class APIWorkerTests(unittest.TestCase):
             chat = Chat(self.core / "webchat", self.root, providers)
             self.addCleanup(chat.close)
             cid = chat.conversation_list()["conversations"][0]["id"]
+            parked_holds = {name: dict(request_id="parked", reason="Keep parked", released_projects=[])
+                            for name in ("Barker", "Wildflower")}
+            chat.conversations[cid]["intent_state"]["holds"] = copy.deepcopy(parked_holds)
+            chat.save(chat.conversations[cid])
             started = time.time()
             # Use the deployment replay's submission function with an in-process
             # HTTP adapter; all chat/intent/journal code stays real and isolated.
@@ -89,6 +99,16 @@ class APIWorkerTests(unittest.TestCase):
                 return chat.get(cid)
             with patch("live_status_snapshot._screen_sessions", return_value=screens), \
                     patch("live_status_snapshot.process_table", return_value={}):
+                if deployed_checkout:
+                    before = observe_work(self.root)
+                    self.assertFalse(before["records"])
+                    self.assertEqual(len(before["work"]), 1)
+                    lane = before["work"][0]
+                    self.assertEqual(lane["screen"], "lane-integrate-deploy-0204")
+                    self.assertEqual(lane["state"], "unverified")
+                    self.assertEqual(lane["source"], "screen")
+                    for field in ("project", "repo", "task", "job_id", "worker"):
+                        self.assertIsNone(lane.get(field), field)
                 receipt = submit(SimpleNamespace(call=call), cid, sessions()[0]["exchanges"][0]["message"])
             rows = queue.tasks(self.root)
             self.assertEqual(len(rows), 2)
@@ -108,6 +128,8 @@ class APIWorkerTests(unittest.TestCase):
                 self.assertIsNone(current["source_job_id"])
                 self.assertIn("FILE " + evidence_file, json.dumps(payload))
                 self.assertIn(context, json.dumps(payload))
+                if deployed_checkout:
+                    self.assertIn("FILE webchat/build_info.py", json.dumps(payload))
                 if not deployed_checkout:
                     self.assertNotIn("fixture-must-not-be-sent", json.dumps(payload))
                 answer = lane + ": " + evidence_file + " needs a duplicate-enqueue regression. Tests were not run."
@@ -135,6 +157,7 @@ class APIWorkerTests(unittest.TestCase):
                     patch.object(dispatch_worker.draft_publish, "publish") as publish:
                 self.assertEqual(web_dispatch.tick(), 2)
             self.assertEqual(called, ["gemini", "minimax"])
+            self.assertEqual(chat.get(cid)["intent_state"]["holds"], parked_holds)
             prepare.assert_not_called()
             publish.assert_not_called()
             for row in queue.tasks(self.root).values():

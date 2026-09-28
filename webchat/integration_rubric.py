@@ -1,4 +1,5 @@
 """Release rubric: actions require effects; status requires live observations."""
+import copy
 import json
 import re
 from datetime import datetime
@@ -123,8 +124,9 @@ def run_eval(*, project_lane_only=False, deployed_checkout=False):
         def reply(self, *args):
             return dict(content="Hi Jeff!", provider="gemini", attempts=[])
 
-    # Attempt 2205 had these open screens but zero queued/claimed jobs and no
-    # confirmed worker. Exercise collection and dispatch without a seed job.
+    # Attempt 2 (0204) had an open deploy screen, but it identified no project,
+    # repository or task. The earlier 2205 fixture also had a Web Bob lane.
+    # Keep these distinct and exercise the real collector without a seed job.
     screens = ({"lane-integrate-deploy-0204": "53678.lane-integrate-deploy-0204"} if deployed_checkout else
                {"lane-integrate-deploy-2205": "68531.lane-integrate-deploy-2205",
                 "lane-webbob-llm-reviews": "29817.lane-webbob-llm-reviews"}
@@ -135,7 +137,7 @@ def run_eval(*, project_lane_only=False, deployed_checkout=False):
             patch("live_status_snapshot.process_table", return_value={}):
         root = Path(folder)
         if deployed_checkout:
-            # Attempt 0204: no active source job or project screen. Use the
+            # Attempt 0204: deploy screen present, no identified project. Use the
             # same release pins written by deploy_parity.restart in production.
             from build_info import CODE_ROOT
             pins = root / "conductor/state"
@@ -146,8 +148,13 @@ def run_eval(*, project_lane_only=False, deployed_checkout=False):
         try:
             if not project_lane_only and not deployed_checkout:
                 task_queue.enqueue(root, "external", "source", "Improve WebJam recording reliability", worker="codex", kind="coding", title="WebJam")
-            for source in sessions():
+            for session_index, source in enumerate(sessions()):
                 cid = chat.new_conversation()["id"]
+                parked_holds = {name: dict(request_id="parked", reason="Keep parked", released_projects=[])
+                                for name in ("Barker", "Wildflower")}
+                if deployed_checkout:
+                    chat.conversations[cid]["intent_state"]["holds"] = copy.deepcopy(parked_holds)
+                    chat.save(chat.conversations[cid])
                 for index, exchange in enumerate(source["exchanges"]):
                     before = build_live_status_snapshot(root)
                     started = time.time()
@@ -157,8 +164,19 @@ def run_eval(*, project_lane_only=False, deployed_checkout=False):
                         thread["thread"].join(5)
                     answer = chat.get(cid)["messages"][-1]
                     errors = check_reply(answer, exchange, cid, started, before, build_live_status_snapshot(root), task_queue.tasks(root))
+                    if deployed_checkout:
+                        if chat.get(cid)["intent_state"]["holds"] != parked_holds:
+                            errors.append("parked Barker/Wildflower holds changed")
+                        if session_index == index == 0:
+                            lanes = before["work"]
+                            if (len(lanes) != 1 or lanes[0].get("screen") != "lane-integrate-deploy-0204"
+                                    or lanes[0].get("state") != "unverified" or lanes[0].get("source") != "screen"
+                                    or any(lanes[0].get(key) for key in ("project", "repo", "task", "job_id", "worker"))):
+                                errors.append("attempt2 fixture must have only an unidentified deploy screen")
+                            if any(before["queue_counts"][key] for key in ("queued", "claimed")) or before["work_counts"]["running"]:
+                                errors.append("attempt2 fixture must start without source jobs or running workers")
                     results.append(dict(name=source["source_id"][:8] + " turn " + str(index + 1) +
-                                             (" (deployed checkout, no project lane)" if deployed_checkout else
+                                             (" (deployed checkout, deploy screen only, parked holds)" if deployed_checkout else
                                               " (unverified project lane)" if project_lane_only else ""),
                                         pass_check=not errors, errors=errors, reply=answer["content"]))
         finally:

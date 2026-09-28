@@ -78,6 +78,20 @@ checkout for these API reports. The assignments explicitly say no current task
 or execution is confirmed. This fallback only supplies Web Bob repository
 context to API workers; project/global holds, maintenance and provider
 availability still apply. Missing or mismatched pins cannot supply context.
+`webchat/build_info.py` is a tracked source module: `CODE_ROOT` comes from its
+resolved `__file__`, never a generated manifest or the persistent `BOB_ROOT`.
+Git must resolve a real checkout and find that module in HEAD. Normal checkouts,
+linked worktrees (`.git` files), and tracked nested code directories are supported;
+an untracked rollback/archive under another repository cannot borrow its identity.
+The pins at `conductor/state/webchat-code-root` and `dispatch-code-root` must
+both contain absolute paths resolving to that running code directory (including
+the code subdirectory in a nested layout). Deployment writes absolute paths with
+a trailing newline; absolute symlink aliases are accepted, relative paths are
+rejected because the services can start from different working directories.
+An unverified `lane-integrate-deploy-0204` screen with no project, repository or
+task does not supply project context or block this fallback. The attempt2
+regressions assert those observed fields before checking real Gemini `audit`
+and MiniMax `test-writing` jobs, while preserving Barker and Wildflower holds.
 
 Named API requests also support audits, planning, research, repository reviews,
 test-case writing and eval grading. Gemini job calls use `gemini-2.5-pro`;

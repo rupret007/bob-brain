@@ -1,16 +1,91 @@
 """Exercise deployed code with a different, deliberately stale data directory."""
 import json
+import os
+import subprocess
+import tempfile
 import threading
+import unittest
 import uuid
 from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
 from app import Server
-from build_info import BUILD, STATIC, load_build, VERSION_QUESTION
+import build_info
+from build_info import BUILD, CODE_ROOT, STATIC, git_checkout_root, load_build, VERSION_QUESTION
 from live_redeploy_check import Client
 from test_webchat import Fixture
 from live_status_snapshot import _screen_sessions
+
+
+class CheckoutIdentity(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        self.repo = self.root / "repo"
+        module = self.repo / "webchat/build_info.py"
+        module.parent.mkdir(parents=True)
+        module.write_text("# Tracked fixture identity module.\n")
+        self.git("init", "-b", "main")
+        self.git("add", ".")
+        self.git("-c", "user.name=Test", "-c", "user.email=test@localhost", "commit", "-m", "Fixture")
+
+    def git(self, *args):
+        return subprocess.check_output(["git", "-C", str(self.repo), *args], text=True,
+                                       stderr=subprocess.STDOUT).strip()
+
+    def test_running_identity_module_is_tracked_in_this_checkout(self):
+        running = Path(__file__).resolve().parents[1]
+        self.assertEqual(Path(build_info.__file__).resolve(), running / "webchat/build_info.py")
+        self.assertEqual(CODE_ROOT, running)
+        actual = Path(subprocess.check_output(["git", "-C", str(running), "rev-parse", "--show-toplevel"],
+                                             text=True).strip()).resolve()
+        self.assertEqual(git_checkout_root(), actual)
+        self.assertEqual(actual, running)
+        self.assertEqual(subprocess.check_output(["git", "-C", str(running), "cat-file", "-t",
+                                                  "HEAD:webchat/build_info.py"], text=True).strip(), "blob")
+
+    def test_normal_and_linked_worktrees_have_real_git_identity(self):
+        self.assertTrue((self.repo / ".git").is_dir())
+        self.assertEqual(git_checkout_root(self.repo), self.repo)
+        linked = self.root / "linked"
+        self.git("worktree", "add", "--detach", str(linked), "HEAD")
+        self.assertTrue((linked / ".git").is_file())
+        self.assertEqual(git_checkout_root(linked), linked)
+        self.assertEqual(load_build(linked)["sha"], self.git("rev-parse", "HEAD"))
+
+    def test_nested_code_must_be_committed_to_use_the_parent_git_identity(self):
+        nested = self.repo / "apps/webbob"
+        module = nested / "webchat/build_info.py"
+        module.parent.mkdir(parents=True)
+        module.write_text("# Nested identity fixture.\n")
+        self.assertIsNone(git_checkout_root(nested))
+        self.assertEqual(load_build(nested)["sha"], "unknown")
+        self.git("add", ".")
+        self.assertIsNone(git_checkout_root(nested))
+        self.git("-c", "user.name=Test", "-c", "user.email=test@localhost", "commit", "-m", "Nested code")
+        self.assertEqual(git_checkout_root(nested), self.repo)
+        self.assertEqual(load_build(nested)["sha"], self.git("rev-parse", "HEAD"))
+
+    def test_git_failures_return_no_checkout(self):
+        for error in (OSError("git unavailable"), subprocess.TimeoutExpired("git", 5),
+                      subprocess.CalledProcessError(128, "git")):
+            with self.subTest(error=type(error).__name__), patch("build_info.subprocess.check_output", side_effect=error):
+                self.assertIsNone(git_checkout_root(self.repo))
+
+    def test_inherited_git_overrides_do_not_choose_the_repository(self):
+        with patch.dict(os.environ, {"GIT_DIR": str(self.root / "wrong-git"), "GIT_WORK_TREE": str(self.root)}):
+            self.assertEqual(git_checkout_root(self.repo), self.repo)
+
+    def test_deleted_or_linked_identity_module_cannot_supply_context(self):
+        module = self.repo / "webchat/build_info.py"
+        module.unlink()
+        self.assertIsNone(git_checkout_root(self.repo))
+        other = self.root / "external.py"
+        other.write_text("# Not the running checkout's module.\n")
+        module.symlink_to(other)
+        self.assertIsNone(git_checkout_root(self.repo))
 
 
 class ReleaseIdentity(Fixture):
