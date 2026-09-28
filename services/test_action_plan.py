@@ -60,7 +60,10 @@ class ActionPlanTests(unittest.TestCase):
         for prompt in (DATA['prompt'], json.loads((REPO / 'services/fixtures/texting_jobcompletion_1035.json').read_text())['prompt']):
             body, meta = api_worker.evidence(REPO, 'minimax', prompt, lambda text: text, kind='test-writing')
             self.assertNotIn(FIXTURE, meta['truncated'])
-            self.assertIn(json.dumps(DATA['complete_answer']), body)
+            self.assertIn(DATA['complete_answer'], body)
+            self.assertNotIn(DATA['answer'], body)
+            rendered = next(row for row in meta['files'] if row['path'] == FIXTURE)
+            self.assertEqual(rendered['rendered_fields'], ['evidence_limits', 'complete_answer'])
             for guard in (acceptance.plan_heading, acceptance.check_completion_json, acceptance.check_deliverables):
                 self.assertIn(inspect.getsource(guard).strip(), body)
             self.assertLessEqual(meta['source_bytes'], 64000)

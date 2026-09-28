@@ -77,7 +77,8 @@ def evidence(repo, worker, task, redact, kind=None):
     # omit the concrete failure/control fixture. Reserve a fair share for that
     # tracked example too; it is evidence, never a replacement worker answer.
     replay_fixture = "services/fixtures/texting_jobcompletion_1403.json"
-    examples = {"services/fixtures/texting_action_plan_1605.json"} if preferred else set()
+    plan_example = "services/fixtures/texting_action_plan_1605.json"
+    examples = {plan_example} if preferred else set()
     if preferred and "services/result_acceptance.py" in task:
         examples.update((replay_fixture, "services/test_replay_completion.py"))
     elif preferred:
@@ -109,11 +110,22 @@ def evidence(repo, worker, task, redact, kind=None):
             if len(raw) > size:
                 truncated.append(name)
             text = redact(raw[:size].decode("utf-8", "replace"))
+            rendered_fields = None
+            if name == plan_example and len(raw) <= size:
+                # Display a real report layout, not JSON-escaped label lines.
+                # The captured malformed answer remains in the regression
+                # fixture; it must not become a worker's formatting example.
+                example = json.loads(text)
+                rendered_fields = ["evidence_limits", "complete_answer"]
+                text = ("Rendered fixture fields: evidence_limits and complete_answer only. "
+                        "Unexecuted report example; adapt the heading and plan to YOUR assigned task.\n"
+                        + example["evidence_limits"] + "\n\n" + example["complete_answer"])
             if len(raw) > size:
                 text += "\n[Snapshot truncated here; remaining source not supplied.]"
             remaining -= len(raw[:size])
             sections.append("FILE " + name + "\n" + text)
-            included.append(dict(path=name, sha256=hashlib.sha256(raw[:size]).hexdigest()))
+            included.append(dict(path=name, sha256=hashlib.sha256(raw[:size]).hexdigest(),
+                                 **({"rendered_fields": rendered_fields} if rendered_fields else {})))
         except OSError:
             omitted.append(name)
     if not included:

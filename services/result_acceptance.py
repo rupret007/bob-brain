@@ -259,6 +259,8 @@ def deliverable_requirements(prompt, kind=None):
             "omitting any of them must expect rejection, never success. Quote actual exception substrings. "
             "Write literal prompt/answer/input values or reference an explicitly supplied fixture field; "
             "descriptions such as 'a prompt with...' or 'an answer containing...' are not concrete fixtures. "
+            "When the input is itself a report, prefer supplied fixture fields over rewriting a long escaped answer. "
+            "Each draft still needs its own OUTER Action: and Expected: lines; labels inside a Setup string do not count. "
             "If a captured report fixture is supplied, its complete_answer is an unexecuted layout/example, "
             "not proof of live success. Ground your own tests in the supplied current implementation. "
             "Architecture notes, copied implementation snippets, search commands and promises are not test drafts. ")
