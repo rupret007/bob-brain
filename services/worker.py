@@ -31,21 +31,20 @@ def execute(job):
             stack.enter_context(lock("worker-" + job, blocking=False))
             if record["engine"] in WORKER_MODELS:
                 from dispatch_worker import redact
-                from result_acceptance import check_answer, accept, deliverable_requirements
+                from result_acceptance import check_answer, accept
                 if coding:
                     raise RuntimeError("API workers cannot edit project files, deploy or resolve conflicts")
                 stack.enter_context(slot(record["engine"]))
                 job_event(job, "running", model=WORKER_MODELS[record["engine"]], pid=os.getpid(),
                           started_at=time.time(), recovery="API report executing")
                 task = (folder / "PROMPT.txt").read_text()
-                body, metadata = api_worker.evidence(Path(record["repo"]), record["engine"], task, redact)
+                body, metadata = api_worker.evidence(Path(record["repo"]), record["engine"], task, redact, kind=record.get("kind"))
                 purpose = "api-worker-research" if record["engine"] == "gemini" and report_kind(task) == "research" else "api-worker"
-                answer = redact(ask(record["engine"], api_worker.RULES + "TASK:\n" + task + "\n\n" + body
-                                    + "\n" + deliverable_requirements(task, record.get("kind")),
+                answer = redact(ask(record["engine"], api_worker.report_prompt(task, body, record.get("kind")),
                                     purpose=purpose, locked=True))
                 check_answer(task, answer, kind=record.get("kind"))
                 acceptance = accept(task, answer, lambda instructions: ask(record["engine"], instructions,
-                                      purpose="result-acceptance", locked=True), kind=record.get("kind"))
+                                      purpose="result-acceptance", locked=True), report_evidence=body, kind=record.get("kind"))
                 report = api_worker.save_report(CONDUCTOR, job, str(record.get("attempts", 0)), record["engine"], answer, redact)
                 atomic_write(folder / "RESULT.txt", answer + "\n")
                 job_event(job, verified=True, report_path=str(report), evidence=metadata,

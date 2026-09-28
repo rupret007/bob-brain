@@ -232,7 +232,13 @@ class APIWorkerTests(unittest.TestCase):
                 self.assertTrue(result["evidence"]["files"])
 
     def test_1035_failed_report_is_never_published_by_either_api_worker(self):
-        fixture = json.loads(Path(__file__).with_name("fixtures").joinpath("texting_jobcompletion_1035.json").read_text())
+        self.failed_completion_report("1035")
+
+    def test_1107_failed_report_is_never_published_by_either_api_worker(self):
+        self.failed_completion_report("1107")
+
+    def failed_completion_report(self, incident):
+        fixture = json.loads(Path(__file__).with_name("fixtures").joinpath("texting_jobcompletion_" + incident + ".json").read_text())
         repo = self.repo()
         (self.core / "services").mkdir()
         (self.core / "services/projects.json").write_text(json.dumps({"Web Bob": {"repo": str(repo)}}))
@@ -256,6 +262,44 @@ class APIWorkerTests(unittest.TestCase):
                 self.assertFalse(result["acceptance"]["accepted"])
                 self.assertIn("Missing concrete regression", result["error"])
                 self.assertFalse((self.core / "state/task-runs" / job["id"] / "RESULT.md").exists())
+
+    def test_old_1107_assignment_gets_implementation_and_saves_accepted_drafts(self):
+        self.acceptance.stop()
+        repo = Path(__file__).resolve().parents[1]
+        fixture = json.loads((repo / "services/fixtures/texting_jobcompletion_1107.json").read_text())
+        complete = json.loads((repo / "services/fixtures/texting_jobcompletion_1035.json").read_text())["complete_answer"]
+        (self.core / "services").mkdir()
+        (self.core / "services/projects.json").write_text(json.dumps({"Web Bob": {"repo": str(repo)}}))
+        job = queue.enqueue(self.root, "conversation", "1107", fixture["prompt"], worker="minimax", kind=fixture["kind"])
+        row = queue.claim(self.root, "minimax")
+        def response(worker, prompt, **kwargs):
+            if kwargs["purpose"] == "result-acceptance":
+                self.assertIn("FILE services/result_acceptance.py", prompt)
+                self.assertIn("def check_deliverables(", prompt)
+                self.assertIn('"report_evidence":', prompt)
+                return '{"accepted": true, "reason": "Concrete drafts and conditional unblock plan"}'
+            self.assertLess(prompt.index(fixture["prompt"]), prompt.index("FILE "))
+            self.assertLess(len(prompt.encode()), 78000)
+            # The old no-path prompt must supply production definitions, not
+            # merely tests that refer to unavailable implementation/fixtures.
+            for path, symbol in (("services/result_acceptance.py", "def check_deliverables("),
+                                 ("services/dispatch_worker.py", "def execute("),
+                                 ("services/api_worker.py", "def evidence(")):
+                section = prompt.split("FILE " + path + "\n", 1)[1].split("\n\nFILE ", 1)[0]
+                self.assertIn(symbol, section)
+            self.assertIn("FILE services/fixtures/texting_jobcompletion_1035.json", prompt)
+            self.assertIn("SAME line", prompt[prompt.index("END OF REPOSITORY EVIDENCE"):])
+            return complete
+        with patch.object(dispatch_worker, "ask", side_effect=response) as ask:
+            self.assertEqual(dispatch_worker.execute(job["id"], row["claim_token"]), 0)
+        self.assertEqual(ask.call_count, 2)
+        result = queue.tasks(self.root)[job["id"]]
+        self.assertEqual(result["status"], "succeeded")
+        self.assertEqual(Path(result["result_path"]).read_text().strip(), complete.strip())
+        self.assertEqual(result["result_sha256"], hashlib.sha256(complete.strip().encode()).hexdigest())
+        self.assertLessEqual(result["evidence"]["source_bytes"], 64000)
+        self.assertTrue(result["evidence"]["omitted"])
+        self.assertIsNone(result["worktree"])
 
     def test_named_evidence_and_tests_survive_minimax_snapshot_budget(self):
         repo = self.repo()

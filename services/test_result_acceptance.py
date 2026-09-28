@@ -20,6 +20,13 @@ class AcceptanceTests(unittest.TestCase):
                 accept(fixture["prompt"], fixture["answer"], review, kind=kind)
         review.assert_not_called()
 
+    def test_1107_exact_rejected_drafts_cannot_win_a_positive_vote(self):
+        fixture = json.loads(Path(__file__).with_name("fixtures").joinpath("texting_jobcompletion_1107.json").read_text())
+        review = Mock(return_value='{"accepted": true, "reason": "Has test-shaped content"}')
+        with self.assertRaisesRegex(ResultRejected, "Missing concrete regression"):
+            accept(fixture["prompt"], fixture["answer"], review, kind=fixture["kind"])
+        review.assert_not_called()
+
     def test_concrete_drafts_and_conditional_unblock_plan_reach_semantic_review(self):
         fixture = self.completion_fixture()
         review = Mock(return_value='{"accepted": true, "reason": "Delivers bounded test drafts and a conditional fix plan"}')
@@ -46,6 +53,16 @@ class AcceptanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ResultRejected, "did not complete the task"):
             accept(fixture["prompt"], fixture["complete_answer"], review)
         self.assertEqual(review.call_count, 1)
+
+    def test_report_reviewer_checks_assertions_against_the_workers_snapshot(self):
+        fixture = self.completion_fixture()
+        evidence = "FILE queue.py\ndef enqueue(job):\n    return job\n"
+        review = Mock(return_value='{"accepted": false, "reason": "The proposed assertion contradicts the supplied implementation"}')
+        with self.assertRaisesRegex(ResultRejected, "contradicts"):
+            accept(fixture["prompt"], fixture["complete_answer"], review, report_evidence=evidence)
+        prompt = review.call_args.args[0]
+        self.assertEqual(json.loads(prompt.split("\n\n", 1)[1])["report_evidence"], evidence)
+        self.assertIn("Reject tests whose expected result contradicts", prompt)
 
     def test_peer_audit_of_named_unblock_also_requires_resolution_steps(self):
         with self.assertRaisesRegex(ResultRejected, "Missing actionable unblock plan"):
