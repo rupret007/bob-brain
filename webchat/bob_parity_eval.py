@@ -72,6 +72,41 @@ def run_eval(root: Path | None = None) -> dict:
     rows.append(_case("job confirm not council", not parse_confirm("yes, run council")))
     rows.append(_case("song projects dir", (root / "conductor/webchat").is_dir()))
 
+    # WEBBOB-REPLYQ-1856 reply-quality rubric: pinned to Jeff's real "still
+    # worse than Bob the Bot" complaints (system prompt + status formatter).
+    from providers import RULES
+    from reply_authority import format_operational_reply
+    from worker_evidence import clean
+    import chat_intent
+
+    rules_lower = RULES.lower()
+    rows.append(_case("prompt bans 'unknown task' wording", 'never say "unknown task"' in rules_lower
+                       and "must stay unknown" not in rules_lower
+                       and "say its current task is unknown" not in rules_lower))
+    rows.append(_case("prompt bans empty improvement promises", "i'll focus on..." in rules_lower
+                       and "give the corrected, better answer right now" in rules_lower))
+    rows.append(_case("prompt requires casual answer-first style", "1 to 4 short, casual" in RULES))
+    rows.append(_case("prompt keeps per-provider limits from crossing over",
+                       "never state one provider's cap or reset time as if it were another's" in rules_lower))
+
+    status_snapshot = {"queue_counts": {"claimed": 0, "queued": 0}, "work": [], "work_counts": {"running": 2},
+                        "inspection": {"screens": True, "processes": True}, "screen_lanes": [], "disk": {},
+                        "lane_locks": {}, "provider_health": {}}
+    status_line = format_operational_reply(status_snapshot, "server", "how's it going?")
+    rows.append(_case("status reply skips robotic 'Yes —' prefix", not status_line.startswith("Yes")
+                       and "workers are running" in status_line))
+
+    long_line = "Colloquial \"text ...\" now reaches the model so Web Bob can make good on texting requests today"
+    excerpt = clean(long_line, 40)
+    normalized = " ".join(long_line.split())
+    rows.append(_case("log excerpts truncate on a word boundary",
+                       normalized.startswith(excerpt) and (len(excerpt) == len(normalized) or normalized[len(excerpt)] == " ")))
+
+    four_projects = chat_intent.projects(
+        "WebJam, AdoptIQ, Stkryboard, Fantasy Football need to be developed to the max.")
+    rows.append(_case("garbled project list still resolves all four names",
+                       four_projects == ["WebJam", "AdoptIQ", "StoryBoard", "Fantasy Football"]))
+
     passed = sum(1 for r in rows if r["pass"])
     return {
         "total": len(rows),

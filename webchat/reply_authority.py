@@ -104,7 +104,7 @@ def format_operational_reply(snap, provider="server", text=""):
     running = snap["work_counts"]["running"]
     detailed = bool(DETAILS.search(text) and not HIDE_DETAILS.search(text))
     if running:
-        first = f"Yes — {running} worker{'s are' if running != 1 else ' is'} running."
+        first = f"{running} worker{'s are' if running != 1 else ' is'} running."
     elif work:
         first = "Work is listed; I can't confirm a running worker."
     elif not all(inspection.values()):

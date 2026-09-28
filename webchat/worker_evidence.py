@@ -13,7 +13,15 @@ def clean(text, limit=220):
     text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
     text = re.sub(r"\b(?:sk-[\w-]{20,}|AIza[\w-]{25,}|gh[pousr]_[\w]{25,})\b", "[secret removed]", text)
     text = re.sub(r"(?i)\b(?:password|token|secret|api_key)\s*[:=]\s*\S+", "[secret removed]", text)
-    return " ".join(text.split())[:limit]
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    clipped = text[:limit]
+    # Never end mid-word: a truncated raw log line should read as a phrase,
+    # not garbage cut off between letters.
+    if " " in clipped:
+        clipped = clipped.rsplit(" ", 1)[0]
+    return clipped
 
 
 def read_part(path, tail=False):
@@ -121,7 +129,9 @@ def enrich_work(root, activity, records, table):
         prompt = record.get("prompt") or (read_part(prompt_path) if prompt_path else "")
         if not prompt and row.get("worker") in ("codex", "cursor", "claude"):
             prompt = _inline_prompt(table.get(row.get("pid"), {}).get("command", ""))
-        tail = [clean(line) for line in read_part(log_path, tail=True).splitlines() if line.strip()]
+        # A casual reply quotes one short evidence line, not a run-on paragraph:
+        # cap well under the 220-char default used for prose fields.
+        tail = [clean(line, 120) for line in read_part(log_path, tail=True).splitlines() if line.strip()]
         last = tail[-1] if tail else "log has no readable lines"
         task = _task(prompt) or _task(record.get("title") or "")
         if not task and row["title"] != "Worker process" and not row.get("screen"):
