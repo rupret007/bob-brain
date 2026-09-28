@@ -67,7 +67,8 @@ class ActionPlanTests(unittest.TestCase):
     def test_captured_nested_report_inputs_have_independent_inner_and_outer_plans(self):
         data = json.loads((REPO / 'services/fixtures/texting_action_plan_control_1605.json').read_text())
         self.assertEqual(hashlib.sha256(data['answer'].encode()).hexdigest(), data['answer_sha256'])
-        acceptance.check_answer(data['prompt'], data['answer'], kind=data['kind'])
+        with self.assertRaisesRegex(acceptance.ResultRejected, 'contradicts literal guard outcome'):
+            acceptance.check_answer(data['prompt'], data['answer'], kind=data['kind'])
         inputs = []
         for line in data['answer'].splitlines():
             if line.startswith('Setup: '):

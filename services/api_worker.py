@@ -86,13 +86,16 @@ def report_serialization(task, kind=None):
         "A nested check_answer/check_deliverables control needs every section its own prompt requires. "
         "Do not handwrite a nested report control: use an explicitly supplied complete fixture field, "
         "or choose the narrow check_completion_json guard with literal prompt/answer inputs as shown below. "
+        "check_completion_json expects ONLY accepted/reason keys, never the regression_tests/plan/completion "
+        "transport envelope. That envelope goes through render_report first; it is not completion JSON. "
         "Prefer a small direct function/state fixture over a long escaped report; never copy historical rejected answers. "
         "Cite existing paths/symbols, actual exception text and required kind arguments. "
         "Drafts are unexecuted; no tools or execution claims. Disclose missing original task/evidence. "
         "Completion describes YOUR delivered report, not a server vote or lane closure. "
         "Use accepted=false if incomplete; missing drafts cannot claim completion. Replace every bracketed value. "
         + ("Tie the plan to the named ongoing task. Read current code: validate existing coverage when already implemented. "
-           "Use a supported validation command; exit requires actual worker results and live gates, otherwise remain blocked. "
+           "For Web Bob validation use python3 -m unittest discover -s services -p 'test_*.py'; "
+           "exit requires actual worker results and live gates, otherwise remain blocked. "
            "The server renders these outer labels (supply values via plan fields, not Markdown):\n" + heading +
            ":\nChange:\nValidation:\nExit condition:\n" if heading else "Use plan=null; no plan is required.\n") +
         '{"regression_tests": [{"name": "[failure case]", "target": "[file/symbol]", '

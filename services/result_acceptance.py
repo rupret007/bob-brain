@@ -1,6 +1,7 @@
 """Reject unusable closeouts before they enter the successful result outbox."""
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -116,6 +117,69 @@ def check_deliverables(prompt, answer, kind=None):
         raise ResultRejected("Missing concrete Findings/limits closing sentence")
 
 
+def check_literal_guard_drafts(answer):
+    """Check known pure guards on literal data, never execute model code.
+
+    General tests and fixture references still need independent semantic review.
+    This catches the observed false controls that even a positive vote missed.
+    """
+    prose = re.sub(r"(?m)^[ \t]*>[^\n]*$", "", FENCED_BLOCK.sub("", answer))
+    guards = {"check_completion_json": check_completion_json, "check_deliverables": check_deliverables}
+    for case in re.split(r"(?m)^Regression test:", prose)[1:]:
+        fields = {name: re.search(r"(?m)^" + name + r": (.+)$", case)
+                  for name in ("Setup", "Action", "Expected")}
+        if not all(fields.values()):
+            continue
+        call = re.search(r"\b(check_completion_json|check_deliverables)\(([^()\n]*)\)", fields["Action"][1])
+        if not call:
+            continue
+        try:
+            # Only plain literal assignments; no expressions, imports, calls,
+            # attributes or mutation from the worker can run here.
+            values = {}
+            try:
+                statements = ast.parse(fields["Setup"][1]).body
+            except SyntaxError:
+                # The older drafts use keyword-list notation instead of
+                # semicolon-separated assignments. This is parsed, never called.
+                fixture = ast.parse("fixture(" + fields["Setup"][1] + ")", mode="eval").body
+                if not isinstance(fixture, ast.Call) or fixture.args:
+                    raise ValueError("Not literal keyword data")
+                values = {key.arg: ast.literal_eval(key.value) for key in fixture.keywords}
+            else:
+                for statement in statements:
+                    if (not isinstance(statement, ast.Assign) or len(statement.targets) != 1
+                            or not isinstance(statement.targets[0], ast.Name)):
+                        raise ValueError("Not a literal fixture")
+                    values[statement.targets[0].id] = ast.literal_eval(statement.value)
+            invocation = ast.parse(call[0], mode="eval").body
+            if ([arg.id if isinstance(arg, ast.Name) else None for arg in invocation.args] != ["prompt", "answer"]
+                    or any(key.arg != "kind" for key in invocation.keywords)):
+                continue
+            kwargs = {key.arg: values[key.value.id] if isinstance(key.value, ast.Name) else ast.literal_eval(key.value)
+                      for key in invocation.keywords}
+            prompt, inner = values["prompt"], values["answer"]
+            if not isinstance(prompt, str) or not isinstance(inner, str):
+                continue
+            if kwargs and call[1] != "check_deliverables":
+                continue
+        except (ValueError, SyntaxError, KeyError, RecursionError):
+            continue  # Nonliteral/mock-based drafts belong to semantic review.
+        expected = fields["Expected"][1]
+        success = bool(re.search(r"(?i)returns?\s+None\b|no exception|without raising|does not raise", expected))
+        failure = not success and bool(re.search(r"\bResultRejected\b", expected))
+        if not (success or failure):
+            continue
+        error = None
+        try:
+            guards[call[1]](prompt, inner, **kwargs)
+        except ResultRejected as exc:
+            error = str(exc)
+        if (success and error is not None) or (failure and error is None):
+            raise ResultRejected("Regression draft contradicts literal guard outcome: " + call[1] +
+                                 (" raised " + error if error else " returned successfully"))
+
+
 CODING_REQUIREMENTS = (
     "Before choosing a bounded fix, read this project's AGENTS.md, test scripts and CI quality gates. "
     "After the final code edit, actually re-run the affected application's tests and the project's required "
@@ -168,6 +232,8 @@ def check_answer(prompt, answer, *, kind=None):
         if match[2] not in answer:
             raise ResultRejected("Answer omitted required exact text: " + match[2][:200])
     check_deliverables(prompt, answer, kind)
+    if needs_test_drafts(prompt, kind):
+        check_literal_guard_drafts(answer)
 
 
 def accept(prompt, answer, review, *, coding_evidence=None, report_evidence=None, kind=None):

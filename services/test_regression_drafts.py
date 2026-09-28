@@ -37,6 +37,22 @@ class RegressionDraftTests(unittest.TestCase):
             acceptance.check_completion_json(**inputs[0])
         acceptance.check_completion_json(**inputs[1])
 
+    def test_known_false_literal_controls_cannot_win_a_positive_vote(self):
+        data = json.loads((REPO / 'services/fixtures/texting_regression_control_1658.json').read_text())
+        for fixture in (data, data['envelope_confusion']):
+            self.assertEqual(hashlib.sha256(fixture['answer'].encode()).hexdigest(), fixture['answer_sha256'])
+            vote = Mock(return_value='{"accepted": true, "reason": "Looks good"}')
+            with self.assertRaisesRegex(acceptance.ResultRejected, 'contradicts literal guard outcome'):
+                acceptance.accept(fixture['prompt'], fixture['answer'], vote, kind=fixture['kind'])
+            vote.assert_not_called()
+
+    def test_literal_guard_audit_never_runs_model_expressions(self):
+        malicious = DATA['complete_answer'].replace("prompt='Return JSON with accepted/reason fields.'",
+                    "prompt=__import__('os').system('touch /must-never-run')")
+        with patch('os.system') as system:
+            acceptance.check_literal_guard_drafts(malicious)
+        system.assert_not_called()
+
     def test_exact_capture_cannot_win_a_positive_vote(self):
         for key in ('prompt', 'answer'):
             self.assertEqual(hashlib.sha256(DATA[key].encode()).hexdigest(), DATA[key + '_sha256'])
