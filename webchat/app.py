@@ -1186,13 +1186,29 @@ class Handler(BaseHTTPRequestHandler):
         if mime != ("application/x-www-form-urlencoded" if form else "application/json"):
             raise RequestError(415, "Unsupported content type.")
         try:
-            raw = self.rfile.read(size).decode("utf-8")
+            raw = self.read_content(size, cap).decode("utf-8")
             data = {k: v[0] for k, v in parse_qs(raw).items()} if form else json.loads(raw)
             if not isinstance(data, dict):
                 raise ValueError()
             return data
         except (UnicodeError, ValueError):
             raise RequestError(400, "Invalid request body.") from None
+
+    def read_content(self, size: int, cap: int, *, incomplete: str = "Incomplete request body. Please retry.") -> bytes:
+        """Read exactly size bytes without exceeding cap; fail closed on short reads."""
+        if size > cap:
+            raise RequestError(413, "Request is empty or too large.")
+        chunks, remaining = [], size
+        while remaining > 0:
+            part = self.rfile.read(min(remaining, 64 * 1024))
+            if not part:
+                break
+            chunks.append(part)
+            remaining -= len(part)
+        blob = b"".join(chunks)
+        if len(blob) != size:
+            raise RequestError(400, incomplete)
+        return blob
 
     def cookie(self, token, clear=False):
         secure = self.origin.startswith("https://")
@@ -1482,9 +1498,8 @@ class Handler(BaseHTTPRequestHandler):
                     raise RequestError(400, "Transfer encoding is not supported.")
                 if not 0 < size <= limit:
                     raise RequestError(413, "Attachment is empty or too large.")
-                blob = self.rfile.read(size)
-                if len(blob) != size:
-                    raise RequestError(400, "Incomplete attachment upload. Please retry.")
+                blob = self.read_content(
+                    size, limit, incomplete="Incomplete attachment upload. Please retry.")
             else:
                 # Compatibility for existing JSON clients, including base64 expansion.
                 data = self.body(limit=MAX_MEDIA_BODY)

@@ -92,6 +92,15 @@ def _check_signature(data: bytes, suffix: str):
         raise ValueError("File content does not match its type, or is not UTF-8 text.")
 
 
+def _reject_embedded_secrets(data: bytes, name: str, redact) -> None:
+    """Scan filename and raw bytes so secrets embedded in binary cannot slip past redact."""
+    if redact(name) != name:
+        raise ValueError("This attachment appears to contain a secret. Remove it before uploading.")
+    for view in (data.decode("latin-1"), data.decode("utf-8", errors="replace")):
+        if redact(view) != view:
+            raise ValueError("This attachment appears to contain a secret. Remove it before uploading.")
+
+
 def store_media(root: Path, data: bytes, filename: str, *, conversation_id: str, redact) -> dict:
     from providers import UUID
     if not isinstance(conversation_id, str) or not UUID.fullmatch(conversation_id):
@@ -109,9 +118,7 @@ def store_media(root: Path, data: bytes, filename: str, *, conversation_id: str,
     # in a text file, filename, or embedded metadata are persisted through HTTP.
     if redact is None:
         raise ValueError("Secret scanning requires a redact callable.")
-    text = data.decode("utf-8", errors="replace")
-    if redact(name) != name or redact(text) != text:
-        raise ValueError("This attachment appears to contain a secret. Remove it before uploading.")
+    _reject_embedded_secrets(data, name, redact)
     if kind == "image":
         with tempfile.TemporaryDirectory() as tmp:
             probe = Path(tmp) / ("upload" + suffix)
@@ -122,14 +129,19 @@ def store_media(root: Path, data: bytes, filename: str, *, conversation_id: str,
     path = _upload_dir(root) / (token + suffix)
     meta = {"media_id": token, "conversation_id": conversation_id, "filename": name,
             "suffix": suffix, "kind": kind, "bytes": len(data), "path": str(path.relative_to(root))}
+    meta_path = _meta_path(root, token)
     try:
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as out:
             out.write(data)
-        with os.fdopen(os.open(_meta_path(root, token), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as out:
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    try:
+        with os.fdopen(os.open(meta_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as out:
             json.dump(meta, out)
     except Exception:
         path.unlink(missing_ok=True)
-        _meta_path(root, token).unlink(missing_ok=True)
+        meta_path.unlink(missing_ok=True)
         raise
     return meta
 
@@ -319,7 +331,8 @@ def scan_image(blob: bytes, budget: MediaBudget, redact) -> str:
 def enrich_for_model(root: Path, metas: list[dict], *, redact, cancel=None) -> dict:
     """One shared deadline and at most two preparations, on reply workers only."""
     text_blocks, vision, warnings = [], [], []
-    if not PROCESS_SLOTS.acquire(timeout=0.1):
+    acquired = PROCESS_SLOTS.acquire(timeout=0.1)
+    if not acquired:
         return {"text": "Media preparation busy. No attachment content was read.", "vision": [],
                 "warnings": ["Attachments could not be analyzed because media processing is busy. Please retry."]}
     budget = MediaBudget(cancel)
@@ -361,7 +374,8 @@ def enrich_for_model(root: Path, metas: list[dict], *, redact, cancel=None) -> d
                 warnings.append(warning)
                 text_blocks.append(warning)
     finally:
-        PROCESS_SLOTS.release()
+        if acquired:
+            PROCESS_SLOTS.release()
     return {"text": redact("\n\n".join(text_blocks)), "vision": vision, "warnings": warnings}
 
 

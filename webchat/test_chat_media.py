@@ -128,6 +128,31 @@ class ChatMediaTests(unittest.TestCase):
                 self.store(body, name)
         self.assertFalse(list((self.root / media.UPLOADS).glob('*')))
 
+    def test_binary_embedded_secret_rejected_before_persistence(self):
+        secret = b'sk-' + b'a' * 25
+        video = b'\0\0\0\x18ftypmp42' + b'\xff' * 64 + secret + b'\x00' * 32
+        with self.assertRaisesRegex(ValueError, 'secret'):
+            self.store(video, 'clip.mp4')
+        self.assertFalse(list((self.root / media.UPLOADS).glob('*')))
+
+    def test_metadata_write_failure_removes_blob(self):
+        with patch.object(media.json, 'dump', side_effect=OSError('disk full')):
+            with self.assertRaises(OSError):
+                self.store()
+        self.assertFalse(list((self.root / media.UPLOADS).glob('*')))
+
+    def test_process_slots_not_leaked_on_busy_response(self):
+        media.PROCESS_SLOTS.acquire()
+        media.PROCESS_SLOTS.acquire()
+        try:
+            bundle = self.enrich([self.store()])
+            self.assertIn('busy', bundle['warnings'][0])
+        finally:
+            media.PROCESS_SLOTS.release()
+            media.PROCESS_SLOTS.release()
+        ok = self.enrich([self.store()])
+        self.assertEqual(ok['warnings'], [])
+
     def test_file_and_transcript_redacted_before_model(self):
         secret = 'sk-' + 'b' * 25
         stored = self.store(b'placeholder', 'legacy.txt')

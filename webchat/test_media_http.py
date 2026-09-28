@@ -2,6 +2,7 @@
 import base64
 import http.client
 import json
+import socket
 import threading
 import unittest
 import uuid
@@ -88,6 +89,28 @@ class MediaHTTPTests(fixtures.Fixture):
         self.assertEqual(code, 201)
         # Header rejection occurs before reading an oversize body.
         self.assertEqual(self.upload(b'', 'max.mp4', **{'Content-Length': str(media.MAX_VIDEO_BYTES + 1)})[0], 413)
+
+    def test_incomplete_binary_upload_rejected(self):
+        body = b'short body'
+        lines = [
+            'POST /api/media/upload HTTP/1.1',
+            f'Host: 127.0.0.1:{self.port}',
+            f'Origin: {self.origin}',
+            f'Cookie: {self.cookie}',
+            f'X-CSRF-Token: {self.csrf}',
+            'Content-Type: application/octet-stream',
+            'X-Filename: notes.txt',
+            f'X-Conversation-Id: {self.identifier}',
+            'Content-Length: 20',
+            '',
+        ]
+        payload = '\r\n'.join(lines).encode() + body
+        with socket.create_connection(('127.0.0.1', self.port), timeout=15) as sock:
+            sock.sendall(payload)
+            sock.shutdown(socket.SHUT_WR)
+            response = sock.recv(4096)
+        status = int(response.split(b'\r\n', 1)[0].split()[1])
+        self.assertEqual(status, 400)
 
     def test_upload_validation_auth_csrf_and_secret_gate(self):
         self.assertEqual(self.raw('POST', '/api/media/upload', b'x', auth=False)[0], 401)
