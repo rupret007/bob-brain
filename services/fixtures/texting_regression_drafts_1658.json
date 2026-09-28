@@ -27,34 +27,34 @@
       "bytes": 7514
     }
   },
-  "evidence_limits": "Unexecuted serialization example, not a live result. Source-selection guards and ReportRepositoryTests already exist. Adapt the plan to the actual named task and disclose its missing original prompt. Preserve unavailable-worktree=None.",
+  "evidence_limits": "Unexecuted JSON transport example, not live success. Adapt the tests and plan to the actual named task. CompletionContractTests already covers this guard; validate existing coverage and require actual worker results. The original unblock assignment is unavailable. Source-selection behavior is not evidence of a completion-JSON fix.",
   "complete_report": {
     "regression_tests": [
       {
-        "name": "missing assigned source fails closed",
-        "target": "services/test_replay_completion.py; services/dispatch_worker.py report_repository",
-        "setup": "row={'source_job_id': 'missing'}; task_queue.tasks(ROOT) and state.jobs() both return {}.",
-        "action": "call report_repository(row).",
-        "expected": "RuntimeError containing 'The assigned source job is no longer available'."
+        "name": "missing completion JSON fails closed",
+        "target": "services/test_replay_completion.py; result_acceptance.check_completion_json",
+        "setup": "prompt='Return JSON with accepted/reason fields.'; answer='Findings only.'",
+        "action": "call check_completion_json(prompt, answer).",
+        "expected": "ResultRejected containing 'Missing or ambiguous required completion JSON output block'."
       },
       {
-        "name": "valid assigned worktree is selected",
-        "target": "services/test_replay_completion.py; services/dispatch_worker.py report_repository",
-        "setup": "create temporary directory d; task_queue.tasks(ROOT) returns {'valid': {'project': 'Web Bob', 'prompt': 'Web Bob', 'worktree': str(d), 'repo': '/unrelated'}}.",
-        "action": "call report_repository({'source_job_id': 'valid'}).",
-        "expected": "('Web Bob', Path(d)); the unrelated repo is not selected."
+        "name": "complete accepted/reason JSON passes the completion guard",
+        "target": "services/test_replay_completion.py; result_acceptance.check_completion_json",
+        "setup": "prompt='Return JSON with accepted/reason fields.'; answer='{\"accepted\": true, \"reason\": \"Delivered bounded unexecuted drafts.\"}'",
+        "action": "call check_completion_json(prompt, answer).",
+        "expected": "returns None; this guard alone does not establish semantic acceptance or task completion."
       }
     ],
     "plan": {
-      "change": "Validate the existing ReportRepositoryTests and completion-contract coverage in services/test_replay_completion.py for Web Bob unblock 1035; retain the unavailable-worktree None behavior in services/dispatch_worker.py.",
-      "validation": "Run python3 -m unittest discover -s services -p 'test_*.py' and require zero failures, then obtain fresh Gemini/MiniMax review and accepted saved replay reports.",
-      "exit_condition": "Web Bob unblock 1035 stays blocked until its actual worker results, offline suites, live replay and rollback gates pass; these unexecuted drafts alone cannot close it."
+      "change": "Validate existing CompletionContractTests in services/test_replay_completion.py for Web Bob unblock 1035; the completion and outer draft guards already exist, and the original assignment is unavailable.",
+      "validation": "Run python3 -m unittest discover -s services -p 'test_*.py' and require zero failures; proposed validation only.",
+      "exit_condition": "Web Bob unblock 1035 stays blocked until its actual worker results, fresh reviews and live replay gates pass; these unexecuted drafts cannot close the lane."
     },
     "completion": {
       "accepted": true,
-      "reason": "Delivered two source-selection drafts and a conditional validation plan; tests and live gates were not executed."
+      "reason": "Delivered completion-JSON failure/control drafts and a conditional plan; no tests or live gates executed."
     },
-    "findings_limits": "Existing source-selection guards need validation against the named lane; drafts are unexecuted and its original task prompt was not recorded and live evidence was not supplied."
+    "findings_limits": "Existing check_completion_json rejects missing output and checks accepted/reason fields; drafts are unexecuted, and the original unblock 1035 prompt and live result were not supplied."
   },
-  "complete_answer": "Regression test: missing assigned source fails closed\nTarget: services/test_replay_completion.py; services/dispatch_worker.py report_repository\nSetup: row={'source_job_id': 'missing'}; task_queue.tasks(ROOT) and state.jobs() both return {}.\nAction: call report_repository(row).\nExpected: RuntimeError containing 'The assigned source job is no longer available'.\n\nRegression test: valid assigned worktree is selected\nTarget: services/test_replay_completion.py; services/dispatch_worker.py report_repository\nSetup: create temporary directory d; task_queue.tasks(ROOT) returns {'valid': {'project': 'Web Bob', 'prompt': 'Web Bob', 'worktree': str(d), 'repo': '/unrelated'}}.\nAction: call report_repository({'source_job_id': 'valid'}).\nExpected: ('Web Bob', Path(d)); the unrelated repo is not selected.\n\nUnblock plan:\nChange: Validate the existing ReportRepositoryTests and completion-contract coverage in services/test_replay_completion.py for Web Bob unblock 1035; retain the unavailable-worktree None behavior in services/dispatch_worker.py.\nValidation: Run python3 -m unittest discover -s services -p 'test_*.py' and require zero failures, then obtain fresh Gemini/MiniMax review and accepted saved replay reports.\nExit condition: Web Bob unblock 1035 stays blocked until its actual worker results, offline suites, live replay and rollback gates pass; these unexecuted drafts alone cannot close it.\n\n```json\n{\"accepted\": true, \"reason\": \"Delivered two source-selection drafts and a conditional validation plan; tests and live gates were not executed.\"}\n```\nFindings/limits: Existing source-selection guards need validation against the named lane; drafts are unexecuted and its original task prompt was not recorded and live evidence was not supplied."
+  "complete_answer": "Regression test: missing completion JSON fails closed\nTarget: services/test_replay_completion.py; result_acceptance.check_completion_json\nSetup: prompt='Return JSON with accepted/reason fields.'; answer='Findings only.'\nAction: call check_completion_json(prompt, answer).\nExpected: ResultRejected containing 'Missing or ambiguous required completion JSON output block'.\n\nRegression test: complete accepted/reason JSON passes the completion guard\nTarget: services/test_replay_completion.py; result_acceptance.check_completion_json\nSetup: prompt='Return JSON with accepted/reason fields.'; answer='{\"accepted\": true, \"reason\": \"Delivered bounded unexecuted drafts.\"}'\nAction: call check_completion_json(prompt, answer).\nExpected: returns None; this guard alone does not establish semantic acceptance or task completion.\n\nUnblock plan:\nChange: Validate existing CompletionContractTests in services/test_replay_completion.py for Web Bob unblock 1035; the completion and outer draft guards already exist, and the original assignment is unavailable.\nValidation: Run python3 -m unittest discover -s services -p 'test_*.py' and require zero failures; proposed validation only.\nExit condition: Web Bob unblock 1035 stays blocked until its actual worker results, fresh reviews and live replay gates pass; these unexecuted drafts cannot close the lane.\n\n```json\n{\"accepted\": true, \"reason\": \"Delivered completion-JSON failure/control drafts and a conditional plan; no tests or live gates executed.\"}\n```\nFindings/limits: Existing check_completion_json rejects missing output and checks accepted/reason fields; drafts are unexecuted, and the original unblock 1035 prompt and live result were not supplied."
 }

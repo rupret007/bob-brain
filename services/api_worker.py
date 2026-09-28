@@ -82,6 +82,7 @@ def report_serialization(task, kind=None):
         "and its successful control. Each has its OWN name, target, setup, action and expected string; "
         "the renderer puts Target:, Setup:, Action:, Expected: on the SAME line as each value. "
         "Use literal inputs or exact supplied fixture fields; trace calls and assertions through supplied code. "
+        "Descriptions like 'prompt contains' or 'answer contains' are not concrete inputs. "
         "A nested check_answer/check_deliverables control needs every section its own prompt requires. "
         "Prefer a small direct function/state fixture over a long escaped report; never copy historical rejected answers. "
         "Cite existing paths/symbols, actual exception text and required kind arguments. "
