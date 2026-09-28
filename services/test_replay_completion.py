@@ -16,6 +16,48 @@ COMPLETE = '```json\n{"accepted": true, "reason": "The supplied evidence was rev
 TASK = 'Review the supplied evidence and return a JSON block with accepted/reason fields.'
 
 
+class ReportRepositoryTests(unittest.TestCase):
+    setUp = fixture.DispatchTests.setUp
+    tearDown = fixture.DispatchTests.tearDown
+
+    def repository(self, source):
+        with patch.object(dispatch.task_queue, 'tasks', return_value={'source': source} if source else {}), \
+             patch.object(state, 'jobs', return_value={}), \
+             patch.object(dispatch, 'task_repository', return_value=('Web Bob', self.root)):
+            return dispatch.report_repository({'source_job_id': 'source'})
+
+    def test_missing_source_raises_without_repo_fallback(self):
+        with self.assertRaisesRegex(RuntimeError, 'source job is no longer available'):
+            self.repository(None)
+
+    def test_valid_source_returns_existing_worktree(self):
+        folder = self.root / 'worktree'
+        folder.mkdir()
+        self.assertEqual(self.repository(dict(worktree=str(folder), repo=str(self.root))), ('Web Bob', folder))
+
+    def test_missing_or_none_worktree_returns_none_despite_repo(self):
+        for source in (dict(repo=str(self.root)), dict(worktree=None, repo=str(self.root))):
+            with self.subTest(source=source):
+                self.assertEqual(self.repository(source), ('Web Bob', None))
+
+    def test_non_directory_worktree_returns_none(self):
+        file = self.root / 'file'
+        file.write_text('not a directory')
+        for path in (file, self.root / 'absent'):
+            with self.subTest(path=path):
+                self.assertEqual(self.repository(dict(worktree=str(path), repo=str(self.root))), ('Web Bob', None))
+
+    def test_missing_source_worktree_stops_before_evidence_or_model_call(self):
+        source = dispatch.task_queue.enqueue(self.root, 'source', 'source', 'Review Web Bob', worker='codex')
+        job = dispatch.task_queue.enqueue(self.root, 'report', 'report', 'Audit Web Bob', worker='gemini', source_job_id=source['id'])
+        claim = dispatch.task_queue.claim(self.root, 'gemini', identifier=job['id'])
+        with patch.object(dispatch, 'ask') as ask, patch.object(api_worker, 'evidence') as evidence:
+            self.assertEqual(dispatch.execute(job['id'], claim['claim_token']), 1)
+        ask.assert_not_called()
+        evidence.assert_not_called()
+        self.assertIn('no available worktree', dispatch.task_queue.tasks(self.root)[job['id']]['error'])
+
+
 class CompletionContractTests(unittest.TestCase):
     def test_missing_malformed_or_ambiguous_json_cannot_win_a_positive_vote(self):
         for answer in ('Findings only.', '> ' + COMPLETE.replace('\n', '\n> '),
@@ -131,45 +173,3 @@ class WorkerContractTests(unittest.TestCase):
                 save.assert_not_called()
                 self.assertFalse(state.jobs()[engine].get('verified'))
                 self.assertFalse((folder / 'RESULT.txt').exists())
-
-
-class ReportRepositoryTests(unittest.TestCase):
-    setUp = fixture.DispatchTests.setUp
-    tearDown = fixture.DispatchTests.tearDown
-
-    def repository(self, source):
-        with patch.object(dispatch.task_queue, 'tasks', return_value={'source': source} if source else {}), \
-             patch.object(state, 'jobs', return_value={}), \
-             patch.object(dispatch, 'task_repository', return_value=('Web Bob', self.root)):
-            return dispatch.report_repository({'source_job_id': 'source'})
-
-    def test_missing_source_raises_without_repo_fallback(self):
-        with self.assertRaisesRegex(RuntimeError, 'source job is no longer available'):
-            self.repository(None)
-
-    def test_valid_source_returns_existing_worktree(self):
-        folder = self.root / 'worktree'
-        folder.mkdir()
-        self.assertEqual(self.repository(dict(worktree=str(folder), repo=str(self.root))), ('Web Bob', folder))
-
-    def test_missing_or_none_worktree_returns_none_despite_repo(self):
-        for source in (dict(repo=str(self.root)), dict(worktree=None, repo=str(self.root))):
-            with self.subTest(source=source):
-                self.assertEqual(self.repository(source), ('Web Bob', None))
-
-    def test_non_directory_worktree_returns_none(self):
-        file = self.root / 'file'
-        file.write_text('not a directory')
-        for path in (file, self.root / 'absent'):
-            with self.subTest(path=path):
-                self.assertEqual(self.repository(dict(worktree=str(path), repo=str(self.root))), ('Web Bob', None))
-
-    def test_missing_source_worktree_stops_before_evidence_or_model_call(self):
-        source = dispatch.task_queue.enqueue(self.root, 'source', 'source', 'Review Web Bob', worker='codex')
-        job = dispatch.task_queue.enqueue(self.root, 'report', 'report', 'Audit Web Bob', worker='gemini', source_job_id=source['id'])
-        claim = dispatch.task_queue.claim(self.root, 'gemini', identifier=job['id'])
-        with patch.object(dispatch, 'ask') as ask, patch.object(api_worker, 'evidence') as evidence:
-            self.assertEqual(dispatch.execute(job['id'], claim['claim_token']), 1)
-        ask.assert_not_called()
-        evidence.assert_not_called()
-        self.assertIn('no available worktree', dispatch.task_queue.tasks(self.root)[job['id']]['error'])

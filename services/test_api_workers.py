@@ -320,6 +320,7 @@ class APIWorkerTests(unittest.TestCase):
     def test_1403_named_snapshot_contains_complete_completion_guards(self):
         import inspect
         import result_acceptance
+        from test_replay_completion import ReportRepositoryTests
         repo = Path(__file__).resolve().parents[1]
         fixture = json.loads((repo / "services/fixtures/texting_jobcompletion_1403.json").read_text())
         body, metadata = api_worker.evidence(repo, "minimax", fixture["prompt"], lambda text: text, kind=fixture["kind"])
@@ -327,6 +328,7 @@ class APIWorkerTests(unittest.TestCase):
         captured = "services/fixtures/texting_jobcompletion_1403.json"
         self.assertIn("FILE " + captured, body)
         self.assertNotIn(captured, metadata["truncated"])
+        self.assertIn(inspect.getsource(ReportRepositoryTests).strip(), body)
         section = body.split("FILE services/result_acceptance.py\n", 1)[1].split("\n\nFILE ", 1)[0]
         for guard in (result_acceptance.check_completion_json, result_acceptance.check_deliverables):
             self.assertIn(inspect.getsource(guard).strip(), section)
