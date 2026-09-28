@@ -1,0 +1,39 @@
+test_abandoned_tab_recovers_at_45_seconds_without_touching_other_call (test_voice.VoiceTests) ... ok
+test_call_failure_releases_slot_and_typing_guard (test_voice.VoiceTests) ... ok
+test_call_start_checks_pending_reply_even_after_late_transcript (test_voice.VoiceTests) ... ok
+test_call_start_rejects_queued_running_and_waiting_chat_reply (test_voice.VoiceTests) ... ok
+test_concurrent_call_start_and_text_have_only_one_winner (test_voice.VoiceTests) ... ok
+test_concurrent_voice_and_text_rejected (test_voice.VoiceTests) ... ok
+test_expired_tab_lease_releases_slot_but_allows_final_transcript (test_voice.VoiceTests) ... ok
+test_failed_token_requests_are_limited_even_across_login_sessions (test_voice.VoiceTests) ... ok
+test_hangup_expiry_logout_allow_flush_but_not_tool_actions (test_voice.VoiceTests) ... ok
+test_interrupted_tool_retry_keeps_transcript_and_dispatches_once (test_voice.VoiceTests) ... ok
+test_invalid_transcripts_are_atomic (test_voice.VoiceTests) ... ok
+test_invalid_voice_source_returns_generic_error_without_mutation (test_voice.VoiceTests) ... ok
+test_key_file_is_parsed_without_shell_and_never_returned (test_voice.VoiceTests) ... ok
+test_late_transcript_does_not_overwrite_async_tool_answer (test_voice.VoiceTests) ... ok
+test_legacy_source_without_voice_order_can_dispatch_and_save (test_voice.VoiceTests) ... ok
+test_memory_snapshot_reads_actual_profile (test_voice.VoiceTests) ... ok
+test_owned_call_and_duplicate_start (test_voice.VoiceTests) ... ok
+test_same_memory_and_server_locked_tools (test_voice.VoiceTests) ... ok
+test_spoken_hold_and_resume_use_chat_permissions (test_voice.VoiceTests) ... ok
+test_spoken_job_punctuation_uses_same_dispatcher_without_rewriting (test_voice.VoiceTests) ... ok
+test_stale_transcript_write_cannot_roll_back_newer_words (test_voice.VoiceTests) ... ok
+test_timeout_falls_back_for_absent_or_stale_reply_id (test_voice.VoiceTests) ... ok
+test_token_expiry_mid_call_allows_flush_but_requires_explicit_restart (test_voice.VoiceTests) ... ok
+test_token_limit_reserved_before_concurrent_provider_request_finishes (test_voice.VoiceTests) ... ok
+test_token_rate_limit_survives_hangup_and_resets_after_one_minute (test_voice.VoiceTests) ... ok
+test_tool_context_is_pinned_before_worker_thread_starts (test_voice.VoiceTests) ... ok
+test_tool_refuses_merge_and_requires_saved_speech (test_voice.VoiceTests) ... ok
+test_tool_uses_original_transcript_once_and_keeps_action_receipt (test_voice.VoiceTests) ... ok
+test_transcript_idempotency_order_redaction_and_restart (test_voice.VoiceTests) ... ok
+test_voice_inherits_current_saved_permissions_after_typed_resume (test_voice.VoiceTests) ... ok
+test_voice_request_reuses_one_user_and_creates_one_reply (test_voice.VoiceTests) ... ok
+test_voice_auth_csrf_origin_and_tailnet (test_voice.VoiceHTTPTests) ... ok
+test_voice_csrf_required (test_voice.VoiceHTTPTests) ... ok
+test_voice_token_rate_limit_http (test_voice.VoiceHTTPTests) ... ok
+
+----------------------------------------------------------------------
+Ran 34 tests in 1.760s
+
+OK
