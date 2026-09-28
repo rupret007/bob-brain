@@ -165,6 +165,7 @@ def execute(identifier, token):
                         prompt += ("Before accepting or publishing your commit, the server will independently re-run: "
                                    + json.dumps(checks) + ". Leave the checkout ready to run these commands.\n")
             prompt += "TASK:\n" + row["prompt"]
+            prompt += "\n" + result_acceptance.deliverable_requirements(row["prompt"], row["kind"])
             if row.get("publish_project"):
                 prompt += ("\nThe server has Jeff's explicit authorization to push this project's assigned draft branch. "
                            "Your part is one useful, bounded improvement: inspect, fix, test and commit locally. "
@@ -192,7 +193,7 @@ def execute(identifier, token):
                                 timeout=90 if row["kind"] == "artifact" else 1800 if coding else 240,
                                 purpose=("api-worker-research" if kind == "research" else "api-worker") if api_only else "pr-review" if review else "small-file" if row["kind"] == "artifact" else "small-review" if row["worker"] == "claude" else "webbob-" + identifier,
                                 locked=True)).strip()
-            result_acceptance.check_answer(row["prompt"], answer)
+            result_acceptance.check_answer(row["prompt"], answer, kind=row["kind"])
             if review:
                 metadata = review["metadata"]
                 if not any(file["path"] in answer for file in metadata["files"]):
@@ -241,7 +242,7 @@ def execute(identifier, token):
                     acceptance_task, answer,
                     lambda instructions: ask(row["worker"], instructions, cwd=cwd, coding=False,
                                              timeout=120, purpose="result-acceptance", locked=True),
-                    coding_evidence=coding_evidence)
+                    coding_evidence=coding_evidence, kind=row["kind"])
                 acceptance = json.loads(redact(json.dumps(acceptance)))
                 if coding_evidence is not None:
                     if (git(cwd, "rev-parse", "HEAD") != coding_evidence["sha"]

@@ -25,6 +25,13 @@ import test_dispatch as dispatch_fixture
 from web_dispatch import task_queue as queue
 
 
+def draft_report(target):
+    return ("Unexecuted regression draft.\nRegression test: enqueue retains input\nTarget: " + target +
+            "\nSetup: job = {'id': 'one'} in an isolated fixture.\nAction: call enqueue(job).\n"
+            "Expected: the returned job equals the input.\n```diff\n+def test_enqueue():\n"
+            "+    job = {'id': 'one'}\n+    assert enqueue(job) == job\n```\n")
+
+
 class APIWorkerTests(unittest.TestCase):
     setUp = dispatch_fixture.DispatchTests.setUp
     tearDown = dispatch_fixture.DispatchTests.tearDown
@@ -133,6 +140,9 @@ class APIWorkerTests(unittest.TestCase):
                 if not deployed_checkout:
                     self.assertNotIn("fixture-must-not-be-sent", json.dumps(payload))
                 answer = lane + ": " + evidence_file + " needs a duplicate-enqueue regression. Tests were not run."
+                if lane == "minimax":
+                    self.assertIn("Deliver actual regression test drafts", json.dumps(payload))
+                    answer = draft_report(evidence_file)
                 if lane == "gemini":
                     self.assertIn("gemini-2.5-pro:generateContent", config)
                     result = dict(candidates=[dict(finishReason="STOP", content=dict(parts=[dict(text=answer)]))],
@@ -204,7 +214,7 @@ class APIWorkerTests(unittest.TestCase):
                     current = queue.tasks(self.root)[job["id"]]
                     self.assertEqual(current["model"], MODELS[lane])
                     self.assertEqual(current["status"], "running")
-                    return "queue.py: Add regression coverage for duplicate claims. Tests were not run.\n```diff\n+assert enqueue(job) == job\n```"
+                    return draft_report("queue.py")
                 with patch.object(api, "model_call", side_effect=response), \
                         patch.object(dispatch_worker, "prepare_task") as prepare, \
                         patch.object(dispatch_worker.draft_publish, "publish") as publish:
@@ -220,6 +230,43 @@ class APIWorkerTests(unittest.TestCase):
                 self.assertIsNone(result["branch"])
                 self.assertIsNone(result["worktree"])
                 self.assertTrue(result["evidence"]["files"])
+
+    def test_1035_failed_report_is_never_published_by_either_api_worker(self):
+        fixture = json.loads(Path(__file__).with_name("fixtures").joinpath("texting_jobcompletion_1035.json").read_text())
+        repo = self.repo()
+        (self.core / "services").mkdir()
+        (self.core / "services/projects.json").write_text(json.dumps({"Web Bob": {"repo": str(repo)}}))
+        for lane in ("gemini", "minimax"):
+            with self.subTest(lane=lane):
+                job = queue.enqueue(self.root, "conversation", lane, fixture["prompt"], worker=lane, kind="test-writing")
+                row = queue.claim(self.root, lane)
+                def answer(worker, prompt, **kwargs):
+                    self.assertIn("Deliver actual regression test drafts", prompt)
+                    self.assertIn("Exit condition:", prompt)
+                    return fixture["answer"]
+                with patch.object(dispatch_worker, "ask", side_effect=answer) as ask, \
+                     patch.object(api_worker, "save_report") as save, \
+                     patch.object(dispatch_worker.draft_publish, "publish") as publish:
+                    self.assertEqual(dispatch_worker.execute(job["id"], row["claim_token"]), 1)
+                self.assertEqual(ask.call_count, 1)
+                save.assert_not_called()
+                publish.assert_not_called()
+                result = queue.tasks(self.root)[job["id"]]
+                self.assertEqual(result["status"], "failed")
+                self.assertFalse(result["acceptance"]["accepted"])
+                self.assertIn("Missing concrete regression", result["error"])
+                self.assertFalse((self.core / "state/task-runs" / job["id"] / "RESULT.md").exists())
+
+    def test_named_evidence_and_tests_survive_minimax_snapshot_budget(self):
+        repo = self.repo()
+        for index in range(6):
+            (repo / f"aaa-{index}.md").write_text("background " * 5000)
+        (repo / "test_queue.py").write_text("def test_enqueue():\n    assert enqueue({'id': 'one'}) == {'id': 'one'}\n")
+        workspaces.git(repo, "add", "test_queue.py", *[f"aaa-{index}.md" for index in range(6)])
+        body, metadata = api_worker.evidence(repo, "minimax", "Review queue.py", lambda text: text)
+        self.assertEqual([row["path"] for row in metadata["files"]][:2], ["queue.py", "test_queue.py"])
+        self.assertIn("FILE test_queue.py", body)
+        self.assertTrue(metadata["omitted"])
 
     def test_transport_loads_keys_uses_exact_models_and_search_without_secret_logs(self):
         (self.core / "keys.env").write_text("export GEMINI_API_KEY='gemini-fixture-key'\nMINIMAX_API_KEY=minimax-fixture-key\n")

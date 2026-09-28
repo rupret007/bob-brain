@@ -162,9 +162,16 @@ def plan(root, conversation, text, workers):
         # One concrete bounded package per requested worker. Keep existing
         # coders running; do not revoke a live claim or share their edit rights.
         prompt = ("Project: " + source["project"] + "\nYour independent subtask:\n" + role +
-                  " for the following " + context + ". Deliver concrete findings and "
-                  "an actionable plan or test drafts. Never deploy or resolve conflicts.\n" +
+                  " for the following " + context + ". Deliver concrete findings and an actionable plan. " +
+                  ("Also deliver actual regression test drafts with inputs, triggers and expected assertions. "
+                   if kind == "test-writing" else "") +
+                  "Never deploy or resolve conflicts.\n" +
                   context.capitalize() + ":\n" + source["prompt"][:8000])
+        if source["project"] == "Web Bob":
+            prompt += ("\nRelevant evidence: services/dispatch_worker.py, services/result_acceptance.py, "
+                       "services/test_result_acceptance.py, services/test_api_workers.py, "
+                       "state/task_queue.py, webchat/worker_assignment.py, webchat/test_dispatch.py. "
+                       "Inspect these supplied files before proposing dispatch/completion regressions.")
         packages.append(dict(worker=worker, kind=kind, title=source["project"] + " — " + role,
                              prompt=prompt, source_job_id=source["id"]))
     return packages

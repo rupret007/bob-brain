@@ -9,6 +9,55 @@ from dispatch_worker import task_queue
 
 
 class AcceptanceTests(unittest.TestCase):
+    def completion_fixture(self):
+        return json.loads(Path(__file__).with_name("fixtures").joinpath("texting_jobcompletion_1035.json").read_text())
+
+    def test_1035_exploratory_answer_cannot_win_a_positive_vote(self):
+        fixture = self.completion_fixture()
+        review = Mock(return_value='{"accepted": true, "reason": "Has architecture findings"}')
+        for kind in (None, "test-writing", "analysis", "coding"):
+            with self.subTest(kind=kind), self.assertRaisesRegex(ResultRejected, "Missing concrete regression"):
+                accept(fixture["prompt"], fixture["answer"], review, kind=kind)
+        review.assert_not_called()
+
+    def test_concrete_drafts_and_conditional_unblock_plan_reach_semantic_review(self):
+        fixture = self.completion_fixture()
+        review = Mock(return_value='{"accepted": true, "reason": "Delivers bounded test drafts and a conditional fix plan"}')
+        self.assertTrue(accept(fixture["prompt"], fixture["complete_answer"], review)["accepted"])
+        self.assertIn("exploratory-only answers", review.call_args.args[0])
+        self.assertIn("Tie it to the named ongoing task", review.call_args.args[0])
+
+    def test_drafts_without_resolution_plan_and_empty_case_labels_fail_closed(self):
+        fixture = self.completion_fixture()
+        with self.assertRaisesRegex(ResultRejected, "Missing actionable unblock plan"):
+            check_answer(fixture["prompt"], fixture["complete_answer"].split("Unblock plan:")[0])
+        for fields in ("Target:\nSetup:\nAction:\nExpected:\n", "Target: TBD\nSetup: ...\nAction: TODO\nExpected: none\n"):
+            with self.subTest(fields=fields), self.assertRaisesRegex(ResultRejected, "Missing concrete regression"):
+                check_answer("Draft regression tests", "Regression test: queue\n" + fields)
+
+    def test_executable_test_draft_is_supported_but_copied_implementation_is_not(self):
+        check_answer("Draft test cases", "Unexecuted draft for tests/test_queue.py:\n```python\ndef test_enqueue():\n    job = {'id': 'one'}\n    assert enqueue(job) == job\n```")
+        with self.assertRaisesRegex(ResultRejected, "Missing concrete regression"):
+            check_answer("Draft test cases", "```python\ndef enqueue(job):\n    return job\n```")
+
+    def test_formatted_but_irrelevant_drafts_still_require_semantic_acceptance(self):
+        fixture = self.completion_fixture()
+        review = Mock(return_value='{"accepted": false, "reason": "Drafts do not address the requested behavior"}')
+        with self.assertRaisesRegex(ResultRejected, "did not complete the task"):
+            accept(fixture["prompt"], fixture["complete_answer"], review)
+        self.assertEqual(review.call_count, 1)
+
+    def test_peer_audit_of_named_unblock_also_requires_resolution_steps(self):
+        with self.assertRaisesRegex(ResultRejected, "Missing actionable unblock plan"):
+            check_answer("Whole-repo audit and implementation plan for Web Bob unblock 1035", "The queue has three states.", kind="audit")
+        check_answer("Summarize supplied architecture", "The queue has three states.", kind="analysis")
+
+    def test_quoted_limitation_cannot_hide_following_deliverables_or_pending_verification(self):
+        fixture = self.completion_fixture()
+        check_answer(fixture["prompt"], "> Original assignment unavailable.\n\n" + fixture["complete_answer"])
+        with self.assertRaisesRegex(ResultRejected, "verification is incomplete"):
+            check_coding_answer("> Previous baseline passed.\n\nFixed and committed. API tests not run.")
+
     def test_0810_captured_incomplete_verification_cannot_be_overridden(self):
         fixture = json.loads(Path(__file__).with_name("fixtures").joinpath("texting_verification_0810.json").read_text())
         review = Mock(return_value='{"accepted": true, "reason": "Claims pass"}')

@@ -3,10 +3,76 @@ from __future__ import annotations
 
 import json
 import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
+from api_tasks import report_kind
 
 
 class ResultRejected(RuntimeError):
     pass
+
+
+def needs_test_drafts(prompt, kind=None):
+    task = prompt.rsplit("Your independent subtask:", 1)[-1]
+    task = re.split(r"\n(?:Ongoing task|Project context):", task, maxsplit=1)[0]
+    return (kind == "test-writing" or report_kind(task) == "test-writing"
+            or bool(re.search(r"Review and regression test-case drafts", task, re.I)))
+
+
+def deliverable_requirements(prompt, kind=None):
+    """One report contract shared by workers and their acceptance reviewer."""
+    requirements = []
+    if needs_test_drafts(prompt, kind):
+        requirements.append(
+            "Deliver actual regression test drafts in this answer, not suggestions to write tests later. "
+            "For each distinct case use a 'Regression test: <name>' heading and separate nonempty lines "
+            "'Target:' (test path and relevant symbol), 'Setup:' (specific fixture/input), "
+            "'Action:' (call/trigger), and 'Expected:' (observable assertion). "
+            "Include both a failure case and a successful control unless the task requests a single case. "
+            "Executable test code with named tests and assertions is also acceptable. "
+            "Ground drafts in supplied code; label drafts unexecuted when you have no tools. "
+            "Architecture notes, copied implementation snippets, search commands and promises are not test drafts. ")
+    if re.search(r"\bunblock\b", prompt, re.I):
+        requirements.append(
+            "Also include a short 'Unblock plan:' section with separate nonempty lines 'Change:' "
+            "(smallest concrete fix and file/symbol), 'Validation:' (command and expected result), "
+            "and 'Exit condition:' (when the named unblock is resolved or must remain blocked). "
+            "Tie it to the named ongoing task. If its original prompt/state is missing, state that limit "
+            "and give conditional actions grounded in the available code; do not invent the assignment. ")
+    if requirements:
+        requirements.append("A missing original prompt is not a substitute for these deliverables. "
+                            "Supply the bounded work possible from the evidence now.\n")
+    return "".join(requirements)
+
+
+def check_deliverables(prompt, answer, kind=None):
+    """Reject absent deliverables before voting; semantics still require review."""
+    prose = re.sub(r"```.*?```", "", answer, flags=re.S)
+    prose = re.sub(r"(?m)^[ \t]*>[^\n]*$", "", prose)
+    def fields(text, names):
+        for name in names:
+            match = re.search(r"(?im)^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?" + name +
+                              r"[ \t]*:(?:\*\*)?[ \t]*([^\n]+)", text)
+            if not match or not match[1].strip(" *`\t") or re.fullmatch(
+                    r"(?i)(?:TBD|TODO|N/A|none|\.\.\.)[.!]?", match[1].strip(" *`\t")):
+                return False
+        return True
+    if needs_test_drafts(prompt, kind):
+        cases = re.split(r"(?im)^\s*(?:#{1,6}\s*)?(?:\*\*)?Regression test\s*:", prose)[1:]
+        structured = any(fields(case, ("Target", "Setup", "Action", "Expected")) for case in cases)
+        # Support actual proposed tests as well as behavioral test-case drafts.
+        blocks = re.findall(r"```[^\n]*\n(.*?)```", answer, re.S)
+        code = any(re.search(r"\b(?:def test_\w+|(?:test|it)\s*\(\s*['\"])", block)
+                   and re.search(r"\b(?:assert\s+|self\.assert\w+\(|expect\s*\()", block)
+                   for block in blocks)
+        if not (structured or code):
+            raise ResultRejected("Missing concrete regression test drafts (setup, action and expected assertion required)")
+    if re.search(r"\bunblock\b", prompt, re.I):
+        plan = re.split(r"(?im)^\s*(?:#{1,6}\s*)?(?:\*\*)?Unblock plan\s*:", prose, maxsplit=1)
+        if len(plan) != 2 or not fields(plan[1], ("Change", "Validation", "Exit condition")):
+            raise ResultRejected("Missing actionable unblock plan (change, validation and exit condition required)")
 
 
 CODING_REQUIREMENTS = (
@@ -25,7 +91,8 @@ CODING_REQUIREMENTS = (
 
 def check_coding_answer(answer):
     """An explicit admission of unfinished validation cannot win an acceptance vote."""
-    prose = re.sub(r"```.*?```|(?m:^\s*>.*$)", "", answer, flags=re.S)
+    prose = re.sub(r"```.*?```", "", answer, flags=re.S)
+    prose = re.sub(r"(?m)^[ \t]*>[^\n]*$", "", prose)
     if re.search(r"\b(?:not|never)\s+(?:re[- ]?)?run\b|\b(?:did(?:n't| not)|haven['’]t|have not)\s+"
                  r"(?:re[- ]?)?run\b|\b(?:tests?|verification|validation)\s+(?:are |is |were )?"
                  r"(?:pending|incomplete|not run)\b|\b(?:will|plan to|need to|still need to)\s+"
@@ -39,7 +106,7 @@ def blocked_answer(answer):
                for text in markers)
 
 
-def check_answer(prompt, answer):
+def check_answer(prompt, answer, *, kind=None):
     """Deterministic gates cannot be overridden by a model's acceptance vote."""
     if not answer.strip():
         raise ResultRejected("Worker returned an empty answer")
@@ -59,15 +126,16 @@ def check_answer(prompt, answer):
                              r"(['\"`])(.+?)\1", prompt, re.I):
         if match[2] not in answer:
             raise ResultRejected("Answer omitted required exact text: " + match[2][:200])
+    check_deliverables(prompt, answer, kind)
 
 
-def accept(prompt, answer, review, *, coding_evidence=None):
+def accept(prompt, answer, review, *, coding_evidence=None, kind=None):
     """Require a separate task/answer review; malformed/unavailable votes fail closed.
 
     This checks task completion, not factual correctness of arbitrary claims.
     File writes and code cleanliness are verified separately by the dispatcher.
     """
-    check_answer(prompt, answer)
+    check_answer(prompt, answer, kind=kind)
     if coding_evidence is not None:
         check_coding_answer(answer)
     payload = {"task": prompt, "answer": answer}
@@ -83,6 +151,10 @@ def accept(prompt, answer, review, *, coding_evidence=None):
         "Accept concise answers that actually satisfy the task. An analysis may honestly state "
         "uncertainty; mentioning a limitation is not itself a refusal if the requested analysis is completed. "
         "BLOCKER: none means no blocker, not a failure. Evaluate only the assigned subtask in a max-mode package. "
+        + deliverable_requirements(prompt, kind) +
+        "Test headings, assertions and plan labels alone do not prove completion: reject placeholders, "
+        "irrelevant tests, copied implementation code, and exploratory-only answers. Assess the actual "
+        "inputs, trigger, expected behavior and concrete resolution steps against the assigned task. "
         + (("For coding work require fresh verification of the actual changed application, using the server's "
             "committed diff and validation evidence below. Shared tests, prepare smoke, stale runs, or plans alone "
             "do not verify API changes. Reject missing relevant tests, weakened checks, or unsupported completion. "
