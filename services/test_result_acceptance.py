@@ -36,7 +36,7 @@ class AcceptanceTests(unittest.TestCase):
                 check_answer("Draft regression tests", "Regression test: queue\n" + fields)
 
     def test_executable_test_draft_is_supported_but_copied_implementation_is_not(self):
-        check_answer("Draft a single test case", "Unexecuted draft for tests/test_queue.py:\n```python\ndef test_enqueue():\n    job = {'id': 'one'}\n    assert enqueue(job) == job\n```")
+        check_answer("Draft test cases", "Unexecuted draft for tests/test_queue.py:\n```python\ndef test_enqueue():\n    job = {'id': 'one'}\n    assert enqueue(job) == job\n```")
         with self.assertRaisesRegex(ResultRejected, "Missing concrete regression"):
             check_answer("Draft test cases", "```python\ndef enqueue(job):\n    return job\n```")
 
