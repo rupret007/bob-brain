@@ -109,7 +109,7 @@ class APIAssignmentTests(SessionFixture):
             processes[pid] = dict(pid=pid, ppid=1, command="python3 /code/dispatch_worker.py " + claim["id"],
                                   process_state="S", elapsed_seconds=12)
         with patch("live_status_snapshot.process_table", return_value=processes):
-            status = operational_reply(self.root, "server", "status")
+            status = operational_reply(self.root, "server", "status with diagnostics")
             jobs = build_jobs_view(self.root)
         for model in ("gemini-2.5-pro", "MiniMax-M2.7"):
             self.assertIn(model, status)

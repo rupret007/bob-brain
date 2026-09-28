@@ -16,8 +16,8 @@ class AuthorityTests(unittest.TestCase):
             (root / "logs/job-runner.log").write_text("Claimed review job\n")
             with patch("live_status_snapshot._screen_sessions", return_value={"svc-job-runner": "12.svc-job-runner"}):
                 answer = operational_reply(root, "server", "is it going now?")
-            self.assertIn("live service sessions", answer)
-            self.assertIn("job runner has 0 claimed and 0 queued jobs", answer)
+            self.assertIn("are idle", answer)
+            self.assertNotIn("job runner", answer)
             self.assertNotIn("Recent logs:", answer)
             self.assertNotIn("I don't see active work", answer)
             with patch("live_status_snapshot._screen_sessions", return_value={"svc-job-runner": "12.svc-job-runner"}):
@@ -92,12 +92,12 @@ class AuthorityTests(unittest.TestCase):
                 with self.subTest(text=text):
                     answer = enforce(root, text, dict(provider="gemini", content=
                         "Nothing is running. All lanes are ready. Use `start a job: task`."))
-                    self.assertIn("Claude is on “Projects push", answer)
-                    self.assertIn("(opus; running for 24 min)", answer)
-                    self.assertIn("Codex is on “Web Bob clean", answer)
-                    self.assertIn("(gpt-fixture; running for 18 min)", answer)
-                    self.assertIn("running for 12 min", answer)
-                    self.assertIn("running for 8 min", answer)
+                    self.assertIn("Claude is working on", answer)
+                    self.assertIn("Codex is working on Web Bob", answer)
+                    self.assertIn("Gemini", answer)
+                    self.assertIn("MiniMax", answer)
+                    self.assertNotIn("running for", answer)
+                    self.assertNotIn(";", answer)
                     self.assertLessEqual(len(answer.split(". ")), 4)
                     for hidden in ("None", "shelf-load-1659", "History:", "provider:", "start a job:", "All lanes", "logs/", "lane-", "last:"):
                         self.assertNotIn(hidden, answer)

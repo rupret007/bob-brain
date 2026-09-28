@@ -332,7 +332,8 @@ class HTTPTests(Fixture):
                 if text.startswith("The hold"):
                     self.assertEqual(answer["content"], "Ready when you are.")
                 else:
-                    self.assertEqual(answer["content"].count("running for"), 4)
+                    self.assertIn("working on", answer["content"])
+                    self.assertNotIn("running for", answer["content"])
                 self.assertNotIn("start a job:", answer["content"])
                 self.assertNotIn("None", answer["content"])
         self.assertEqual(self.fake.calls, [])
@@ -1247,7 +1248,7 @@ class HandbackJobTests(Fixture):
         state_ledger.write_now(self.root, "offline parity fixture", sha="fedcba1")
         result = run_eval(self.root)
         self.assertEqual(result["passed"], result["total"], result["cases"])
-        self.assertEqual(result["total"], 96)
+        self.assertEqual(result["total"], 99)
 
     def test_catchup_event_ack_cursor(self):
         ledger_dir = Path(__file__).resolve().parent.parent / "state"

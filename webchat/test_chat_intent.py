@@ -59,7 +59,7 @@ class IntentTests(Fixture):
     def test_exact_live_going_question_uses_server_status_without_generation(self):
         answer = self.submit("is it going now?")["messages"][-1]
         self.assertEqual(answer["provider"], "state")
-        self.assertIn("I don't see active work", answer["content"])
+        self.assertIn("are idle", answer["content"])
         self.assertFalse(queue.tasks(self.root))
         self.assertFalse(self.fake.calls)
 

@@ -50,14 +50,14 @@ class SessionReplies(Fixture):
                     reply = self.submit(text)
                     answer = reply["content"]
                     self.assertEqual(reply["provider"], "state")
-                    self.assertEqual(answer.count("running for 11 min"), 5)
-                    for task in ("Fix login validation", "Test intake validation", "Review scene editing", "Audit lineup scoring", "Test login retries"):
+                    self.assertNotIn("running for", answer)
+                    for task in NAMES:
                         self.assertIn(task, answer)
                     for name in NAMES:
                         self.assertIn(name, answer)
-                    self.assertEqual(answer.count("running for 11 min"), 5)
-                    self.assertIn("Claude is idle; resets 6:20 PM CT", answer)
-                    self.assertNotIn("resets", answer.split("Claude")[0])
+                    self.assertNotIn("running for", answer)
+                    self.assertIn("Claude is cooling down until 6:20 PM CT", answer)
+                    self.assertNotIn("cooling down", answer.split("Claude")[0])
                     self.assertLessEqual(len(answer.split(". ")), 4)
                     for unwanted in ("unknown task", "details unavailable", "I'll focus", "Chat health", "Recent logs", "Disk space"):
                         self.assertNotIn(unwanted.lower(), answer.lower())
@@ -71,9 +71,9 @@ class SessionReplies(Fixture):
                 patch("live_status_snapshot.process_table", return_value=parse_processes(
                     "100 1 08:00 S SCREEN -dmS lane-mystery bash\n101 100 07:00 S codex exec private task")):
             answer = self.submit(ASKS[1])["content"]
-        for expected in ("Codex is on “Mystery", "model not reported", "7 min"):
+        for expected in ("Codex is working on Mystery",):
             self.assertIn(expected, answer)
-        for hidden in ("lane-mystery", "logs/", "waiting for response"):
+        for hidden in ("lane-mystery", "logs/", "waiting for response", "model not reported", "7 min"):
             self.assertNotIn(hidden, answer)
         self.assertNotIn("unknown task", answer.lower())
 
