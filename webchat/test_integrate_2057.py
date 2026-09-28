@@ -15,6 +15,149 @@ from test_webbob_replyq_1856 import SessionFixture
 SESSIONS = json.loads(Path(__file__).with_name("fixtures").joinpath("integrate_sessions_0927.json").read_text())["sessions"]
 
 
+class PinnedDeploymentAssignments(SessionFixture):
+    def setUp(self):
+        super().setUp()
+        from build_info import CODE_ROOT
+        self.code_root = CODE_ROOT
+        self.pins = self.root / "conductor/state"
+        self.pins.mkdir(parents=True, exist_ok=True)
+        for name in ("webchat", "dispatch"):
+            (self.pins / (name + "-code-root")).write_text(str(CODE_ROOT) + "\n")
+        # Attempt 0204 had this screen only: no identifiable project lane.
+        sampler = patch("live_status_snapshot._screen_sessions", return_value={
+            "lane-integrate-deploy-0204": "53678.lane-integrate-deploy-0204"})
+        sampler.start()
+        self.addCleanup(sampler.stop)
+
+    def test_attempt2_turn_one_dispatches_from_the_matching_release_pins(self):
+        from integration_rubric import check_reply, sessions
+        from live_status_snapshot import build_live_status_snapshot
+        exchange = sessions()[0]["exchanges"][0]
+        before = build_live_status_snapshot(self.root)
+        self.assertEqual(before["queue_counts"]["queued"], 0)
+        self.assertEqual(before["queue_counts"]["claimed"], 0)
+        self.assertEqual(before["work_counts"]["running"], 0)
+        self.assertEqual(len(before["work"]), 1)
+        self.assertIsNone(before["work"][0]["project"])
+        started = time.time()
+        answer = self.send(exchange["message"])
+        records = queue.tasks(self.root)
+        after = build_live_status_snapshot(self.root)
+        self.assertEqual(check_reply(answer, exchange, self.identifier, started, before, after, records), [])
+        self.assertEqual(len(records), 2)
+        self.assertEqual(after["work_counts"]["running"], 0)
+        for row in records.values():
+            self.assertEqual(row["status"], "queued")
+            self.assertIsNone(row["source_job_id"])
+            self.assertIn("Project: Web Bob", row["prompt"])
+            self.assertIn("matching deployment pins", row["prompt"])
+            self.assertIn("no current task or worker execution is confirmed", row["prompt"])
+            self.assertNotIn("Ongoing task:", row["prompt"])
+        self.assertFalse(self.fake.calls)
+        self.chat.close()
+        self.chat = Chat(self.folder, self.root, self.fake)
+        replay = self.chat.submit(self.identifier, exchange["message"], answer["request_id"])["messages"][-1]
+        self.assertEqual(replay["task_ids"], answer["task_ids"])
+        self.assertEqual(replay["content"], answer["content"])
+        self.assertEqual(set(queue.tasks(self.root)), set(records))
+
+    def test_pins_are_context_without_an_open_screen_or_a_claim_of_running_work(self):
+        with patch("live_status_snapshot._screen_sessions", return_value={}):
+            answer = self.send(SESSIONS[0]["exchanges"][0]["message"])
+            self.assertEqual(len(answer.get("task_ids", [])), 2)
+            status = self.send("What are you working on?")
+        self.assertIn("waiting to run", status["content"])
+        self.assertNotIn("running for", status["content"])
+
+    def test_missing_empty_relative_mismatched_and_unreadable_pins_fail_closed(self):
+        for name in ("webchat", "dispatch"):
+            pin = self.pins / (name + "-code-root")
+            for value in (None, "", ".", str(self.root), str(self.root / "missing")):
+                with self.subTest(pin=name, value=value):
+                    pin.unlink(missing_ok=True)
+                    if value is not None:
+                        pin.write_text(value)
+                    answer = self.send(SESSIONS[0]["exchanges"][0]["message"])
+                    self.assertFalse(answer.get("task_ids"))
+                    self.assertFalse(queue.tasks(self.root))
+                    pin.write_text(str(self.code_root))
+            pin.unlink()
+            pin.mkdir()
+            self.assertIn("couldn't assign", self.send(SESSIONS[0]["exchanges"][0]["message"])["content"])
+            pin.rmdir()
+            pin.write_text(str(self.code_root))
+
+    def test_pinned_context_respects_project_global_and_partial_release_holds(self):
+        for hold, release, permitted in (
+            ("Hold off on Web Bob", None, False),
+            ("Hold off", None, False),
+            ("Hold off", "Resume WebJam", False),
+            ("Hold off", "Resume Web Bob", True),
+            ("Hold off on WebJam", None, True),
+        ):
+            with self.subTest(hold=hold, release=release):
+                self.identifier = self.chat.new_conversation()["id"]
+                self.send(hold)
+                if release:
+                    self.send(release)
+                before = set(queue.tasks(self.root))
+                answer = self.send(SESSIONS[0]["exchanges"][0]["message"])
+                added = set(queue.tasks(self.root)) - before
+                self.assertEqual(len(added), 2 if permitted else 0)
+                if permitted:
+                    for key in added:
+                        self.assertTrue(queue.tasks(self.root)[key]["prompt"].startswith("Project: Web Bob\n"))
+                else:
+                    self.assertIn("current holds", answer["content"])
+
+    def test_pins_do_not_authorize_other_projects_or_tool_workers(self):
+        for text in ("Use Gemini and MiniMax for ongoing WebJam jobs",
+                     "Use Codex for ongoing jobs", "Use all LLMs for ongoing jobs"):
+            with self.subTest(text=text):
+                self.assertIn("couldn't assign", self.send(text)["content"])
+                self.assertFalse(queue.tasks(self.root))
+
+    def test_parked_project_holds_survive_the_permitted_webbob_dispatch(self):
+        conversation = self.chat.conversations[self.identifier]
+        holds = {name: dict(request_id="parked", reason="Keep parked", released_projects=[])
+                 for name in ("Barker", "Wildflower")}
+        conversation["intent_state"]["holds"] = copy.deepcopy(holds)
+        self.chat.save(conversation)
+        answer = self.send(SESSIONS[0]["exchanges"][0]["message"])
+        self.assertEqual(len(answer.get("task_ids", [])), 2)
+        self.assertEqual(self.chat.get(self.identifier)["intent_state"]["holds"], holds)
+        for row in queue.tasks(self.root).values():
+            self.assertTrue(row["prompt"].startswith("Project: Web Bob\n"))
+            self.assertIsNone(row["publish_project"])
+
+    def test_rollback_copy_without_git_evidence_cannot_supply_report_context(self):
+        rollback = self.root / "rollback-copy"
+        rollback.mkdir()
+        for name in ("webchat", "dispatch"):
+            (self.pins / (name + "-code-root")).write_text(str(rollback))
+        with patch("worker_assignment.CODE_ROOT", rollback):
+            self.assertIn("couldn't assign", self.send(SESSIONS[0]["exchanges"][0]["message"])["content"])
+        self.assertFalse(queue.tasks(self.root))
+
+    def test_pinned_context_does_not_displace_a_permitted_ongoing_job(self):
+        source = queue.enqueue(self.root, "external", "source", "Improve WebJam recording", kind="coding")
+        answer = self.send(SESSIONS[0]["exchanges"][0]["message"])
+        rows = queue.tasks(self.root)
+        self.assertEqual([rows[key]["source_job_id"] for key in answer["task_ids"]], [source["id"], source["id"]])
+
+    def test_pinned_context_still_respects_maintenance_and_provider_unavailability(self):
+        maintenance = self.root / "conductor/MAINTENANCE"
+        maintenance.touch()
+        self.assertIn("maintenance", self.send(SESSIONS[0]["exchanges"][0]["message"])["content"])
+        maintenance.unlink()
+        for state in ("needs_key", "cooldown", "budget_exhausted"):
+            with self.subTest(state=state):
+                (self.root / "conductor/lanes.json").write_text(json.dumps({"minimax": {"state": state}}))
+                self.assertIn(state.replace("_", " "), self.send(SESSIONS[0]["exchanges"][0]["message"])["content"])
+                self.assertFalse(queue.tasks(self.root))
+
+
 class IntegratedSessions(SessionFixture):
     def seed(self):
         return queue.enqueue(self.root, "external-project-work", str(uuid.uuid4()),

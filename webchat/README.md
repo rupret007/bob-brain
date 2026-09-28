@@ -72,6 +72,13 @@ holds, maintenance or unavailable lanes get an honest explanation, never a
 readiness-only acknowledgement. A queued receipt means waiting for runner
 capacity; a started receipt requires a recorded worker claim.
 
+When no permitted ongoing job or identified project lane remains, matching
+webchat and dispatcher deployment pins can identify the running Web Bob Git
+checkout for these API reports. The assignments explicitly say no current task
+or execution is confirmed. This fallback only supplies Web Bob repository
+context to API workers; project/global holds, maintenance and provider
+availability still apply. Missing or mismatched pins cannot supply context.
+
 Named API requests also support audits, planning, research, repository reviews,
 test-case writing and eval grading. Gemini job calls use `gemini-2.5-pro`;
 research enables `google_search`. MiniMax uses `MiniMax-M2.7`. The runner supplies

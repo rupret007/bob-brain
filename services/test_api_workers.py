@@ -42,30 +42,57 @@ class APIWorkerTests(unittest.TestCase):
         return repo
 
     def test_frozen_turn_one_reaches_both_api_transports_and_delivers_reports(self):
+        self.frozen_turn_reports(deployed_checkout=False)
+
+    def test_attempt2_without_a_project_lane_reaches_both_api_transports(self):
+        self.frozen_turn_reports(deployed_checkout=True)
+
+    def frozen_turn_reports(self, *, deployed_checkout):
         # Real chat -> queue -> scheduler -> worker -> metered API transport.
         # Only HTTP responses, lane health and semantic acceptance are fixtures.
         with patch.object(sys, "path", [str(Path(__file__).resolve().parents[1] / "webchat"), *sys.path]):
             from app import Chat
+            from build_info import CODE_ROOT
+            from deploy_integrate import submit
             from dispatch_receipts import receipt_errors
             from integration_rubric import sessions
 
-            repo = self.repo()
-            (self.core / "services").mkdir()
-            (self.core / "services/projects.json").write_text(json.dumps({"Web Bob": {"repo": str(repo)}}))
+            if deployed_checkout:
+                # Match restart()'s real pin layout. No project mapping or
+                # report_repository mock: workers must inspect the pinned code.
+                repo = CODE_ROOT
+                (self.core / "state").mkdir()
+                for name in ("webchat", "dispatch"):
+                    (self.core / "state" / (name + "-code-root")).write_text(str(repo) + "\n")
+                screens = {"lane-integrate-deploy-0204": "53678.lane-integrate-deploy-0204"}
+                evidence_file = "webchat/worker_assignment.py"
+                context = "no current task or worker execution is confirmed"
+            else:
+                repo = self.repo()
+                (self.core / "services").mkdir()
+                (self.core / "services/projects.json").write_text(json.dumps({"Web Bob": {"repo": str(repo)}}))
+                screens = {"lane-webbob-llm-reviews": "29817.lane-webbob-llm-reviews"}
+                evidence_file = "queue.py"
+                context = "worker activity is unverified"
             (self.core / "keys.env").write_text("GEMINI_API_KEY=gemini-fixture-key\nMINIMAX_API_KEY=minimax-fixture-key\n")
             providers = Mock(spec=["reply"])
             providers.reply.side_effect = AssertionError("Assignments must bypass conversational models")
             chat = Chat(self.core / "webchat", self.root, providers)
             self.addCleanup(chat.close)
             cid = chat.conversation_list()["conversations"][0]["id"]
-            request = str(uuid.uuid4())
             started = time.time()
-            with patch("live_status_snapshot._screen_sessions", return_value={"lane-webbob-llm-reviews": "29817.lane-webbob-llm-reviews"}), \
+            # Use the deployment replay's submission function with an in-process
+            # HTTP adapter; all chat/intent/journal code stays real and isolated.
+            def call(route, payload=None):
+                if route == "/api/messages":
+                    return chat.submit(payload["conversation_id"], payload["message"], payload["request_id"])
+                return chat.get(cid)
+            with patch("live_status_snapshot._screen_sessions", return_value=screens), \
                     patch("live_status_snapshot.process_table", return_value={}):
-                receipt = chat.submit(cid, sessions()[0]["exchanges"][0]["message"], request)["messages"][-1]
+                receipt = submit(SimpleNamespace(call=call), cid, sessions()[0]["exchanges"][0]["message"])
             rows = queue.tasks(self.root)
             self.assertEqual(len(rows), 2)
-            self.assertEqual(receipt_errors(receipt, rows, cid, request, started), [])
+            self.assertEqual(receipt_errors(receipt, rows, cid, receipt["request_id"], started), [])
             self.assertEqual([rows[key]["requested_worker"] for key in receipt["task_ids"]], ["gemini", "minimax"])
             self.assertEqual([rows[key]["kind"] for key in receipt["task_ids"]], ["audit", "test-writing"])
             providers.reply.assert_not_called()
@@ -79,10 +106,11 @@ class APIWorkerTests(unittest.TestCase):
                 self.assertEqual(current["worker"], lane)
                 self.assertEqual(current["model"], MODELS[lane])
                 self.assertIsNone(current["source_job_id"])
-                self.assertIn("FILE queue.py", json.dumps(payload))
-                self.assertIn("worker activity is unverified", json.dumps(payload))
-                self.assertNotIn("fixture-must-not-be-sent", json.dumps(payload))
-                answer = lane + ": queue.py needs a duplicate-enqueue regression. Tests were not run."
+                self.assertIn("FILE " + evidence_file, json.dumps(payload))
+                self.assertIn(context, json.dumps(payload))
+                if not deployed_checkout:
+                    self.assertNotIn("fixture-must-not-be-sent", json.dumps(payload))
+                answer = lane + ": " + evidence_file + " needs a duplicate-enqueue regression. Tests were not run."
                 if lane == "gemini":
                     self.assertIn("gemini-2.5-pro:generateContent", config)
                     result = dict(candidates=[dict(finishReason="STOP", content=dict(parts=[dict(text=answer)]))],
@@ -111,6 +139,8 @@ class APIWorkerTests(unittest.TestCase):
             publish.assert_not_called()
             for row in queue.tasks(self.root).values():
                 self.assertEqual(row["status"], "succeeded")
+                self.assertEqual(row["worker"], row["requested_worker"])
+                self.assertGreaterEqual(row["execution_started_at"], started)
                 self.assertEqual(Path(row["repo"]), repo)
                 self.assertIn(row["result"], Path(row["result_path"]).read_text())
                 self.assertEqual(row["result_sha256"], hashlib.sha256(row["result"].encode()).hexdigest())

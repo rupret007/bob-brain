@@ -109,7 +109,7 @@ def check_reply(answer, exchange, cid, started, before, after, jobs):
     return errors
 
 
-def run_eval(*, project_lane_only=False):
+def run_eval(*, project_lane_only=False, deployed_checkout=False):
     """Run the same exact-message rubric offline against real isolated journals."""
     import tempfile
     import time
@@ -125,7 +125,8 @@ def run_eval(*, project_lane_only=False):
 
     # Attempt 2205 had these open screens but zero queued/claimed jobs and no
     # confirmed worker. Exercise collection and dispatch without a seed job.
-    screens = ({"lane-integrate-deploy-2205": "68531.lane-integrate-deploy-2205",
+    screens = ({"lane-integrate-deploy-0204": "53678.lane-integrate-deploy-0204"} if deployed_checkout else
+               {"lane-integrate-deploy-2205": "68531.lane-integrate-deploy-2205",
                 "lane-webbob-llm-reviews": "29817.lane-webbob-llm-reviews"}
                if project_lane_only else {})
     results = []
@@ -133,9 +134,17 @@ def run_eval(*, project_lane_only=False):
             patch("live_status_snapshot._screen_sessions", return_value=screens), \
             patch("live_status_snapshot.process_table", return_value={}):
         root = Path(folder)
+        if deployed_checkout:
+            # Attempt 0204: no active source job or project screen. Use the
+            # same release pins written by deploy_parity.restart in production.
+            from build_info import CODE_ROOT
+            pins = root / "conductor/state"
+            pins.mkdir(parents=True)
+            for name in ("webchat", "dispatch"):
+                (pins / (name + "-code-root")).write_text(str(CODE_ROOT) + "\n")
         chat = Chat(root / "conductor/webchat", root, Greeting())
         try:
-            if not project_lane_only:
+            if not project_lane_only and not deployed_checkout:
                 task_queue.enqueue(root, "external", "source", "Improve WebJam recording reliability", worker="codex", kind="coding", title="WebJam")
             for source in sessions():
                 cid = chat.new_conversation()["id"]
@@ -149,7 +158,8 @@ def run_eval(*, project_lane_only=False):
                     answer = chat.get(cid)["messages"][-1]
                     errors = check_reply(answer, exchange, cid, started, before, build_live_status_snapshot(root), task_queue.tasks(root))
                     results.append(dict(name=source["source_id"][:8] + " turn " + str(index + 1) +
-                                             (" (unverified project lane)" if project_lane_only else ""),
+                                             (" (deployed checkout, no project lane)" if deployed_checkout else
+                                              " (unverified project lane)" if project_lane_only else ""),
                                         pass_check=not errors, errors=errors, reply=answer["content"]))
         finally:
             chat.close()

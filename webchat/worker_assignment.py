@@ -1,9 +1,11 @@
 """Turn requests to use LLMs on ongoing work into durable, scoped assignments."""
 import json
 import re
+from pathlib import Path
 
 import task_queue
 from api_tasks import ROLES
+from build_info import CODE_ROOT
 from chat_intent import blocked_scopes, command, project_targets, state_for
 from live_status_snapshot import observe_work
 
@@ -58,6 +60,29 @@ def issue_followup(root, conversation, text):
     return ("Fix verified issues in " + project + "\nInspect the ongoing work and available review reports, "
             "reproduce a concrete issue, implement one bounded fix if warranted, and run relevant tests. "
             "Report evidence if no fix is needed. Work in your assigned draft worktree; never deploy or merge.")
+
+
+def deployed_project_context(root):
+    """A pinned checkout can supply API evidence, never proof of ongoing work."""
+    # Deployments can have no active jobs and no identifiable project screen.
+    # Both services must select this running checkout; an arbitrary/stale pin
+    # or a rollback copy without Git evidence is not enough to assign a report.
+    if not (CODE_ROOT / ".git").exists():
+        return None
+    try:
+        for name in ("webchat", "dispatch"):
+            value = (root / "conductor/state" / (name + "-code-root")).read_text().strip()
+            path = Path(value)
+            if not path.is_absolute() or path.resolve(strict=True) != CODE_ROOT:
+                return None
+    except (OSError, ValueError, RuntimeError):
+        return None
+    return dict(id=None, project="Web Bob", context="project context", prompt=(
+        "The Web Bob checkout is selected by matching deployment pins for this server and its dispatcher; "
+        "no current task or worker execution is confirmed. Inspect the supplied repository snapshot for "
+        "concrete dispatch findings and regression test drafts, including webchat/worker_assignment.py, "
+        "webchat/task_dispatch.py, state/task_queue.py and services/dispatch_worker.py. "
+        "Do not infer active work, progress or results from deployment metadata."))
 
 
 def plan(root, conversation, text, workers):
@@ -117,6 +142,10 @@ def plan(root, conversation, text, workers):
                        "progress or results from the lane name or historical logs.")
             candidates.append(dict(id=None, prompt=context, project=project, context="project context"))
             seen_projects.add(project)
+        if not candidates and (not targets or "Web Bob" in targets) and not blocked_scopes(state, ["Web Bob"]):
+            context = deployed_project_context(root)
+            if context:
+                candidates.append(context)
     if not candidates:
         raise ValueError("I couldn't assign those workers: there is no identifiable ongoing job permitted by the current holds. Name a project and task to start.")
     health = root / "conductor/lanes.json"
