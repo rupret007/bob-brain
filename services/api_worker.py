@@ -93,7 +93,7 @@ def evidence(repo, worker, task, redact, kind=None):
     # Reserve a share for each named file; a large test module must not crowd
     # the running checkout's build/assignment evidence out of the snapshot.
     named_limit = max(1, limit // len(named)) if worker == "minimax" and drafts and named else 48000
-    sections, included, omitted, truncated = [], [], [], []
+    sections, examples_rendered, included, omitted, truncated = [], [], [], [], []
     remaining = limit
     for name in paths:
         path = repo / name
@@ -123,7 +123,9 @@ def evidence(repo, worker, task, redact, kind=None):
             if len(raw) > size:
                 text += "\n[Snapshot truncated here; remaining source not supplied.]"
             remaining -= len(raw[:size])
-            sections.append("FILE " + name + "\n" + text)
+            # Put the valid unescaped layout after the source/old fixtures so
+            # their malformed historical answers are not the last example.
+            (examples_rendered if rendered_fields else sections).append("FILE " + name + "\n" + text)
             included.append(dict(path=name, sha256=hashlib.sha256(raw[:size]).hexdigest(),
                                  **({"rendered_fields": rendered_fields} if rendered_fields else {})))
         except OSError:
@@ -140,7 +142,7 @@ def evidence(repo, worker, task, redact, kind=None):
     body = ("Repository snapshot (tracked working files; untracked/private/binary files excluded). "
             "This is a bounded snapshot, not proof of complete coverage.\nHEAD: " + metadata["head"] +
             "\nManifest (bounded): " + manifest[:8000 if worker == "minimax" and drafts else 60000] +
-            "\n\n" + "\n\n".join(sections))
+            "\n\n" + "\n\n".join(sections + examples_rendered))
     return body, metadata
 
 
