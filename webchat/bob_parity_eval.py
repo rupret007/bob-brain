@@ -247,6 +247,23 @@ def run_eval(root: Path | None = None) -> dict:
             rejected = True
         rows.append(_case(label, rejected == rejected_expected))
 
+    from result_acceptance import check_literal_guard_drafts, guard_draft_expected
+    guard_fixture = json.loads((HERE.parent / "services/fixtures/texting_guard_consistency_1803.json").read_text())
+    actual = guard_draft_expected('check_completion_json',
+                                 'Your independent subtask:\nReturn a JSON block with accepted/reason fields.',
+                                 'Findings only.')
+    for label, expected, error in (
+            ('1803 exact false control fails closed', 'returns None', guard_fixture['error']),
+            ('1803 paraphrased JSON error fails closed', "ResultRejected('Missing completion JSON')", guard_fixture['error']),
+            ('1803 wrong JSON error class fails closed', "ResultRejected('Malformed required completion JSON output block')", guard_fixture['error']),
+            ('1803 exact live guard error is a consistent draft', actual, None)):
+        observed = None
+        try:
+            check_literal_guard_drafts(guard_fixture['rejected_control'].replace('Expected: returns None', 'Expected: ' + expected))
+        except ResultRejected as exc:
+            observed = str(exc)
+        rows.append(_case(label, observed == error))
+
     passed = sum(1 for r in rows if r["pass"])
     return {
         "total": len(rows),

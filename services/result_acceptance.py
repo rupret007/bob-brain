@@ -20,6 +20,12 @@ class ResultRejected(RuntimeError):
 
 
 DRAFT_ERROR = "Missing concrete regression test drafts (setup, action and expected assertion required)"
+GUARD_CONTRADICTION = "Regression draft contradicts literal guard outcome: "
+CASE_HEADING = r"(?im)^[ \t]{0,3}(?:#{1,6}[ \t]*)?(?:\*\*)?Regression test[ \t]*:"
+
+
+def draft_prose(answer):
+    return re.sub(r"(?m)^[ \t]*>[^\n]*$", "", FENCED_BLOCK.sub("", answer))
 
 
 def assigned_task(prompt):
@@ -94,7 +100,7 @@ def check_deliverables(prompt, answer, kind=None):
     if needs_test_drafts(prompt, kind):
         # Indented code, quoted history and escaped Setup inputs are not outer
         # report sections. Split before testing fields so cases cannot borrow.
-        cases = re.split(r"(?im)^[ \t]{0,3}(?:#{1,6}[ \t]*)?(?:\*\*)?Regression test[ \t]*:", prose)[1:]
+        cases = re.split(CASE_HEADING, prose)[1:]
         structured = any(fields(case, ("Target", "Setup", "Action", "Expected")) for case in cases)
         # Support actual proposed tests as well as behavioral test-case drafts.
         blocks = [body for _, body in FENCED_BLOCK.findall(answer)]
@@ -117,16 +123,31 @@ def check_deliverables(prompt, answer, kind=None):
         raise ResultRejected("Missing concrete Findings/limits closing sentence")
 
 
+def literal_guard_outcome(guard, prompt, answer, **kwargs):
+    """Single source for example expectations and audits; only known pure guards."""
+    guards = {"check_completion_json": check_completion_json, "check_deliverables": check_deliverables}
+    try:
+        guards[guard](prompt, answer, **kwargs)
+    except ResultRejected as exc:
+        return str(exc)
+    return None
+
+
+def guard_draft_expected(guard, prompt, answer, **kwargs):
+    error = literal_guard_outcome(guard, prompt, answer, **kwargs)
+    return "raises ResultRejected(" + repr(error) + ")" if error is not None else "returns None"
+
+
 def check_literal_guard_drafts(answer):
     """Check known pure guards on literal data, never execute model code.
 
-    General tests and fixture references still need independent semantic review.
-    This catches the observed false controls that even a positive vote missed.
+    Direct calls to these guards require auditable literal inputs and an exact
+    outcome. Other tests still need independent semantic review.
     """
-    prose = re.sub(r"(?m)^[ \t]*>[^\n]*$", "", FENCED_BLOCK.sub("", answer))
-    guards = {"check_completion_json": check_completion_json, "check_deliverables": check_deliverables}
-    for case in re.split(r"(?m)^Regression test:", prose)[1:]:
-        fields = {name: re.search(r"(?m)^" + name + r": (.+)$", case)
+    prose = draft_prose(answer)
+    for case in re.split(CASE_HEADING, prose)[1:]:
+        fields = {name: re.search(r"(?im)^[ \t]{0,3}(?:[-*][ \t]+)?(?:\*\*)?" + name +
+                                 r"[ \t]*:(?:\*\*)?[ \t]*([^\n]+)", case)
                   for name in ("Setup", "Action", "Expected")}
         if not all(fields.values()):
             continue
@@ -155,29 +176,34 @@ def check_literal_guard_drafts(answer):
             invocation = ast.parse(call[0], mode="eval").body
             if ([arg.id if isinstance(arg, ast.Name) else None for arg in invocation.args] != ["prompt", "answer"]
                     or any(key.arg != "kind" for key in invocation.keywords)):
-                continue
+                raise ValueError("Guard call must use prompt, answer and optional kind")
             kwargs = {key.arg: values[key.value.id] if isinstance(key.value, ast.Name) else ast.literal_eval(key.value)
                       for key in invocation.keywords}
             prompt, inner = values["prompt"], values["answer"]
             if not isinstance(prompt, str) or not isinstance(inner, str):
-                continue
+                raise ValueError("Guard inputs must be strings")
             if kwargs and call[1] != "check_deliverables":
-                continue
+                raise ValueError("Only check_deliverables accepts kind")
         except (ValueError, SyntaxError, KeyError, RecursionError):
-            continue  # Nonliteral/mock-based drafts belong to semantic review.
+            raise ResultRejected("Unverifiable literal guard draft: " + call[1] +
+                                 " requires literal prompt/answer inputs") from None
         expected = fields["Expected"][1]
         success = bool(re.search(r"(?i)returns?\s+None\b|no exception|without raising|does not raise", expected))
-        failure = not success and bool(re.search(r"\bResultRejected\b", expected))
-        if not (success or failure):
-            continue
-        error = None
-        try:
-            guards[call[1]](prompt, inner, **kwargs)
-        except ResultRejected as exc:
-            error = str(exc)
-        if (success and error is not None) or (failure and error is None):
-            raise ResultRejected("Regression draft contradicts literal guard outcome: " + call[1] +
-                                 (" raised " + error if error else " returned successfully"))
+        failure = bool(re.search(r"\bResultRejected\b", expected))
+        quoted = r"(?:'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|`[^`]*`)"
+        claims = re.findall(r"\bResultRejected\s*(?:\(\s*|(?:containing|with(?: message)?|matching)\s+|:\s*)(" +
+                            quoted + r")", expected)
+        claimed_error = None
+        if len(claims) == 1:
+            try:
+                claimed_error = claims[0][1:-1] if claims[0].startswith('`') else ast.literal_eval(claims[0])
+            except (ValueError, SyntaxError):
+                pass
+        error = literal_guard_outcome(call[1], prompt, inner, **kwargs)
+        if (error is None and (not success or failure)) or (error is not None and
+                (success or not failure or error != claimed_error)):
+            raise ResultRejected(GUARD_CONTRADICTION + call[1] +
+                                 (" raised " + error if error is not None else " returned successfully"))
 
 
 CODING_REQUIREMENTS = (
