@@ -1,0 +1,80 @@
+"""Turn requests to use LLMs on ongoing work into durable, scoped assignments."""
+import json
+import re
+
+import task_queue
+from api_tasks import ROLES
+from chat_intent import blocked_scopes, command, project_targets, state_for
+from live_status_snapshot import observe_work
+
+NAMES = r"(?:gemini|minimax|codex|claude|cursor(?:-agent)?|grok|xai|xAI)"
+DIRECTIVE = re.compile(
+    r"^(?:remember\s*[:,]?\s*(?:that\s+)?(?:(?:you|we)\s+can\s+|to\s+)?|(?:you|we)\s+can\s+)?"
+    r"(?:also\s+)?(?:use|assign|put|have|get|delegate\s+to)\s+(?P<names>" + NAMES +
+    r"(?:\s*(?:,|&|and)\s*(?:and\s+)?" + NAMES + r")*)\b(?P<rest>.*)$", re.I | re.S)
+ONGOING = re.compile(r"\b(?:ongoing|current|existing|active|running|queued)\b.{0,35}\b(?:jobs?|tasks?|work|projects?)\b|"
+                     r"\b(?:jobs?|tasks?|work|projects?)\b.{0,30}\b(?:ongoing|underway|running)\b|"
+                     r"\b(?:for|on|with)\s+(?:these|those|our|the)\s+(?:jobs?|tasks?|work)\b", re.I)
+
+
+def requested_workers(text):
+    match = DIRECTIVE.match(command(text))
+    reminder = re.match(r"^(?:remember|you can|we can)\b", command(text), re.I)
+    if not match or not (ONGOING.search(match["rest"]) or (reminder and re.fullmatch(r"\s*(?:too|also)?[.!]*", match["rest"], re.I))):
+        return None
+    return list(dict.fromkeys(name.lower().replace("cursor-agent", "cursor")
+                              for name in re.findall(NAMES, match["names"], re.I)))
+
+
+def plan(root, conversation, text, workers):
+    for worker in workers:
+        task_queue.worker_name(worker)  # Reject Grok/xAI before any queue write.
+    observed = observe_work(root)
+    state = state_for(conversation)
+    targets = project_targets(text, state)
+    candidates = []
+    for row in observed["records"].values():
+        if (row.get("status") or row.get("state")) not in ("queued", "claimed", "launched", "running"):
+            continue
+        if row.get("source_job_id"):
+            continue  # Never recursively create report jobs about report jobs.
+        prompt = row.get("prompt") or row.get("title") or row.get("project")
+        if not prompt:
+            continue
+        names = project_targets(row.get("project") or prompt, state)
+        if targets and not any(name in targets for name in names):
+            continue
+        if blocked_scopes(state, names):
+            continue
+        candidates.append(dict(id=row["job_id"], prompt=prompt,
+                               project=", ".join(names) or "Web Bob"))
+    # Some ongoing jobs are external CLI workers, observed outside the journal.
+    known = {row["id"] for row in candidates}
+    for row in observed["work"]:
+        if row["state"] != "running" or row.get("job_id") in known or not row.get("task") or not row.get("project"):
+            continue
+        if targets and row["project"] not in targets:
+            continue
+        if blocked_scopes(state, [row["project"]]):
+            continue
+        candidates.append(dict(id=None, prompt=row["task"], project=row["project"]))
+    if not candidates:
+        raise ValueError("I couldn't assign those workers: there is no identifiable ongoing job permitted by the current holds. Name a project and task to start.")
+    health = root / "conductor/lanes.json"
+    board = json.loads(health.read_text()) if health.exists() else {}
+    packages = []
+    for index, worker in enumerate(workers):
+        row = board.get(worker, {})
+        if row.get("state") in ("needs_key", "unavailable", "budget_exhausted", "cooldown", "needs_login"):
+            raise ValueError("I couldn't assign " + worker + ": " + row["state"].replace("_", " ") + ". No new assignments were queued.")
+        source = candidates[index % len(candidates)]
+        kind, role = ROLES.get(worker, ("analysis", "Review the ongoing task and propose next steps"))
+        # One concrete bounded package per requested worker. Keep existing
+        # coders running; do not revoke a live claim or share their edit rights.
+        prompt = ("Project: " + source["project"] + "\nYour independent subtask:\n" + role +
+                  " for the following ongoing task. Deliver concrete findings and "
+                  "an actionable plan or test drafts. Never deploy or resolve conflicts.\n" +
+                  "Ongoing task:\n" + source["prompt"][:8000])
+        packages.append(dict(worker=worker, kind=kind, title=source["project"] + " — " + role,
+                             prompt=prompt, source_job_id=source["id"]))
+    return packages

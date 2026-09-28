@@ -349,6 +349,10 @@ class Chat(TaskDispatch):
                 conversation["pending_job"] = "Improve " + ", ".join(intent_state["project_order"])
                 conversation["pending_job_id"] = request_id
                 return self.intent_reply(conversation, "Priority order: " + ", ".join(intent_state["project_order"]) + ".")
+            from worker_assignment import requested_workers
+            assignments = requested_workers(text)
+            if assignments:
+                return self.submit_worker_assignment(conversation, text, request_id, assignments)
             work, route = parse_work(text)
             if transition == "resume" and not work:
                 work_text = re.sub(r"^(?:go(?:\s+ahead)?|resume)(?:\s+and)?[\s,:!]+", "", chat_intent.command(text), flags=re.I)

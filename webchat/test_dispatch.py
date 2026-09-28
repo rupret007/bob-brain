@@ -56,9 +56,9 @@ class ChatDispatchTests(Fixture):
         self.assertEqual(row["kind"], "artifact")
         self.assertIsNotNone(queue.claim(self.root, "claude"))
 
-    def test_api_file_requests_are_refused_before_saving_dispatch_intent(self):
+    def test_api_writes_and_outside_reads_are_refused_before_saving_dispatch_intent(self):
         for worker in ("minimax", "gemini"):
-            for prompt in ("write hello to /tmp/wb-proof.txt", "Review services/dispatch_worker.py"):
+            for prompt in ("write hello to /tmp/wb-proof.txt", "Read /tmp/evidence.txt"):
                 with self.subTest(worker=worker, prompt=prompt):
                     value = self.submit("start a job: " + prompt, worker=worker)
                     message = value["messages"][-1]
@@ -90,8 +90,9 @@ class ChatDispatchTests(Fixture):
                 row = queue.tasks(self.root)[value["messages"][-1]["task_id"]]
                 self.assertEqual(row["kind"], "inspection")
                 value = self.submit(prompt, worker="minimax")
-                self.assertEqual(value["messages"][-1]["action_card"]["state"], "refused")
-                self.assertNotIn("dispatch_intent", value["messages"][-1])
+                report = queue.tasks(self.root)[value["messages"][-1]["task_id"]]
+                self.assertEqual(report["kind"], "review")
+                self.assertEqual(report["requested_worker"], "minimax")
 
     def test_answer_rejection_delivers_one_failed_result_after_restart(self):
         self.submit(worker="minimax")
@@ -117,11 +118,11 @@ class ChatDispatchTests(Fixture):
         finally:
             replacement.close()
 
-    def test_max_mode_api_file_package_is_rejected_before_any_enqueue(self):
+    def test_max_mode_api_file_package_queues_a_repository_report(self):
         value = self.submit("Max mode: review.\n[minimax] Read services/worker.py.\n[gemini] Analyze supplied evidence.")
-        self.assertEqual(value["messages"][-1]["action_card"]["state"], "refused")
-        self.assertIn("API-only", value["messages"][-1]["content"])
-        self.assertFalse(queue.tasks(self.root))
+        self.assertEqual(value["messages"][-1]["action_card"]["state"], "queued")
+        rows = list(queue.tasks(self.root).values())
+        self.assertEqual({r["requested_worker"]: r["kind"] for r in rows}, {"minimax": "review", "gemini": "analysis"})
 
     def test_natural_requests_have_short_server_confirmed_receipts(self):
         for text, prompt, worker in (

@@ -189,6 +189,7 @@ def _queue_jobs(jobs_map: dict[str, dict], sessions: set[str], *, limit: int = 2
             "state": record.get("status") or record.get("state"),
             "bucket": bucket,
             "worker": _job_worker(record, sessions),
+            "model": record.get("model"),
             "recovery": (record.get("recovery") or "")[:160] or None,
             "journal": record.get("_journal"),
             "updated_at": record.get("updated_at") or record.get("timestamp"),

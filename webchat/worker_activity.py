@@ -165,6 +165,8 @@ def collect_work(sessions, claimed_jobs, processes, now, root=None):
         # Prefer explicit model metadata from the actual binary if a wrapper
         # has none. Never guess a model from a lane's name or cached lock.
         model = model or next((workers[child][1] for child in descendants if workers[child][1]), None)
+        if record and worker in ("gemini", "minimax"):
+            model = model or record.get("model")
         state = "paused" if any(table[child]["process_state"].startswith("T") for child in descendants) else "running"
         title = task_label(record, screen if screen and not screen.startswith("svc-") else None)
         if title == "Worker process":
@@ -186,12 +188,12 @@ def collect_work(sessions, claimed_jobs, processes, now, root=None):
         argv = process.get("command", "").split()
         # API/local workers may have no CLI child. Verify the dispatch process
         # and its task argument so a reused PID cannot establish live work.
-        confirmed = (len(argv) >= 3 and Path(argv[1]).name == "dispatch_worker.py"
+        confirmed = (len(argv) >= 3 and Path(argv[1]).name in ("dispatch_worker.py", "worker.py")
                      and argv[2] == record["job_id"] and not process["process_state"].startswith(("Z", "X")))
         state = ("paused" if process["process_state"].startswith("T") else "running") if confirmed else "claimed"
         if confirmed:
             screen = next((screens[parent] for parent in ancestry(record["pid"]) if parent in screens), screen)
-        activity.append(dict(title=task_label(record, screen), worker=record.get("worker"), model=None,
+        activity.append(dict(title=task_label(record, screen), worker=record.get("worker"), model=record.get("model"),
                              state=state, elapsed_seconds=process["elapsed_seconds"] if confirmed else
                              max(0, now - started) if isinstance(started, (int, float)) else None,
                              pid=record.get("pid") if confirmed else None,

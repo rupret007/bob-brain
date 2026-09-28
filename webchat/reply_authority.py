@@ -161,6 +161,10 @@ def operational_reply(root, provider, text=""):
 
 def enforce(root, text, answer, conversation=None):
     content = answer["content"]
+    from worker_assignment import requested_workers
+    if requested_workers(text):
+        # Model prose is never an assignment receipt, even if it sounds ready.
+        return "I haven't assigned a worker from this reply. The dispatcher must save a job before I can name an assignment."
     state = state_for(conversation if conversation is not None else {})
     scopes = blocked_scopes(state, projects(text))
     if HOLD_QUESTION.match(text.strip()):

@@ -107,6 +107,38 @@ def run_eval(root: Path | None = None) -> dict:
     rows.append(_case("garbled project list still resolves all four names",
                        four_projects == ["WebJam", "AdoptIQ", "StoryBoard", "Fantasy Football"]))
 
+    # Exercise the real server dispatcher, with no chat model or live services.
+    from app import Chat
+    from worker_assignment import requested_workers
+    from unittest.mock import patch
+    import uuid
+    request = "remember you can use Gemini and MiniMax for the ongoing jobs"
+    rows.append(_case("ongoing LLM instruction recognized", requested_workers(request) == ["gemini", "minimax"]))
+    with tempfile.TemporaryDirectory() as tmp:
+        data = Path(tmp)
+        folder = data / "conductor/webchat"
+        folder.mkdir(parents=True)
+        class NoModel:
+            def health(self, conversation_id=None):
+                return dict(providers={}, order=[], fast_order=[])
+            def reply(self, *args):
+                raise AssertionError("Assignment must be server-owned")
+        with patch("live_status_snapshot._screen_sessions", return_value={}), patch("live_status_snapshot.process_table", return_value={}):
+            chat = Chat(folder, data, NoModel())
+            try:
+                identifier = chat.conversation_list()["conversations"][0]["id"]
+                no_work = chat.submit(identifier, request, str(uuid.uuid4()))["messages"][-1]
+                rows.append(_case("no ongoing work explained honestly", "couldn't assign" in no_work["content"] and not task_queue.tasks(data)))
+                task_queue.enqueue(data, identifier, "source", "Improve Web Bob queue recovery", worker="codex", kind="coding")
+                receipt = chat.submit(identifier, request, str(uuid.uuid4()))["messages"][-1]
+                assigned = [task_queue.tasks(data)[key] for key in receipt.get("task_ids", [])]
+                rows.append(_case("Gemini receives a real audit job", any(r["requested_worker"] == "gemini" and r["kind"] == "audit" for r in assigned)))
+                rows.append(_case("MiniMax receives a real test-writing job", any(r["requested_worker"] == "minimax" and r["kind"] == "test-writing" for r in assigned)))
+                rows.append(_case("assignment receipt names tasks and durable IDs", len(assigned) == 2 and all(r["id"] in receipt["content"] and r["title"] in receipt["content"] for r in assigned)))
+                rows.append(_case("assignment receipt never readiness-only", "ready" not in receipt["content"].lower() and receipt["provider"] == "dispatcher"))
+            finally:
+                chat.close()
+
     passed = sum(1 for r in rows if r["pass"])
     return {
         "total": len(rows),
@@ -118,12 +150,16 @@ def run_eval(root: Path | None = None) -> dict:
 
 
 def main() -> int:
-    result = run_eval()
+    with tempfile.TemporaryDirectory(prefix="webbob-eval-") as tmp:
+        root = Path(tmp)
+        (root / "conductor/webchat").mkdir(parents=True)
+        state_ledger.write_now(root, "offline parity fixture", sha="fedcba1")
+        result = run_eval(root)
     out = HERE / "evidence/bob-parity-eval.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps({"passed": result["passed"], "total": result["total"], "score": result["score"]}, indent=2))
-    return 0 if result["passed"] >= result["total"] - 1 else 1
+    return 0 if result["passed"] == result["total"] else 1
 
 
 if __name__ == "__main__":

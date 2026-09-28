@@ -17,11 +17,13 @@ import mini_worker
 import result_acceptance
 import pr_evidence
 import draft_publish
+import api_worker
 from result_acceptance import ResultRejected, blocked_answer
 from workspaces import prepare, git, analysis_workspace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
 import task_queue
+from api_tasks import MODELS as WORKER_MODELS, REPORT_KINDS
 
 
 def task_repository(prompt):
@@ -35,6 +37,20 @@ def project_catalog():
     # Ship new project mappings with the pinned release; retain local overrides.
     return {**read_json(Path(__file__).with_name("projects.json"), {}),
             **read_json(CONDUCTOR / "services/projects.json", {})}
+
+
+def report_repository(row):
+    source_id = row.get("source_job_id")
+    if source_id:
+        from state import jobs
+        source = task_queue.tasks(ROOT).get(source_id) or jobs().get(source_id)
+        if not source:
+            raise RuntimeError("The assigned source job is no longer available")
+        project, repo = task_repository(source.get("prompt", "") or source.get("project", ""))
+        # Paths come only from server-owned jobs, never from model output.
+        worktree = Path(source["worktree"]) if source.get("worktree") else None
+        return source.get("project") or project, worktree if worktree and worktree.is_dir() else Path(source.get("repo") or repo)
+    return task_repository(row["prompt"])
 
 
 def prepare_task(record, coding):
@@ -82,10 +98,11 @@ def execute(identifier, token):
             stack.enter_context(slot(row["worker"]))
             api_only = row["worker"] in task_queue.API_WORKERS
             kind = task_queue.task_kind(row["kind"], row["prompt"])
-            if api_only and kind != "analysis":
+            if api_only and (kind not in ("analysis", *REPORT_KINDS) or row.get("publish_project")):
                 raise ResultRejected(row["worker"] + " is API-only; this task needs files or command execution. "
                                      "Choose codex or cursor-agent, or supply the evidence in the request.")
-            project, repo = task_repository(row["prompt"]) if not api_only else (None, None)
+            project, repo = (report_repository(row) if api_only and kind in REPORT_KINDS else
+                             task_repository(row["prompt"]) if not api_only else (None, None))
             if project and project.lower() == "webjam" and row["kind"] == "coding":
                 stack.enter_context(lock("webjam-coder", blocking=False))
                 from jobs import external_webjam_lease
@@ -111,19 +128,26 @@ def execute(identifier, token):
             heartbeat = threading.Thread(target=renew, daemon=True)
             heartbeat.start()
             review = (pr_evidence.load(row["prompt"], project_catalog())
-                      if row["kind"] == "analysis" else None)
+                      if row["kind"] in ("analysis", "review") else None)
             folder = CONDUCTOR / "state/task-runs" / identifier
             folder.mkdir(parents=True, exist_ok=True)
             branch, cwd = None, None
             coding = row["kind"] in ("coding", "artifact")
+            evidence_metadata = None
             prompt = ("Web Bob assigned this task from Jeff. Complete it and return the actual result in your final answer. "
                       "Do not merely propose a plan or claim another worker will do it. If blocked, begin BLOCKER:. "
                       "Use the supplied evidence; do not invent observations.\n\n")
+            if api_only:
+                prompt += api_worker.RULES
             if review:
                 if not api_only:
                     cwd = analysis_workspace(row["worker"])
                 atomic_write(folder / "PR-EVIDENCE.json", json.dumps(review["metadata"], indent=2) + "\n")
                 prompt += review["text"] + "\n\n"
+            elif api_only and kind in REPORT_KINDS:
+                body, evidence_metadata = api_worker.evidence(repo, row["worker"], row["prompt"], redact)
+                atomic_write(folder / "REPO-EVIDENCE.json", json.dumps(evidence_metadata, indent=2) + "\n")
+                prompt += body + "\n\n"
             elif not api_only and row["worker"] != "mini":
                 branch = "draft/" + identifier
                 record = dict(repo=str(repo), worktree=str(ROOT / "workspaces" / identifier),
@@ -153,11 +177,12 @@ def execute(identifier, token):
             atomic_write(folder / "prompt.txt", redact(prompt))
             if not task_queue.transition(ROOT, identifier, token, "executing", worktree=str(cwd) if cwd else None,
                                          branch=branch, project=project, repo=str(repo) if repo else None,
+                                         model=WORKER_MODELS.get(row["worker"]),
                                          prompt_file=str(folder / "prompt.txt")):
                 return 0
             answer = redact(mini_worker.execute(row) if row["worker"] == "mini" else ask(row["worker"], prompt, cwd=cwd, coding=coding,
                                 timeout=90 if row["kind"] == "artifact" else 1800 if coding else 240,
-                                purpose="pr-review" if review else "small-file" if row["kind"] == "artifact" else "small-review" if row["worker"] == "claude" else "webbob-" + identifier,
+                                purpose=("api-worker-research" if kind == "research" else "api-worker") if api_only else "pr-review" if review else "small-file" if row["kind"] == "artifact" else "small-review" if row["worker"] == "claude" else "webbob-" + identifier,
                                 locked=True)).strip()
             result_acceptance.check_answer(row["prompt"], answer)
             if review:
@@ -202,10 +227,17 @@ def execute(identifier, token):
             # of completion, and a superseded claim cannot publish a result.
             digest = hashlib.sha256(answer.encode()).hexdigest()
             acceptance["result_sha256"] = digest
+            report_path = None
+            if api_only:
+                if not task_queue.transition(ROOT, identifier, token, "heartbeat"):
+                    return 0
+                report_path = api_worker.save_report(CONDUCTOR, identifier, token, row["worker"], answer, redact)
             result = task_queue.transition(ROOT, identifier, token, "succeeded", result=answer,
                                            result_sha256=digest, worktree=str(cwd) if cwd else None,
                                            branch=branch, acceptance=acceptance,
-                                           review_source=review["metadata"] if review else None, publication=publication)
+                                           review_source=review["metadata"] if review else None, publication=publication,
+                                           evidence=evidence_metadata,
+                                           result_path=str(report_path) if report_path else None)
             stopped.set()
             if result:
                 atomic_write(folder / "RESULT.md", answer + "\n")
