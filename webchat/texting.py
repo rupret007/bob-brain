@@ -42,6 +42,10 @@ DELIVERY_UNCONFIRMED = ("Confirmation recorded; delivery is unconfirmed. Check t
 class TextingError(Exception):
     """A safe, owner-facing error; never include response bodies or credential URLs."""
 
+    def __init__(self, message, *, status=None):
+        super().__init__(message)
+        self.status = status
+
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *_args, **_kwargs):
@@ -81,8 +85,8 @@ def request_json(base, path, *, data=None, headers=None):
         raise
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403):
-            raise TextingError("Local messaging authentication failed. Nothing was sent.") from None
-        raise TextingError("The local messaging service rejected the request. Nothing was sent.") from None
+            raise TextingError("Local messaging authentication failed. Nothing was sent.", status=exc.code) from None
+        raise TextingError("The local messaging service rejected the request. Nothing was sent.", status=exc.code) from None
     except (OSError, ValueError, UnicodeError):
         raise TextingError("Local messaging is unavailable or returned invalid data. Nothing was sent.") from None
 
@@ -142,16 +146,19 @@ class Andrea:
                  "Its BlueBubbles channel is unavailable."))
 
     def deliver(self, chat_guid, body):
-        """Owner-approved send through Andrea when the control service exposes Web Bob delivery."""
+        """Return True for delivery, False for rejection, or None for an unknown outcome."""
         if not self.token or not isinstance(chat_guid, str) or not chat_guid or not isinstance(body, str) or not body.strip():
             return False
         try:
             result = request_json(self.base, "/web-bob/send",
                                   data={"chatGuid": chat_guid, "text": body},
                                   headers={"Authorization": "Bearer " + self.token})
-        except TextingError:
-            return False
-        return result.get("ok") is True and isinstance(result.get("messageGuid"), str)
+        except TextingError as exc:
+            # Auth or an absent endpoint rejects the handoff. A lost response or
+            # server error may follow delivery, so it cannot prove "not sent".
+            return False if exc.status in (401, 403, 404, 405) else None
+        guid = result.get("messageGuid")
+        return True if result.get("ok") is True and isinstance(guid, str) and guid.strip() else None
 
 
 def fingerprint(draft):
@@ -271,6 +278,8 @@ class Texting:
         if draft["epoch"] != self.epoch or self.clock() >= draft["expires_at"]:
             draft.update(state="expired", token=None)
             return "Nothing sent. That text confirmation expired. Review a fresh draft."
+        # The draft-creation request cannot also authorize delivery: the owner
+        # must review the card and submit its exact token in a later request.
         if (not actor or not hmac.compare_digest(actor, draft["actor"]) or
                 request_id == draft["request_id"] or draft["conversation_id"] != conversation["id"] or
                 not hmac.compare_digest(match[1], draft["token"]) or
@@ -285,14 +294,17 @@ class Texting:
         state["audit"].append(audit)
         conversation["messages"][-1].update(status="done", provider="texting", content=DELIVERY_UNCONFIRMED)
         persist(conversation)
-        if self.andrea.deliver(draft["recipient"]["guid"], draft["body"]):
+        delivered = self.andrea.deliver(draft["recipient"]["guid"], draft["body"])
+        if delivered is True:
             draft["state"] = "sent"
             audit["event"] = "owner_sent_via_andrea"
             content = SENT_VIA_ANDREA
-        else:
+        elif delivered is False:
             draft["state"] = "confirmed_not_sent"
             audit["event"] = "owner_confirmed_not_sent"
             content = BRIDGE_BLOCKED
+        else:
+            content = DELIVERY_UNCONFIRMED
         return content
 
     def handle(self, conversation, text, actor, request_id, persist, redact):
@@ -306,6 +318,8 @@ class Texting:
         command = clean.casefold().rstrip(".?!")
         text_context = active and (active["state"] in ("pending", "editing") or
             len(conversation["messages"]) >= 3 and conversation["messages"][-3].get("texting"))
+        # Bare approvals are routed here for token guidance only; confirm() still
+        # requires the entire message to match the exact yes + token format.
         confirmation = re.match(r"^yes\s+wbtxt-", clean, re.I) or (text_context and command in ("yes", "ok", "send it", "send it now", "send now", "go", "do it"))
         edit = re.fullmatch(r"(edit|cancel) text draft ([0-9a-f]{16})", clean, re.I)
         replace = re.fullmatch(r"replace text draft ([0-9a-f]{16}) to (.+?):\s*([\s\S]+)", clean, re.I)

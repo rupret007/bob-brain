@@ -70,9 +70,13 @@ class TextingE2ETest(unittest.TestCase):
         self.assertEqual(card["body"], "Charts at 7 tonight.")
         self.assertIn("+15550101010", json.dumps(card["recipient"]))
         self.assertEqual(self.mock.sends, [])
-        _, bare = self.post("yes")
-        self.assertIn("Nothing sent", bare["messages"][-1]["content"])
-        self.assertEqual(self.mock.sends, [])
+        for phrase in ("yes", "ok", "send it"):
+            with self.subTest(phrase=phrase):
+                status, bare = self.post(phrase)
+                self.assertEqual(status, 202)
+                self.assertIn("Nothing sent", bare["messages"][-1]["content"])
+                self.assertEqual(self.mock.sends, [])
+                self.assertNotIn(("POST", "/web-bob/send"), self.mock.calls)
         status, confirmed = self.post(card["confirm_message"])
         self.assertEqual(status, 202)
         self.assertTrue(confirmed["messages"][-1]["content"].startswith("Sent via Andrea"))

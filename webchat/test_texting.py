@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 from app import Chat, RequestError, Server
 from task_dispatch import task_queue
-from texting import Andrea, BlueBubbles, Texting, TextingError, SENT_VIA_ANDREA, local_url
+from texting import Andrea, BlueBubbles, Texting, TextingError, DELIVERY_UNCONFIRMED, SENT_VIA_ANDREA, local_url
 from texting_fixture import MockMessaging, OfflineProviders
 
 
@@ -99,13 +99,52 @@ class TextingTests(unittest.TestCase):
         self.assertIn("I can read recent texts", incomplete["content"])
 
     def test_send_request_is_only_a_draft_and_separate_yes_is_required(self):
+        self.mock.enable_web_bob_send = True
         draft = self.draft("send a text to Alex Morgan: yes, send it now")
         self.assertEqual(draft["body"], "yes, send it now")
         self.assertEqual(draft["state"], "pending")
         self.assertEqual(self.private()["audit"], [])
-        for phrase in ("yes", "ok", "send it", "send it now", "go", "do it"):
-            self.assertIn("Nothing sent", self.say(phrase)["messages"][-1]["content"])
-        self.assertEqual(self.private()["audit"], [])
+        for phrase in ("yes", "ok", "send it", "send it now", "send now", "go", "do it"):
+            with self.subTest(phrase=phrase):
+                self.assertIn("Nothing sent", self.say(phrase)["messages"][-1]["content"])
+                self.assertEqual(self.private()["drafts"][draft["id"]]["state"], "pending")
+                self.assertEqual(self.private()["audit"], [])
+                self.assertEqual(self.mock.sends, [])
+                self.assertNotIn(("POST", "/web-bob/send"), self.mock.calls)
+        self.assertEqual(self.providers.calls, [])
+        self.assertEqual(task_queue.tasks(self.root), {})
+        self.assertEqual(self.say(draft["confirm_message"])["messages"][-1]["content"], SENT_VIA_ANDREA)
+        self.assertEqual(len(self.mock.sends), 1)
+
+    def test_same_request_cannot_confirm_draft(self):
+        self.mock.enable_web_bob_send = True
+        draft = self.draft()
+        conversation = copy.deepcopy(self.chat.conversations[self.identifier])
+        pending = conversation["_texting"]["drafts"][draft["id"]]
+        draft_request = pending["request_id"]
+        with patch.object(self.chat, "save", wraps=self.chat.save) as saved:
+            with self.assertRaises(RequestError) as error:
+                self.say(draft["confirm_message"], request_id=draft_request)
+            self.assertEqual(error.exception.status, 409)
+            # Exercise the consent guard itself, beyond Chat.submit's replay check.
+            content = self.texting.confirm(conversation, draft["confirm_message"],
+                                          self.actor, draft_request, self.chat.save)
+            self.assertIn("does not match", content)
+            saved.assert_not_called()
+        self.assertEqual(pending["state"], "pending")
+        self.assertEqual("yes " + pending["token"], draft["confirm_message"])
+        self.assertEqual(conversation["_texting"]["audit"], [])
+        self.assertEqual(self.mock.sends, [])
+        self.assertNotIn(("POST", "/web-bob/send"), self.mock.calls)
+
+        later_request = str(uuid.uuid4())
+        value = self.say(draft["confirm_message"], request_id=later_request)
+        self.assertEqual(value["messages"][-1]["content"], SENT_VIA_ANDREA)
+        self.assertEqual(self.private()["drafts"][draft["id"]]["state"], "sent")
+        self.assertEqual(len(self.private()["audit"]), 1)
+        self.assertEqual(self.private()["audit"][0]["request_id"], later_request)
+        self.assertEqual(self.mock.sends, [{"chatGuid": draft["recipient"]["guid"], "text": draft["body"]}])
+        self.assertEqual(self.mock.calls.count(("POST", "/web-bob/send")), 1)
 
     def test_worker_routing_cannot_bypass_text_draft_gate(self):
         for request in ("ask Codex to send a text to Alex Morgan: Hello",
@@ -317,6 +356,43 @@ class TextingTests(unittest.TestCase):
         finally:
             restored.close()
 
+    def test_lost_andrea_reply_keeps_delivery_unconfirmed_and_cannot_replay(self):
+        self.mock.enable_web_bob_send = True
+        self.mock.drop_send_response = True
+        draft = self.draft()
+        value = self.say(draft["confirm_message"])
+        self.assertEqual(len(self.mock.sends), 1)
+        self.assertEqual(value["messages"][-1]["content"], DELIVERY_UNCONFIRMED)
+        self.assertEqual(self.private()["drafts"][draft["id"]]["state"], "delivery_unconfirmed")
+        self.assertIsNone(self.private()["drafts"][draft["id"]]["token"])
+        self.assertEqual(self.private()["audit"][0]["event"], "owner_confirmed_delivery_unconfirmed")
+        self.say(draft["confirm_message"])
+        restored = Chat(self.folder, self.root, self.providers,
+                       texting=Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token)))
+        try:
+            history = restored.history(self.identifier)
+            cards = [m["text_draft"] for m in history["messages"] if m.get("text_draft")]
+            self.assertEqual(cards[-1]["state"], "delivery_unconfirmed")
+            self.assertIsNone(cards[-1]["confirm_message"])
+            restored.submit(self.identifier, draft["confirm_message"], str(uuid.uuid4()), actor=self.actor)
+        finally:
+            restored.close()
+        self.assertEqual(len(self.mock.sends), 1)
+        self.assertEqual(self.mock.calls.count(("POST", "/web-bob/send")), 1)
+
+    def test_invalid_andrea_receipts_do_not_claim_sent_or_not_sent(self):
+        for receipt in ({}, {"ok": False}, {"ok": True}, {"ok": True, "messageGuid": ""},
+                        {"ok": True, "messageGuid": " "}, {"ok": True, "messageGuid": 1}):
+            with self.subTest(receipt=receipt):
+                draft = self.draft()
+                with patch("texting.request_json", return_value=receipt) as requested:
+                    value = self.say(draft["confirm_message"])
+                    self.assertEqual(value["messages"][-1]["content"], DELIVERY_UNCONFIRMED)
+                    self.assertEqual(self.private()["drafts"][draft["id"]]["state"], "delivery_unconfirmed")
+                    self.assertIsNone(self.private()["drafts"][draft["id"]]["token"])
+                    self.say(draft["confirm_message"])
+                    self.assertEqual(requested.call_count, 1)
+
     def test_texting_persists_each_turn_and_clears_pending_work(self):
         for text in ("texts", "draft reply to Alex Morgan: Hello", "yes", "cancel text draft"):
             with self.subTest(text=text):
@@ -419,18 +495,22 @@ class TextingTests(unittest.TestCase):
         secret_path = "/private/fixture-andrea/config.env"
         self.mock.andrea_error_body = (f"{self.mock.base}/web-bob/send?password={self.mock.password} "
                                        f"Bearer {self.mock.token} {secret_path}")
-        for status in (401, 403, 500):
+        for status in (401, 403, 404, 405, 500):
             with self.subTest(status=status):
                 self.mock.andrea_error_status = status
                 draft = self.draft()
                 value = self.say(draft["confirm_message"])
-                self.assertTrue(value["messages"][-1]["content"].startswith("Not sent."))
+                if status == 500:
+                    self.assertEqual(value["messages"][-1]["content"], DELIVERY_UNCONFIRMED)
+                else:
+                    self.assertTrue(value["messages"][-1]["content"].startswith("Not sent."))
                 disk = (self.chat.state / (self.identifier + ".json")).read_text()
                 for secret in (self.mock.base, self.mock.password, self.mock.token, secret_path, "password="):
                     self.assertNotIn(secret, json.dumps(value))
                     self.assertNotIn(secret, disk)
                 self.assertEqual(self.mock.sends, [])
-                self.assertEqual(self.private()["drafts"][draft["id"]]["state"], "confirmed_not_sent")
+                expected_state = "delivery_unconfirmed" if status == 500 else "confirmed_not_sent"
+                self.assertEqual(self.private()["drafts"][draft["id"]]["state"], expected_state)
                 self.assertIsNone(self.private()["drafts"][draft["id"]]["token"])
 
     def test_read_allowlist_and_loopback_no_proxy(self):

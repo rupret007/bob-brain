@@ -28,6 +28,7 @@ class MockMessaging:
     def __init__(self, folder):
         self.calls, self.unexpected_writes, self.sends = [], [], []
         self.enable_web_bob_send = False
+        self.drop_send_response = False
         self.andrea_error_status = None
         self.andrea_error_body = None
         self.chats, self.messages = copy.deepcopy(CHATS), copy.deepcopy(MESSAGES)
@@ -58,6 +59,9 @@ class MockMessaging:
                     fixture.sends.append({"chatGuid": guid, "text": text})
                     # Andrea hands off to BlueBubbles on the same loopback fixture.
                     fixture.calls.append(("POST", "/api/v1/message/text"))
+                    if fixture.drop_send_response:
+                        self.close_connection = True
+                        return
                     return self.respond(200, {"ok": True, "messageGuid": "mock-" + secrets.token_hex(8)})
                 if self.command == "POST" and url.path == "/api/v1/message/text":
                     if not fixture.enable_web_bob_send:
