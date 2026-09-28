@@ -18,6 +18,9 @@ class ResultRejected(RuntimeError):
     pass
 
 
+DRAFT_ERROR = "Missing concrete regression test drafts (setup, action and expected assertion required)"
+
+
 def assigned_task(prompt):
     task = prompt.rsplit("Your independent subtask:", 1)[-1]
     return re.split(r"\n(?:Ongoing task|Project context):", task, maxsplit=1)[0]
@@ -81,14 +84,16 @@ def check_deliverables(prompt, answer, kind=None):
     prose = re.sub(r"(?m)^[ \t]*>[^\n]*$", "", prose)
     def fields(text, names):
         for name in names:
-            match = re.search(r"(?im)^[ \t]*(?:[-*][ \t]+)?(?:\*\*)?" + name +
+            match = re.search(r"(?im)^[ \t]{0,3}(?:[-*][ \t]+)?(?:\*\*)?" + name +
                               r"[ \t]*:(?:\*\*)?[ \t]*([^\n]+)", text)
             if not match or not match[1].strip(" *`\t") or re.fullmatch(
                     r"(?i)(?:TBD|TODO|N/A|none|\.\.\.)[.!]?", match[1].strip(" *`\t")):
                 return False
         return True
     if needs_test_drafts(prompt, kind):
-        cases = re.split(r"(?im)^\s*(?:#{1,6}\s*)?(?:\*\*)?Regression test\s*:", prose)[1:]
+        # Indented code, quoted history and escaped Setup inputs are not outer
+        # report sections. Split before testing fields so cases cannot borrow.
+        cases = re.split(r"(?im)^[ \t]{0,3}(?:#{1,6}[ \t]*)?(?:\*\*)?Regression test[ \t]*:", prose)[1:]
         structured = any(fields(case, ("Target", "Setup", "Action", "Expected")) for case in cases)
         # Support actual proposed tests as well as behavioral test-case drafts.
         blocks = [body for _, body in FENCED_BLOCK.findall(answer)]
@@ -96,12 +101,16 @@ def check_deliverables(prompt, answer, kind=None):
                    and re.search(r"\b(?:assert\s+|self\.assert\w+\(|expect\s*\()", block)
                    for block in blocks)
         if not (structured or code):
-            raise ResultRejected("Missing concrete regression test drafts (setup, action and expected assertion required)")
+            raise ResultRejected(DRAFT_ERROR)
     heading = plan_heading(prompt)
     if heading:
         plan = re.split(r"(?im)^\s*(?:#{1,6}\s*)?(?:\*\*)?" + heading + r"\s*:", prose, maxsplit=1)
         if len(plan) != 2 or not fields(plan[1], ("Change", "Validation", "Exit condition")):
             raise ResultRejected("Missing actionable " + heading.lower() + " (change, validation and exit condition required)")
+    if needs_test_drafts(prompt, kind) and (kind == "test-writing" or "Your independent subtask:" in prompt):
+        if len(cases) != 2 or not all(case.splitlines()[0].strip(" *\t") and
+                                     fields(case, ("Target", "Setup", "Action", "Expected")) for case in cases):
+            raise ResultRejected(DRAFT_ERROR)
     check_completion_json(prompt, answer)
     if "Your independent subtask:" in prompt and not fields(prose, ("Findings/limits",)):
         raise ResultRejected("Missing concrete Findings/limits closing sentence")
@@ -255,7 +264,9 @@ def deliverable_requirements(prompt, kind=None):
             "'Target:' (test path and relevant symbol), 'Setup:' (specific fixture/input), "
             "'Action:' (call/trigger), and 'Expected:' (observable assertion). "
             "Use exactly two focused cases, a failure and its successful control, unless the task explicitly requests a different count. "
-            "Executable test code with named tests and assertions is also acceptable. "
+            "Executable test code with named tests and assertions may accompany the cases. "
+            "Test-writing and independent-subtask reports must have exactly two outer cases with all four fields; "
+            "nested fixtures, historical quoted/fenced examples and code alone do not count as those drafts. "
             "Ground drafts in supplied code; label drafts unexecuted when you have no tools. "
             "Unexecuted behavioral drafts ARE the requested deliverable; execution is not required for this report. "
             "Lead with the requested cases, then the required plan, completion JSON and Findings/limits. "

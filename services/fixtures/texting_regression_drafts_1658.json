@@ -1,0 +1,60 @@
+{
+  "job_id": "webchat-20bfc6f211c05e1f95221804051ff8a9",
+  "source": "TEXTING-DEPLOY-1605 / deployment attempt9",
+  "repo_tip": "c6b3e79218674703cd104d16c2a967ba0cb47221",
+  "prompt": "Project: Web Bob\nYour independent subtask:\nReview and regression test-case drafts for the following ongoing task. Deliver concrete findings and an actionable plan or test drafts. Never deploy or resolve conflicts.\nOngoing task:\nObserved active lane: Web Bob unblock 1035. Its original task prompt was not recorded; inspect the project's current code and state that limitation. Do not invent the lane's exact assignment.",
+  "prompt_sha256": "c4d9a7ec11bf1238384a7d57093d9cdcb8bdc5269a58e3a8d8f86cbd051348b3",
+  "kind": "test-writing",
+  "worker": "minimax",
+  "error": "Missing concrete regression test drafts (setup, action and expected assertion required)",
+  "answer": "Regression test: missing unblock plan raises ResultRejected\nTarget: services/result_acceptance.py; result_acceptance.check_deliverables\nSetup: prompt=\"Project: Web Bob\\nYour independent subtask:\\nReview and regression test-case drafts\\nOngoing task:\\nObserved active lane: Web Bob unblock 1035\"; answer=\"Regression test: coverage exists\\nTarget: services/test_result_acceptance.py; result_acceptance.check_deliverables\\nSetup: Use check_deliverables with a prompt naming unblock and a report containing regression tests but no plan.\\nAction: call result_acceptance.check_deliverables(prompt, answer, kind='test-writing')\\nExpected: Raise ResultRejected containing 'Missing actionable unblock plan'\\n\\nRegression test: complete unblock plan passes check_deliverables\nTarget: services/result_acceptance.py; result_acceptance.check_deliverables\nSetup: prompt=\"Project: Web Bob\\nYour independent subtask:\\nReview and regression test-case drafts\\nOngoing task:\\nObserved active lane: Web Bob unblock 1035\"; answer=\"Regression test: plan present\\nTarget: services/test_result_acceptance.py; result_acceptance.check_deliverables\\nSetup: Use check_deliverables with a prompt naming unblock 1035.\\nAction: call result_acceptance.check_deliverables(prompt, answer, kind='test-writing')\\nExpected: Raise ResultRejected containing 'Missing actionable unblock plan'\\nRegression test: control passes\nTarget: services/result_acceptance.py; result_acceptance.check_deliverables\nSetup: prompt=\"Project: Web Bob\\nYour independent subtask:\\nReview and regression test-case drafts\\nOngoing task:\\nObserved active lane: Web Bob unblock 1035\"; answer='Regression test: unblock coverage\\nTarget: services/test_result_acceptance.py; result_acceptance.check_deliverables\\nSetup: Prompt names unblock 1035 and includes a report with two complete regression tests.\\nAction: call result_acceptance.check_deliverables(prompt, answer, kind=\"test-writing\")\\nExpected: No exception raised.\\nUnblock plan:\\nChange: Validate existing ReportRepositoryTests coverage in services/test_replay_completion.py for lane-webbob-texting-replay-json-fix-1508; existing check_deliverables enforcement in services/result_acceptance.py covers the plan-heading requirement.\\nValidation: python3 -m unittest discover -s services -p 'test_*.py' returns zero failures; distinguish proposed validation from executed checks.\\nExit condition: Web Bob unblock 1035 stays blocked until its actual worker results and fresh Gemini/MiniMax reviews pass acceptance; unexecuted drafts alone cannot close the lane.\n```json\n{\"accepted\": true, \"reason\": \"Delivered regression test drafts for check_deliverables plan enforcement; existing coverage validated conditionally; tests not executed.\"}\n```\nFindings/limits: Regression test drafts cover plan-heading enforcement in result_acceptance.check_deliverables; original unblock 1035 prompt not recorded; drafts are unexecuted.",
+  "answer_sha256": "f640a9e29def307ed8d4e37fcece52b95bf5e5ad6d3632d466335dbf02934d04",
+  "answer_origin": "Verbatim task_queue rejected_result; worker.log is empty. No outer Action/Expected labels; nested Setup labels cannot satisfy drafts.",
+  "artifacts": {
+    "prompt.txt": {
+      "path": "/Users/jeffstory/Documents/bob-overnight-inject/conductor/state/task-runs/webchat-20bfc6f211c05e1f95221804051ff8a9/prompt.txt",
+      "sha256": "19bbe490d95f5eb024101f06efa3a08e9b79d1b32b2bde269cc5346247c4d8d0",
+      "bytes": 76382
+    },
+    "worker.log": {
+      "path": "/Users/jeffstory/Documents/bob-overnight-inject/conductor/state/task-runs/webchat-20bfc6f211c05e1f95221804051ff8a9/worker.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "REPO-EVIDENCE.json": {
+      "path": "/Users/jeffstory/Documents/bob-overnight-inject/conductor/state/task-runs/webchat-20bfc6f211c05e1f95221804051ff8a9/REPO-EVIDENCE.json",
+      "sha256": "c1f98ba185a51e53e6b4ff8707309c47661678ad17fa2980e39ab1f64236a1c8",
+      "bytes": 7514
+    }
+  },
+  "evidence_limits": "Unexecuted serialization example, not a live result. Source-selection guards and ReportRepositoryTests already exist. Adapt the plan to the actual named task and disclose its missing original prompt. Preserve unavailable-worktree=None.",
+  "complete_report": {
+    "regression_tests": [
+      {
+        "name": "missing assigned source fails closed",
+        "target": "services/test_replay_completion.py; services/dispatch_worker.py report_repository",
+        "setup": "row={'source_job_id': 'missing'}; task_queue.tasks(ROOT) and state.jobs() both return {}.",
+        "action": "call report_repository(row).",
+        "expected": "RuntimeError containing 'The assigned source job is no longer available'."
+      },
+      {
+        "name": "valid assigned worktree is selected",
+        "target": "services/test_replay_completion.py; services/dispatch_worker.py report_repository",
+        "setup": "create temporary directory d; task_queue.tasks(ROOT) returns {'valid': {'project': 'Web Bob', 'prompt': 'Web Bob', 'worktree': str(d), 'repo': '/unrelated'}}.",
+        "action": "call report_repository({'source_job_id': 'valid'}).",
+        "expected": "('Web Bob', Path(d)); the unrelated repo is not selected."
+      }
+    ],
+    "plan": {
+      "change": "Validate the existing ReportRepositoryTests and completion-contract coverage in services/test_replay_completion.py for Web Bob unblock 1035; retain the unavailable-worktree None behavior in services/dispatch_worker.py.",
+      "validation": "Run python3 -m unittest discover -s services -p 'test_*.py' and require zero failures, then obtain fresh Gemini/MiniMax review and accepted saved replay reports.",
+      "exit_condition": "Web Bob unblock 1035 stays blocked until its actual worker results, offline suites, live replay and rollback gates pass; these unexecuted drafts alone cannot close it."
+    },
+    "completion": {
+      "accepted": true,
+      "reason": "Delivered two source-selection drafts and a conditional validation plan; tests and live gates were not executed."
+    },
+    "findings_limits": "Existing source-selection guards need validation against the named lane; drafts are unexecuted and its original task prompt was not recorded and live evidence was not supplied."
+  },
+  "complete_answer": "Regression test: missing assigned source fails closed\nTarget: services/test_replay_completion.py; services/dispatch_worker.py report_repository\nSetup: row={'source_job_id': 'missing'}; task_queue.tasks(ROOT) and state.jobs() both return {}.\nAction: call report_repository(row).\nExpected: RuntimeError containing 'The assigned source job is no longer available'.\n\nRegression test: valid assigned worktree is selected\nTarget: services/test_replay_completion.py; services/dispatch_worker.py report_repository\nSetup: create temporary directory d; task_queue.tasks(ROOT) returns {'valid': {'project': 'Web Bob', 'prompt': 'Web Bob', 'worktree': str(d), 'repo': '/unrelated'}}.\nAction: call report_repository({'source_job_id': 'valid'}).\nExpected: ('Web Bob', Path(d)); the unrelated repo is not selected.\n\nUnblock plan:\nChange: Validate the existing ReportRepositoryTests and completion-contract coverage in services/test_replay_completion.py for Web Bob unblock 1035; retain the unavailable-worktree None behavior in services/dispatch_worker.py.\nValidation: Run python3 -m unittest discover -s services -p 'test_*.py' and require zero failures, then obtain fresh Gemini/MiniMax review and accepted saved replay reports.\nExit condition: Web Bob unblock 1035 stays blocked until its actual worker results, offline suites, live replay and rollback gates pass; these unexecuted drafts alone cannot close it.\n\n```json\n{\"accepted\": true, \"reason\": \"Delivered two source-selection drafts and a conditional validation plan; tests and live gates were not executed.\"}\n```\nFindings/limits: Existing source-selection guards need validation against the named lane; drafts are unexecuted and its original task prompt was not recorded and live evidence was not supplied."
+}

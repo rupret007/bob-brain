@@ -172,8 +172,7 @@ def execute(identifier, token):
                 prompt += api_worker.report_prompt(row["prompt"], evidence_body, row["kind"])
             else:
                 prompt += "TASK:\n" + row["prompt"]
-                prompt += "\n" + result_acceptance.deliverable_requirements(row["prompt"], row["kind"])
-                prompt += api_worker.report_serialization(row["prompt"], row["kind"])
+                prompt += "\n" + api_worker.report_instructions(row["prompt"], row["kind"])
             if row.get("publish_project"):
                 prompt += ("\nThe server has Jeff's explicit authorization to push this project's assigned draft branch. "
                            "Your part is one useful, bounded improvement: inspect, fix, test and commit locally. "

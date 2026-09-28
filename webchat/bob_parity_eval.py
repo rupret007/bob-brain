@@ -231,6 +231,22 @@ def run_eval(root: Path | None = None) -> dict:
             rejected = True
         rows.append(_case(label, rejected == expect_rejection))
 
+    drafts = json.loads((HERE.parent / "services/fixtures/texting_regression_drafts_1658.json").read_text())
+    complete = drafts["complete_answer"]
+    for label, answer, rejected_expected in (
+            ("1658 exact 20bfc nested drafts fail closed", drafts["answer"], True),
+            ("1658 two outer drafts plus plan JSON findings pass", complete, False),
+            ("1658 missing outer Action fails closed", complete.replace("Action: ", "Action:\n"), True),
+            ("1658 missing outer Expected fails closed", complete.replace("Expected: ", "Expected:\n"), True),
+            ("1658 historical quoted drafts fail closed", '\n'.join('> ' + line for line in complete.splitlines()), True),
+            ("1658 one complete draft is insufficient", complete[complete.index('Regression test:', 1):], True)):
+        rejected = False
+        try:
+            check_answer(drafts["prompt"], answer, kind=drafts["kind"])
+        except ResultRejected:
+            rejected = True
+        rows.append(_case(label, rejected == rejected_expected))
+
     passed = sum(1 for r in rows if r["pass"])
     return {
         "total": len(rows),

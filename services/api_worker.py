@@ -10,7 +10,7 @@ from pathlib import Path
 
 from state import atomic_write
 from workspaces import git
-from result_acceptance import deliverable_requirements, needs_test_drafts, plan_heading, ResultRejected
+from result_acceptance import deliverable_requirements, needs_test_drafts, plan_heading, ResultRejected, DRAFT_ERROR
 
 TEXT_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".md", ".txt",
                  ".json", ".toml", ".yaml", ".yml", ".sh", ".html", ".css", ".sql", ".go", ".rs"}
@@ -56,32 +56,50 @@ def read_source(repo, name, limit):
 
 def report_prompt(task, body, kind=None):
     """Keep the assignment visible before the snapshot and the contract after it."""
-    contract = deliverable_requirements(task, kind)
+    contract = report_instructions(task, kind)
     return (RULES + "TASK:\n" + task + "\n\n" + contract + "\n" + body +
-            "\n\nEND OF REPOSITORY EVIDENCE. Return the assigned report now.\n" + contract +
-            report_serialization(task, kind))
+            "\n\nEND OF REPOSITORY EVIDENCE. Return the assigned report now.\n" + contract)
+
+
+def report_instructions(task, kind=None):
+    # One presentation contract. Repeating a Markdown template before asking
+    # for JSON caused workers to copy nested fixture labels as their report.
+    return report_serialization(task, kind) or deliverable_requirements(task, kind)
 
 
 def report_serialization(task, kind=None):
     """Separate nested test inputs from the outer fields without inventing content."""
-    if kind in ("coding", "artifact") or not (needs_test_drafts(task, kind) and plan_heading(task)):
+    if kind in ("coding", "artifact") or not needs_test_drafts(task, kind):
         return ""
+    heading = plan_heading(task)
     return (
         "\nREPORT SERIALIZATION: return ONLY the following JSON object, without a Markdown fence or prose. "
-        "This serialization replaces the presentation layout above: the server renders each field into its "
+        "Deliver actual regression test drafts. The server renders each field into its "
         "own report line, then runs the same deterministic and independent semantic acceptance checks. "
-        "The plan heading will be '" + plan_heading(task) + ":'. You must supply every substantive value; "
+        "You must supply every substantive value; "
         "the server never fills missing content. Keep nested test input strings solely in setup. "
-        "Do not place outer Action/Expected or plan fields inside setup. Use the assigned number of cases. "
-        "Replace all bracketed values; completion describes your work and is not the server's verdict.\n"
+        "Do not place outer Action/Expected or plan fields inside setup. Supply exactly two cases, a failure "
+        "and its successful control. Each has its OWN name, target, setup, action and expected string; "
+        "the renderer puts Target:, Setup:, Action:, Expected: on the SAME line as each value. "
+        "Use literal inputs or exact supplied fixture fields; trace calls and assertions through supplied code. "
+        "A nested check_answer/check_deliverables control needs every section its own prompt requires. "
+        "Prefer a small direct function/state fixture over a long escaped report; never copy historical rejected answers. "
+        "Cite existing paths/symbols, actual exception text and required kind arguments. "
+        "Drafts are unexecuted; no tools or execution claims. Disclose missing original task/evidence. "
+        "Completion describes YOUR delivered report, not a server vote or lane closure. "
+        "Use accepted=false if incomplete; missing drafts cannot claim completion. Replace every bracketed value. "
+        + ("Tie the plan to the named ongoing task. Read current code: validate existing coverage when already implemented. "
+           "Use a supported validation command; exit requires actual worker results and live gates, otherwise remain blocked. "
+           "The server renders these outer labels (supply values via plan fields, not Markdown):\n" + heading +
+           ":\nChange:\nValidation:\nExit condition:\n" if heading else "Use plan=null; no plan is required.\n") +
         '{"regression_tests": [{"name": "[failure case]", "target": "[file/symbol]", '
         '"setup": "[literal input/state or supplied fixture fields]", "action": "[exact call]", '
         '"expected": "[observable failure assertion]"}, {"name": "[control case]", '
         '"target": "[file/symbol]", "setup": "[valid input/state or supplied fixture fields]", '
         '"action": "[exact call]", "expected": "[observable successful assertion]"}], '
-        '"plan": {"change": "[grounded change or validation of existing coverage]", '
+        '"plan": ' + ('{"change": "[grounded change or validation of existing coverage]", '
         '"validation": "[supported command and passing result]", '
-        '"exit_condition": "[actual named task result and gates required to pass; otherwise retain hold]"}, '
+        '"exit_condition": "[actual named task result and gates required to pass; otherwise retain hold]"}' if heading else 'null') + ', '
         '"completion": {"accepted": true, "reason": "[task-specific delivered findings and limits]"}, '
         '"findings_limits": "[concrete finding; drafts unexecuted and missing evidence]"}\n')
 
@@ -111,9 +129,12 @@ def render_report(task, answer, kind=None):
     if not isinstance(report, dict):
         raise ResultRejected("Invalid structured regression report")
     plan = report.get('plan')
-    plan_error = "Missing actionable " + plan_heading(task).lower() + " (change, validation and exit condition required)"
-    if not isinstance(plan, dict) or set(plan) != {'change', 'validation', 'exit_condition'}:
+    heading = plan_heading(task)
+    plan_error = "Missing actionable " + (heading or 'plan').lower() + " (change, validation and exit condition required)"
+    if heading and (not isinstance(plan, dict) or set(plan) != {'change', 'validation', 'exit_condition'}):
         raise ResultRejected(plan_error)
+    if not heading and plan is not None:
+        raise ResultRejected("Unexpected structured regression report plan")
     if set(report) != {'regression_tests', 'plan', 'completion', 'findings_limits'}:
         raise ResultRejected("Missing or unknown structured regression report fields")
 
@@ -124,19 +145,20 @@ def render_report(task, answer, kind=None):
         return value.strip().replace('\r\n', '\n').replace('\r', '\n').replace('\n', r'\n')
 
     cases = report['regression_tests']
-    if not isinstance(cases, list) or not cases:
-        raise ResultRejected("Missing concrete regression test drafts (setup, action and expected assertion required)")
+    if not isinstance(cases, list) or len(cases) != 2:
+        raise ResultRejected(DRAFT_ERROR)
     rendered = []
     for case in cases:
         if not isinstance(case, dict) or set(case) != {'name', 'target', 'setup', 'action', 'expected'}:
-            raise ResultRejected("Missing concrete regression test draft fields")
+            raise ResultRejected(DRAFT_ERROR)
         for label, key in (('Regression test', 'name'), ('Target', 'target'), ('Setup', 'setup'),
                            ('Action', 'action'), ('Expected', 'expected')):
-            rendered.append(label + ': ' + line(case[key], 'Missing concrete regression test draft ' + key))
+            rendered.append(label + ': ' + line(case[key], DRAFT_ERROR))
         rendered.append('')
-    rendered.append(plan_heading(task) + ':')
-    for label, key in (('Change', 'change'), ('Validation', 'validation'), ('Exit condition', 'exit_condition')):
-        rendered.append(label + ': ' + line(plan[key], plan_error))
+    if heading:
+        rendered.append(heading + ':')
+        for label, key in (('Change', 'change'), ('Validation', 'validation'), ('Exit condition', 'exit_condition')):
+            rendered.append(label + ': ' + line(plan[key], plan_error))
     # The completion object is copied verbatim as JSON data; check_answer still
     # validates its exact keys, boolean, reason and accepted=true requirement.
     rendered.extend(['', '```json', json.dumps(report['completion'], ensure_ascii=False), '```',
@@ -160,8 +182,8 @@ def evidence(repo, worker, task, redact, kind=None):
     # omit the concrete failure/control fixture. Reserve a fair share for that
     # tracked example too; it is evidence, never a replacement worker answer.
     replay_fixture = "services/fixtures/texting_jobcompletion_1403.json"
-    plan_example = "services/fixtures/texting_action_plan_1605.json"
-    examples = {plan_example} if preferred else set()
+    plan_example = "services/fixtures/texting_regression_drafts_1658.json"
+    examples = {plan_example, "services/test_replay_completion.py"} if preferred else set()
     if preferred and "services/result_acceptance.py" in task:
         examples.update((replay_fixture, "services/test_replay_completion.py"))
     elif preferred:
@@ -185,7 +207,14 @@ def evidence(repo, worker, task, redact, kind=None):
             if not path.is_file() or not safe_source(repo, name):
                 omitted.append(name)
                 continue
-            size = min(48000, remaining, named_limit if name in named else 48000)
+            share = named_limit if name in named else 48000
+            if name == plan_example:
+                share = 48000  # A partial JSON example is unusable.
+            elif preferred and name == "services/result_acceptance.py":
+                share = 10000  # Complete guards; prose contracts are supplied separately.
+            elif preferred and name == "services/test_replay_completion.py":
+                share = 6000  # Complete ReportRepositoryTests; leave room for implementation.
+            size = min(48000, remaining, share)
             raw = read_source(repo, name, max(0, size) + 1)
             if b"\0" in raw or remaining <= 0:
                 omitted.append(name)
@@ -195,14 +224,13 @@ def evidence(repo, worker, task, redact, kind=None):
             text = redact(raw[:size].decode("utf-8", "replace"))
             rendered_fields = None
             if name == plan_example and len(raw) <= size:
-                # Display a real report layout, not JSON-escaped label lines.
-                # The captured malformed answer remains in the regression
-                # fixture; it must not become a worker's formatting example.
+                # Match the requested transport. A Markdown example competed
+                # with JSON instructions and induced malformed nested drafts.
                 example = json.loads(text)
-                rendered_fields = ["evidence_limits", "complete_answer"]
-                text = ("Rendered fixture fields: evidence_limits and complete_answer only. "
-                        "Unexecuted report example; adapt the heading and plan to YOUR assigned task.\n"
-                        + example["evidence_limits"] + "\n\n" + example["complete_answer"])
+                rendered_fields = ["evidence_limits", "complete_report"]
+                text = ("Rendered fixture fields: evidence_limits and complete_report only. "
+                        "Unexecuted JSON transport example; adapt values to YOUR assigned task.\n"
+                        + example["evidence_limits"] + "\n\n" + json.dumps(example["complete_report"], ensure_ascii=False))
             if len(raw) > size:
                 text += "\n[Snapshot truncated here; remaining source not supplied.]"
             remaining -= len(raw[:size])
