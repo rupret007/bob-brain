@@ -59,7 +59,9 @@ def execute(job):
                     raise BlockingIOError("external WebJam coding lease")
             cwd = setup_record(record)
             job_event(job, "running", recovery="worker executing")
-            prompt = (folder / "PROMPT.txt").read_text()
+            from result_acceptance import check_answer, deliverable_requirements
+            task = (folder / "PROMPT.txt").read_text()
+            prompt = task + "\n" + deliverable_requirements(task, record.get("kind"))
             prompt = ("ASSIGNED WORKTREE: " + str(cwd) + "\nBRANCH: " + record["branch"] +
                       "\nThis job specification replaces every legacy shared-worktree instruction in the task. "
                       "Do not switch branches or use other checkout paths. "
@@ -74,6 +76,7 @@ def execute(job):
             atomic_write(folder / (record["engine"] + ".log"), answer + "\n")
             if re.search(r"(?im)^\s*(?:\*\*)?BLOCKER\s*:", answer):
                 raise RuntimeError(answer[:1000])
+            check_answer(task, answer, kind=record.get("kind"))
             if coding:
                 if git(cwd, "status", "--porcelain", "--untracked-files=no"):
                     raise RuntimeError("tracked changes remain uncommitted")

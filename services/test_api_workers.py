@@ -143,6 +143,11 @@ class APIWorkerTests(unittest.TestCase):
                 if lane == "minimax":
                     self.assertIn("Deliver actual regression test drafts", json.dumps(payload))
                     answer = draft_report(evidence_file)
+                answer += ("\nAction plan:\nChange: Add duplicate-enqueue coverage for " + evidence_file +
+                           ".\nValidation: Run python3 -m unittest discover -s services -p 'test_*.py'; require zero failures."
+                           "\nExit condition: Actual worker results and project validation must pass before closing the lane."
+                           '\n```json\n{"accepted": true, "reason": "Delivered grounded findings and a conditional test plan."}\n```'
+                           "\nFindings/limits: Duplicate-enqueue coverage is missing; drafts are unexecuted and lane activity is unverified.\n")
                 if lane == "gemini":
                     self.assertIn("gemini-2.5-pro:generateContent", config)
                     result = dict(candidates=[dict(finishReason="STOP", content=dict(parts=[dict(text=answer)]))],

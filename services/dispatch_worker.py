@@ -49,7 +49,9 @@ def report_repository(row):
         project, repo = task_repository(source.get("prompt", "") or source.get("project", ""))
         # Paths come only from server-owned jobs, never from model output.
         worktree = Path(source["worktree"]) if source.get("worktree") else None
-        return source.get("project") or project, worktree if worktree and worktree.is_dir() else Path(source.get("repo") or repo)
+        # A source-linked report must inspect that job's actual checkout. A
+        # repo fallback could silently review different code and claim success.
+        return source.get("project") or project, worktree if worktree and worktree.is_dir() else None
     return task_repository(row["prompt"])
 
 
@@ -146,6 +148,8 @@ def execute(identifier, token):
                 if not api_only:
                     prompt += evidence_body + "\n\n"
             elif api_only and kind in REPORT_KINDS:
+                if repo is None:
+                    raise ResultRejected("The assigned source job has no available worktree for repository evidence")
                 evidence_body, evidence_metadata = api_worker.evidence(repo, row["worker"], row["prompt"], redact, kind=kind)
                 atomic_write(folder / "REPO-EVIDENCE.json", json.dumps(evidence_metadata, indent=2) + "\n")
             elif not api_only and row["worker"] != "mini":
