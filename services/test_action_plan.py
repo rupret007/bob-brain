@@ -128,7 +128,7 @@ class ActionPlanTests(unittest.TestCase):
     def test_snapshot_preserves_plan_example_and_complete_guards(self):
         example_path = 'services/fixtures/texting_regression_drafts_1658.json'
         example = json.loads((REPO / example_path).read_text())
-        example['complete_report']['regression_tests'] = api_worker.completion_guard_examples()
+        example['complete_report']['regression_tests'] = api_worker.completion_guard_examples(structured=True)
         for prompt in (DATA['prompt'], json.loads((REPO / 'services/fixtures/texting_jobcompletion_1035.json').read_text())['prompt']):
             body, meta = api_worker.evidence(REPO, 'minimax', prompt, lambda text: text, kind='test-writing')
             self.assertNotIn(example_path, meta['truncated'])

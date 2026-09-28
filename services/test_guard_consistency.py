@@ -40,6 +40,13 @@ class GuardConsistencyTests(unittest.TestCase):
         self.assertEqual(str(raised.exception), DATA['error'])
         vote.assert_not_called()
 
+    def test_captured_gemini_nested_report_without_completion_stays_rejected(self):
+        fixture = DATA['probe_control']
+        self.assertEqual(hashlib.sha256(fixture['answer'].encode()).hexdigest(), fixture['answer_sha256'])
+        with self.assertRaises(acceptance.ResultRejected) as raised:
+            api_worker.render_report(fixture['prompt'], fixture['answer'], fixture['kind'])
+        self.assertEqual(str(raised.exception), fixture['error'])
+
     def test_missing_and_ambiguous_json_require_exact_rejection_text(self):
         for answer in ('Findings only.', '```json\n{}\n```\n```json\n{}\n```'):
             for expected in ('returns None', 'ResultRejected: Missing completion JSON',
@@ -102,6 +109,31 @@ class GuardConsistencyTests(unittest.TestCase):
             api_worker.render_report(DRAFTS['prompt'], json.dumps(raw), DRAFTS['kind'])
         self.assertEqual(raw, before)
 
+    def test_typed_expectations_derive_error_only_when_declared_mode_agrees(self):
+        raw = report()
+        raw['regression_tests'] = api_worker.completion_guard_examples(structured=True)
+        rendered = api_worker.render_report(DRAFTS['prompt'], json.dumps(raw), DRAFTS['kind'])
+        self.assertIn("Expected: raises ResultRejected(" + repr(DATA['literal_guard_error']) + ")", rendered)
+        self.assertIn('Expected: returns None', rendered)
+        acceptance.check_answer(DRAFTS['prompt'], rendered, kind=DRAFTS['kind'])
+        for index, wrong in ((0, 'pass'), (1, 'reject')):
+            changed = copy.deepcopy(raw)
+            changed['regression_tests'][index]['expected']['guard_outcome'] = wrong
+            with self.assertRaisesRegex(acceptance.ResultRejected, 'contradicts literal guard outcome'):
+                api_worker.render_report(DRAFTS['prompt'], json.dumps(changed), DRAFTS['kind'])
+        for expected in ({}, {'guard_outcome': 'unknown'}, {'guard_outcome': 'reject', 'reason': 'invented'}):
+            raw['regression_tests'][0]['expected'] = expected
+            with self.assertRaisesRegex(acceptance.ResultRejected, 'Missing concrete regression'):
+                api_worker.render_report(DRAFTS['prompt'], json.dumps(raw), DRAFTS['kind'])
+
+    def test_typed_outcome_does_not_execute_expressions_or_fill_missing_inputs(self):
+        raw = report()
+        raw['regression_tests'][0]['expected'] = {'guard_outcome': 'reject'}
+        raw['regression_tests'][0]['setup'] = "prompt=__import__('os').system('must-never-run'); answer='missing'"
+        with patch('os.system') as execute, self.assertRaisesRegex(acceptance.ResultRejected, 'Unverifiable'):
+            api_worker.render_report(DRAFTS['prompt'], json.dumps(raw), DRAFTS['kind'])
+        execute.assert_not_called()
+
     def test_examples_follow_the_live_guard_and_keep_successful_control(self):
         cases = api_worker.completion_guard_examples()
         for case in cases:
@@ -126,6 +158,8 @@ class GuardPublicationTests(unittest.TestCase):
         for engine in ('gemini', 'minimax', 'claude', 'codex', 'cursor'):
             for valid in (False, True):
                 raw = report()
+                if valid:
+                    raw['regression_tests'] = api_worker.completion_guard_examples(structured=True)
                 if not valid:
                     raw['regression_tests'][0]['expected'] = "ResultRejected('Missing JSON output')"
                 job = dispatch.task_queue.enqueue(self.root, '1803', engine + str(valid), DRAFTS['prompt'],
