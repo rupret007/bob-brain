@@ -9,11 +9,11 @@ _ PinnedDeploymentAssignments.test_nested_tracked_code_uses_its_git_root_with_pi
 test_integrate_2057.py:187: in test_nested_tracked_code_uses_its_git_root_with_pins_to_the_running_code
     self.assertEqual([records[key]["requested_worker"] for key in answer.get("task_ids", [])],
 E   AssertionError: Lists differ: [] != ['gemini', 'minimax']
-E   
+E
 E   Second list contains 2 additional elements.
 E   First extra element 0:
 E   'gemini'
-E   
+E
 E   - []
 E   + ['gemini', 'minimax']
 __________________ HandbackJobTests.test_bob_parity_eval_runs __________________
