@@ -12,12 +12,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
 import task_queue
 import max_mode
+from api_tasks import normalize_kind
 from chat_intent import (POLITE, PREAMBLE, PUSH, blocked_scopes, command, hold_reply,
-                         project_targets, projects, PROJECT, PROJECT_NAMES, state_for)
+                         project_targets, projects, PROJECT, PROJECT_NAMES, state_for, normalize_projects, project_start)
 
 WORK = re.compile(
     r"^" + POLITE +
-    r"(?:review|analy[sz]e|audit|research|investigate|inspect|check|compare|summari[sz]e|calculate|"
+    r"(?:plan|grade|score|evaluate|review|analy[sz]e|audit|research|investigate|inspect|check|compare|summari[sz]e|calculate|"
     r"read|open|save|append|write|draft|create|build|implement|fix|repair|debug|test|trace|update|refactor|add|remove|"
     r"diagnose|figure out|find out|look into|work on|improve|make)\b.*", re.I | re.S)
 ROUTED = re.compile(r"^" + POLITE + r"(?:have|get|ask|use|assign(?:\s+to)?|delegate(?:\s+to)?)\s+"
@@ -85,6 +86,8 @@ def parse_work(text):
     text = PREAMBLE.sub("", text.strip())
     if CHAT_STYLE.match(text):
         return None, "auto"
+    if project_start(text):
+        return text.strip(), "auto"
     if PUSH.match(command(text)):
         return text.strip(), "auto"
     if max_mode.MAX_MODE.search(text) and (WORK.match(text) or max_mode.MAX_MODE.match(command(text))):
@@ -92,7 +95,9 @@ def parse_work(text):
     lane = re.fullmatch(r"(?:start|run)\s+(?:a\s+)?lane\s+(codex|cursor-agent|cursor|claude|gemini|minimax|grok)\s*:\s*(.+)", text.strip(), re.I | re.S)
     if lane:
         return lane[2].strip(), lane[1].lower()
-    routed = ROUTED.match(text.strip()) or PREFIX.match(text.strip())
+    routed = (ROUTED.match(text.strip()) or PREFIX.match(text.strip()) or
+              re.match(r"^" + POLITE + r"(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\s+"
+                       r"((?:plan|grade|score|evaluate|review|audit|inspect|fix|build|write|research)\b.+)$", text.strip(), re.I | re.S))
     if routed:
         return routed.group(2).strip(), routed.group(1).lower()
     if WORK.match(text.strip()):
@@ -101,13 +106,13 @@ def parse_work(text):
 
 
 def task_receipt(row):
+    from worker_evidence import clean
     names = {"codex": "Codex", "claude": "Claude", "cursor": "Cursor", "gemini": "Gemini", "minimax": "MiniMax", "mini": "mini"}
-    if row["status"] in task_queue.ACTIVE:
-        label = "Started on " + names[row["worker"]]
-    else:
-        worker = row["requested_worker"]
-        label = "Queued" + (" for " + names[worker] if worker != "auto" else "")
-    return label + " — job " + row["id"] + "."
+    worker = row["requested_worker"]
+    target = names[worker] if worker != "auto" else "the next available worker"
+    title = row.get("title") or row.get("prompt", "the requested task").splitlines()[0]
+    title = clean(title, 100).strip(" .?!") or "the requested task"
+    return "I queued “" + title + "” for " + target + " (job `" + row["id"] + "`)."
 
 
 def task_kind(prompt):
@@ -133,8 +138,10 @@ def task_kind(prompt):
 def project_plan(root, description, names, worker):
     """One independently routable job per project, using existing capabilities."""
     goal = max_mode.MAX_MODE.sub("", description).strip(" :,-\n")
-    improve = bool(PUSH.match(command(description)) or (max_mode.MAX_MODE.match(command(description)) and not WORK.match(goal)))
-    kind = "coding" if improve else task_kind(goal)
+    starting = project_start(description)
+    improve = bool(starting or PUSH.match(command(description)) or (max_mode.MAX_MODE.match(command(description)) and not WORK.match(goal)))
+    publish = bool(re.fullmatch(r"push\s+" + PROJECT_LIST + r"[.!]*", command(description), re.I))
+    kind = normalize_kind(worker, "coding" if improve else task_kind(goal), goal)
     eligible = task_queue.worker_order(kind)
     if worker != "auto":
         task_queue.validate_worker(worker, kind)
@@ -157,28 +164,96 @@ def project_plan(root, description, names, worker):
         load[lane] += 1
         # The existing worker chooses its repository from the prompt. Never
         # include the other projects' names in this project's assignment.
-        scoped = PROJECT.sub(lambda match: project if PROJECT_NAMES[re.sub(r"\s+", "", match[0].lower())] == project
-                             else "another project", description)
-        assignment = ("Improve " + project + ": inspect the project, fix issues you find, and run relevant tests."
+        scoped = PROJECT.sub(lambda match: project if projects(match[0]) == [project]
+                             else "another project", normalize_projects(description))
+        assignment = ("Improve " + project + ": inspect the project, choose one useful bounded fix, implement it, and run relevant tests."
                       if improve else "Carry out this request for " + project + " only.")
         prompt = ("Project: " + project + "\n" + assignment + "\nJeff's request: " + scoped +
-                  "\nWork only on this project. Keep changes in drafts and report actual results. Do not start other workers.")
-        packages.append(dict(worker=lane, kind=kind, title=project, prompt=prompt))
+                  ("\nReturn a report or proposed patch for this project; the server saves it under reviews/. "
+                   "Never deploy, apply changes or resolve conflicts. " if lane in task_queue.API_WORKERS else
+                   "\nWork only on this project in your assigned worktree and draft branch. Report actual results. ") +
+                  "Never merge, undraft, force-push, use Grok/xAI, send texts, or start other workers.")
+        if project == "Fantasy Football":
+            prompt += "\nESPN access is read-only. Jeff makes all lineup and roster moves himself."
+        packages.append(dict(worker=lane, kind=kind, title=project, prompt=prompt,
+                             publish_project=project if publish or starting else None, draft_pr=starting))
     return packages
 
 
 def project_receipt(rows):
-    lines = []
-    for row in sorted(rows, key=lambda row: row["group_index"]):
-        if row["status"] in task_queue.TERMINAL:
-            receipt = ("Finished" if row["status"] == "succeeded" else "Failed") + " on " + str(row["worker"]) + " — job " + row["id"] + "."
-        else:
-            receipt = task_receipt(row)
-        lines.append(row["title"] + ": " + receipt)
-    return "\n".join(lines)
+    return "\n".join(task_receipt(row) for row in sorted(rows, key=lambda row: row.get("group_index") or 0))
+
+
+def result_receipt(row):
+    """Keep full evidence in the authenticated Jobs result, not a chat dump."""
+    from worker_activity import WORKER_NAMES
+    from worker_evidence import clean
+    worker = WORKER_NAMES.get(row.get("worker") or row.get("requested_worker"), "The worker")
+    title = clean(row.get("title") or row["prompt"].splitlines()[0], 100).strip(" .?!")
+    succeeded = row["status"] == "succeeded"
+    body = row.get("result") if succeeded else row.get("error")
+    # A completed API report is an artifact, not a new dispatch or an executed
+    # patch. Cite the saved report instead of reprinting model instructions.
+    if succeeded and row.get("result_path"):
+        summary = "report saved"
+    else:
+        body = (body or "No result text was recorded").strip()
+        line = next((line.strip().lstrip("# ") for line in body.splitlines() if line.strip()), "")
+        sentence = re.split(r"[.!?](?:\s|$)", line, maxsplit=1)[0]
+        summary = clean(sentence, 180).strip(" .?!")
+        from dispatch_receipts import claims_dispatch
+        if claims_dispatch(summary):
+            summary = "verified result saved" if succeeded else "the task failed; see the saved error"
+    lead = (worker + " finished “" + title + "”" if succeeded else
+            "“" + title + "” failed after " + str(row.get("attempts", 0)) + " attempts on " + worker)
+    return (lead + " (job `" + row["id"] +
+            "`): " + summary + "; [full result](/api/jobs/result?id=" + row["id"] + ").")
+
+
+def group_result_receipt(rows, label):
+    ordered = sorted(rows, key=lambda row: row["group_index"])
+    if all(row["status"] == "succeeded" and row.get("publication") for row in ordered):
+        return max_mode.merge_text(ordered, label)
+    succeeded = sum(row["status"] == "succeeded" for row in ordered)
+    return (label + " completed: " + str(succeeded) + "/" + str(len(ordered)) + ".\n" +
+            "\n".join(result_receipt(row) for row in ordered))
 
 
 class TaskDispatch:
+    def submit_council(self, conversation, topic, request_id):
+        # Council has the same journal and receipt contract as every other job.
+        description = ("max-mode Council: " + topic + "\n"
+                       "[gemini] Audit the evidence for this council question: " + topic + "\n"
+                       "[minimax] Draft test cases and failure checks for this council question: " + topic + "\n"
+                       "[claude] Review the design and assumptions for this council question: " + topic)
+        return self.submit_max_task(conversation, description, request_id)
+
+    def submit_worker_assignment(self, conversation, description, request_id, workers):
+        from worker_assignment import plan
+        message = conversation["messages"][-1]
+        try:
+            if self.ledger_root(conversation["id"]) != self.root:
+                raise ValueError("Worker dispatch is disabled in a drill overlay.")
+            if (self.root / "conductor/MAINTENANCE").exists():
+                raise ValueError("Scheduling is paused for maintenance; no assignments were queued.")
+            packages = plan(self.root, conversation, description, workers)
+        except ValueError as exc:
+            return self.intent_reply(conversation, str(exc))
+        conversation["assignment_workers"] = list(workers)
+        intent = dict(prompt=description, request_id=request_id, goal=description,
+                      worker_assignment=True, project_batch=True,
+                      assignment_projects=list(dict.fromkeys(name for package in packages
+                                               for name in projects(package["prompt"].splitlines()[0]))))
+        if len(packages) > 1:
+            intent["subtasks"] = packages
+        else:
+            intent.update(packages[0])
+        message.update(status="done", content="Saving worker assignments…", dispatch_intent=intent)
+        self.save(conversation)
+        self.conversations[conversation["id"]] = conversation
+        self.reconcile_tasks()
+        return self.public(self.conversations[conversation["id"]])
+
     def submit_max_task(self, conversation, description, request_id):
         return self.submit_task(conversation, description, request_id, worker="max")
 
@@ -204,10 +279,13 @@ class TaskDispatch:
             self.conversations[identifier] = conversation
             return self.public(conversation)
         try:
+            publish_project = None
+            draft_pr = False
             maximum = worker == "max"
             project_batch = len(names) >= 2
             worker = "auto" if maximum else task_queue.worker_name(worker)
             kind = task_kind(max_mode.MAX_MODE.sub("", description).strip(" :,-\n") if maximum else description)
+            kind = normalize_kind(worker, kind, description)
             if not maximum:
                 task_queue.validate_worker(worker, "local" if worker == "mini" else kind)
             refusal = hard_rule_refusal(description)
@@ -220,9 +298,11 @@ class TaskDispatch:
             if project_batch:
                 goal, subtasks = description, project_plan(self.root, description, names, worker)
                 kind = subtasks[0]["kind"]
-            elif names and PUSH.match(command(description)):
+            elif names and (PUSH.match(command(description)) or project_start(description)):
                 package = project_plan(self.root, description, names, worker)[0]
                 description, worker, kind = package["prompt"], package["worker"], package["kind"]
+                publish_project = package.get("publish_project")
+                draft_pr = package.get("draft_pr", False)
             elif maximum:
                 goal, subtasks = max_mode.plan(self.root, description, kind)
         except ValueError as exc:
@@ -232,7 +312,7 @@ class TaskDispatch:
             return self.public(conversation)
         # Save the originating message AND intent before the queue side effect.
         # Startup/reconciliation retries this idempotently after either write fails.
-        intent = dict(prompt=description, worker=worker, kind=kind, request_id=request_id)
+        intent = dict(prompt=description, worker=worker, kind=kind, request_id=request_id, publish_project=publish_project, draft_pr=draft_pr)
         if maximum or project_batch:
             intent.update(goal=goal, subtasks=subtasks)
         if project_batch:
@@ -256,7 +336,7 @@ class TaskDispatch:
                     if not intent or message.get("task_id") or message.get("group_id"):
                         continue
                     state = state_for(value)
-                    scopes = blocked_scopes(state, project_targets(intent["prompt"], state))
+                    scopes = blocked_scopes(state, intent.get("assignment_projects", project_targets(intent["prompt"], state)))
                     if scopes:
                         content = hold_reply(scopes)
                         if message["content"] != content:
@@ -267,17 +347,23 @@ class TaskDispatch:
                         rows = max_mode.enqueue(self.root, identifier, intent)
                         group = rows[0]["group_id"]
                         message.update(group_id=group, task_ids=[row["id"] for row in rows], status="done", provider="dispatcher",
-                                       content=project_receipt(rows) if intent.get("project_batch") else "Queued " + str(len(rows)) + " tasks — group " + group + ".",
+                                       content=project_receipt(rows),
                                        action_card={"id": message["request_id"], "state": "queued", "executable": False,
                                                     "group_id": group, "queue_id": group, "goal_text": intent["goal"][:160]})
+                        from dispatch_receipts import verify_saved_receipt
+                        verify_saved_receipt(self.root, value, message)
                         changed = True
                         continue
                     row = task_queue.enqueue(self.root, identifier, intent["request_id"], intent["prompt"],
-                                             worker=intent["worker"], kind=intent["kind"])
+                                             worker=intent["worker"], kind=intent["kind"], publish_project=intent.get("publish_project"),
+                                             draft_pr=intent.get("draft_pr", False), title=intent.get("title"),
+                                             source_job_id=intent.get("source_job_id"))
                     message.update(task_id=row["id"], status="done", provider="dispatcher",
                                    content=task_receipt(row),
                                    action_card={"id": message["request_id"], "state": "queued", "executable": False,
                                                 "queue_id": row["id"], "task_id": row["id"], "goal_text": row["prompt"][:160]})
+                    from dispatch_receipts import verify_saved_receipt
+                    verify_saved_receipt(self.root, value, message)
                     changed = True
                 if changed:
                     self.save(value)
@@ -290,9 +376,21 @@ class TaskDispatch:
                 for message in value["messages"]:
                     if not message.get("dispatch_intent", {}).get("project_batch") or not message.get("task_ids"):
                         continue
-                    receipt = project_receipt([by_id[task_id] for task_id in message["task_ids"]])
-                    if message["content"] != receipt:
-                        message["content"] = receipt
+                    members = [by_id[task_id] for task_id in message["task_ids"]]
+                    tasks = [{key: row.get(key) for key in ("id", "worker", "status")} for row in members]
+                    card = message.get("action_card", {})
+                    if card.get("tasks") != tasks:
+                        card["tasks"] = tasks
+                        if all(row["status"] in task_queue.TERMINAL for row in members):
+                            card["state"] = "done" if all(row["status"] == "succeeded" for row in members) else "blocked"
+                        elif any(row["status"] == "running" for row in members):
+                            card["state"] = "running"
+                        elif any(row["status"] == "claimed" for row in members):
+                            card["state"] = "claimed"
+                        else:
+                            card["state"] = "queued"
+                        # The receipt is an event at created_at, not a mutable
+                        # status field. Completion gets its own dated message.
                         changed = True
                 if changed:
                     self.save(value)
@@ -310,7 +408,6 @@ class TaskDispatch:
                             card = message["action_card"]
                             if (card.get("state"), card.get("worker")) != (row["status"], row["worker"]):
                                 card.update(state=row["status"], worker=row["worker"])
-                                message.update(content=task_receipt(row))
                                 changed = True
                     if changed:
                         self.save(value)
@@ -325,12 +422,11 @@ class TaskDispatch:
                 message_id = str(uuid.uuid5(uuid.NAMESPACE_URL, row["id"] + ":result"))
                 if not any(m["id"] == message_id for m in value["messages"]):
                     success = row["status"] == "succeeded"
-                    content = ("Job `" + row["id"] + "` finished on " + row["worker"] + ":\n\n" + row["result"] if success else
-                               "Job `" + row["id"] + "` failed after " + str(row["attempts"]) + " attempts on " + str(row["worker"]) + ": " + row.get("error", "Unknown worker failure"))
+                    content = result_receipt(row)
                     value["messages"].append(dict(id=message_id, request_id=row["request_id"], task_id=row["id"],
                                                   role="assistant", status="done", provider=row["worker"],
                                                   content=self.redact(content), created_at=time.time(),
-                                                  task_status=row["status"], claimed_at=row["claimed_at"],
+                                                  task_status=row["status"], claimed_at=row.get("claimed_at"),
                                                   started_at=row.get("started_at"), finished_at=row["finished_at"]))
                     for message in value["messages"]:
                         if message.get("task_id") == row["id"] and message.get("action_card"):
@@ -356,9 +452,12 @@ class TaskDispatch:
             message_id = str(uuid.uuid5(uuid.NAMESPACE_URL, group + ":result"))
             if not any(m["id"] == message_id for m in value["messages"]):
                 success = all(row["status"] == "succeeded" for row in members)
+                assignment = any(m.get("group_id") == group and m.get("dispatch_intent", {}).get("worker_assignment")
+                                 for m in value["messages"])
                 value["messages"].append(dict(id=message_id, request_id=first["request_id"].rsplit(":", 1)[0],
                                               group_id=group, task_ids=[r["id"] for r in members], role="assistant",
-                                              status="done", provider="max-mode", content=self.redact(max_mode.merge_text(members)),
+                                              status="done", provider="dispatcher" if assignment else "max-mode",
+                                              content=self.redact(group_result_receipt(members, "Worker assignments" if assignment else "Max mode")),
                                               created_at=time.time(), task_status="succeeded" if success else "partial",
                                               subtasks=[{k: r.get(k) for k in ("id", "title", "worker", "status", "claimed_at", "started_at", "execution_started_at", "finished_at", "result_sha256")} for r in members]))
                 for message in value["messages"]:

@@ -1,0 +1,29 @@
+{
+  "session": "8126301c-7a40-4a51-a31d-3c5c329a5b0a",
+  "exchanges": [
+    {
+      "message": "Ok start up all the projects we were working on taking everything to the max.",
+      "before": "Okay, I'll focus on getting all the projects running at full capacity."
+    },
+    {
+      "message": "Ok what’s working on what?",
+      "before": "Right now, there are no active jobs running in the queue.\n\nThe services are all healthy:\n\n*   `reviewer` is running and completed a review cycle 3 minutes ago.\n*   `dashboard-updater` is running and completed a cycle 3 minutes ago.\n*   `watchdog` is running and completed a cycle 1 minute ago.\n*   `webchat` is also running.\n\n MiniMax is busy with an unknown task. Codex, Cursor, and Gemini are all ready."
+    },
+    {
+      "message": "Ok we can’t have unknown tasks. We need to also know what’s going on what resources.",
+      "before": "Yes — 1 worker is running.\n\n- Task details unavailable — Cursor — running for less than a minute.\n\nJob runner: 0 claimed, 0 queued.\n\nNothing else is waiting in the queue.\n\nChat health: Codex — last reply succeeded; Claude — last reply succeeded; Cursor — last reply succeeded; Gemini — last reply succeeded; MiniMax — last reply succeeded.\n\nService sessions: dashboard updater, disk watch, job runner, reviewer, watchdog, webbob reviewers, webchat.\n\nRecent logs: job runner updated less than a minute ago; dashboard updater updated less than a minute ago; webchat updated less than a minute ago; watchdog updated 2 min ago.\n\n4 of 4 monitored services are healthy.\n\nDisk space: 9.45 GB free."
+    },
+    {
+      "message": "This needs to be way better",
+      "before": "I understand. I'll focus on providing more detailed and useful updates."
+    },
+    {
+      "message": "What’s going on each LLM",
+      "before": "Here's the status of each LLM:\n\n*   **Codex:** Ready. Last reply succeeded.\n It resets at 6:20 PM America/Chicago time.\n*   **Cursor:** Ready. Last reply succeeded.\n*   **Gemini:** Ready. Last reply succeeded.\n*   **MiniMax:** Ready. Last reply succeeded."
+    },
+    {
+      "message": "Ok we want it to start up at max all the projects we were working on before. Remember. WebJam, AdoptIQ, Stkryboard, Fantasy Football. All of these need to be developed to the max using and and all resources. This is a stress test essentially.",
+      "before": "There are live service sessions on the mini; no task worker is confirmed.\n\nJob runner: 0 claimed, 0 queued.\n\nNo jobs are waiting in the queue.\n\nChat health: Codex — last reply succeeded; Claude — last reply succeeded; Cursor — last reply succeeded; Gemini — last reply succeeded; MiniMax — last reply succeeded.\n\nService sessions: dashboard updater, disk watch, job runner, reviewer, watchdog, webbob reviewers, webchat.\n\nRecent logs: job runner updated less than a minute ago; webchat updated less than a minute ago; disk watch updated 1 min ago; watchdog updated 1 min ago.\n\n4 of 4 monitored services are healthy.\n\nDisk space: 9.45 GB free."
+    }
+  ]
+}

@@ -9,6 +9,21 @@ from worker_activity import parse_processes
 
 
 class AuthorityTests(unittest.TestCase):
+    def test_services_and_fresh_log_observations_are_available_on_request(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "logs").mkdir()
+            (root / "logs/job-runner.log").write_text("Claimed review job\n")
+            with patch("live_status_snapshot._screen_sessions", return_value={"svc-job-runner": "12.svc-job-runner"}):
+                answer = operational_reply(root, "server", "is it going now?")
+            self.assertIn("live service sessions", answer)
+            self.assertIn("job runner has 0 claimed and 0 queued jobs", answer)
+            self.assertNotIn("Recent logs:", answer)
+            self.assertNotIn("I don't see active work", answer)
+            with patch("live_status_snapshot._screen_sessions", return_value={"svc-job-runner": "12.svc-job-runner"}):
+                answer = operational_reply(root, "server", "status with diagnostics")
+            self.assertIn("logs/job-runner.log: Claimed review job", answer)
+
     def setUp(self):
         for name in ("_screen_sessions", "process_table"):
             sampler = patch("live_status_snapshot." + name, return_value={})
@@ -23,7 +38,7 @@ class AuthorityTests(unittest.TestCase):
                      "You're all set — Claude has your task.", "Claude’s on it."):
             with self.subTest(text=text):
                 answer = enforce(Path('/unused'), "Ok going now?", dict(content=text, provider="gemini"))
-                self.assertEqual(answer, "What would you like me to work on?")
+                self.assertEqual(answer, "I did not start, assign, or queue any work in this turn.")
 
     def test_plain_answers_and_job_explanations_are_unchanged(self):
         for text in ("Got it — I’ll keep it short.", "Hi Jeff!", "A lease expires; a lock needs to be released.",
@@ -40,7 +55,8 @@ class AuthorityTests(unittest.TestCase):
                       "No server-confirmed job was created by this reply. Send `start a job: <task>` to create a tracked job."):
             with self.subTest(claim=claim):
                 answer = enforce(Path('/unused'), "Please be brief", dict(content="Got it — I’ll keep it short.\n\n" + claim, provider="gemini"))
-                self.assertEqual(answer, "Got it — I’ll keep it short.")
+                self.assertEqual(answer, "Got it — I’ll keep it short." if claim.startswith("No server") else
+                                 "I did not start, assign, or queue any work in this turn.")
 
     def test_style_preference_never_gets_an_unsolicited_status_report(self):
         answer = enforce(Path('/unused'), "Keep replies short and friendly.",
@@ -58,7 +74,8 @@ class AuthorityTests(unittest.TestCase):
             with patch("live_status_snapshot._screen_sessions", return_value={}):
                 answer = enforce(root, "How everything going. We using all resources now?",
                                  dict(provider="gemini", content="Cursor is handling our chat; Gemini and MiniMax are still failing."))
-        self.assertIn("Gemini — no recent reply verified", answer)
+        self.assertIn("Gemini", answer)
+        self.assertIn("are idle", answer)
         self.assertNotIn("Answering provider:", answer)
         self.assertNotIn("still failing", answer)
         self.assertNotIn("Cursor is handling", answer)
@@ -70,17 +87,19 @@ class AuthorityTests(unittest.TestCase):
             root = Path(folder)
             (root / "conductor").mkdir()
             (root / "conductor/jobs.jsonl").write_text('{"job_id":"shelf-load-1659","state":"harvested"}\n')
-            for text in ("Ok great is it moving along now?", "Is anything running?", "Are things making progress?", "What's running?",
+            for text in ("is it going now?", "Ok great is it moving along now?", "Is anything running?", "Are things making progress?", "What's running?",
                          "Status without internal IDs or raw diagnostics, please"):
                 with self.subTest(text=text):
                     answer = enforce(root, text, dict(provider="gemini", content=
                         "Nothing is running. All lanes are ready. Use `start a job: task`."))
-                    self.assertIn("4 workers are running", answer)
-                    self.assertIn("Projects push — Claude (opus) — running for 24 min", answer)
-                    self.assertIn("Web Bob clean — Codex (gpt-fixture) — running for 18 min", answer)
-                    self.assertIn("Web Bob clean 2 — Codex — running for 12 min", answer)
-                    self.assertIn("Web Bob MiniMax — Codex — running for 8 min", answer)
-                    for hidden in ("None", "shelf-load-1659", "lane-", "History:", "provider:", "start a job:", "All lanes"):
+                    self.assertIn("Claude is on “Projects push", answer)
+                    self.assertIn("(opus; running for 24 min)", answer)
+                    self.assertIn("Codex is on “Web Bob clean", answer)
+                    self.assertIn("(gpt-fixture; running for 18 min)", answer)
+                    self.assertIn("running for 12 min", answer)
+                    self.assertIn("running for 8 min", answer)
+                    self.assertLessEqual(len(answer.split(". ")), 4)
+                    for hidden in ("None", "shelf-load-1659", "History:", "provider:", "start a job:", "All lanes", "logs/", "lane-", "last:"):
                         self.assertNotIn(hidden, answer)
 
     def test_internal_details_and_answering_model_are_available_when_requested(self):
