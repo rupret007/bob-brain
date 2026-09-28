@@ -163,7 +163,9 @@ def plan(root, conversation, text, workers):
         # coders running; do not revoke a live claim or share their edit rights.
         prompt = ("Project: " + source["project"] + "\nYour independent subtask:\n" + role +
                   " for the following " + context + ". Deliver concrete findings and an actionable plan. " +
-                  ("Also deliver actual regression test drafts with inputs, triggers and expected assertions. "
+                  ("Lead with two unexecuted regression drafts: one failure and one successful control. "
+                   "Each needs Regression test:, Target:, Setup:, Action: and Expected: lines with concrete values "
+                   "on the same line as each label. Keep findings brief. "
                    if kind == "test-writing" else "") +
                   "Never deploy or resolve conflicts.\n" +
                   context.capitalize() + ":\n" + source["prompt"][:8000])

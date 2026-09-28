@@ -20,6 +20,13 @@ class AcceptanceTests(unittest.TestCase):
                 accept(fixture["prompt"], fixture["answer"], review, kind=kind)
         review.assert_not_called()
 
+    def test_1107_exact_rejected_drafts_cannot_win_a_positive_vote(self):
+        fixture = json.loads(Path(__file__).with_name("fixtures").joinpath("texting_jobcompletion_1107.json").read_text())
+        review = Mock(return_value='{"accepted": true, "reason": "Has test-shaped content"}')
+        with self.assertRaisesRegex(ResultRejected, "Missing concrete regression"):
+            accept(fixture["prompt"], fixture["answer"], review, kind=fixture["kind"])
+        review.assert_not_called()
+
     def test_concrete_drafts_and_conditional_unblock_plan_reach_semantic_review(self):
         fixture = self.completion_fixture()
         review = Mock(return_value='{"accepted": true, "reason": "Delivers bounded test drafts and a conditional fix plan"}')

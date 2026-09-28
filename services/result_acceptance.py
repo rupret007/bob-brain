@@ -33,6 +33,11 @@ def deliverable_requirements(prompt, kind=None):
             "Include both a failure case and a successful control unless the task requests a single case. "
             "Executable test code with named tests and assertions is also acceptable. "
             "Ground drafts in supplied code; label drafts unexecuted when you have no tools. "
+            "Unexecuted behavioral drafts ARE the requested deliverable; execution is not required for this report. "
+            "Lead with the requested cases, then the unblock plan if required, then at most two sentences of findings/limits. "
+            "Keep the report under 450 words unless the task explicitly requires more. "
+            "For behavioral drafts, use plain labels and put the full field value on the SAME line after each colon; "
+            "do not put a field's value only in a following code fence or list. "
             "Architecture notes, copied implementation snippets, search commands and promises are not test drafts. ")
     if re.search(r"\bunblock\b", prompt, re.I):
         requirements.append(
@@ -43,7 +48,10 @@ def deliverable_requirements(prompt, kind=None):
             "and give conditional actions grounded in the available code; do not invent the assignment. ")
     if requirements:
         requirements.append("A missing original prompt is not a substitute for these deliverables. "
-                            "Supply the bounded work possible from the evidence now.\n")
+                            "Supply the bounded work possible from the evidence now. "
+                            "Use the literal heading 'Unblock plan:' when required, including its colon, "
+                            "and keep Change, Validation and Exit condition values on their label lines. "
+                            "Cite only symbols present in supplied source; do not infer a fixture's contents from its filename.\n")
     return "".join(requirements)
 
 

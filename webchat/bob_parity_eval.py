@@ -192,6 +192,14 @@ def run_eval(root: Path | None = None) -> dict:
             rejected = True
         rows.append(_case(label, rejected == expect_rejection))
 
+    completion_1107 = json.loads((HERE.parent / "services/fixtures/texting_jobcompletion_1107.json").read_text())
+    rejected = False
+    try:
+        check_answer(completion_1107["prompt"], completion_1107["answer"], kind=completion_1107["kind"])
+    except ResultRejected:
+        rejected = True
+    rows.append(_case("1107 malformed and ungrounded drafts cannot complete test-writing", rejected))
+
     passed = sum(1 for r in rows if r["pass"])
     return {
         "total": len(rows),

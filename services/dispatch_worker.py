@@ -134,20 +134,20 @@ def execute(identifier, token):
             branch, cwd, base_sha = None, None, None
             coding = row["kind"] in ("coding", "artifact")
             evidence_metadata = None
+            evidence_body = ""
             prompt = ("Web Bob assigned this task from Jeff. Complete it and return the actual result in your final answer. "
                       "Do not merely propose a plan or claim another worker will do it. If blocked, begin BLOCKER:. "
                       "Use the supplied evidence; do not invent observations.\n\n")
-            if api_only:
-                prompt += api_worker.RULES
             if review:
                 if not api_only:
                     cwd = analysis_workspace(row["worker"])
                 atomic_write(folder / "PR-EVIDENCE.json", json.dumps(review["metadata"], indent=2) + "\n")
-                prompt += review["text"] + "\n\n"
+                evidence_body = review["text"]
+                if not api_only:
+                    prompt += evidence_body + "\n\n"
             elif api_only and kind in REPORT_KINDS:
-                body, evidence_metadata = api_worker.evidence(repo, row["worker"], row["prompt"], redact)
+                evidence_body, evidence_metadata = api_worker.evidence(repo, row["worker"], row["prompt"], redact, kind=kind)
                 atomic_write(folder / "REPO-EVIDENCE.json", json.dumps(evidence_metadata, indent=2) + "\n")
-                prompt += body + "\n\n"
             elif not api_only and row["worker"] != "mini":
                 branch = "draft/" + identifier
                 record = dict(repo=str(repo), worktree=str(ROOT / "workspaces" / identifier),
@@ -164,8 +164,11 @@ def execute(identifier, token):
                     if checks:
                         prompt += ("Before accepting or publishing your commit, the server will independently re-run: "
                                    + json.dumps(checks) + ". Leave the checkout ready to run these commands.\n")
-            prompt += "TASK:\n" + row["prompt"]
-            prompt += "\n" + result_acceptance.deliverable_requirements(row["prompt"], row["kind"])
+            if api_only:
+                prompt += api_worker.report_prompt(row["prompt"], evidence_body, row["kind"])
+            else:
+                prompt += "TASK:\n" + row["prompt"]
+                prompt += "\n" + result_acceptance.deliverable_requirements(row["prompt"], row["kind"])
             if row.get("publish_project"):
                 prompt += ("\nThe server has Jeff's explicit authorization to push this project's assigned draft branch. "
                            "Your part is one useful, bounded improvement: inspect, fix, test and commit locally. "
