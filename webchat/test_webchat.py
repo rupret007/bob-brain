@@ -301,13 +301,13 @@ class HTTPTests(Fixture):
         for provider in ("minimax", "gemini", "codex", "claude", "cursor"):
             with self.subTest(provider=provider), patch("app.state_ledger.try_status_reply", return_value="local shortcut"):
                 code, _, _ = self.request("POST", "/api/messages", {
-                    "conversation_id": self.identifier, "message": "what are the workers doing right now",
+                    "conversation_id": self.identifier, "message": "Hello Bob",
                     "request_id": str(uuid.uuid4()), "provider": provider})
                 self.assertEqual(code, 202)
                 self.wait()
                 self.assertEqual(self.fake.calls[-1]["preferred_provider"], provider)
                 answer = self.chat.history(self.identifier)["messages"][-1]
-                self.assertIn("No jobs are waiting in the queue.", answer["content"])
+                self.assertEqual("A saved reply.", answer["content"])
                 self.assertNotIn("Answering provider:", answer["content"])
         for provider in ("grok", "unknown", None):
             self.assertEqual(self.request("POST", "/api/messages", {
@@ -332,7 +332,7 @@ class HTTPTests(Fixture):
                 if text.startswith("The hold"):
                     self.assertEqual(answer["content"], "Ready when you are.")
                 else:
-                    self.assertIn("4 workers are running", answer["content"])
+                    self.assertEqual(answer["content"].count("running for"), 4)
                 self.assertNotIn("start a job:", answer["content"])
                 self.assertNotIn("None", answer["content"])
         self.assertEqual(self.fake.calls, [])
@@ -709,10 +709,14 @@ class HandbackJobTests(Fixture):
         self.assertEqual(self.chat.conversations[self.identifier].get("pending_council"), "mobile sheet UX")
         self.chat.submit(self.identifier, "yes, run council", str(uuid.uuid4()))
         self.wait()
-        index = (self.root / "next-prompts/INDEX.md").read_text()
-        self.assertIn("webchat-", index)
-        bodies = " ".join(p.read_text().lower() for p in (self.root / "next-prompts").glob("webchat-*.md"))
-        self.assertIn("council", bodies)
+        from task_dispatch import task_queue
+        answer = self.chat.history(self.identifier)["messages"][-1]
+        rows = [task_queue.tasks(self.root)[key] for key in answer["task_ids"]]
+        self.assertEqual([row["requested_worker"] for row in rows], ["gemini", "minimax", "claude"])
+        self.assertEqual([row["kind"] for row in rows], ["audit", "test-writing", "analysis"])
+        for row in rows:
+            self.assertIn(row["id"], answer["content"])
+            self.assertIn("council question", row["prompt"])
         self.assertNotIn("pending_council", self.chat.conversations[self.identifier])
 
     def test_job_confirm_dispatches_durable_task(self):
@@ -735,7 +739,7 @@ class HandbackJobTests(Fixture):
         self.assertEqual(assistant["action_card"]["state"], "queued")
         self.assertIn("webchat-", assistant["action_card"].get("queue_id", ""))
         self.assertEqual(assistant["action_card"].get("goal_text"), "fix the webchat panel")
-        self.assertEqual(assistant["content"], "Queued — job " + tasks[0]["id"] + ".")
+        self.assertEqual(assistant["content"], "I queued “fix the webchat panel” for the next available worker (job `" + assistant["task_id"] + "`).")
 
     def test_job_merge_refused_before_queue(self):
         self.chat.submit(self.identifier, "start a job: merge #158", str(uuid.uuid4()))
@@ -1227,7 +1231,7 @@ class HandbackJobTests(Fixture):
         state_ledger.write_now(self.root, "offline parity fixture", sha="fedcba1")
         result = run_eval(self.root)
         self.assertEqual(result["passed"], result["total"], result["cases"])
-        self.assertEqual(result["total"], 24)
+        self.assertEqual(result["total"], 96)
 
     def test_catchup_event_ack_cursor(self):
         ledger_dir = Path(__file__).resolve().parent.parent / "state"

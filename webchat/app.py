@@ -48,6 +48,7 @@ from quiet_hours import in_quiet_hours
 from task_dispatch import FOLLOW_UP, PREAMBLE, TaskDispatch, followup_work, needs_task_detail, parse_work, task_queue
 import chat_intent
 from jobs_view import build_jobs_view, result_text
+from build_info import BUILD, STATIC, VERSION_QUESTION, render_page
 
 HERE = Path(os.environ.get("BOB_WEBCHAT_DIR", Path(__file__).resolve().parent)).resolve()
 ROOT = Path(os.environ.get("BOB_ROOT", HERE.parent.parent)).resolve()
@@ -217,11 +218,23 @@ class Chat(TaskDispatch):
     def public(self, value):
         return {k: copy.deepcopy(v) for k, v in value.items() if k not in ("codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job")}
 
-    def intent_reply(self, conversation, content):
-        conversation["messages"][-1].update(status="done", provider="dispatcher", content=content)
+    def intent_reply(self, conversation, content, provider="dispatcher"):
+        conversation["messages"][-1].update(status="done", provider=provider, content=content)
         self.save(conversation)
         self.conversations[conversation["id"]] = conversation
         return self.public(conversation)
+
+    def status_reply(self, conversation, text):
+        from reply_authority import operational_reply
+        from status_observation import bind_observation
+        conversation = copy.deepcopy(conversation)
+        observation = {}
+        content = operational_reply(self.ledger_root(conversation["id"]), "server", text,
+                                    observation=observation, redact=self.redact)
+        conversation["messages"][-1]["status_observation"] = bind_observation(observation, conversation)
+        # The reply and its exact rendering input share the existing private,
+        # fsynced atomic conversation write. Retries/restarts keep both intact.
+        return self.intent_reply(conversation, self.redact(content), provider="state")
 
     def get(self, identifier):
         if not isinstance(identifier, str) or not UUID.fullmatch(identifier) or identifier not in self.conversations:
@@ -333,6 +346,11 @@ class Chat(TaskDispatch):
             ]
             if conversation["title"] == "New conversation":
                 conversation["title"] = text[:65]
+            if VERSION_QUESTION.search(text):
+                return self.intent_reply(conversation, BUILD["short_sha"])
+            from reply_authority import correcting_status
+            if correcting_status(text, conversation):
+                return self.status_reply(conversation, text)
             transition = chat_intent.apply_turn(intent_state, text, request_id)
             if transition == "hold":
                 held_work, held_worker = followup_work(conversation)
@@ -343,6 +361,14 @@ class Chat(TaskDispatch):
                 conversation["pending_job"] = "Improve " + ", ".join(intent_state["project_order"])
                 conversation["pending_job_id"] = request_id
                 return self.intent_reply(conversation, "Priority order: " + ", ".join(intent_state["project_order"]) + ".")
+            from worker_assignment import requested_workers
+            assignments = requested_workers(text, conversation)
+            if assignments:
+                return self.submit_worker_assignment(conversation, text, request_id, assignments)
+            from worker_assignment import issue_followup
+            fix = issue_followup(self.root, conversation, text)
+            if fix:
+                return self.submit_task(conversation, fix, request_id)
             work, route = parse_work(text)
             if transition == "resume" and not work:
                 work_text = re.sub(r"^(?:go(?:\s+ahead)?|resume)(?:\s+and)?[\s,:!]+", "", chat_intent.command(text), flags=re.I)
@@ -360,7 +386,7 @@ class Chat(TaskDispatch):
             names = chat_intent.project_targets(task or text, intent_state)
             if task and len(names) >= 2:
                 intent_state["project_order"] = names
-            if chat_intent.PUSH.match(chat_intent.command(text)) and not names:
+            if (chat_intent.PUSH.match(chat_intent.command(text)) or chat_intent.project_start(text)) and not names:
                 return self.intent_reply(conversation, "Which projects should I work on?")
             if route != "max":
                 try:
@@ -413,26 +439,8 @@ class Chat(TaskDispatch):
                     self.record_turn(ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
                                 refusals=[blocked], open_items=[])
                     return self.public(conversation)
-                action_id = conversation.pop("pending_council_id", None) or str(uuid.uuid5(uuid.NAMESPACE_URL, identifier + pending_council))
-                description = council_job_description(pending_council)
-                result = queue_once(self.root, action_id, description)
-                if result["ok"]:
-                    reply = (
-                        f"Queued a **draft** council run on the mini (`{result['file']}`). "
-                        "Gemini, MiniMax, and Claude will critique; transcript lands under `conductor/reviews/`."
-                    )
-                    conversation["messages"][-1].update(status="done", content=reply,
-                        action_card={"id": request_id, "state": "queued", "executable": False, "reason": "Council queued (draft)", "queue_id": result.get("file")})
-                else:
-                    conversation["messages"][-1].update(status="done", content=result["error"],
-                        action_card={"id": request_id, "state": "blocked", "executable": False, "reason": "Duplicate or blocked"})
-                self.save(conversation)
-                self.conversations[identifier] = conversation
-                self.record_turn(ask=text, provider=None, jobs=[result.get("file", "")] if result.get("ok") else [],
-                            files=[result.get("path", "")] if result.get("ok") else [], commits=[],
-                            confirmations=[text[:200]] if result.get("ok") else [],
-                            refusals=[result.get("error", "blocked")] if not result.get("ok") else [], open_items=[])
-                return self.public(conversation)
+                conversation.pop("pending_council_id", None)
+                return self.submit_council(conversation, pending_council, request_id)
             job_confirm, job_proposal = parse_job_confirm(text)
             if job_confirm and pending:
                 expected_job = conversation.get("pending_job_id")
@@ -461,8 +469,8 @@ class Chat(TaskDispatch):
                     self.record_turn(ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
                                 refusals=[blocked], open_items=[])
                     return self.public(conversation)
-                action_id = conversation.pop("pending_job_id", None) or str(uuid.uuid5(uuid.NAMESPACE_URL, identifier + pending))
-                return self.submit_task(conversation, pending, action_id)
+                conversation.pop("pending_job_id", None)
+                return self.submit_task(conversation, pending, request_id)
             if pending and not job_confirm:
                 conversation.pop("pending_job", None)
             if parse_council_cancel(text) and pending_council:
@@ -534,16 +542,12 @@ class Chat(TaskDispatch):
                 if not state_ledger._DRILL_NOISE_RE.search(text):
                     state_ledger.record_webchat_turn(ledger, ask=text, provider="inbox", request_id=request_id)
                 return self.public(conversation)
-            from reply_authority import HOLD_QUESTION, STATUS_QUESTION, operational_reply
+            from reply_authority import HOLD_QUESTION, STATUS_QUESTION
             if HOLD_QUESTION.match(text):
                 scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
                 return self.intent_reply(conversation, chat_intent.hold_reply(scopes) if scopes else "Ready when you are.")
-            if ledger == self.root and provider == "auto" and STATUS_QUESTION.search(text):
-                conversation["messages"][-1].update(status="done", provider="state",
-                    content=self.redact(operational_reply(self.root, "server", text)))
-                self.save(conversation)
-                self.conversations[identifier] = conversation
-                return self.public(conversation)
+            if ledger == self.root and STATUS_QUESTION.search(text):
+                return self.status_reply(conversation, text)
             if ledger == self.root:
                 try:
                     state_ledger.sync_from_live_ops(
@@ -615,10 +619,19 @@ class Chat(TaskDispatch):
                 value = self.get(identifier)
                 value["codex_thread_id"] = answer.pop("codex_thread_id", None)
                 value.pop("retry_prompt", None)
-                answer["content"] = repair_hollow_progress(self.redact(answer["content"]))
+                # Provider metadata cannot mint receipts or dispatcher authority.
+                answer = {key: answer[key] for key in ("content", "provider", "attempts") if key in answer}
+                answer["content"] = self.redact(answer["content"])
                 user_msg = next((m for m in reversed(value["messages"]) if m["role"] == "user"), {})
                 from reply_authority import enforce
-                answer["content"] = self.redact(enforce(self.ledger_root(identifier), user_msg.get("content", ""), answer, value))
+                from status_observation import bind_observation
+                observation = {}
+                answer["content"] = self.redact(enforce(self.ledger_root(identifier), user_msg.get("content", ""), answer, value,
+                                                       observation=observation, redact=self.redact))
+                if observation:
+                    answer["status_observation"] = bind_observation(observation, value)
+                else:
+                    answer["content"] = repair_hollow_progress(answer["content"])
                 rid = user_msg.get("request_id")
                 value["messages"][-1].update(answer, status="done")
                 if rid:
@@ -1108,7 +1121,7 @@ class Handler(BaseHTTPRequestHandler):
             self.path_only = urlsplit(self.path).path
             session = self.server.chat.authenticate(self.headers.get("Cookie"))
             if self.path_only == "/api" or self.path_only.startswith("/api/"):
-                if not session:
+                if not session and not (self.command == "GET" and self.path_only == "/api/version"):
                     raise RequestError(401, "Please log in.")
             if self.command == "POST":
                 origins = self.headers.get_all("Origin", [])
@@ -1176,17 +1189,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def get(self, session):
         route, chat = self.path_only, self.server.chat
+        if route == "/api/version":
+            return self.send(200, BUILD)
         assets = {"/style.css": ("style.css", "text/css; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                   "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json")}
         if route in assets:
             name, mime = assets[route]
-            return self.send(200, (HERE / "static" / name).read_bytes(), mime)
+            return self.send(200, (STATIC / name).read_bytes(), mime)
         if route == "/login":
-            return self.send(200, (HERE / "static/login.html").read_bytes(), "text/html; charset=utf-8")
+            return self.send(200, render_page("login.html"), "text/html; charset=utf-8",
+                             headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache", "Expires": "0"})
         if route == "/":
             if not session:
                 return self.send(303, "", headers={"Location": "/login"})
-            return self.send(200, (HERE / "static/index.html").read_bytes(), "text/html; charset=utf-8")
+            return self.send(200, render_page("index.html"), "text/html; charset=utf-8",
+                             headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache", "Expires": "0"})
         if route in ("/api", "/api/session"):
             return self.send(200, {"csrf": session["csrf"], "active_conversation": next(iter(chat.workers), None),
                                    "active_conversations": list(chat.workers)})

@@ -19,6 +19,15 @@ NAMES = ["Web Bob", "WebJam", "AdoptIQ", "StoryBoard"]
 
 
 class IntentTests(Fixture):
+    def test_literal_project_push_saves_scoped_publication_authority(self):
+        receipt = self.submit("push WebJam and AdoptIQ")["messages"][-1]
+        rows = [queue.tasks(self.root)[identifier] for identifier in receipt["task_ids"]]
+        self.assertEqual({row["publish_project"] for row in rows}, {"WebJam", "AdoptIQ"})
+        single = self.submit("push WebJam")["messages"][-1]
+        self.assertEqual(queue.tasks(self.root)[single["task_id"]]["publish_project"], "WebJam")
+        local = self.submit("Improve WebJam")["messages"][-1]
+        self.assertIsNone(queue.tasks(self.root)[local["task_id"]]["publish_project"])
+
     def submit(self, text, request_id=None, **kwargs):
         value = self.chat.submit(self.identifier, text, request_id or str(uuid.uuid4()), **kwargs)
         self.wait()
@@ -30,6 +39,29 @@ class IntentTests(Fixture):
 
     def ready(self, *lanes):
         (self.root / "conductor/lanes.json").write_text(json.dumps({lane: dict(state="ready", active=0) for lane in lanes}))
+
+    def test_exact_live_push_creates_two_jobs_and_releases_only_named_holds(self):
+        self.ready("codex", "cursor")
+        self.submit("hold")
+        request = str(uuid.uuid4())
+        receipt = self.submit("push WebJam and AdoptIQ", request)["messages"][-1]
+        rows = list(queue.tasks(self.root).values())
+        self.assertEqual([row["title"] for row in rows], ["WebJam", "AdoptIQ"])
+        self.assertEqual(set(receipt["task_ids"]), {row["id"] for row in rows})
+        self.assertEqual({row["kind"] for row in rows}, {"coding"})
+        self.assertNotIn("hold", receipt["content"].lower())
+        self.reload()
+        self.submit("push WebJam and AdoptIQ", request)
+        self.assertEqual(len(queue.tasks(self.root)), 2)
+        self.assertIn("On hold", self.submit("fix Web Bob login")["messages"][-1]["content"])
+        self.assertFalse(self.fake.calls)
+
+    def test_exact_live_going_question_uses_server_status_without_generation(self):
+        answer = self.submit("is it going now?")["messages"][-1]
+        self.assertEqual(answer["provider"], "state")
+        self.assertIn("I don't see active work", answer["content"])
+        self.assertFalse(queue.tasks(self.root))
+        self.assertFalse(self.fake.calls)
 
     def test_incident_two_turn_request_persists_one_real_job_per_project(self):
         self.ready("codex", "cursor", "claude", "gemini", "minimax")
@@ -105,10 +137,14 @@ class IntentTests(Fixture):
         rows = [queue.tasks(self.root)[identifier] for identifier in receipt["task_ids"]]
         self.assertEqual(len({row["requested_worker"] for row in rows}), 4)
         for row in rows:
-            self.assertIsNotNone(queue.claim(self.root, row["requested_worker"], identifier=row["id"]))
+            claim = queue.claim(self.root, row["requested_worker"], identifier=row["id"])
+            self.assertIsNotNone(claim)
+            queue.transition(self.root, row["id"], claim["claim_token"], "running")
         self.chat.reconcile_tasks()
-        content = self.chat.history(self.identifier)["messages"][-1]["content"]
-        self.assertEqual(content.count("Started on"), 4)
+        updated = self.chat.history(self.identifier)["messages"][-1]
+        self.assertEqual(updated["content"], receipt["content"])
+        self.assertEqual(updated["action_card"]["state"], "running")
+        self.assertTrue(all(task["status"] == "running" for task in updated["action_card"]["tasks"]))
 
     def test_busy_lane_and_existing_claim_do_not_get_free_worker_preference(self):
         self.ready("codex", "cursor")

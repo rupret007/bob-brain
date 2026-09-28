@@ -70,18 +70,21 @@ def totals(lane):
                 "cap_usd": cap(lane)}
 
 
-def reserve(lane, prompt, max_tokens, purpose="model"):
+def reserve(lane, prompt, max_tokens, purpose="model", *, model_id=None, google_search=False):
     if lane == "minimax":
         import_ux_ledger()
-    rate = RATES[lane]
-    bound = ((len(prompt.encode("utf-8")) + 4096) * max(rate[0], rate[3]) + max_tokens * rate[1]) / 1_000_000
+    # Reserve the Pro long-context tier conservatively; settle at the actual tier.
+    rate = (2.50, 15.0, .25, 2.50) if model_id == "gemini-2.5-pro" else RATES[lane]
+    search_cost = .035 if google_search else 0
+    bound = ((len(prompt.encode("utf-8")) + 4096) * max(rate[0], rate[3]) + max_tokens * rate[1]) / 1_000_000 + search_cost
     with lock("ledger-" + lane):
         calls = {r["call_id"]: r for r in _rows(path(lane))}
         committed = sum(r["cost_usd"] if r.get("cost_usd") is not None else r.get("reserved_usd", 0) for r in calls.values())
         if committed + bound > cap(lane) * .95:
             raise BudgetExceeded(lane + " 95% cap: next worst-case request does not fit")
         row = {"call_id": uuid.uuid4().hex, "event": "reserved", "lane": lane,
-               "reserved_usd": bound, "cost_usd": None, "purpose": purpose, "timestamp": time.time()}
+               "reserved_usd": bound, "cost_usd": None, "purpose": purpose, "timestamp": time.time(),
+               "model": model_id, "search_cost_usd": search_cost}
         _append(path(lane), row)
         return row
 
@@ -98,8 +101,11 @@ def settle(lane, reservation, data):
         # is conservative and avoids undercounting incompatible response schemas.
         cost = (max(0, inp - cached) * .30 + out * 1.20 + cached * .06 + written * .375) / 1_000_000
     elif lane == "gemini" and "promptTokenCount" in usage:
-        cost = (usage["promptTokenCount"] * .30 +
-                (usage.get("candidatesTokenCount", 0) + usage.get("thoughtsTokenCount", 0)) * 2.50) / 1_000_000
+        inp, out = ((2.50, 15.0) if usage["promptTokenCount"] > 200000 else (1.25, 10.0)) if reservation.get("model") == "gemini-2.5-pro" else (.30, 2.50)
+        cost = (usage["promptTokenCount"] * inp +
+                (usage.get("candidatesTokenCount", 0) + usage.get("thoughtsTokenCount", 0)) * out) / 1_000_000
+        # Do not assume this account has any free grounding allowance left.
+        cost += reservation.get("search_cost_usd", 0)
     if cost is not None and (cost < 0 or cost > reservation["reserved_usd"]):
         # Retain the larger charge and stop further calls if the provider violated
         # the bound. Never discard billing evidence to make the cap look healthy.

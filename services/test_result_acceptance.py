@@ -8,6 +8,17 @@ from dispatch_worker import task_queue
 
 
 class AcceptanceTests(unittest.TestCase):
+    def test_malformed_cursor_review_retries_validation_once_without_accepting_prose(self):
+        review = Mock(side_effect=["Checking the changes.\nThe result satisfies the task.",
+                                   '{"accepted": true, "reason": "The requested fix was committed and tested."}'])
+        self.assertTrue(accept("Fix report job visibility", "Fixed and tested visibility; committed the change.", review)["accepted"])
+        self.assertEqual(review.call_count, 2)
+        self.assertIn("Do not use tools", review.call_args.args[0])
+        review = Mock(return_value='{"accepted": false, "reason": "Missing the requested fix"}')
+        with self.assertRaisesRegex(ResultRejected, "did not complete"):
+            accept("Fix visibility", "I plan to fix it", review)
+        self.assertEqual(review.call_count, 1)
+
     def test_refusals_empty_answers_and_real_blockers_never_reach_reviewer(self):
         for answer in ("", "   ", "BLOCKER: missing evidence", "**BLOCKER:** Cannot proceed",
                        "I cannot access the Git worktree.\nVerification phrase: marker",
