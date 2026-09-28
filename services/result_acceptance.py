@@ -253,6 +253,10 @@ def deliverable_requirements(prompt, kind=None):
             "When testing check_answer or check_deliverables with an independent-subtask prompt, explicitly put "
             "the required plan, Findings/limits, and accepted/reason JSON in the control answer fixture; "
             "omitting any of them must expect rejection, never success. Quote actual exception substrings. "
+            "Write literal prompt/answer/input values or reference an explicitly supplied fixture field; "
+            "descriptions such as 'a prompt with...' or 'an answer containing...' are not concrete fixtures. "
+            "If a captured report fixture is supplied, its complete_answer is an unexecuted layout/example, "
+            "not proof of live success. Ground your own tests in the supplied current implementation. "
             "Architecture notes, copied implementation snippets, search commands and promises are not test drafts. ")
     heading = plan_heading(prompt)
     if heading:
@@ -264,6 +268,8 @@ def deliverable_requirements(prompt, kind=None):
             "and give conditional actions grounded in the available code; do not invent the assignment. "
             "Read the current implementation before naming a fix: if it already enforces the desired behavior, "
             "propose adding the drafted coverage in an existing test file, not implementing a check that already exists. "
+            "If coverage already exists, cite it and plan its validation plus the remaining lane gates; "
+            "do not invent a coverage gap or infer screen-isolation behavior from a lane name. "
             "Use an actual test command supported by the supplied repository (for Web Bob, "
             "python3 -m unittest discover -s services -p 'test_*.py'); do not invent test selectors or flags. "
             "The exit condition must require the named task's real worker result and validation to pass; "

@@ -73,13 +73,18 @@ def evidence(repo, worker, task, redact, kind=None):
                         "services/test_result_acceptance.py", "services/fixtures/texting_jobcompletion_1035.json",
                         "webchat/worker_assignment.py", "state/task_queue.py", "services/test_api_workers.py")
     preferred = {name: i for i, name in enumerate(completion_paths)} if drafts and "Web Bob" in task else {}
+    # Named-file replay assignments can spend the whole budget on source and
+    # omit the concrete failure/control fixture. Reserve a fair share for that
+    # tracked example too; it is evidence, never a replacement worker answer.
+    replay_fixture = "services/fixtures/texting_jobcompletion_1403.json"
+    examples = {replay_fixture} if preferred and "services/result_acceptance.py" in task else set()
     paths = sorted({name for name in paths if name and safe_source(repo, name)},
-                   key=lambda name: (name not in task, preferred.get(name, len(preferred)),
+                   key=lambda name: (name not in examples, name not in task, preferred.get(name, len(preferred)),
                                      not (Path(name).name.startswith("test_") or "/tests/" in name), name))
     if not paths:
         raise RuntimeError("No eligible tracked repository evidence is available for this report")
     limit = 700000 if worker == "gemini" else 64000 if drafts else 220000
-    named = [name for name in paths if name in task]
+    named = [name for name in paths if name in task or name in examples]
     # Reserve a share for each named file; a large test module must not crowd
     # the running checkout's build/assignment evidence out of the snapshot.
     named_limit = max(1, limit // len(named)) if worker == "minimax" and drafts and named else 48000
