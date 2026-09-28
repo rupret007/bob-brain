@@ -1,4 +1,5 @@
 """Attempt9 regression drafts must be outer deliverables before publication."""
+import ast
 import copy
 import hashlib
 import json
@@ -20,6 +21,22 @@ ERROR = 'Missing concrete regression test drafts (setup, action and expected ass
 
 
 class RegressionDraftTests(unittest.TestCase):
+    def test_historical_probe_control_cannot_claim_success_for_incomplete_inner_report(self):
+        data = json.loads((REPO / 'services/fixtures/texting_regression_control_1658.json').read_text())
+        self.assertEqual(hashlib.sha256(data['answer'].encode()).hexdigest(), data['answer_sha256'])
+        setup = [line[7:] for line in data['answer'].splitlines() if line.startswith('Setup: ')][1]
+        values = {statement.targets[0].id: ast.literal_eval(statement.value)
+                  for statement in ast.parse(setup).body}
+        with self.assertRaisesRegex(acceptance.ResultRejected, re.escape(data['expected_inner_error'])):
+            acceptance.check_deliverables(**values)
+        # The current concrete example instead calls a narrow guard. Its literal
+        # failure and successful control have the actual stated outcomes.
+        inputs = [{s.targets[0].id: ast.literal_eval(s.value)
+                   for s in ast.parse(case['setup']).body} for case in DATA['complete_report']['regression_tests']]
+        with self.assertRaisesRegex(acceptance.ResultRejected, 'Missing or ambiguous required completion JSON'):
+            acceptance.check_completion_json(**inputs[0])
+        acceptance.check_completion_json(**inputs[1])
+
     def test_exact_capture_cannot_win_a_positive_vote(self):
         for key in ('prompt', 'answer'):
             self.assertEqual(hashlib.sha256(DATA[key].encode()).hexdigest(), DATA[key + '_sha256'])

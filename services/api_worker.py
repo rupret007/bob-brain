@@ -84,6 +84,8 @@ def report_serialization(task, kind=None):
         "Use literal inputs or exact supplied fixture fields; trace calls and assertions through supplied code. "
         "Descriptions like 'prompt contains' or 'answer contains' are not concrete inputs. "
         "A nested check_answer/check_deliverables control needs every section its own prompt requires. "
+        "Do not handwrite a nested report control: use an explicitly supplied complete fixture field, "
+        "or choose the narrow check_completion_json guard with literal prompt/answer inputs as shown below. "
         "Prefer a small direct function/state fixture over a long escaped report; never copy historical rejected answers. "
         "Cite existing paths/symbols, actual exception text and required kind arguments. "
         "Drafts are unexecuted; no tools or execution claims. Disclose missing original task/evidence. "
@@ -232,12 +234,21 @@ def evidence(repo, worker, task, redact, kind=None):
                 text = ("Rendered fixture fields: evidence_limits and complete_report only. "
                         "Unexecuted JSON transport example; adapt values to YOUR assigned task.\n"
                         + example["evidence_limits"] + "\n\n" + json.dumps(example["complete_report"], ensure_ascii=False))
+            elif preferred and name == "services/fixtures/texting_jobcompletion_1035.json" and len(raw) <= size:
+                # Historical answer/layout text induced paraphrased inputs and
+                # invalid one-case controls. Keep provenance, disclose omission,
+                # and show the concrete transport example after current source.
+                example = json.loads(text)
+                rendered_fields = ["prompt", "kind", "job_id", "error"]
+                text = ("Rendered historical fixture fields only: " + ", ".join(rendered_fields) +
+                        ". Historical answer and complete_answer omitted; do not cite their contents.\n" +
+                        json.dumps({key: example[key] for key in rendered_fields}, ensure_ascii=False))
             if len(raw) > size:
                 text += "\n[Snapshot truncated here; remaining source not supplied.]"
             remaining -= len(raw[:size])
             # Put the valid unescaped layout after the source/old fixtures so
             # their malformed historical answers are not the last example.
-            (examples_rendered if rendered_fields else sections).append("FILE " + name + "\n" + text)
+            (examples_rendered if name == plan_example and rendered_fields else sections).append("FILE " + name + "\n" + text)
             included.append(dict(path=name, sha256=hashlib.sha256(raw[:size]).hexdigest(),
                                  **({"rendered_fields": rendered_fields} if rendered_fields else {})))
         except OSError:
