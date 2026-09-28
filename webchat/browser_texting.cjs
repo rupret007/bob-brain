@@ -23,7 +23,7 @@ const { chromium } = require(process.env.BOB_PLAYWRIGHT_MODULE || "playwright");
     await page.locator("#password").fill(config.password);
     await page.locator("#login-form button").click();
     await page.waitForURL(config.url + "/");
-    await page.waitForFunction(() => !document.querySelector("#send").disabled);
+    await page.locator("#send:enabled").waitFor();
     async function say(text) {
       await page.locator("#message").fill(text);
       const response = page.waitForResponse(r => r.url() === config.url + "/api/messages" && r.request().method() === "POST");
@@ -31,7 +31,7 @@ const { chromium } = require(process.env.BOB_PLAYWRIGHT_MODULE || "playwright");
       const result = await response;
       assert.equal(result.status(), 202);
       const data = await result.json();
-      await page.waitForFunction(() => !document.querySelector("#send").disabled);
+      await page.locator("#send:enabled").waitFor();
       return data;
     }
     const screenshots = [];
