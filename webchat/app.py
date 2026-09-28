@@ -258,7 +258,20 @@ class Chat(TaskDispatch):
                 return self.public(conversation)
             conversation.pop("pending_memory", None)
             conversation.pop("pending_memory_id", None)
-            saved = append_profile_memory(self.root, pending_memory)
+            try:
+                saved = append_profile_memory(self.root, pending_memory)
+            except OSError as exc:
+                conversation["pending_memory"] = pending_memory
+                conversation["pending_memory_id"] = expected or request_id
+                conversation["messages"][-1].update(
+                    status="done",
+                    content=f"Error: Could not save memory to profile. ({exc})",
+                    provider="state",
+                    action_card={"id": request_id, "state": "refused", "executable": False, "reason": "Save failed"},
+                )
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                return self.public(conversation)
             conversation["messages"][-1].update(
                 status="done",
                 content=f"Saved to `bob-brain/memory/profile.md`:\n\n`{saved}`",

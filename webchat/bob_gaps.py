@@ -6,6 +6,7 @@ import re
 import secrets
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -28,6 +29,10 @@ WEB_SEARCH = re.compile(
     r"(?:what\s+(?:was|is)|who\s+won|score\s+of).{0,120}\?",
     re.I,
 )
+
+CAPTURE_MAX_COUNT = 100
+CAPTURE_MAX_AGE_DAYS = 7
+PROFILE_MAX_BYTES = 512 * 1024
 
 
 def profile_path(root: Path) -> Path:
@@ -56,6 +61,34 @@ def memory_confirm_prompt(fact: str) -> str:
     return f"I can save this to durable memory:\n\n**{fact}**\n\nReply `yes, save memory` to confirm."
 
 
+def _trim_profile_file(path: Path, max_bytes: int = PROFILE_MAX_BYTES) -> None:
+    try:
+        if not path.is_file() or path.stat().st_size <= max_bytes:
+            return
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        while lines and sum(len(entry) for entry in lines) > max_bytes:
+            lines.pop(0)
+        path.write_text("".join(lines), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _prune_captures(folder: Path, max_count: int = CAPTURE_MAX_COUNT, max_age_days: int = CAPTURE_MAX_AGE_DAYS) -> None:
+    try:
+        now = time.time()
+        max_age_seconds = max_age_days * 24 * 60 * 60
+        captures = [path for path in folder.glob("*.png") if path.is_file()]
+        captures.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+        to_delete = set(captures[max_count:])
+        for path in captures:
+            if now - path.stat().st_mtime > max_age_seconds:
+                to_delete.add(path)
+        for path in to_delete:
+            path.unlink()
+    except OSError:
+        pass
+
+
 def append_profile_memory(root: Path, fact: str, when: datetime | None = None) -> str:
     when = when or datetime.now(timezone.utc)
     stamp = when.astimezone().strftime("%Y-%m-%d")
@@ -64,6 +97,7 @@ def append_profile_memory(root: Path, fact: str, when: datetime | None = None) -
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(line)
+    _trim_profile_file(path)
     return line.strip()
 
 
@@ -110,6 +144,7 @@ def capture_screenshot(root: Path, target: str | None = None) -> tuple[str, Path
         raise RuntimeError("The screenshot feature is only available on macOS.")
     folder = root / "conductor/webchat/captures"
     folder.mkdir(parents=True, exist_ok=True)
+    _prune_captures(folder)
     capture_id = secrets.token_hex(8)
     path = folder / f"{capture_id}.png"
     command = ["screencapture", "-x"]

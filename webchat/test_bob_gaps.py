@@ -2,10 +2,12 @@
 """Acceptance tests for Web Bob gap closures (memory, research, screenshots)."""
 import http.client
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import uuid
 from datetime import datetime, timezone
@@ -18,6 +20,7 @@ from bob_gaps import (
     MEMORY_CANCEL,
     MEMORY_CONFIRM,
     MEMORY_CONFIRM_PROPOSAL,
+    PROFILE_MAX_BYTES,
     append_profile_memory,
     capture_screenshot,
     format_web_search_reply,
@@ -28,6 +31,7 @@ from bob_gaps import (
     resolve_capture_path,
     web_search,
     _macos_window_id,
+    _prune_captures,
 )
 
 
@@ -99,6 +103,15 @@ class MemoryGapTests(GapFixture):
         result = self.chat.bob_gaps_memory_turn(conversation, "yes, save memory", request_id, provider="codex")
         self.assertIsNone(result)
         self.assertEqual(conversation.get("pending_memory"), "secret")
+
+    def test_memory_save_oserror_surfaces_in_chat(self):
+        self.submit("remember that disk full scenario")
+        with patch("app.append_profile_memory", side_effect=OSError("disk full")):
+            result = self.submit("yes, save memory")
+        assistant = result["messages"][-1]
+        self.assertIn("could not save memory", assistant["content"].lower())
+        self.assertEqual(assistant["action_card"]["state"], "refused")
+        self.assertEqual(self.chat.conversations[self.identifier].get("pending_memory"), "disk full scenario")
 
 
 class WebSearchGapTests(GapFixture):
@@ -240,6 +253,31 @@ class UnitTests(unittest.TestCase):
             expected = when.astimezone().strftime("%Y-%m-%d")
             self.assertIn(f"[{expected}]", line)
             self.assertIn("test fact", (root / "bob-brain/memory/profile.md").read_text())
+
+    def test_append_profile_memory_trims_when_oversized(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "bob-brain/memory/profile.md"
+            path.parent.mkdir(parents=True)
+            path.write_text("x" * (PROFILE_MAX_BYTES + 100) + "\n", encoding="utf-8")
+            append_profile_memory(root, "newest")
+            body = path.read_text(encoding="utf-8")
+            self.assertLessEqual(len(body.encode("utf-8")), PROFILE_MAX_BYTES + 200)
+            self.assertIn("newest", body)
+
+    def test_prune_captures_enforces_max_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            for index in range(5):
+                path = folder / f"{index:016x}.png"
+                path.write_bytes(b"png")
+            now = time.time()
+            for index, path in enumerate(sorted(folder.glob("*.png"))):
+                stamp = now - (5 - index)
+                os.utime(path, (stamp, stamp))
+            _prune_captures(folder, max_count=2, max_age_days=365)
+            remaining = list(folder.glob("*.png"))
+            self.assertEqual(len(remaining), 2)
 
     def test_format_web_search_reply_tolerates_missing_keys(self):
         self.assertEqual(format_web_search_reply({}), "")
