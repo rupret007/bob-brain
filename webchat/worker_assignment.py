@@ -55,7 +55,7 @@ def issue_followup(root, conversation, text):
     if not previous or not previous.get("assignment_projects"):
         return None
     project = previous["assignment_projects"][0]
-    return ("Fix verified issues in " + project + ": inspect the ongoing work and available review reports, "
+    return ("Fix verified issues in " + project + "\nInspect the ongoing work and available review reports, "
             "reproduce a concrete issue, implement one bounded fix if warranted, and run relevant tests. "
             "Report evidence if no fix is needed. Work in your assigned draft worktree; never deploy or merge.")
 
