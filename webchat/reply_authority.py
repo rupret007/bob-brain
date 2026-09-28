@@ -4,6 +4,7 @@ import re
 from live_status_snapshot import build_live_status_snapshot
 from chat_intent import PROJECT, blocked_scopes, hold_reply, projects, state_for
 from worker_activity import WORKER_NAMES, task_label
+from worker_evidence import clean
 
 QUEUE_CLAIM = re.compile(
     r"\b(?:i|we)(?:['’]ve| have)?\s+(?:(?:just|already|now)\s+)?(?:queued|scheduled|launched|started|created|dispatched|added|submitted|assigned|delegated|asked|kicked off)\b"
@@ -77,7 +78,7 @@ def _work_line(row, detailed=False):
     repo = row.get("repo")
     label = project + (" (" + repo + ")" if repo else "") + ": " if project else (repo + ": " if repo else "")
     label += row.get("task") or row["title"]
-    if not row.get("task") and "task" in row:
+    if detailed and not row.get("task") and "task" in row:
         label += " — " + (row.get("screen") or "process " + str(row.get("pid")))
         label += "; " + row["log_path"] + "; last: " + row["last_log_line"]
     if row.get("model"):
@@ -98,11 +99,93 @@ def _work_line(row, detailed=False):
     return label
 
 
+def _join(items):
+    return ", ".join(items[:-1]) + " and " + items[-1] if len(items) > 1 else items[0]
+
+
+def _task_name(row):
+    label = row.get("task") or row.get("title") or task_label(screen=row.get("screen"))
+    label = clean(label, 95).strip(" .;:") or "a CLI session"
+    project = row.get("project")
+    if project and project.lower() not in label.lower():
+        label = project + ": " + label
+    elif project:
+        label = re.sub(re.escape(project), lambda _: project, label, flags=re.I)
+    return label
+
+
+def _casual_status(snap):
+    """Use full sentences; keep diagnostics and missing metadata out of task names."""
+    work, inspection = snap["work"], snap["inspection"]
+    active, idle, extra = [], [], []
+    for name in WORKER_NAMES:
+        rows = [row for row in work if row.get("worker") == name]
+        if name == "mini" and not rows:
+            continue
+        display = WORKER_NAMES[name]
+        if rows:
+            tasks = []
+            for row in rows:
+                model = row.get("model") or "model not reported"
+                duration = _duration(row.get("elapsed_seconds"))
+                state = {"running": "running for ", "paused": "paused; process age ",
+                         "claimed": "claimed, execution unconfirmed; age ",
+                         "unverified": "open, worker unconfirmed; age "}[row["state"]]
+                tasks.append("“" + _task_name(row) + "” (" + model + "; " + state + duration + ")")
+            active.append(display + " is on " + _join(tasks) + _cooldown(snap, name))
+        elif snap.get("lane_locks", {}).get(name, {}).get("state") == "busy":
+            extra.append(display + "'s last lane check was busy, but its task isn't recorded")
+        elif _cooldown(snap, name):
+            extra.append(display + " has no confirmed active work" + _cooldown(snap, name))
+        else:
+            idle.append(display)
+    sentences = []
+    if active:
+        # At most two sentences for actual workers, even when all five are busy.
+        middle = (len(active) + 1) // 2
+        sentences.append("; ".join(active[:middle]) + ".")
+        if active[middle:]:
+            sentences.append("; ".join(active[middle:]) + ".")
+    elif work:
+        sentences.append("Work sessions are open, but I can't confirm a running worker.")
+    elif not all(inspection.values()):
+        sentences.append("I can't confirm all workers because a live check failed.")
+    elif snap["screen_lanes"]:
+        sentences.append("There are live service sessions, but no task worker is confirmed.")
+    else:
+        sentences.append("I don't see active work on the mini right now.")
+    other = [row for row in work if row.get("worker") not in WORKER_NAMES]
+    if other:
+        extra.append(_join([_task_name(row) for row in other]) +
+                     (" has" if len(other) == 1 else " have") + " an open session with no confirmed worker")
+    # A cached lock or a failed inspection cannot establish that a worker is idle.
+    if idle:
+        extra.append(_join(idle) + (" has" if len(idle) == 1 else " have") + " no confirmed active work")
+    if not all(inspection.values()) and active:
+        extra.append("a live check failed, so this list may be incomplete")
+    if extra:
+        sentences.append("; ".join(extra) + ".")
+    counts = snap["queue_counts"]
+    if inspection.get("queue_available", True):
+        sentences.append(f"The job runner has {counts['claimed']} claimed and {counts['queued']} queued jobs.")
+    else:
+        sentences.append("I couldn't read the job queue.")
+    return " ".join(sentences)
+
+
 def format_operational_reply(snap, provider="server", text=""):
-    """Every live worker, grouped into five LLM lines; diagnostics are opt-in."""
+    """Live worker facts in casual sentences; diagnostics are opt-in."""
     counts, work, inspection = snap["queue_counts"], snap["work"], snap["inspection"]
     running = snap["work_counts"]["running"]
     detailed = bool(DETAILS.search(text) and not HIDE_DETAILS.search(text))
+    if not detailed:
+        answer = _casual_status(snap)
+        if IDENTITY.search(text):
+            answer += (" " + WORKER_NAMES[provider] + " answered this message." if provider in WORKER_NAMES
+                       else " This answer comes from live checks.")
+        if re.search(r"\b(?:disk|storage)\b", text, re.I) and snap["disk"].get("available"):
+            answer += f" Disk space: {snap['disk']['avail_gb']} GB free."
+        return answer
     if running:
         first = f"{running} worker{'s are' if running != 1 else ' is'} running."
     elif work:

@@ -41,13 +41,16 @@ class ChatDispatchTests(Fixture):
         receipt = value["messages"][-1]
         row = queue.tasks(self.root)[receipt["task_id"]]
         self.assertEqual(row["status"], "queued")
-        self.assertIn(row["id"], receipt["content"])
+        self.assertNotIn(row["id"], receipt["content"])
+        self.assertEqual(receipt["task_id"], row["id"])
+        original = receipt["content"]
         self.assertFalse(self.fake.calls)
         claim = queue.claim(self.root, "gemini")
         queue.transition(self.root, claim["id"], claim["claim_token"], "running")
         self.chat.reconcile_tasks()
         receipt = self.chat.history(self.identifier)["messages"][-1]
-        self.assertEqual(receipt["content"], "Started on Gemini — job " + row["id"] + ".")
+        self.assertEqual(receipt["content"], original)
+        self.assertEqual(receipt["action_card"]["state"], "running")
         self.assertEqual(receipt["action_card"]["worker"], "gemini")
 
     def test_explicit_file_write_uses_a_tool_worker(self):
@@ -134,8 +137,10 @@ class ChatDispatchTests(Fixture):
                 receipt = self.submit(text)["messages"][-1]
                 row = queue.tasks(self.root)[receipt["task_id"]]
                 self.assertEqual((row["prompt"], row["requested_worker"]), (prompt, worker))
-                label = "Queued for Claude" if worker == "claude" else "Queued"
-                self.assertEqual(receipt["content"], label + " — job " + row["id"] + ".")
+                self.assertTrue(receipt["content"].startswith("I queued “"))
+                self.assertIn(prompt.strip(" .?!"), receipt["content"])
+                self.assertIn("Claude" if worker == "claude" else "next available worker", receipt["content"])
+                self.assertNotIn(row["id"], receipt["content"])
         self.assertEqual(len(queue.tasks(self.root)), 5)
         self.assertFalse(self.fake.calls)
 

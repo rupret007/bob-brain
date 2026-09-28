@@ -33,26 +33,24 @@ def verify_replies(client, root, output, timeout=1800):
                 require(text == "Which projects should I work on?", "Unnamed request must ask for missing targets, not promise work")
             elif index < 5:
                 require(answer["provider"] == "state", "Status/criticism used a model answer")
-                require(len(text.splitlines()) <= 8, "Status exceeds eight lines")
+                require(len(text.split(". ")) <= 4, "Status exceeds four sentences")
                 for name in ("Codex", "Claude", "Cursor", "Gemini", "MiniMax"):
-                    require(any(line.startswith(name + ":") for line in text.splitlines()), "Missing LLM: " + name)
+                    require(name in text, "Missing worker: " + name)
                 stable = {r.get("pid"): r for r in before["work"] if r.get("pid")}
                 for row in after["work"]:
                     if row.get("pid") in stable and stable[row["pid"]]["title"] == row["title"]:
-                        require(row["title"] in text, "Omitted worker: " + row["title"])
-                        if not row.get("task"):
-                            for field in ("screen", "log_path", "last_log_line"):
-                                require(not row.get(field) or row[field] in text, "Missing worker fallback: " + field)
-                codex = next(line for line in text.splitlines() if line.startswith("Codex:"))
-                require("6:20" not in codex, "Claude reset time attached to Codex")
-                require(not any(label in text for label in ("Chat health:", "Recent logs:", "Disk space:")), "Unrequested diagnostics")
+                        from worker_evidence import clean
+                        require(clean(row["title"], 95).strip(" .;:") in text, "Omitted worker: " + row["title"])
+                        require(not row.get("model") or row["model"] in text, "Omitted observed model")
+                require(not any(label in text for label in ("Chat health:", "Recent logs:", "Disk space:", "logs/", "lane-", "last:")), "Unrequested diagnostics")
             else:
                 require(answer["provider"] == "dispatcher", "Stress action returned chat/status")
                 ids = answer.get("task_ids", [])
                 rows = [task_queue.tasks(root)[job] for job in ids]
                 require(len(ids) == 4 and [r["title"] for r in rows] == PROJECTS, "Stress request did not create all four project jobs")
                 require(len({r["requested_worker"] for r in rows}) >= 2, "Project jobs were not distributed")
-                require(len(text.splitlines()) == 4 and all(job in text for job in ids), "Missing short project receipts")
+                require(len(text.splitlines()) == 4 and all(r["title"] in text for r in rows), "Missing short project receipts")
+                require(not any(job in text for job in ids), "Raw job IDs in receipt")
                 _, replay = client.submit(cid, exchange["message"], answer["request_id"])
                 require(replay["task_ids"] == ids, "Replay created duplicate jobs")
                 require(len([r for r in task_queue.tasks(root).values() if r["conversation_id"] == cid]) == 4, "Extra session jobs")

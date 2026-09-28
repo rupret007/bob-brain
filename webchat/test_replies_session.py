@@ -50,29 +50,31 @@ class SessionReplies(Fixture):
                     reply = self.submit(text)
                     answer = reply["content"]
                     self.assertEqual(reply["provider"], "state")
-                    self.assertIn("5 workers are running", answer)
+                    self.assertEqual(answer.count("running for 11 min"), 5)
                     for task in ("Fix login validation", "Test intake validation", "Review scene editing", "Audit lineup scoring", "Test login retries"):
                         self.assertIn(task, answer)
                     for name in NAMES:
                         self.assertIn(name, answer)
                     self.assertEqual(answer.count("running for 11 min"), 5)
-                    self.assertIn("Claude: idle; resets 6:20 PM CT.", answer)
-                    self.assertNotIn("resets", next(line for line in answer.splitlines() if line.startswith("Codex:")))
-                    self.assertLessEqual(len(answer.splitlines()), 8)
+                    self.assertIn("Claude has no confirmed active work; resets 6:20 PM CT", answer)
+                    self.assertNotIn("resets", answer.split("Claude")[0])
+                    self.assertLessEqual(len(answer.split(". ")), 4)
                     for unwanted in ("unknown task", "details unavailable", "I'll focus", "Chat health", "Recent logs", "Disk space"):
                         self.assertNotIn(unwanted.lower(), answer.lower())
         self.assertFalse(self.fake.calls)
         self.assertFalse(queue.tasks(self.root))
 
-    def test_missing_assignment_names_screen_log_and_last_line_without_omitting_worker(self):
+    def test_missing_assignment_uses_readable_lane_without_log_dump(self):
         (self.root / "logs").mkdir(exist_ok=True)
         (self.root / "logs/mystery-1720.log").write_text("phase one\nwaiting for response\n")
         with patch("live_status_snapshot._screen_sessions", return_value={"lane-mystery": "100.lane-mystery"}), \
                 patch("live_status_snapshot.process_table", return_value=parse_processes(
                     "100 1 08:00 S SCREEN -dmS lane-mystery bash\n101 100 07:00 S codex exec private task")):
             answer = self.submit(ASKS[1])["content"]
-        for expected in ("Codex:", "lane-mystery", "logs/mystery-1720.log", "waiting for response", "7 min"):
+        for expected in ("Codex is on “Mystery", "model not reported", "7 min"):
             self.assertIn(expected, answer)
+        for hidden in ("lane-mystery", "logs/", "waiting for response"):
+            self.assertNotIn(hidden, answer)
         self.assertNotIn("unknown task", answer.lower())
 
     def test_exact_stress_request_saves_four_scoped_draft_jobs_and_replays_once(self):
@@ -94,13 +96,15 @@ class SessionReplies(Fixture):
             self.assertEqual(row["kind"], "coding")
             self.assertIn("worktree", row["prompt"])
             self.assertIn("draft branch", row["prompt"])
-            self.assertIn(row["id"], receipt["content"])
+            self.assertNotIn(row["id"], receipt["content"])
             claim = queue.claim(self.root, row["requested_worker"], identifier=row["id"])
             self.assertIsNotNone(claim)
             queue.transition(self.root, row["id"], claim["claim_token"], "running")
             queue.transition(self.root, row["id"], claim["claim_token"], "executing")
             self.chat.reconcile_tasks()
-            self.assertIn("Started on", self.chat.history(self.identifier)["messages"][1]["content"])
+            updated = self.chat.history(self.identifier)["messages"][1]
+            self.assertEqual(updated["content"], receipt["content"])
+            self.assertEqual(updated["action_card"]["state"], "running")
             queue.transition(self.root, row["id"], claim["claim_token"], "succeeded", result="Verified fixture result")
         self.chat.close()
         self.chat = Chat(self.folder, self.root, self.fake)
@@ -128,5 +132,6 @@ class SessionReplies(Fixture):
         for provider in ("codex", "claude", "cursor", "gemini", "minimax"):
             reply = self.submit(ASKS[4], provider=provider)
             self.assertEqual(reply["provider"], "state")
-            self.assertIn("Codex: idle", reply["content"])
+            self.assertIn("Codex", reply["content"])
+            self.assertIn("have no confirmed active work", reply["content"])
         self.assertFalse(self.fake.calls)

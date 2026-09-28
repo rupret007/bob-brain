@@ -332,7 +332,7 @@ class HTTPTests(Fixture):
                 if text.startswith("The hold"):
                     self.assertEqual(answer["content"], "Ready when you are.")
                 else:
-                    self.assertIn("4 workers are running", answer["content"])
+                    self.assertEqual(answer["content"].count("running for"), 4)
                 self.assertNotIn("start a job:", answer["content"])
                 self.assertNotIn("None", answer["content"])
         self.assertEqual(self.fake.calls, [])
@@ -735,7 +735,7 @@ class HandbackJobTests(Fixture):
         self.assertEqual(assistant["action_card"]["state"], "queued")
         self.assertIn("webchat-", assistant["action_card"].get("queue_id", ""))
         self.assertEqual(assistant["action_card"].get("goal_text"), "fix the webchat panel")
-        self.assertEqual(assistant["content"], "Queued — job " + tasks[0]["id"] + ".")
+        self.assertEqual(assistant["content"], "I queued “fix the webchat panel” for the next available worker.")
 
     def test_job_merge_refused_before_queue(self):
         self.chat.submit(self.identifier, "start a job: merge #158", str(uuid.uuid4()))
@@ -1227,7 +1227,7 @@ class HandbackJobTests(Fixture):
         state_ledger.write_now(self.root, "offline parity fixture", sha="fedcba1")
         result = run_eval(self.root)
         self.assertEqual(result["passed"], result["total"], result["cases"])
-        self.assertEqual(result["total"], 31)
+        self.assertEqual(result["total"], 33)
 
     def test_catchup_event_ack_cursor(self):
         ledger_dir = Path(__file__).resolve().parent.parent / "state"

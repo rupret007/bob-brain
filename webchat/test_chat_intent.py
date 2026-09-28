@@ -83,7 +83,7 @@ class IntentTests(Fixture):
             self.assertEqual(row["status"], "queued")
             self.assertIn(row["title"], receipt["content"])
             self.assertIn(row["requested_worker"].title(), receipt["content"])
-            self.assertIn(row["id"], receipt["content"])
+            self.assertNotIn(row["id"], receipt["content"])
         self.submit(PUSH, request)
         self.reload()
         self.submit(PUSH, request)
@@ -141,8 +141,10 @@ class IntentTests(Fixture):
             self.assertIsNotNone(claim)
             queue.transition(self.root, row["id"], claim["claim_token"], "running")
         self.chat.reconcile_tasks()
-        content = self.chat.history(self.identifier)["messages"][-1]["content"]
-        self.assertEqual(content.count("Started on"), 4)
+        updated = self.chat.history(self.identifier)["messages"][-1]
+        self.assertEqual(updated["content"], receipt["content"])
+        self.assertEqual(updated["action_card"]["state"], "running")
+        self.assertTrue(all(task["status"] == "running" for task in updated["action_card"]["tasks"]))
 
     def test_busy_lane_and_existing_claim_do_not_get_free_worker_preference(self):
         self.ready("codex", "cursor")

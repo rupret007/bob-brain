@@ -15,13 +15,12 @@ turns each one into a checkable property.
 
 ## Rubric (per reply)
 
-A reply is scored against seven checks. Each is a hard pass/fail, not a
+A reply is scored against eight checks. Each is a hard pass/fail, not a
 vibe:
 
 1. **Answer-first** — the first sentence answers the question; no throat-clearing.
-2. **Casual, bounded length** — 1-4 plain-spoken sentences for a normal chat
-   turn. Multi-worker status rundowns may run one short line per worker, but
-   every line is a fact Jeff asked for, not filler.
+2. **Casual, bounded length** — 1-4 plain-spoken, complete sentences for normal chat
+   and multi-worker status. Only requested diagnostics expand the output.
 3. **Real facts only** — nothing stated that the live snapshot / job queue
    does not actually support. No "I'll check" without a result attached.
 4. **Names worker + LLM + task** — a status answer says *which* worker
@@ -30,8 +29,8 @@ vibe:
 5. **Never "unknown task"** — if the snapshot has no one-line task summary,
    name the lane/project/screen instead of the word "unknown."
 6. **No dumps** — no raw job IDs, PIDs, or full log tails unless Jeff asked
-   for diagnostics; a short, word-bounded log excerpt is fine, a run-on
-   paragraph mid-word cut off is not.
+   for diagnostics; casual replies use readable task labels and observed model metadata.
+   Raw logs belong only in requested diagnostics.
 7. **No empty promises** — "I'll focus on...", "I understand, I'll...", "I'll
    do better" are always a fail. When Jeff says an answer needs to be
    better, the very next reply must *be* better, not promise to be.
@@ -41,7 +40,7 @@ vibe:
 
 ## Automated checks (`webchat/bob_parity_eval.py`)
 
-Five rubric checks were added to the existing 24-case offline eval (now 31
+Seven rubric checks were added to the existing 24-case offline eval (now 31
 cases, run via `python3 webchat/bob_parity_eval.py`):
 
 | case | what it guards |
@@ -75,3 +74,12 @@ python3 webchat/bob_parity_eval.py            # scored eval, JSON to stdout + we
 python3 -m pytest webchat/test_webbob_replyq_1856.py -q   # regression tests
 python3 -m pytest webchat -q                  # full suite
 ```
+
+## Cross-vendor gate corrections
+
+The suite now has 33 cases, requires 33/33, and initializes isolated data in
+any worktree. Three always-true assertions were repaired; the directory check
+was replaced with a real song save/reload. New cases cover complete, bounded
+status sentences and ID-free task/worker receipts. A green offline score is
+not a claim that Web Bob beat another model. See `WEBBOB-REPLYQ-GATE-0927.md`
+and the actual live gate evidence for the final deployment decision.

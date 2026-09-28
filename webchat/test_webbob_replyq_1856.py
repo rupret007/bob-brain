@@ -7,6 +7,9 @@ a robotic "Yes —" prefix on non yes/no questions, and status queries that
 never actually named a worker/task — so they cannot silently come back.
 """
 import tempfile
+import json
+import re
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -17,7 +20,8 @@ from providers import RULES
 from reply_authority import format_operational_reply
 from test_worker_activity import PS, SCREENS
 from worker_activity import parse_processes
-from worker_evidence import clean
+from worker_evidence import clean, _log_model
+from task_dispatch import task_queue
 
 
 class FakeProviders:
@@ -75,7 +79,7 @@ class Session8126301cTests(SessionFixture):
         reply = self.send("Ok what’s working on what?")
         self.assertEqual(reply["provider"], "state")
         self.assertNotIn("unknown", reply["content"].lower())
-        self.assertIn("Codex:", reply["content"])
+        self.assertIn("Codex", reply["content"])
 
     def test_cant_have_unknown_tasks_reply_itself_has_no_unknown_task(self):
         reply = self.send("Ok we can’t have unknown tasks. We need to also know what’s going on what resources.")
@@ -92,8 +96,8 @@ class Session8126301cTests(SessionFixture):
     def test_whats_going_on_each_llm_names_workers(self):
         reply = self.send("What’s going on each LLM")
         self.assertEqual(reply["provider"], "state")
-        self.assertIn("Codex:", reply["content"])
-        self.assertIn("Claude:", reply["content"])
+        self.assertIn("Codex", reply["content"])
+        self.assertIn("Claude", reply["content"])
 
     def test_four_named_projects_actually_dispatches_instead_of_a_status_dump(self):
         reply = self.send(
@@ -116,8 +120,8 @@ class Session8126301cTests(SessionFixture):
                 patch("live_status_snapshot.process_table", return_value=parse_processes(PS)):
             reply = self.send("What’s the status or everything.")
         self.assertEqual(reply["provider"], "state")
-        self.assertIn("Codex:", reply["content"])
-        self.assertIn("Claude:", reply["content"])
+        self.assertIn("Codex", reply["content"])
+        self.assertIn("Claude", reply["content"])
         self.assertNotIn("Yes —", reply["content"])
         self.assertNotIn("unknown", reply["content"].lower())
 
@@ -127,7 +131,7 @@ class Session8126301cTests(SessionFixture):
             reply = self.send("How’s it going?")
         self.assertEqual(reply["provider"], "state")
         self.assertFalse(reply["content"].startswith("Yes"))
-        self.assertIn("workers are running", reply["content"])
+        self.assertEqual(reply["content"].count("running for"), 4)
 
 
 class Session65a5d782Tests(SessionFixture):
@@ -138,6 +142,28 @@ class Session65a5d782Tests(SessionFixture):
         self.assertEqual(reply["provider"], "dispatcher")
         self.assertIn("WebJam", reply["content"])
         self.assertIn("AdoptIQ", reply["content"])
+
+    def test_receipt_stays_truthful_after_completion_and_reload(self):
+        receipt = self.send("push WebJam and AdoptIQ")
+        original = receipt["content"]
+        created = receipt["created_at"]
+        for identifier in receipt["task_ids"]:
+            row = task_queue.tasks(self.root)[identifier]
+            self.assertNotIn(identifier, original)
+            claim = task_queue.claim(self.root, row["requested_worker"], identifier=identifier)
+            task_queue.transition(self.root, identifier, claim["claim_token"], "running")
+            task_queue.transition(self.root, identifier, claim["claim_token"], "succeeded", result="Verified fixture change")
+        self.chat.reconcile_tasks()
+        self.chat.close()
+        self.chat = Chat(self.folder, self.root, self.fake)
+        messages = self.chat.get(self.identifier)["messages"]
+        saved = next(m for m in messages if m["id"] == receipt["id"])
+        self.assertEqual((saved["content"], saved["created_at"]), (original, created))
+        self.assertNotIn("Finished", saved["content"])
+        self.assertEqual(saved["action_card"]["state"], "done")
+        results = [m for m in messages if m.get("task_status") == "succeeded"]
+        self.assertEqual(len(results), 1)
+        self.assertGreater(results[0]["created_at"], created)
 
 
 class SystemPromptStyleRubricTests(unittest.TestCase):
@@ -168,7 +194,7 @@ class OperationalReplyFormattingTests(unittest.TestCase):
     def _snapshot(self, running=1):
         return {
             "queue_counts": {"claimed": 0, "queued": 0},
-            "work": [],
+            "work": [dict(worker="codex", model="gpt-fixture", task="Review Web Bob replies", state="running", elapsed_seconds=60) for _ in range(running)],
             "inspection": {"screens": True, "processes": True},
             "work_counts": {"running": running},
             "screen_lanes": [],
@@ -179,12 +205,55 @@ class OperationalReplyFormattingTests(unittest.TestCase):
 
     def test_running_workers_line_has_no_yes_prefix(self):
         text = format_operational_reply(self._snapshot(running=2), "server", "how's it going?")
-        self.assertTrue(text.startswith("2 workers are running."))
+        self.assertTrue(text.startswith("Codex is on “Review Web Bob replies"))
+        self.assertEqual(text.count("running for 1 min"), 2)
         self.assertNotIn("Yes", text)
 
     def test_single_running_worker_uses_singular_verb_with_no_yes_prefix(self):
         text = format_operational_reply(self._snapshot(running=1), "server", "how's it going?")
-        self.assertTrue(text.startswith("1 worker is running."))
+        self.assertTrue(text.startswith("Codex is on “Review Web Bob replies"))
+        self.assertEqual(text.count("running for 1 min"), 1)
+
+    def test_fallback_task_has_no_log_dump_and_diagnostics_are_opt_in(self):
+        snap = self._snapshot()
+        snap["work"][0].update(task=None, title="Web Bob replies", screen="lane-webbob-replies", pid=8912,
+                               log_path="logs/replies.log", last_log_line="Raw output " * 100)
+        casual = format_operational_reply(snap, text="How's it going?")
+        self.assertIn("Web Bob replies", casual)
+        self.assertIn("gpt-fixture", casual)
+        for value in ("logs/", "lane-", "8912", "Raw output", " | "):
+            self.assertNotIn(value, casual)
+        self.assertLessEqual(len(re.split(r"[.!?]\s+", casual)), 4)
+        diagnostic = format_operational_reply(snap, text="Status with diagnostics")
+        self.assertIn("logs/replies.log", diagnostic)
+        self.assertIn("8912", diagnostic)
+
+    def test_busy_lane_and_unreadable_queue_do_not_become_idle_or_empty(self):
+        snap = self._snapshot(0)
+        snap["inspection"]["queue_available"] = False
+        snap["lane_locks"]["claude"] = dict(state="busy")
+        reply = format_operational_reply(snap, text="What's working on what?")
+        self.assertIn("Claude's last lane check was busy", reply)
+        self.assertIn("couldn't read the job queue", reply)
+        self.assertNotIn("idle", reply)
+        self.assertNotIn("0 queued", reply)
+
+
+class ModelEvidenceTests(unittest.TestCase):
+    def test_model_comes_from_current_cli_startup_not_log_prose(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "worker.log"
+            row = dict(worker="codex", elapsed_seconds=30)
+            metadata = type("Stat", (), {"st_birthtime": time.time()})()
+            with patch.object(Path, "stat", return_value=metadata), \
+                    patch.object(Path, "is_file", return_value=True), \
+                    patch.object(Path, "is_symlink", return_value=False), \
+                    patch("worker_evidence.read_part", return_value="OpenAI Codex v1\nmodel: gpt-observed\nuser\nmodel: invented"):
+                self.assertEqual(_log_model(path, row), "gpt-observed")
+                metadata.st_birthtime -= 3600
+                self.assertIsNone(_log_model(path, row))
+            path.write_text("Task: review a model\nmodel: invented\n")
+            self.assertIsNone(_log_model(path, row))
 
 
 class LogExcerptTruncationTests(unittest.TestCase):
@@ -201,6 +270,10 @@ class LogExcerptTruncationTests(unittest.TestCase):
 
     def test_short_line_is_unchanged(self):
         self.assertEqual(clean("waiting for response"), "waiting for response")
+
+    def test_exact_word_boundary_and_unbroken_tokens(self):
+        self.assertEqual(clean("full word next", 9), "full word")
+        self.assertEqual(clean("unbrokenidentifier", 8), "")
 
 
 if __name__ == "__main__":

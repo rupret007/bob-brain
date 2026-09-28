@@ -59,8 +59,8 @@ tools; success requires the server to verify the changed file and its contents.
 
 Named multi-project requests create one durable job per project. For example,
 `prioritize Web Bob, WebJam, AdoptIQ, StoryBoard` saves the order; `push everything
-to the max and fix anything you find` queues four project jobs. Each reply line
-names the project, requested worker and real job ID. Assignment prefers ready
+to the max and fix anything you find` queues four project jobs. Each receipt sentence
+names the project and requested worker; job IDs stay in structured job data. Assignment prefers ready
 compatible lanes and accounts for existing claims and queued work. Coding jobs
 use Codex/Cursor; API-only workers keep their existing capability limits.
 
@@ -81,7 +81,7 @@ are excluded. Open screens without a confirmed worker and unavailable checks are
 reported as unverified. A running process proves activity, not forward progress;
 an exact model variant is shown only when present in the process arguments.
 Task labels come from queue titles/projects or readable screen names, never raw
-process prompts. Unknown task details stay unknown. Internal job IDs, screen
+process prompts. Missing task details use a readable project or lane label; missing exact model metadata stays unreported. Internal job IDs, screen
 names, PIDs and finished-job history are shown only when requested. Ordinary chat
 never recommends special job syntax.
 
@@ -154,9 +154,10 @@ CLI slot falls through to the next provider. Handback: `conductor/handback/`
 `review PR #161`, and `have Claude review this design` queue durable tasks without
 a second confirmation. `go` accepts the most recent clear work proposal; an
 ambiguous request gets one short question. Ordinary answers have no job footer.
-Receipts say `Queued — job <id>.` after the durable write, or
-`Queued for Claude — job <id>.` for a named worker. They update to
-`Started on Claude — job <id>.` only after the queue records that worker's claim.
+Receipts say, for example, `I queued “Review PR #161” for Claude.` only after
+the durable write. They remain unchanged at their original timestamps.
+Structured job data records actual claims and execution; a separate completion
+message names the actual worker and links verified project results.
 The job runner launches work as capacity becomes available; nothing merges
 automatically. Retransmitting the same request ID does
 not duplicate work. The server saves intent before queue writes and acknowledges

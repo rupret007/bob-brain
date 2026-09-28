@@ -81,8 +81,10 @@ def merge_text(rows):
     """
     ordered = sorted(rows, key=lambda row: row["group_index"])
     if all(row["status"] == "succeeded" and row.get("publication") for row in ordered):
-        return "Pushed " + str(len(ordered)) + " draft branches:\n\n" + "\n".join(
-            row["title"] + ": [" + row["publication"]["sha"][:7] + "](" + row["publication"]["url"] + ")."
+        from worker_activity import WORKER_NAMES
+        return "\n".join(
+            WORKER_NAMES.get(row["worker"], row["worker"] or "The worker") + " pushed " + row["title"] +
+            "'s draft at [" + row["publication"]["sha"][:7] + "](" + row["publication"]["url"] + ")."
             for row in ordered)
     succeeded = sum(row["status"] == "succeeded" for row in ordered)
     parts = ["Max mode completed: " + str(succeeded) + "/" + str(len(rows)) + " subtasks succeeded."]

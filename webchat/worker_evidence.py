@@ -1,5 +1,7 @@
 """Bounded, read-only task evidence for live processes and screen lanes."""
 import re
+import json
+import time
 from pathlib import Path
 
 PROJECTS = ((r"web\s*bob|conductor", "Web Bob", "conductor"),
@@ -16,11 +18,13 @@ def clean(text, limit=220):
     text = " ".join(text.split())
     if len(text) <= limit:
         return text
-    clipped = text[:limit]
+    clipped = text[:max(0, limit)]
     # Never end mid-word: a truncated raw log line should read as a phrase,
     # not garbage cut off between letters.
-    if " " in clipped:
+    if len(text) > limit and text[max(0, limit):max(0, limit) + 1] != " ":
         clipped = clipped.rsplit(" ", 1)[0]
+        if " " not in text[:max(0, limit)]:
+            return ""
     return clipped
 
 
@@ -77,8 +81,10 @@ def _task(prompt):
     if not text and prompt:
         text = next((line for line in prompt.splitlines()[1:] if line.strip()), "")
     text = re.split(r"[.!?]\s", text, maxsplit=1)[0]
+    if re.match(r"Improve .+: inspect the project, choose one useful bounded fix", text):
+        text = text.split(":", 1)[0]
     text = re.sub(r"\b[0-9a-f]{7,40}\b", "", text)
-    if re.search(r"\b(?:read|review|audit|fix|repair|implement|build|improve|develop|test|redesign|replies|reply|status|check|plan|research|gives bad)\b", text, re.I):
+    if re.search(r"\b(?:read|review|audit|fix|repair|implement|build|improve|develop|test|redesign|replies|reply|status|check|plan|research|gives bad|project push|deploy|gate)\b", text, re.I):
         return clean(text, 160).strip(" .")
     return None
 
@@ -101,6 +107,34 @@ def _inline_prompt(command):
         if option[1] in ("-c", "--config", "-m", "--model", "-C", "--cd", "-s", "--sandbox", "-a", "--ask-for-approval", "-o", "--output-last-message"):
             text = re.sub(r"^(?:\"[^\"]*\"|'[^']*'|\S+)\s*", "", text)
     return text
+
+
+def _log_model(path, row):
+    """Accept CLI startup metadata from this execution, never model mentions in prose."""
+    if not path.is_file() or path.is_symlink() or row.get("elapsed_seconds") is None:
+        return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    started = time.time() - row["elapsed_seconds"]
+    # A reused old transcript is not evidence of this process's selected model.
+    if getattr(stat, "st_birthtime", 0) < started - 5:
+        return None
+    head = read_part(path)
+    if row.get("worker") == "codex" and head.startswith("OpenAI Codex v"):
+        header = re.split(r"(?m)^user\s*$", head, maxsplit=1)[0]
+        match = re.search(r"(?m)^model:\s*([\w./:-]{1,80})\s*$", header)
+        return match[1] if match else None
+    if row.get("worker") in ("claude", "cursor"):
+        try:
+            event = json.loads(head.splitlines()[0])
+            model = event.get("model", "")
+            if event.get("type") == "system" and event.get("subtype") == "init" and re.fullmatch(r"[\w./:-]{1,80}", model):
+                return model
+        except (ValueError, IndexError, AttributeError, TypeError):
+            pass
+    return None
 
 
 def enrich_work(root, activity, records, table):
@@ -126,6 +160,8 @@ def enrich_work(root, activity, records, table):
             log_path = log_path or run_dir / "worker.log"
         if log_path is None:
             log_path = root / "logs" / ((row.get("screen") or "process-" + str(row.get("pid", "observed"))) + ".log")
+        if not row.get("model"):
+            row["model"] = _log_model(log_path, row)
         prompt = record.get("prompt") or (read_part(prompt_path) if prompt_path else "")
         if not prompt and row.get("worker") in ("codex", "cursor", "claude"):
             prompt = _inline_prompt(table.get(row.get("pid"), {}).get("command", ""))

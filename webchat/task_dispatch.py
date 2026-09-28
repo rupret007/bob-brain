@@ -105,18 +105,13 @@ def parse_work(text):
 
 
 def task_receipt(row):
+    from worker_evidence import clean
     names = {"codex": "Codex", "claude": "Claude", "cursor": "Cursor", "gemini": "Gemini", "minimax": "MiniMax", "mini": "mini"}
-    if row["status"] == "running":
-        label = "Started on " + names[row["worker"]]
-        requested = row["requested_worker"]
-        if requested != "auto" and requested != row["worker"]:
-            label += " (" + names[requested] + " unavailable; fallback)"
-    elif row["status"] == "claimed":
-        label = "Starting on " + names[row["worker"]]
-    else:
-        worker = row["requested_worker"]
-        label = "Queued" + (" for " + names[worker] if worker != "auto" else "")
-    return label + " — job " + row["id"] + "."
+    worker = row["requested_worker"]
+    target = names[worker] if worker != "auto" else "the next available worker"
+    title = row.get("title") or row.get("prompt", "the requested task").splitlines()[0]
+    title = clean(title, 100).strip(" .?!") or "the requested task"
+    return "I queued “" + title + "” for " + target + "."
 
 
 def task_kind(prompt):
@@ -183,14 +178,7 @@ def project_plan(root, description, names, worker):
 
 
 def project_receipt(rows):
-    lines = []
-    for row in sorted(rows, key=lambda row: row["group_index"]):
-        if row["status"] in task_queue.TERMINAL:
-            receipt = ("Finished" if row["status"] == "succeeded" else "Failed") + " on " + str(row["worker"]) + " — job " + row["id"] + "."
-        else:
-            receipt = task_receipt(row)
-        lines.append(row["title"] + ": " + receipt)
-    return "\n".join(lines)
+    return "\n".join(task_receipt(row) for row in sorted(rows, key=lambda row: row["group_index"]))
 
 
 class TaskDispatch:
@@ -286,7 +274,7 @@ class TaskDispatch:
                         rows = max_mode.enqueue(self.root, identifier, intent)
                         group = rows[0]["group_id"]
                         message.update(group_id=group, task_ids=[row["id"] for row in rows], status="done", provider="dispatcher",
-                                       content=project_receipt(rows) if intent.get("project_batch") else "Queued " + str(len(rows)) + " tasks — group " + group + ".",
+                                       content=project_receipt(rows) if intent.get("project_batch") else "I queued " + str(len(rows)) + " tasks across the available workers.",
                                        action_card={"id": message["request_id"], "state": "queued", "executable": False,
                                                     "group_id": group, "queue_id": group, "goal_text": intent["goal"][:160]})
                         changed = True
@@ -310,9 +298,21 @@ class TaskDispatch:
                 for message in value["messages"]:
                     if not message.get("dispatch_intent", {}).get("project_batch") or not message.get("task_ids"):
                         continue
-                    receipt = project_receipt([by_id[task_id] for task_id in message["task_ids"]])
-                    if message["content"] != receipt:
-                        message["content"] = receipt
+                    members = [by_id[task_id] for task_id in message["task_ids"]]
+                    tasks = [{key: row.get(key) for key in ("id", "worker", "status")} for row in members]
+                    card = message.get("action_card", {})
+                    if card.get("tasks") != tasks:
+                        card["tasks"] = tasks
+                        if all(row["status"] in task_queue.TERMINAL for row in members):
+                            card["state"] = "done" if all(row["status"] == "succeeded" for row in members) else "blocked"
+                        elif any(row["status"] == "running" for row in members):
+                            card["state"] = "running"
+                        elif any(row["status"] == "claimed" for row in members):
+                            card["state"] = "claimed"
+                        else:
+                            card["state"] = "queued"
+                        # The receipt is an event at created_at, not a mutable
+                        # status field. Completion gets its own dated message.
                         changed = True
                 if changed:
                     self.save(value)
@@ -330,7 +330,6 @@ class TaskDispatch:
                             card = message["action_card"]
                             if (card.get("state"), card.get("worker")) != (row["status"], row["worker"]):
                                 card.update(state=row["status"], worker=row["worker"])
-                                message.update(content=task_receipt(row))
                                 changed = True
                     if changed:
                         self.save(value)

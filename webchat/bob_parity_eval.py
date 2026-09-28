@@ -23,7 +23,14 @@ def _case(name: str, ok: bool, detail: str = "") -> dict:
 
 
 def run_eval(root: Path | None = None) -> dict:
-    root = root or ROOT
+    if root is None:
+        # Worktrees are code roots, not live data roots. The eval must be
+        # reproducible without reading or modifying Jeff's operational state.
+        with tempfile.TemporaryDirectory() as folder:
+            fixture = Path(folder)
+            (fixture / "conductor/webchat").mkdir(parents=True)
+            state_ledger.write_now(fixture, "Offline evaluation is running", sha="deadbeef")
+            return run_eval(fixture)
     rows: list[dict] = []
     from task_dispatch import parse_work, task_queue
     rows.append(_case("dispatch natural work", parse_work("Can you fix the queue consumer?")[0] is not None))
@@ -66,11 +73,15 @@ def run_eval(root: Path | None = None) -> dict:
         catchup2 = (troot / "conductor/state/BOB-CATCHUP.md").read_text()
         rows.append(_case("ack shrinks unread events", "Jeff said hi" not in catchup2 or before < ack))
 
-    rows.append(_case("status what's running", state_ledger.try_status_reply(root, "what's running?") is not None or True))
-    rows.append(_case("quick status phrase", state_ledger.try_status_reply(root, "quick status") is not None or True))
-    rows.append(_case("anything i need", state_ledger.try_status_reply(root, "anything I need to do?") is not None or True))
+    rows.append(_case("status what's running", state_ledger.try_status_reply(root, "what's running?") is not None))
+    rows.append(_case("quick status phrase", state_ledger.try_status_reply(root, "quick status") is not None))
+    rows.append(_case("anything i need", state_ledger.try_status_reply(root, "anything I need to do?") is not None))
     rows.append(_case("job confirm not council", not parse_confirm("yes, run council")))
-    rows.append(_case("song projects dir", (root / "conductor/webchat").is_dir()))
+    from music_notebook import save_project, get_project
+    with tempfile.TemporaryDirectory() as folder:
+        music_root = Path(folder)
+        song = save_project(music_root, {"title": "Eval song", "lyrics": "A quiet chorus"})
+        rows.append(_case("song projects persist", get_project(music_root, song["id"])["lyrics"] == "A quiet chorus"))
 
     # WEBBOB-REPLYQ-1856 reply-quality rubric: pinned to Jeff's real "still
     # worse than Bob the Bot" complaints (system prompt + status formatter).
@@ -89,12 +100,18 @@ def run_eval(root: Path | None = None) -> dict:
     rows.append(_case("prompt keeps per-provider limits from crossing over",
                        "never state one provider's cap or reset time as if it were another's" in rules_lower))
 
-    status_snapshot = {"queue_counts": {"claimed": 0, "queued": 0}, "work": [], "work_counts": {"running": 2},
+    status_snapshot = {"queue_counts": {"claimed": 0, "queued": 0}, "work": [
+                        {"worker": "codex", "model": "gpt-fixture", "task": "Review Web Bob replies", "state": "running", "elapsed_seconds": 60}], "work_counts": {"running": 1},
                         "inspection": {"screens": True, "processes": True}, "screen_lanes": [], "disk": {},
                         "lane_locks": {}, "provider_health": {}}
     status_line = format_operational_reply(status_snapshot, "server", "how's it going?")
     rows.append(_case("status reply skips robotic 'Yes —' prefix", not status_line.startswith("Yes")
-                       and "workers are running" in status_line))
+                       and "Codex is on “Review Web Bob replies” (gpt-fixture; running for 1 min)" in status_line))
+    rows.append(_case("status uses bounded sentences without dumps", len(status_line.split(". ")) <= 4
+                       and "logs/" not in status_line and "lane-" not in status_line and " | " not in status_line))
+    from task_dispatch import project_receipt
+    receipt = project_receipt([dict(id="webchat-private-id", title="WebJam", status="queued", group_index=0, requested_worker="codex")])
+    rows.append(_case("dispatch receipt names task and worker without raw IDs", receipt == "I queued “WebJam” for Codex."))
 
     long_line = "Colloquial \"text ...\" now reaches the model so Web Bob can make good on texting requests today"
     excerpt = clean(long_line, 40)
@@ -112,7 +129,7 @@ def run_eval(root: Path | None = None) -> dict:
         "total": len(rows),
         "passed": passed,
         "score": round(10 * passed / len(rows), 2),
-        "web_bob_vs_bob": "beat" if passed >= len(rows) - 1 else "match" if passed >= len(rows) - 3 else "behind",
+        "all_pass": passed == len(rows),
         "cases": rows,
     }
 
@@ -123,7 +140,7 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps({"passed": result["passed"], "total": result["total"], "score": result["score"]}, indent=2))
-    return 0 if result["passed"] >= result["total"] - 1 else 1
+    return 0 if result["passed"] == result["total"] else 1
 
 
 if __name__ == "__main__":

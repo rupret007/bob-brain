@@ -1,5 +1,13 @@
 # Web Bob reply quality — WEBBOB-REPLYQ-1856
 
+> Cross-vendor gate correction: the original assessment below is historical,
+> not a deployment approval. Its 8/8 status scores overlooked raw log paths,
+> incomplete sentences and unbounded detail; its dispatch scores overlooked
+> raw IDs and reconciliation rewriting old receipts as "Finished". Its eval
+> also tolerated a failure and three checks ended in `or True`. Codex fixed
+> these on the same branch; see `WEBBOB-REPLYQ-GATE-0927.md`. Live evidence and
+> the final decision are recorded separately after the actual deployment gate.
+
 Branch: `draft/webbob-replyq-1856`, base `dff84e3`. Scope: reply quality only
 (system prompt, context assembly, status formatting, dispatch routing,
 post-processing). No deploy performed.

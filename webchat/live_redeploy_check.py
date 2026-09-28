@@ -121,7 +121,8 @@ def verify_four(client, root, output):
                 f"Expected {count} durable jobs matching the receipt")
         api_rows = {row["id"]: row for row in client.call("/api/jobs")["dispatch"]}
         for row in rows:
-            require(row["id"] in answer["content"] and row["id"] in api_rows, "Receipt/API/journal disagree")
+            require(row["id"] in ids and row["id"] in api_rows, "Receipt/API/journal disagree")
+            require(row["id"] not in answer["content"], "Raw job ID leaked into casual receipt")
             require(row["status"] not in ("failed", "cancelled"), "Accepted job already failed; inspect queue")
             require(row["requested_worker"] not in ("grok", "xai"), "Forbidden worker selected")
         return rows
@@ -148,12 +149,12 @@ def verify_four(client, root, output):
                 require(all(before["inspection"].values()) and all(after["inspection"].values()), "Live observation source unavailable")
                 counts = {s["work_counts"]["running"] for s in (before, after)}
                 if counts != {0}:
-                    match = re.search(r"(\d+) workers? (?:is|are) running", answer["content"])
-                    require(match and int(match[1]) in counts, "Running-worker count disagrees with process observations")
+                    require(answer["content"].count("running for") in counts, "Running-worker count disagrees with process observations")
                 stable = {r["pid"]: r for r in before["work"] if r.get("pid")}
                 for row in after["work"]:
                     if row.get("pid") in stable:
-                        require(row["title"] in answer["content"], "Status omitted active work: " + row["title"])
+                        from worker_evidence import clean
+                        require(clean(row["title"], 95).strip(" .;:") in answer["content"], "Status omitted active work: " + row["title"])
                 _, details = submit(case, cid, "status with screen names and PIDs")
                 current = observation(root)
                 common = {r["screen"] for r in after["screen_lanes"]} & {r["screen"] for r in current["screen_lanes"]}
