@@ -245,7 +245,8 @@ def execute(identifier, token):
                     acceptance_task, answer,
                     lambda instructions: ask(row["worker"], instructions, cwd=cwd, coding=False,
                                              timeout=120, purpose="result-acceptance", locked=True),
-                    coding_evidence=coding_evidence, kind=row["kind"])
+                    coding_evidence=coding_evidence, report_evidence=evidence_body if api_only else None,
+                    kind=row["kind"])
                 acceptance = json.loads(redact(json.dumps(acceptance)))
                 if coding_evidence is not None:
                     if (git(cwd, "rev-parse", "HEAD") != coding_evidence["sha"]

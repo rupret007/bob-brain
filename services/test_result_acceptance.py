@@ -54,6 +54,16 @@ class AcceptanceTests(unittest.TestCase):
             accept(fixture["prompt"], fixture["complete_answer"], review)
         self.assertEqual(review.call_count, 1)
 
+    def test_report_reviewer_checks_assertions_against_the_workers_snapshot(self):
+        fixture = self.completion_fixture()
+        evidence = "FILE queue.py\ndef enqueue(job):\n    return job\n"
+        review = Mock(return_value='{"accepted": false, "reason": "The proposed assertion contradicts the supplied implementation"}')
+        with self.assertRaisesRegex(ResultRejected, "contradicts"):
+            accept(fixture["prompt"], fixture["complete_answer"], review, report_evidence=evidence)
+        prompt = review.call_args.args[0]
+        self.assertEqual(json.loads(prompt.split("\n\n", 1)[1])["report_evidence"], evidence)
+        self.assertIn("Reject tests whose expected result contradicts", prompt)
+
     def test_peer_audit_of_named_unblock_also_requires_resolution_steps(self):
         with self.assertRaisesRegex(ResultRejected, "Missing actionable unblock plan"):
             check_answer("Whole-repo audit and implementation plan for Web Bob unblock 1035", "The queue has three states.", kind="audit")

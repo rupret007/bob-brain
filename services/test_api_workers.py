@@ -274,18 +274,20 @@ class APIWorkerTests(unittest.TestCase):
         row = queue.claim(self.root, "minimax")
         def response(worker, prompt, **kwargs):
             if kwargs["purpose"] == "result-acceptance":
+                self.assertIn("FILE services/result_acceptance.py", prompt)
+                self.assertIn("def check_deliverables(", prompt)
+                self.assertIn('"report_evidence":', prompt)
                 return '{"accepted": true, "reason": "Concrete drafts and conditional unblock plan"}'
             self.assertLess(prompt.index(fixture["prompt"]), prompt.index("FILE "))
-            self.assertLess(len(prompt.encode()), 130000)
+            self.assertLess(len(prompt.encode()), 78000)
             # The old no-path prompt must supply production definitions, not
             # merely tests that refer to unavailable implementation/fixtures.
             for path, symbol in (("services/result_acceptance.py", "def check_deliverables("),
                                  ("services/dispatch_worker.py", "def execute("),
-                                 ("services/api_worker.py", "def evidence("),
-                                 ("webchat/worker_assignment.py", "def plan("),
-                                 ("state/task_queue.py", "def enqueue(")):
+                                 ("services/api_worker.py", "def evidence(")):
                 section = prompt.split("FILE " + path + "\n", 1)[1].split("\n\nFILE ", 1)[0]
                 self.assertIn(symbol, section)
+            self.assertIn("FILE services/fixtures/texting_jobcompletion_1035.json", prompt)
             self.assertIn("SAME line", prompt[prompt.index("END OF REPOSITORY EVIDENCE"):])
             return complete
         with patch.object(dispatch_worker, "ask", side_effect=response) as ask:
@@ -295,7 +297,7 @@ class APIWorkerTests(unittest.TestCase):
         self.assertEqual(result["status"], "succeeded")
         self.assertEqual(Path(result["result_path"]).read_text().strip(), complete.strip())
         self.assertEqual(result["result_sha256"], hashlib.sha256(complete.strip().encode()).hexdigest())
-        self.assertLessEqual(result["evidence"]["source_bytes"], 112000)
+        self.assertLessEqual(result["evidence"]["source_bytes"], 64000)
         self.assertTrue(result["evidence"]["omitted"])
         self.assertIsNone(result["worktree"])
 

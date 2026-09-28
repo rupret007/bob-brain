@@ -44,7 +44,7 @@ def execute(job):
                                     purpose=purpose, locked=True))
                 check_answer(task, answer, kind=record.get("kind"))
                 acceptance = accept(task, answer, lambda instructions: ask(record["engine"], instructions,
-                                      purpose="result-acceptance", locked=True), kind=record.get("kind"))
+                                      purpose="result-acceptance", locked=True), report_evidence=body, kind=record.get("kind"))
                 report = api_worker.save_report(CONDUCTOR, job, str(record.get("attempts", 0)), record["engine"], answer, redact)
                 atomic_write(folder / "RESULT.txt", answer + "\n")
                 job_event(job, verified=True, report_path=str(report), evidence=metadata,

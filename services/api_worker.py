@@ -69,16 +69,20 @@ def evidence(repo, worker, task, redact, kind=None):
     # Old queued assignments (including the 1035 replay) name no files. A
     # tests-first fallback consumed MiniMax's entire snapshot without any of
     # the implementation, causing invented symbols and misread requirements.
-    completion_paths = ("services/result_acceptance.py", "services/dispatch_worker.py",
-                        "services/api_worker.py", "webchat/worker_assignment.py", "state/task_queue.py",
-                        "services/test_result_acceptance.py", "services/test_api_workers.py")
+    completion_paths = ("services/result_acceptance.py", "services/dispatch_worker.py", "services/api_worker.py",
+                        "services/test_result_acceptance.py", "services/fixtures/texting_jobcompletion_1035.json",
+                        "webchat/worker_assignment.py", "state/task_queue.py", "services/test_api_workers.py")
     preferred = {name: i for i, name in enumerate(completion_paths)} if drafts and "Web Bob" in task else {}
     paths = sorted({name for name in paths if name and safe_source(repo, name)},
                    key=lambda name: (name not in task, preferred.get(name, len(preferred)),
                                      not (Path(name).name.startswith("test_") or "/tests/" in name), name))
     if not paths:
         raise RuntimeError("No eligible tracked repository evidence is available for this report")
-    limit = 700000 if worker == "gemini" else 112000 if drafts else 220000
+    limit = 700000 if worker == "gemini" else 64000 if drafts else 220000
+    named = [name for name in paths if name in task]
+    # Reserve a share for each named file; a large test module must not crowd
+    # the running checkout's build/assignment evidence out of the snapshot.
+    named_limit = max(1, limit // len(named)) if worker == "minimax" and drafts and named else 48000
     sections, included, omitted, truncated = [], [], [], []
     remaining = limit
     for name in paths:
@@ -88,11 +92,11 @@ def evidence(repo, worker, task, redact, kind=None):
             if not path.is_file() or not safe_source(repo, name):
                 omitted.append(name)
                 continue
-            raw = read_source(repo, name, min(48000, max(0, remaining)) + 1)
+            size = min(48000, remaining, named_limit if name in named else 48000)
+            raw = read_source(repo, name, max(0, size) + 1)
             if b"\0" in raw or remaining <= 0:
                 omitted.append(name)
                 continue
-            size = min(48000, remaining)
             if len(raw) > size:
                 truncated.append(name)
             text = redact(raw[:size].decode("utf-8", "replace"))
@@ -109,6 +113,9 @@ def evidence(repo, worker, task, redact, kind=None):
                     omitted=omitted, truncated=truncated, tracked_only=True, byte_limit=limit,
                     source_bytes=limit - remaining)
     manifest = json.dumps(dict(eligible_paths=paths, omitted=omitted, truncated=truncated))
+    if worker == "minimax" and drafts:
+        manifest = json.dumps(dict(included_paths=[row["path"] for row in included],
+                                   omitted_count=len(omitted), truncated=truncated))
     body = ("Repository snapshot (tracked working files; untracked/private/binary files excluded). "
             "This is a bounded snapshot, not proof of complete coverage.\nHEAD: " + metadata["head"] +
             "\nManifest (bounded): " + manifest[:8000 if worker == "minimax" and drafts else 60000] +
