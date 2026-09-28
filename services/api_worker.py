@@ -72,8 +72,22 @@ def report_serialization(task, kind=None):
     if kind in ("coding", "artifact") or not needs_test_drafts(task, kind):
         return ""
     heading = plan_heading(task)
+    schema = dict(
+        regression_tests=[dict(name="[failure case]", target="[file/symbol]",
+                               setup="[literal input/state or supplied fixture fields]", action="[exact call]",
+                               expected="[observable failure assertion]"),
+                          dict(name="[successful control]", target="[file/symbol]",
+                               setup="[valid literal input/state or supplied fixture fields]", action="[exact call]",
+                               expected="[observable success assertion]")],
+        plan=dict(change="[grounded change or validation of existing coverage]",
+                  validation="[supported command and passing result]",
+                  exit_condition="[actual named task result and gates required to pass; otherwise retain hold]") if heading else None,
+        completion=dict(accepted=True, reason="[task-specific delivered findings and limits]"),
+        findings_limits="[concrete finding; drafts unexecuted and missing evidence]")
     return (
         "\nREPORT SERIALIZATION: return ONLY the following JSON object, without a Markdown fence or prose. "
+        "Use readable indented JSON, one field per line. Check commas between every property, including "
+        "the comma after the plan object before completion. Invalid JSON is rejected without publication. "
         "Deliver actual regression test drafts. The server renders each field into its "
         "own report line, then runs the same deterministic and independent semantic acceptance checks. "
         "You must supply every substantive value; "
@@ -98,16 +112,7 @@ def report_serialization(task, kind=None):
            "exit requires actual worker results and live gates, otherwise remain blocked. "
            "The server renders these outer labels (supply values via plan fields, not Markdown):\n" + heading +
            ":\nChange:\nValidation:\nExit condition:\n" if heading else "Use plan=null; no plan is required.\n") +
-        '{"regression_tests": [{"name": "[failure case]", "target": "[file/symbol]", '
-        '"setup": "[literal input/state or supplied fixture fields]", "action": "[exact call]", '
-        '"expected": "[observable failure assertion]"}, {"name": "[control case]", '
-        '"target": "[file/symbol]", "setup": "[valid input/state or supplied fixture fields]", '
-        '"action": "[exact call]", "expected": "[observable successful assertion]"}], '
-        '"plan": ' + ('{"change": "[grounded change or validation of existing coverage]", '
-        '"validation": "[supported command and passing result]", '
-        '"exit_condition": "[actual named task result and gates required to pass; otherwise retain hold]"}' if heading else 'null') + ', '
-        '"completion": {"accepted": true, "reason": "[task-specific delivered findings and limits]"}, '
-        '"findings_limits": "[concrete finding; drafts unexecuted and missing evidence]"}\n')
+        json.dumps(schema, ensure_ascii=False, indent=2) + "\n")
 
 
 def render_report(task, answer, kind=None):
@@ -236,7 +241,7 @@ def evidence(repo, worker, task, redact, kind=None):
                 rendered_fields = ["evidence_limits", "complete_report"]
                 text = ("Rendered fixture fields: evidence_limits and complete_report only. "
                         "Unexecuted JSON transport example; adapt values to YOUR assigned task.\n"
-                        + example["evidence_limits"] + "\n\n" + json.dumps(example["complete_report"], ensure_ascii=False))
+                        + example["evidence_limits"] + "\n\n" + json.dumps(example["complete_report"], ensure_ascii=False, indent=2))
             elif preferred and name == "services/fixtures/texting_jobcompletion_1035.json" and len(raw) <= size:
                 # Historical answer/layout text induced paraphrased inputs and
                 # invalid one-case controls. Keep provenance, disclose omission,

@@ -131,7 +131,7 @@ class ActionPlanTests(unittest.TestCase):
         for prompt in (DATA['prompt'], json.loads((REPO / 'services/fixtures/texting_jobcompletion_1035.json').read_text())['prompt']):
             body, meta = api_worker.evidence(REPO, 'minimax', prompt, lambda text: text, kind='test-writing')
             self.assertNotIn(example_path, meta['truncated'])
-            self.assertTrue(body.endswith(json.dumps(example['complete_report'], ensure_ascii=False)))
+            self.assertTrue(body.endswith(json.dumps(example['complete_report'], ensure_ascii=False, indent=2)))
             self.assertNotIn(example['answer'], body)
             rendered = next(row for row in meta['files'] if row['path'] == example_path)
             self.assertEqual(rendered['rendered_fields'], ['evidence_limits', 'complete_report'])

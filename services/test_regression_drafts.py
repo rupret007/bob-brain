@@ -53,6 +53,12 @@ class RegressionDraftTests(unittest.TestCase):
             acceptance.check_literal_guard_drafts(malicious)
         system.assert_not_called()
 
+    def test_captured_missing_json_separator_is_not_repaired_into_success(self):
+        data = json.loads((REPO / 'services/fixtures/texting_regression_control_1658.json').read_text())['malformed_transport']
+        self.assertEqual(hashlib.sha256(data['answer'].encode()).hexdigest(), data['answer_sha256'])
+        with self.assertRaisesRegex(acceptance.ResultRejected, data['error']):
+            api_worker.render_report(data['prompt'], data['answer'], data['kind'])
+
     def test_exact_capture_cannot_win_a_positive_vote(self):
         for key in ('prompt', 'answer'):
             self.assertEqual(hashlib.sha256(DATA[key].encode()).hexdigest(), DATA[key + '_sha256'])
