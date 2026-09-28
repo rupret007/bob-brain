@@ -41,7 +41,7 @@ class ChatDispatchTests(Fixture):
         receipt = value["messages"][-1]
         row = queue.tasks(self.root)[receipt["task_id"]]
         self.assertEqual(row["status"], "queued")
-        self.assertNotIn(row["id"], receipt["content"])
+        self.assertIn(row["id"], receipt["content"])
         self.assertEqual(receipt["task_id"], row["id"])
         original = receipt["content"]
         self.assertFalse(self.fake.calls)
@@ -141,7 +141,7 @@ class ChatDispatchTests(Fixture):
                 self.assertTrue(receipt["content"].startswith("I queued “"))
                 self.assertIn(prompt.strip(" .?!"), receipt["content"])
                 self.assertIn("Claude" if worker == "claude" else "next available worker", receipt["content"])
-                self.assertNotIn(row["id"], receipt["content"])
+                self.assertIn(row["id"], receipt["content"])
         self.assertEqual(len(queue.tasks(self.root)), 5)
         self.assertFalse(self.fake.calls)
 

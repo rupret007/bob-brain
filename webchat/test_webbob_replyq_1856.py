@@ -149,7 +149,7 @@ class Session65a5d782Tests(SessionFixture):
         created = receipt["created_at"]
         for identifier in receipt["task_ids"]:
             row = task_queue.tasks(self.root)[identifier]
-            self.assertNotIn(identifier, original)
+            self.assertIn(identifier, original)
             claim = task_queue.claim(self.root, row["requested_worker"], identifier=identifier)
             task_queue.transition(self.root, identifier, claim["claim_token"], "running")
             task_queue.transition(self.root, identifier, claim["claim_token"], "succeeded", result="Verified fixture change")

@@ -111,7 +111,7 @@ def run_eval(root: Path | None = None) -> dict:
                        and "logs/" not in status_line and "lane-" not in status_line and " | " not in status_line))
     from task_dispatch import project_receipt
     receipt = project_receipt([dict(id="webchat-private-id", title="WebJam", status="queued", group_index=0, requested_worker="codex")])
-    rows.append(_case("dispatch receipt names task and worker without raw IDs", receipt == "I queued “WebJam” for Codex."))
+    rows.append(_case("dispatch receipt cites task, worker and job ID", receipt == "I queued “WebJam” for Codex (job `webchat-private-id`)."))
 
     long_line = "Colloquial \"text ...\" now reaches the model so Web Bob can make good on texting requests today"
     excerpt = clean(long_line, 40)
@@ -155,6 +155,10 @@ def run_eval(root: Path | None = None) -> dict:
                 rows.append(_case("assignment receipt never readiness-only", "ready" not in receipt["content"].lower() and receipt["provider"] == "dispatcher"))
             finally:
                 chat.close()
+
+    from integration_rubric import run_eval as integration_eval
+    for result in integration_eval():
+        rows.append(_case(result["name"], result["pass_check"], "; ".join(result["errors"])))
 
     passed = sum(1 for r in rows if r["pass"])
     return {

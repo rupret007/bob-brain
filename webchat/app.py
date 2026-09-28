@@ -350,9 +350,13 @@ class Chat(TaskDispatch):
                 conversation["pending_job_id"] = request_id
                 return self.intent_reply(conversation, "Priority order: " + ", ".join(intent_state["project_order"]) + ".")
             from worker_assignment import requested_workers
-            assignments = requested_workers(text)
+            assignments = requested_workers(text, conversation)
             if assignments:
                 return self.submit_worker_assignment(conversation, text, request_id, assignments)
+            from worker_assignment import issue_followup
+            fix = issue_followup(self.root, conversation, text)
+            if fix:
+                return self.submit_task(conversation, fix, request_id)
             work, route = parse_work(text)
             if transition == "resume" and not work:
                 work_text = re.sub(r"^(?:go(?:\s+ahead)?|resume)(?:\s+and)?[\s,:!]+", "", chat_intent.command(text), flags=re.I)
@@ -423,26 +427,8 @@ class Chat(TaskDispatch):
                     self.record_turn(ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
                                 refusals=[blocked], open_items=[])
                     return self.public(conversation)
-                action_id = conversation.pop("pending_council_id", None) or str(uuid.uuid5(uuid.NAMESPACE_URL, identifier + pending_council))
-                description = council_job_description(pending_council)
-                result = queue_once(self.root, action_id, description)
-                if result["ok"]:
-                    reply = (
-                        f"Queued a **draft** council run on the mini (`{result['file']}`). "
-                        "Gemini, MiniMax, and Claude will critique; transcript lands under `conductor/reviews/`."
-                    )
-                    conversation["messages"][-1].update(status="done", content=reply,
-                        action_card={"id": request_id, "state": "queued", "executable": False, "reason": "Council queued (draft)", "queue_id": result.get("file")})
-                else:
-                    conversation["messages"][-1].update(status="done", content=result["error"],
-                        action_card={"id": request_id, "state": "blocked", "executable": False, "reason": "Duplicate or blocked"})
-                self.save(conversation)
-                self.conversations[identifier] = conversation
-                self.record_turn(ask=text, provider=None, jobs=[result.get("file", "")] if result.get("ok") else [],
-                            files=[result.get("path", "")] if result.get("ok") else [], commits=[],
-                            confirmations=[text[:200]] if result.get("ok") else [],
-                            refusals=[result.get("error", "blocked")] if not result.get("ok") else [], open_items=[])
-                return self.public(conversation)
+                conversation.pop("pending_council_id", None)
+                return self.submit_council(conversation, pending_council, request_id)
             job_confirm, job_proposal = parse_job_confirm(text)
             if job_confirm and pending:
                 expected_job = conversation.get("pending_job_id")
@@ -471,8 +457,8 @@ class Chat(TaskDispatch):
                     self.record_turn(ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
                                 refusals=[blocked], open_items=[])
                     return self.public(conversation)
-                action_id = conversation.pop("pending_job_id", None) or str(uuid.uuid5(uuid.NAMESPACE_URL, identifier + pending))
-                return self.submit_task(conversation, pending, action_id)
+                conversation.pop("pending_job_id", None)
+                return self.submit_task(conversation, pending, request_id)
             if pending and not job_confirm:
                 conversation.pop("pending_job", None)
             if parse_council_cancel(text) and pending_council:
@@ -625,10 +611,13 @@ class Chat(TaskDispatch):
                 value = self.get(identifier)
                 value["codex_thread_id"] = answer.pop("codex_thread_id", None)
                 value.pop("retry_prompt", None)
-                answer["content"] = repair_hollow_progress(self.redact(answer["content"]))
+                # Provider metadata cannot mint receipts or dispatcher authority.
+                answer = {key: answer[key] for key in ("content", "provider", "attempts") if key in answer}
+                answer["content"] = self.redact(answer["content"])
                 user_msg = next((m for m in reversed(value["messages"]) if m["role"] == "user"), {})
                 from reply_authority import enforce
                 answer["content"] = self.redact(enforce(self.ledger_root(identifier), user_msg.get("content", ""), answer, value))
+                answer["content"] = repair_hollow_progress(answer["content"])
                 rid = user_msg.get("request_id")
                 value["messages"][-1].update(answer, status="done")
                 if rid:

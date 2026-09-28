@@ -83,7 +83,7 @@ class IntentTests(Fixture):
             self.assertEqual(row["status"], "queued")
             self.assertIn(row["title"], receipt["content"])
             self.assertIn(row["requested_worker"].title(), receipt["content"])
-            self.assertNotIn(row["id"], receipt["content"])
+            self.assertIn(row["id"], receipt["content"])
         self.submit(PUSH, request)
         self.reload()
         self.submit(PUSH, request)

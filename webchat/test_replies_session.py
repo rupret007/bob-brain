@@ -56,7 +56,7 @@ class SessionReplies(Fixture):
                     for name in NAMES:
                         self.assertIn(name, answer)
                     self.assertEqual(answer.count("running for 11 min"), 5)
-                    self.assertIn("Claude has no confirmed active work; resets 6:20 PM CT", answer)
+                    self.assertIn("Claude is idle; resets 6:20 PM CT", answer)
                     self.assertNotIn("resets", answer.split("Claude")[0])
                     self.assertLessEqual(len(answer.split(". ")), 4)
                     for unwanted in ("unknown task", "details unavailable", "I'll focus", "Chat health", "Recent logs", "Disk space"):
@@ -96,7 +96,7 @@ class SessionReplies(Fixture):
             self.assertEqual(row["kind"], "coding")
             self.assertIn("worktree", row["prompt"])
             self.assertIn("draft branch", row["prompt"])
-            self.assertNotIn(row["id"], receipt["content"])
+            self.assertIn(row["id"], receipt["content"])
             claim = queue.claim(self.root, row["requested_worker"], identifier=row["id"])
             self.assertIsNotNone(claim)
             queue.transition(self.root, row["id"], claim["claim_token"], "running")
@@ -133,5 +133,5 @@ class SessionReplies(Fixture):
             reply = self.submit(ASKS[4], provider=provider)
             self.assertEqual(reply["provider"], "state")
             self.assertIn("Codex", reply["content"])
-            self.assertIn("have no confirmed active work", reply["content"])
+            self.assertIn("are idle", reply["content"])
         self.assertFalse(self.fake.calls)

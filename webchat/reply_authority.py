@@ -19,7 +19,8 @@ NO_JOB_NOTICE = re.compile(
     r"\b(?:nothing|no work) (?:was |is |has been )?(?:queued|started|running)\b|"
     r"\bstart a job\s*:", re.I)
 STATUS_QUESTION = re.compile(
-    r"\b(?:status|resources?|workers? doing|each (?:worker|model)|all (?:workers|models)|"
+    r"\b(?:status|resources?|workers? doing|each (?:worker|model)|all (?:workers|models|LLMs)|"
+    r"work being performed|what about (?:Gemini|MiniMax|Codex|Claude|Cursor)|"
     r"(?:what(?:['’]s| is) (?:working on what|going on)|each llm)|"
     r"everything (?:going|running)|how(?:['’]s| is| we)? (?:everything|it going|we doing)|"
     r"(?:is|are) (?:it|anything|everything|things|the (?:work|jobs?|workers?)) "
@@ -135,7 +136,7 @@ def _join(items):
 
 
 def _task_name(row):
-    label = row.get("task") or row.get("title") or task_label(screen=row.get("screen"))
+    label = row.get("task") or row.get("title") or (row.get("prompt") or "").split("\n")[0] or task_label(screen=row.get("screen"))
     label = clean(label, 95).strip(" .;:") or "a CLI session"
     project = row.get("project")
     if project and project.lower() not in label.lower():
@@ -151,10 +152,11 @@ def _casual_status(snap):
     active, idle, extra = [], [], []
     for name in WORKER_NAMES:
         rows = [row for row in work if row.get("worker") == name]
+        pending = [row for row in snap.get("queue_jobs", {}).get("queued", []) if row.get("worker") == name]
         if name == "mini" and not rows:
             continue
         display = WORKER_NAMES[name]
-        if rows:
+        if rows or pending:
             tasks = []
             for row in rows:
                 model = row.get("model") or "model not reported"
@@ -163,11 +165,14 @@ def _casual_status(snap):
                          "claimed": "claimed, execution unconfirmed; age ",
                          "unverified": "open, worker unconfirmed; age "}[row["state"]]
                 tasks.append("“" + _task_name(row) + "” (" + model + "; " + state + duration + ")")
+            from collections import Counter
+            for label, count in Counter(_task_name(row) for row in pending).items():
+                tasks.append("“" + label + "” (" + (str(count) + " jobs " if count > 1 else "") + "waiting to run)")
             active.append(display + " is on " + _join(tasks) + _cooldown(snap, name))
         elif snap.get("lane_locks", {}).get(name, {}).get("state") == "busy":
             extra.append(display + "'s last lane check was busy, but its task isn't recorded")
         elif _cooldown(snap, name):
-            extra.append(display + " has no confirmed active work" + _cooldown(snap, name))
+            extra.append(display + (" is idle" if all(inspection.values()) else " has unconfirmed activity") + _cooldown(snap, name))
         else:
             idle.append(display)
     sentences = []
@@ -191,14 +196,19 @@ def _casual_status(snap):
                      (" has" if len(other) == 1 else " have") + " an open session with no confirmed worker")
     # A cached lock or a failed inspection cannot establish that a worker is idle.
     if idle:
-        extra.append(_join(idle) + (" has" if len(idle) == 1 else " have") + " no confirmed active work")
+        extra.append(_join(idle) + ((" is idle" if len(idle) == 1 else " are idle") if all(inspection.values())
+                                   else " have no confirmed active work"))
     if not all(inspection.values()) and active:
         extra.append("a live check failed, so this list may be incomplete")
     if extra:
         sentences.append("; ".join(extra) + ".")
     counts = snap["queue_counts"]
     if inspection.get("queue_available", True):
-        sentences.append(f"The job runner has {counts['claimed']} claimed and {counts['queued']} queued jobs.")
+        queue_line = f"The job runner has {counts['claimed']} claimed and {counts['queued']} queued jobs"
+        unassigned = [row for row in snap.get("queue_jobs", {}).get("queued", []) if row.get("worker") not in WORKER_NAMES]
+        if unassigned:
+            queue_line += "; awaiting a worker for " + _join(["“" + _task_name(row) + "”" for row in unassigned])
+        sentences.append(queue_line + ".")
     else:
         sentences.append("I couldn't read the job queue.")
     return " ".join(sentences)
@@ -301,9 +311,9 @@ def operational_reply(root, provider, text=""):
 def enforce(root, text, answer, conversation=None):
     content = answer["content"]
     from worker_assignment import requested_workers
-    if requested_workers(text):
+    if requested_workers(text, conversation):
         # Model prose is never an assignment receipt, even if it sounds ready.
-        return "I haven't assigned a worker from this reply. The dispatcher must save a job before I can name an assignment."
+        return "I haven't assigned a worker from this reply. No new job was queued."
     state = state_for(conversation if conversation is not None else {})
     scopes = blocked_scopes(state, projects(text))
     if HOLD_QUESTION.match(text.strip()):
@@ -316,13 +326,17 @@ def enforce(root, text, answer, conversation=None):
     if STATUS_QUESTION.search(text) or correcting_status(text, conversation):
         content = operational_reply(root, answer["provider"], text)
     else:
+        from dispatch_receipts import claims_dispatch, NO_DISPATCH
+        sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
+        content = "".join(part for part in sentences if not NO_JOB_NOTICE.search(part)).strip() or NO_DISPATCH
+        if claims_dispatch(content) or QUEUE_CLAIM.search(content):
+            return NO_DISPATCH
         # Keep the useful answer; remove unsupported effects and boilerplate
         # without adding a system notice to ordinary chat.
         # Keep original whitespace so removing a footer doesn't flatten the
         # useful answer's paragraphs, lists, or code formatting.
         sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
-        kept = [part for part in sentences if not QUEUE_CLAIM.search(part)
-                and not NO_JOB_NOTICE.search(part) and not PROVIDER_CLAIM.search(part)]
+        kept = [part for part in sentences if not PROVIDER_CLAIM.search(part)]
         if len(kept) != len(sentences):
             content = "".join(kept).strip() or "What would you like me to work on?"
     sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)

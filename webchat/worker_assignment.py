@@ -17,13 +17,47 @@ ONGOING = re.compile(r"\b(?:ongoing|current|existing|active|running|queued)\b.{0
                      r"\b(?:for|on|with)\s+(?:these|those|our|the)\s+(?:jobs?|tasks?|work)\b", re.I)
 
 
-def requested_workers(text):
-    match = DIRECTIVE.match(command(text))
-    reminder = re.match(r"^(?:remember|you can|we can)\b", command(text), re.I)
+def requested_workers(text, conversation=None):
+    cleaned = command(text)
+    if re.match(r"^(?:don't|do not|never|stop|hold)\b", cleaned, re.I):
+        return None
+    # A follow-up references the last explicit worker request, not arbitrary
+    # names from a model answer or provider-health metadata.
+    followup = re.search(r"\b(?:add|assign|queue|give)\s+(?:some |more |new )?(?:work|jobs?|tasks?)\s+(?:for|to)\s+(?:them|those (?:LLMs|workers))\b|"
+                         r"\b(?:want|need)\s+them\s+(?:workout|working|to work|busy)\b|"
+                         r"\b(?:put|get|keep)\s+them\s+(?:to work|working|busy)\b", cleaned, re.I)
+    if followup:
+        names = (conversation or {}).get("assignment_workers")
+        if not names:
+            for message in reversed((conversation or {}).get("messages", [])):
+                if message.get("role") == "user" and message.get("content") != text:
+                    names = requested_workers(message.get("content", ""))
+                    if names:
+                        break
+        if names:
+            return list(names)
+    all_workers = re.match(r"^(?:use|assign|put|get|keep)\s+all\s+(?:the\s+)?(?:LLMs|models|workers)\b", cleaned, re.I)
+    if all_workers and (ONGOING.search(cleaned) or re.search(r"\b(?:to work|busy|working)\b", cleaned, re.I)):
+        return list(task_queue.MODEL_WORKERS)
+    match = DIRECTIVE.match(cleaned)
+    reminder = re.match(r"^(?:remember|you can|we can)\b", cleaned, re.I)
     if not match or not (ONGOING.search(match["rest"]) or (reminder and re.fullmatch(r"\s*(?:too|also)?[.!]*", match["rest"], re.I))):
         return None
     return list(dict.fromkeys(name.lower().replace("cursor-agent", "cursor")
                               for name in re.findall(NAMES, match["names"], re.I)))
+
+
+def issue_followup(root, conversation, text):
+    if not re.fullmatch(r"if you find (?:any )?(?:issues|bugs)[, ]+(?:please )?fix them[.!]*", command(text), re.I):
+        return None
+    previous = next((m["dispatch_intent"] for m in reversed(conversation["messages"][:-2])
+                     if m.get("dispatch_intent", {}).get("worker_assignment")), None)
+    if not previous or not previous.get("assignment_projects"):
+        return None
+    project = previous["assignment_projects"][0]
+    return ("Fix verified issues in " + project + ": inspect the ongoing work and available review reports, "
+            "reproduce a concrete issue, implement one bounded fix if warranted, and run relevant tests. "
+            "Report evidence if no fix is needed. Work in your assigned draft worktree; never deploy or merge.")
 
 
 def plan(root, conversation, text, workers):
@@ -36,7 +70,7 @@ def plan(root, conversation, text, workers):
     for row in observed["records"].values():
         if (row.get("status") or row.get("state")) not in ("queued", "claimed", "launched", "running"):
             continue
-        if row.get("source_job_id"):
+        if row.get("source_job_id") or (row.get("kind") in ("audit", "test-writing", "planning", "review", "research", "eval-grading")):
             continue  # Never recursively create report jobs about report jobs.
         prompt = row.get("prompt") or row.get("title") or row.get("project")
         if not prompt:
@@ -52,6 +86,8 @@ def plan(root, conversation, text, workers):
     known = {row["id"] for row in candidates}
     for row in observed["work"]:
         if row["state"] != "running" or row.get("job_id") in known or not row.get("task") or not row.get("project"):
+            continue
+        if row.get("job_id") and observed["records"].get(row["job_id"], {}).get("kind") in ("audit", "test-writing", "planning", "review", "research", "eval-grading"):
             continue
         if targets and row["project"] not in targets:
             continue

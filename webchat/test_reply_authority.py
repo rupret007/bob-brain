@@ -38,7 +38,7 @@ class AuthorityTests(unittest.TestCase):
                      "You're all set — Claude has your task.", "Claude’s on it."):
             with self.subTest(text=text):
                 answer = enforce(Path('/unused'), "Ok going now?", dict(content=text, provider="gemini"))
-                self.assertEqual(answer, "What would you like me to work on?")
+                self.assertEqual(answer, "I did not start, assign, or queue any work in this turn.")
 
     def test_plain_answers_and_job_explanations_are_unchanged(self):
         for text in ("Got it — I’ll keep it short.", "Hi Jeff!", "A lease expires; a lock needs to be released.",
@@ -55,7 +55,8 @@ class AuthorityTests(unittest.TestCase):
                       "No server-confirmed job was created by this reply. Send `start a job: <task>` to create a tracked job."):
             with self.subTest(claim=claim):
                 answer = enforce(Path('/unused'), "Please be brief", dict(content="Got it — I’ll keep it short.\n\n" + claim, provider="gemini"))
-                self.assertEqual(answer, "Got it — I’ll keep it short.")
+                self.assertEqual(answer, "Got it — I’ll keep it short." if claim.startswith("No server") else
+                                 "I did not start, assign, or queue any work in this turn.")
 
     def test_style_preference_never_gets_an_unsolicited_status_report(self):
         answer = enforce(Path('/unused'), "Keep replies short and friendly.",
@@ -74,7 +75,7 @@ class AuthorityTests(unittest.TestCase):
                 answer = enforce(root, "How everything going. We using all resources now?",
                                  dict(provider="gemini", content="Cursor is handling our chat; Gemini and MiniMax are still failing."))
         self.assertIn("Gemini", answer)
-        self.assertIn("have no confirmed active work", answer)
+        self.assertIn("are idle", answer)
         self.assertNotIn("Answering provider:", answer)
         self.assertNotIn("still failing", answer)
         self.assertNotIn("Cursor is handling", answer)

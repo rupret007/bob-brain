@@ -709,10 +709,14 @@ class HandbackJobTests(Fixture):
         self.assertEqual(self.chat.conversations[self.identifier].get("pending_council"), "mobile sheet UX")
         self.chat.submit(self.identifier, "yes, run council", str(uuid.uuid4()))
         self.wait()
-        index = (self.root / "next-prompts/INDEX.md").read_text()
-        self.assertIn("webchat-", index)
-        bodies = " ".join(p.read_text().lower() for p in (self.root / "next-prompts").glob("webchat-*.md"))
-        self.assertIn("council", bodies)
+        from task_dispatch import task_queue
+        answer = self.chat.history(self.identifier)["messages"][-1]
+        rows = [task_queue.tasks(self.root)[key] for key in answer["task_ids"]]
+        self.assertEqual([row["requested_worker"] for row in rows], ["gemini", "minimax", "claude"])
+        self.assertEqual([row["kind"] for row in rows], ["audit", "test-writing", "analysis"])
+        for row in rows:
+            self.assertIn(row["id"], answer["content"])
+            self.assertIn("council question", row["prompt"])
         self.assertNotIn("pending_council", self.chat.conversations[self.identifier])
 
     def test_job_confirm_dispatches_durable_task(self):
@@ -735,7 +739,7 @@ class HandbackJobTests(Fixture):
         self.assertEqual(assistant["action_card"]["state"], "queued")
         self.assertIn("webchat-", assistant["action_card"].get("queue_id", ""))
         self.assertEqual(assistant["action_card"].get("goal_text"), "fix the webchat panel")
-        self.assertEqual(assistant["content"], "I queued “fix the webchat panel” for the next available worker.")
+        self.assertEqual(assistant["content"], "I queued “fix the webchat panel” for the next available worker (job `" + assistant["task_id"] + "`).")
 
     def test_job_merge_refused_before_queue(self):
         self.chat.submit(self.identifier, "start a job: merge #158", str(uuid.uuid4()))
@@ -1227,7 +1231,7 @@ class HandbackJobTests(Fixture):
         state_ledger.write_now(self.root, "offline parity fixture", sha="fedcba1")
         result = run_eval(self.root)
         self.assertEqual(result["passed"], result["total"], result["cases"])
-        self.assertEqual(result["total"], 37)
+        self.assertEqual(result["total"], 56)
 
     def test_catchup_event_ack_cursor(self):
         ledger_dir = Path(__file__).resolve().parent.parent / "state"

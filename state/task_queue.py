@@ -303,3 +303,19 @@ def delivered(root, identifier, message_id):
             row.update(delivered_at=time.time(), result_message_id=message_id)
             return _append(path, row, "delivered")
         return row
+
+
+def cancel_replay(root, conversation_ids, reason):
+    """Fence only this release's replay jobs before restoring older workers.
+
+    Keep receipts, drafts and completed results. Existing workers observe the
+    revoked claim on their next heartbeat and cannot publish after rollback.
+    """
+    cancelled = []
+    with locked(root) as path:
+        for row in _read(path).values():
+            if row.get("conversation_id") not in conversation_ids or row["status"] in TERMINAL:
+                continue
+            row.update(status="failed", claim_token=None, lease_until=0, finished_at=time.time(), error=reason)
+            cancelled.append(_append(path, row, "replay_cancelled"))
+    return cancelled

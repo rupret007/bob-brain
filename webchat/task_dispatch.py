@@ -112,7 +112,7 @@ def task_receipt(row):
     target = names[worker] if worker != "auto" else "the next available worker"
     title = row.get("title") or row.get("prompt", "the requested task").splitlines()[0]
     title = clean(title, 100).strip(" .?!") or "the requested task"
-    return "I queued “" + title + "” for " + target + "."
+    return "I queued “" + title + "” for " + target + " (job `" + row["id"] + "`)."
 
 
 def task_kind(prompt):
@@ -181,10 +181,18 @@ def project_plan(root, description, names, worker):
 
 
 def project_receipt(rows):
-    return "\n".join(task_receipt(row) for row in sorted(rows, key=lambda row: row["group_index"]))
+    return "\n".join(task_receipt(row) for row in sorted(rows, key=lambda row: row.get("group_index") or 0))
 
 
 class TaskDispatch:
+    def submit_council(self, conversation, topic, request_id):
+        # Council has the same journal and receipt contract as every other job.
+        description = ("max-mode Council: " + topic + "\n"
+                       "[gemini] Audit the evidence for this council question: " + topic + "\n"
+                       "[minimax] Draft test cases and failure checks for this council question: " + topic + "\n"
+                       "[claude] Review the design and assumptions for this council question: " + topic)
+        return self.submit_max_task(conversation, description, request_id)
+
     def submit_worker_assignment(self, conversation, description, request_id, workers):
         from worker_assignment import plan
         message = conversation["messages"][-1]
@@ -196,6 +204,7 @@ class TaskDispatch:
             packages = plan(self.root, conversation, description, workers)
         except ValueError as exc:
             return self.intent_reply(conversation, str(exc))
+        conversation["assignment_workers"] = list(workers)
         intent = dict(prompt=description, request_id=request_id, goal=description,
                       worker_assignment=True, project_batch=True,
                       assignment_projects=list(dict.fromkeys(name for package in packages
@@ -303,9 +312,11 @@ class TaskDispatch:
                         rows = max_mode.enqueue(self.root, identifier, intent)
                         group = rows[0]["group_id"]
                         message.update(group_id=group, task_ids=[row["id"] for row in rows], status="done", provider="dispatcher",
-                                       content=project_receipt(rows) if intent.get("project_batch") else "I queued " + str(len(rows)) + " tasks across the available workers.",
+                                       content=project_receipt(rows),
                                        action_card={"id": message["request_id"], "state": "queued", "executable": False,
                                                     "group_id": group, "queue_id": group, "goal_text": intent["goal"][:160]})
+                        from dispatch_receipts import verify_saved_receipt
+                        verify_saved_receipt(self.root, value, message)
                         changed = True
                         continue
                     row = task_queue.enqueue(self.root, identifier, intent["request_id"], intent["prompt"],
@@ -313,9 +324,11 @@ class TaskDispatch:
                                              draft_pr=intent.get("draft_pr", False), title=intent.get("title"),
                                              source_job_id=intent.get("source_job_id"))
                     message.update(task_id=row["id"], status="done", provider="dispatcher",
-                                   content=(row["title"] + ": " if intent.get("worker_assignment") else "") + task_receipt(row),
+                                   content=task_receipt(row),
                                    action_card={"id": message["request_id"], "state": "queued", "executable": False,
                                                 "queue_id": row["id"], "task_id": row["id"], "goal_text": row["prompt"][:160]})
+                    from dispatch_receipts import verify_saved_receipt
+                    verify_saved_receipt(self.root, value, message)
                     changed = True
                 if changed:
                     self.save(value)

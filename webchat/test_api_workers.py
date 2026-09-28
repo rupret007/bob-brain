@@ -49,7 +49,8 @@ class APIAssignmentTests(SessionFixture):
         queue.transition(self.root, row["id"], claim["claim_token"], "running")
         self.chat.reconcile_tasks()
         reply = self.chat.history(self.identifier)["messages"][-1]["content"]
-        self.assertIn("Started on MiniMax", reply)
+        self.assertEqual(reply, value["messages"][-1]["content"])
+        self.assertIn(row["id"], reply)
         self.assertIn(row["title"], reply)
 
     def test_assignments_deliver_one_attributed_result_without_reassigning_coder(self):

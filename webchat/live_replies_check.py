@@ -50,7 +50,7 @@ def verify_replies(client, root, output, timeout=1800):
                 require(len(ids) == 4 and [r["title"] for r in rows] == PROJECTS, "Stress request did not create all four project jobs")
                 require(len({r["requested_worker"] for r in rows}) >= 2, "Project jobs were not distributed")
                 require(len(text.splitlines()) == 4 and all(r["title"] in text for r in rows), "Missing short project receipts")
-                require(not any(job in text for job in ids), "Raw job IDs in receipt")
+                require(all(job in text for job in ids), "Missing job IDs in receipt")
                 _, replay = client.submit(cid, exchange["message"], answer["request_id"])
                 require(replay["task_ids"] == ids, "Replay created duplicate jobs")
                 require(len([r for r in task_queue.tasks(root).values() if r["conversation_id"] == cid]) == 4, "Extra session jobs")

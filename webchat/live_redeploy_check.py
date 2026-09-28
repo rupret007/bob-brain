@@ -122,7 +122,7 @@ def verify_four(client, root, output):
         api_rows = {row["id"]: row for row in client.call("/api/jobs")["dispatch"]}
         for row in rows:
             require(row["id"] in ids and row["id"] in api_rows, "Receipt/API/journal disagree")
-            require(row["id"] not in answer["content"], "Raw job ID leaked into casual receipt")
+            require(row["id"] in answer["content"], "Dispatch receipt omits job ID")
             require(row["status"] not in ("failed", "cancelled"), "Accepted job already failed; inspect queue")
             require(row["requested_worker"] not in ("grok", "xai"), "Forbidden worker selected")
         return rows
