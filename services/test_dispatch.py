@@ -46,6 +46,9 @@ class DispatchTests(unittest.TestCase):
         self.acceptance = patch.object(result_acceptance, "accept", return_value={"accepted": True, "method": "test-review"})
         self.acceptance.start()
         self.addCleanup(self.acceptance.stop)
+        self.validation = patch.object(mini_worker, "verify_coding", return_value=None)
+        self.validation.start()
+        self.addCleanup(self.validation.stop)
 
     def tearDown(self):
         for item in reversed(self.patches):
@@ -320,9 +323,37 @@ class DispatchTests(unittest.TestCase):
     def test_coding_without_commit_is_not_success(self):
         self.enqueue(worker="codex", kind="coding")
         row = queue.claim(self.root, "codex")
-        with patch.object(dispatch_worker, "prepare_task", return_value=self.root), patch.object(dispatch_worker, "ask", return_value="I made changes"), patch.object(dispatch_worker, "git", side_effect=["draft/" + row["id"], " M file.py"]):
+        with patch.object(dispatch_worker, "prepare_task", return_value=self.root), patch.object(dispatch_worker, "ask", return_value="I made changes"), patch.object(dispatch_worker, "git", side_effect=["base-sha", "draft/" + row["id"], " M file.py"]):
             dispatch_worker.execute(row["id"], row["claim_token"])
         self.assertEqual(queue.tasks(self.root)[row["id"]]["status"], "failed")
+
+    def test_required_coding_checks_precede_acceptance_publication_and_success(self):
+        self.validation.stop()
+        row = queue.enqueue(self.root, "conversation", "incomplete-api", "Improve StoryBoard", kind="coding",
+                            worker="cursor", publish_project="StoryBoard")
+        claim = queue.claim(self.root, "cursor")
+        branch = "draft/" + row["id"]
+        def git(cwd, *args):
+            if args[0] == "rev-parse": return "a" * 40
+            if args[0] == "branch": return branch
+            return ""
+        with patch.object(dispatch_worker, "prepare_task", return_value=self.root), \
+                patch.object(dispatch_worker, "git", side_effect=git), \
+                patch.object(dispatch_worker, "ask", return_value="Fixed API install. Tests: shared 106 pass. Status: Pass.") as ask, \
+                patch.object(mini_worker, "verify_coding", side_effect=result_acceptance.ResultRejected("Required coding check failed: pnpm test")) as verify, \
+                patch.object(dispatch_worker.draft_publish, "publish") as publish, \
+                patch.object(result_acceptance, "accept") as accept:
+            self.assertEqual(dispatch_worker.execute(row["id"], claim["claim_token"]), 1)
+        verify.assert_called_once()
+        publish.assert_not_called()
+        accept.assert_not_called()
+        self.assertEqual(ask.call_count, 1)
+        self.assertIn("After the final code edit", ask.call_args.args[1])
+        self.assertIn('["pnpm", "test"]', ask.call_args.args[1])
+        result = queue.tasks(self.root)[row["id"]]
+        self.assertEqual(result["status"], "failed")
+        self.assertNotIn("result", result)
+        self.assertFalse((self.core / "state/task-runs" / row["id"] / "RESULT.md").exists())
 
     def test_api_only_prompt_has_no_workspace_framing_in_either_call(self):
         import api
