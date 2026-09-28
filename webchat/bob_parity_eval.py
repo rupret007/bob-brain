@@ -157,8 +157,9 @@ def run_eval(root: Path | None = None) -> dict:
                 chat.close()
 
     from integration_rubric import run_eval as integration_eval
-    for result in integration_eval():
-        rows.append(_case(result["name"], result["pass_check"], "; ".join(result["errors"])))
+    for project_lane_only in (False, True):
+        for result in integration_eval(project_lane_only=project_lane_only):
+            rows.append(_case(result["name"], result["pass_check"], "; ".join(result["errors"])))
 
     passed = sum(1 for r in rows if r["pass"])
     return {

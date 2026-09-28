@@ -97,6 +97,26 @@ def plan(root, conversation, text, workers):
                                    ". Its original task prompt was not recorded; inspect the project's current code and "
                                    "state that limitation. Do not invent the lane's exact assignment.")
         candidates.append(dict(id=None, prompt=task, project=row["project"]))
+    # An open project lane can outlive its worker process. It still identifies
+    # a repository for a new API report, but proves neither an ongoing task nor
+    # execution. Use it only when no permitted active assignment is available;
+    # never turn this limited context into a coding job or a fake source job ID.
+    if not candidates and all(worker in task_queue.API_WORKERS for worker in workers):
+        seen_projects = set()
+        for row in observed["work"]:
+            project = row.get("project")
+            if (row["state"] != "unverified" or row.get("source") != "screen" or row.get("job_id")
+                    or row.get("screen") not in observed.get("sessions", {})
+                    or not project or not row.get("repo") or not row.get("title") or project in seen_projects):
+                continue
+            if (targets and project not in targets) or blocked_scopes(state, [project]):
+                continue
+            context = ("Observed open project lane: " + row["title"] + ". Its worker activity is unverified; "
+                       "no current task is confirmed. Inspect the project's supplied repository snapshot "
+                       "for concrete findings and regression test drafts. Do not infer active work, "
+                       "progress or results from the lane name or historical logs.")
+            candidates.append(dict(id=None, prompt=context, project=project, context="project context"))
+            seen_projects.add(project)
     if not candidates:
         raise ValueError("I couldn't assign those workers: there is no identifiable ongoing job permitted by the current holds. Name a project and task to start.")
     health = root / "conductor/lanes.json"
@@ -108,12 +128,13 @@ def plan(root, conversation, text, workers):
             raise ValueError("I couldn't assign " + worker + ": " + row["state"].replace("_", " ") + ". No new assignments were queued.")
         source = candidates[index % len(candidates)]
         kind, role = ROLES.get(worker, ("analysis", "Review the ongoing task and propose next steps"))
+        context = source.get("context", "ongoing task")
         # One concrete bounded package per requested worker. Keep existing
         # coders running; do not revoke a live claim or share their edit rights.
         prompt = ("Project: " + source["project"] + "\nYour independent subtask:\n" + role +
-                  " for the following ongoing task. Deliver concrete findings and "
+                  " for the following " + context + ". Deliver concrete findings and "
                   "an actionable plan or test drafts. Never deploy or resolve conflicts.\n" +
-                  "Ongoing task:\n" + source["prompt"][:8000])
+                  context.capitalize() + ":\n" + source["prompt"][:8000])
         packages.append(dict(worker=worker, kind=kind, title=source["project"] + " — " + role,
                              prompt=prompt, source_job_id=source["id"]))
     return packages

@@ -1,10 +1,14 @@
 """Offline API job execution through the real scheduler, transport and ledger."""
+import hashlib
 import json
 import os
+import sys
+import time
 import unittest
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import api
 import api_worker
@@ -14,6 +18,7 @@ import lanes
 import state
 import worker
 import workspaces
+import web_dispatch
 from api_tasks import MODELS
 import test_dispatch as dispatch_fixture
 from web_dispatch import task_queue as queue
@@ -35,6 +40,95 @@ class APIWorkerTests(unittest.TestCase):
         workspaces.git(repo, "add", "queue.py", "keys.env", "webchat/.password", "linked.py")
         workspaces.git(repo, "-c", "user.name=Test", "-c", "user.email=test@localhost", "commit", "-m", "Fixture")
         return repo
+
+    def test_frozen_turn_one_reaches_both_api_transports_and_delivers_reports(self):
+        # Real chat -> queue -> scheduler -> worker -> metered API transport.
+        # Only HTTP responses, lane health and semantic acceptance are fixtures.
+        with patch.object(sys, "path", [str(Path(__file__).resolve().parents[1] / "webchat"), *sys.path]):
+            from app import Chat
+            from dispatch_receipts import receipt_errors
+            from integration_rubric import sessions
+
+            repo = self.repo()
+            (self.core / "services").mkdir()
+            (self.core / "services/projects.json").write_text(json.dumps({"Web Bob": {"repo": str(repo)}}))
+            (self.core / "keys.env").write_text("GEMINI_API_KEY=gemini-fixture-key\nMINIMAX_API_KEY=minimax-fixture-key\n")
+            providers = Mock(spec=["reply"])
+            providers.reply.side_effect = AssertionError("Assignments must bypass conversational models")
+            chat = Chat(self.core / "webchat", self.root, providers)
+            self.addCleanup(chat.close)
+            cid = chat.conversation_list()["conversations"][0]["id"]
+            request = str(uuid.uuid4())
+            started = time.time()
+            with patch("live_status_snapshot._screen_sessions", return_value={"lane-webbob-llm-reviews": "29817.lane-webbob-llm-reviews"}), \
+                    patch("live_status_snapshot.process_table", return_value={}):
+                receipt = chat.submit(cid, sessions()[0]["exchanges"][0]["message"], request)["messages"][-1]
+            rows = queue.tasks(self.root)
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(receipt_errors(receipt, rows, cid, request, started), [])
+            self.assertEqual([rows[key]["requested_worker"] for key in receipt["task_ids"]], ["gemini", "minimax"])
+            self.assertEqual([rows[key]["kind"] for key in receipt["task_ids"]], ["audit", "test-writing"])
+            providers.reply.assert_not_called()
+
+            called = []
+            def transport(argv, **kwargs):
+                config = Path(argv[argv.index("--config") + 1]).read_text()
+                payload = json.loads(Path(argv[argv.index("--data-binary") + 1][1:]).read_text())
+                lane = "gemini" if "generativelanguage" in config else "minimax"
+                current = next(row for row in queue.tasks(self.root).values() if row["status"] == "running")
+                self.assertEqual(current["worker"], lane)
+                self.assertEqual(current["model"], MODELS[lane])
+                self.assertIsNone(current["source_job_id"])
+                self.assertIn("FILE queue.py", json.dumps(payload))
+                self.assertIn("worker activity is unverified", json.dumps(payload))
+                self.assertNotIn("fixture-must-not-be-sent", json.dumps(payload))
+                answer = lane + ": queue.py needs a duplicate-enqueue regression. Tests were not run."
+                if lane == "gemini":
+                    self.assertIn("gemini-2.5-pro:generateContent", config)
+                    result = dict(candidates=[dict(finishReason="STOP", content=dict(parts=[dict(text=answer)]))],
+                                  usageMetadata=dict(promptTokenCount=100, candidatesTokenCount=30))
+                else:
+                    self.assertIn("https://api.minimax.io/v1/text/chatcompletion_v2", config)
+                    self.assertEqual(payload["model"], "MiniMax-M2.7")
+                    result = dict(choices=[dict(finish_reason="stop", message=dict(content=answer))],
+                                  usage=dict(prompt_tokens=100, completion_tokens=30), base_resp=dict(status_code=0))
+                Path(argv[argv.index("-o") + 1]).write_text(json.dumps(result))
+                called.append(lane)
+                return SimpleNamespace(returncode=0, stdout="200", stderr="")
+
+            def launch(row):
+                self.assertEqual(dispatch_worker.execute(row["id"], row["claim_token"]), 0)
+
+            with patch.object(lanes, "refresh", return_value={lane: dict(state="ready") for lane in MODELS}), \
+                    patch.object(web_dispatch, "launch", side_effect=launch), \
+                    patch.object(api, "CONDUCTOR", self.core), patch.object(api, "run", side_effect=transport), \
+                    patch.dict(os.environ, {"GEMINI_API_KEY": "gemini-fixture-key", "MINIMAX_API_KEY": "minimax-fixture-key"}), \
+                    patch.object(dispatch_worker, "prepare_task") as prepare, \
+                    patch.object(dispatch_worker.draft_publish, "publish") as publish:
+                self.assertEqual(web_dispatch.tick(), 2)
+            self.assertEqual(called, ["gemini", "minimax"])
+            prepare.assert_not_called()
+            publish.assert_not_called()
+            for row in queue.tasks(self.root).values():
+                self.assertEqual(row["status"], "succeeded")
+                self.assertEqual(Path(row["repo"]), repo)
+                self.assertIn(row["result"], Path(row["result_path"]).read_text())
+                self.assertEqual(row["result_sha256"], hashlib.sha256(row["result"].encode()).hexdigest())
+                self.assertEqual(row["acceptance"]["result_sha256"], row["result_sha256"])
+                self.assertTrue(row["evidence"]["files"])
+                self.assertIsNone(row["branch"])
+                self.assertIsNone(row["worktree"])
+            chat.reconcile_tasks()
+            chat.reconcile_tasks()
+            messages = chat.history(cid)["messages"]
+            saved = next(message for message in messages if message["id"] == receipt["id"])
+            self.assertEqual(saved["content"], receipt["content"])
+            self.assertEqual(saved["task_ids"], receipt["task_ids"])
+            completed = [message for message in messages if message.get("task_status")]
+            self.assertEqual(len(completed), 1)
+            self.assertIn("Worker assignments completed: 2/2", completed[0]["content"])
+            for identifier in receipt["task_ids"]:
+                self.assertIn(identifier, completed[0]["content"])
 
     def test_both_workers_execute_real_claims_with_repo_evidence_and_reports(self):
         repo = self.repo()

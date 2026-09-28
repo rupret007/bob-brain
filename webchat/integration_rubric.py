@@ -109,7 +109,7 @@ def check_reply(answer, exchange, cid, started, before, after, jobs):
     return errors
 
 
-def run_eval():
+def run_eval(*, project_lane_only=False):
     """Run the same exact-message rubric offline against real isolated journals."""
     import tempfile
     import time
@@ -123,14 +123,20 @@ def run_eval():
         def reply(self, *args):
             return dict(content="Hi Jeff!", provider="gemini", attempts=[])
 
+    # Attempt 2205 had these open screens but zero queued/claimed jobs and no
+    # confirmed worker. Exercise collection and dispatch without a seed job.
+    screens = ({"lane-integrate-deploy-2205": "68531.lane-integrate-deploy-2205",
+                "lane-webbob-llm-reviews": "29817.lane-webbob-llm-reviews"}
+               if project_lane_only else {})
     results = []
     with tempfile.TemporaryDirectory() as folder, \
-            patch("live_status_snapshot._screen_sessions", return_value={}), \
+            patch("live_status_snapshot._screen_sessions", return_value=screens), \
             patch("live_status_snapshot.process_table", return_value={}):
         root = Path(folder)
         chat = Chat(root / "conductor/webchat", root, Greeting())
         try:
-            task_queue.enqueue(root, "external", "source", "Improve WebJam recording reliability", worker="codex", kind="coding", title="WebJam")
+            if not project_lane_only:
+                task_queue.enqueue(root, "external", "source", "Improve WebJam recording reliability", worker="codex", kind="coding", title="WebJam")
             for source in sessions():
                 cid = chat.new_conversation()["id"]
                 for index, exchange in enumerate(source["exchanges"]):
@@ -142,7 +148,8 @@ def run_eval():
                         thread["thread"].join(5)
                     answer = chat.get(cid)["messages"][-1]
                     errors = check_reply(answer, exchange, cid, started, before, build_live_status_snapshot(root), task_queue.tasks(root))
-                    results.append(dict(name=source["source_id"][:8] + " turn " + str(index + 1),
+                    results.append(dict(name=source["source_id"][:8] + " turn " + str(index + 1) +
+                                             (" (unverified project lane)" if project_lane_only else ""),
                                         pass_check=not errors, errors=errors, reply=answer["content"]))
         finally:
             chat.close()

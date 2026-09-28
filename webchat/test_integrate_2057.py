@@ -154,6 +154,67 @@ class IntegratedSessions(SessionFixture):
             self.assertIn("Project: Web Bob", records[identifier]["prompt"])
             self.assertIn(identifier, answer["content"])
 
+    def test_frozen_turn_one_with_only_an_unverified_project_lane(self):
+        from integration_rubric import check_reply, sessions
+        from live_status_snapshot import build_live_status_snapshot
+        # Failed attempt 2205: no queued/claimed jobs, no confirmed worker,
+        # and these two open screens. Only the review lane identifies a project.
+        screens = {"lane-integrate-deploy-2205": "68531.lane-integrate-deploy-2205",
+                   "lane-webbob-llm-reviews": "29817.lane-webbob-llm-reviews"}
+        exchange = sessions()[0]["exchanges"][0]
+        with patch("live_status_snapshot._screen_sessions", return_value=screens):
+            before = build_live_status_snapshot(self.root)
+            self.assertEqual(before["queue_counts"]["queued"], 0)
+            self.assertEqual(before["queue_counts"]["claimed"], 0)
+            self.assertEqual(before["work_counts"]["running"], 0)
+            self.assertEqual(before["work_counts"]["unverified"], 2)
+            started = time.time()
+            answer = self.send(exchange["message"])
+            records = queue.tasks(self.root)
+            after = build_live_status_snapshot(self.root)
+            self.assertEqual(check_reply(answer, exchange, self.identifier, started, before, after, records), [])
+            self.assertEqual(len(records), 2)
+            self.assertEqual(after["work_counts"]["running"], 0)
+            for row in records.values():
+                self.assertIsNone(row["source_job_id"])
+                self.assertEqual(row["status"], "queued")
+                self.assertIn("Project: Web Bob", row["prompt"])
+                self.assertIn("worker activity is unverified", row["prompt"])
+                self.assertNotIn("Ongoing task:", row["prompt"])
+            self.assertFalse(self.fake.calls)
+        self.chat.close()
+        self.chat = Chat(self.folder, self.root, self.fake)
+        replay = self.chat.submit(self.identifier, exchange["message"], answer["request_id"])["messages"][-1]
+        self.assertEqual(replay["task_ids"], answer["task_ids"])
+        self.assertEqual(replay["content"], answer["content"])
+        self.assertEqual(set(queue.tasks(self.root)), set(records))
+
+    def test_unverified_project_context_respects_scope_and_api_only_work(self):
+        screens = {"lane-webbob-llm-reviews": "29817.lane-webbob-llm-reviews"}
+        with patch("live_status_snapshot._screen_sessions", return_value=screens):
+            for text in ("Use Gemini and MiniMax for ongoing WebJam jobs",
+                         "Use Codex for ongoing jobs", "Use all LLMs for ongoing jobs"):
+                with self.subTest(text=text):
+                    self.assertIn("couldn't assign", self.send(text)["content"])
+                    self.assertFalse(queue.tasks(self.root))
+            self.send("Hold off on Web Bob")
+            self.assertIn("current holds", self.send(SESSIONS[0]["exchanges"][0]["message"])["content"])
+            self.assertFalse(queue.tasks(self.root))
+
+    def test_unverified_lane_fallback_does_not_displace_an_ongoing_job(self):
+        source = self.seed()
+        with patch("live_status_snapshot._screen_sessions", return_value={"lane-webbob-llm-reviews": "29817.lane-webbob-llm-reviews"}):
+            answer = self.send(SESSIONS[0]["exchanges"][0]["message"])
+        records = queue.tasks(self.root)
+        self.assertEqual([records[key]["source_job_id"] for key in answer["task_ids"]], [source["id"], source["id"]])
+
+    def test_unidentified_screens_and_unassigned_processes_do_not_supply_projects(self):
+        from worker_activity import parse_processes
+        with patch("live_status_snapshot._screen_sessions", return_value={"lane-integrate-deploy-2205": "68531.lane-integrate-deploy-2205"}), \
+                patch("live_status_snapshot.process_table", return_value=parse_processes("40 1 01:00 S codex exec -\n")):
+            self.assertIn("couldn't assign", self.send(SESSIONS[0]["exchanges"][0]["message"])["content"])
+            self.assertFalse(queue.tasks(self.root))
+
     def test_health_probes_and_unattributed_processes_are_not_task_execution(self):
         from worker_activity import collect_work, parse_processes
         table = parse_processes("10 1 01:00 S cursor-agent status\n"
