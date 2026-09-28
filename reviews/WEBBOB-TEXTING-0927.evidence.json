@@ -1,0 +1,113 @@
+{
+  "ok": true,
+  "scope": "mock messaging, real isolated HTTP server and browser",
+  "delivery": "blocked_andrea_bridge_unavailable",
+  "mock_sends": 0,
+  "real_texts_sent": 0,
+  "started_at": "2026-09-27T23:53:11.961451+00:00",
+  "finished_at": "2026-09-27T23:53:14.127336+00:00",
+  "webchat_url": "http://127.0.0.1:57812",
+  "mock_messaging_url": "http://127.0.0.1:57811",
+  "browser": {
+    "ok": true,
+    "synthetic_only": true,
+    "screenshots": [
+      "WEBBOB-TEXTING-0927-phone-summary.png",
+      "WEBBOB-TEXTING-0927-phone-draft.png",
+      "WEBBOB-TEXTING-0927-phone-revised.png",
+      "WEBBOB-TEXTING-0927-phone-not-sent.png",
+      "WEBBOB-TEXTING-0927-desktop-confirmed-not-sent.png"
+    ],
+    "browser_errors": [],
+    "checks": [
+      "login",
+      "thread summary",
+      "exact recipient and body",
+      "edit clears consent",
+      "new token after edit",
+      "stale token rejected",
+      "separate chat submission",
+      "honest blocked receipt",
+      "reload preserves consumed consent",
+      "no horizontal phone overflow"
+    ]
+  },
+  "mock_requests": [
+    [
+      "POST",
+      "/api/v1/chat/query"
+    ],
+    [
+      "POST",
+      "/api/v1/chat/query"
+    ],
+    [
+      "GET",
+      "/api/v1/chat/iMessage%3B-%3B%2B15550101010/message"
+    ],
+    [
+      "POST",
+      "/api/v1/chat/query"
+    ],
+    [
+      "POST",
+      "/api/v1/chat/query"
+    ],
+    [
+      "POST",
+      "/web-bob/send"
+    ]
+  ],
+  "unexpected_writes": [],
+  "model_calls": 0,
+  "queued_jobs": 0,
+  "confirmation_audit": [
+    {
+      "event": "owner_confirmed_not_sent",
+      "conversation_id": "3b48704f-8a3a-4d24-be8f-5dbcb9202e4b",
+      "draft_id": "8986acf6936e1207",
+      "revision": 2,
+      "recipient": {
+        "guid": "iMessage;-;+15550101010",
+        "name": "Alex Morgan",
+        "addresses": [
+          "+15550101010"
+        ]
+      },
+      "body": "I’ll bring the charts at 7.",
+      "fingerprint": "3fb31611c87ddc8bdacabc76b68c8ced21002303fc7828973233f63b3dce99cc",
+      "at": 1790553193.734025,
+      "request_id": "3a580ce2-44f4-498b-ad4d-b43a7331751e"
+    }
+  ],
+  "live_listeners_before": [
+    "BlueBubbl   926 jeffstory   61u  IPv6 0x122b8f6db67e2589      0t0  TCP *:1234 (LISTEN)",
+    "Python    92234 jeffstory    4u  IPv4 0xbcedf21a9143dd67      0t0  TCP 127.0.0.1:8787 (LISTEN)",
+    "node      66987 jeffstory   32u  IPv4 0x2ab1d2e72c7e6c1b      0t0  TCP 127.0.0.1:4315 (LISTEN)"
+  ],
+  "live_listeners_after": [
+    "BlueBubbl   926 jeffstory   61u  IPv6 0x122b8f6db67e2589      0t0  TCP *:1234 (LISTEN)",
+    "Python    92234 jeffstory    4u  IPv4 0xbcedf21a9143dd67      0t0  TCP 127.0.0.1:8787 (LISTEN)",
+    "node      66987 jeffstory   32u  IPv4 0x2ab1d2e72c7e6c1b      0t0  TCP 127.0.0.1:4315 (LISTEN)"
+  ],
+  "source_sha256": {
+    "webchat/texting.py": "4d3c31f7f1fe7d4b6229e50eab802b94c8214dce993593cb66fc425802d8b539",
+    "webchat/app.py": "f94c7540d38fa4a6d052f0b225ed19ddab72799dad8b30587a7592027f26d807",
+    "webchat/providers.py": "6b0d1e5df037ce5350dfde28958264bc65da14f88746be031cb9be0886942298",
+    "webchat/static/app.js": "6a1b07676ed059f554d4ef3a9e9ff08b7de2949ca41bc27a9d91cd9eb16db089",
+    "webchat/static/index.html": "18dc17da45983b17ab47b818ecbed60bf793ab17c0fd6bfa1778ca4e63b41bc2",
+    "webchat/static/style.css": "132455290218f727bed92b771295b42ac67f794024c78b8cd2f95c92c4def697",
+    "webchat/texting_fixture.py": "c17c585b748789b12b714d29dead744807f6ccae0d7bf082bbebf41648a86ae3",
+    "webchat/texting_proof.py": "f92543e2138fa35688a34a18f66e575037f5cb32483d0a09ab93c646d19e81f4",
+    "webchat/browser_texting.cjs": "93d31c44eed2c3e0c8579c82ec1fdc3c609bdb5faa120722fa1ad37e504a967f",
+    "webchat/test_texting.py": "4b4c85f111bbcf3fbe19c6fa651f736a5ecbbc06d7173f3b4cbd7c65f7e41bd8",
+    "webchat/test_texting_e2e.py": "7fe38ce7d383169eca113581c182580c641e1c9b110f9d38549381327c959705"
+  },
+  "screenshot_sha256": {
+    "WEBBOB-TEXTING-0927-phone-summary.png": "54958606d6af97d464b9694a029589b5db2ca6a4c0573622136906a4ca205051",
+    "WEBBOB-TEXTING-0927-phone-draft.png": "e84c1ef3933c099a96a5a977878d75e281a2567d690e2a9978e8ea7772165fdd",
+    "WEBBOB-TEXTING-0927-phone-revised.png": "124fb542ec95cd88845fd812966afb9004bfbd6ed1a6cc9aa09476f38a416bf1",
+    "WEBBOB-TEXTING-0927-phone-not-sent.png": "ce235231ee25a6aa8e9dd0b71b0c9c5ff3b711463e31a0545bde3a86cc984fe3",
+    "WEBBOB-TEXTING-0927-desktop-confirmed-not-sent.png": "34875bafc9661e0c5a383305b11a87a909371a1a58de6d583fa52cd8d6bf0686"
+  }
+}
