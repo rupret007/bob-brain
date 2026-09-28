@@ -181,9 +181,9 @@ def main():
             evidence["jobs"] = [{k: row.get(k) for k in ("id", "title", "worker", "status", "execution_started_at", "worktree", "branch", "publication", "result_path", "result_sha256", "kind", "model", "evidence", "error")} for row in rows]
             evidence["started_jobs"] = [row["id"] for row in started]
             save()
-            if len(started) == len(rows) and all(r["status"] == "succeeded" for r in rows if r["worker"] in ("gemini", "minimax")):
+            if len(started) == len(rows) and all(r["status"] == "succeeded" for r in rows):
                 break
-            require(time.monotonic() < deadline, "Timed out waiting for every replay job to execute")
+            require(time.monotonic() < deadline, "Timed out waiting for every replay job to finish")
             if time.monotonic() - last_progress > 20:
                 print("Replay executions: " + str(len(started)) + "/" + str(len(rows)) + "; " +
                       ", ".join((row.get("title") or row["id"]) + "=" + row["status"] for row in rows), flush=True)
@@ -199,8 +199,8 @@ def main():
                 require(row.get("model") in ("gemini-2.5-pro", "MiniMax-M2.7"), "API execution model not recorded")
                 require(not row.get("worktree"), "API report worker gained a code worktree")
                 require(row["status"] == "succeeded" and Path(row.get("result_path") or "").is_file(), "API report did not complete")
-        # Verify every API report completed before accepting
-        # utilization. Queue entries and an executing timestamp alone cannot pass.
+        # Verify all replay jobs completed before accepting their replies.
+        # Queue entries and an executing timestamp alone cannot pass.
         # Reconciliation must not rewrite the historical dispatch receipts.
         for source in evidence["sessions"]:
             messages = client.call("/api/conversations/" + source["replay_id"])["messages"]
