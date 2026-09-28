@@ -36,6 +36,9 @@ Calls last at most ten minutes; tap the waveform again to continue with saved
 context. There are at most two concurrent calls, with a 45-second server lease
 to recover slots after a tab disappears. A failed transcript save offers retry;
 keep the page open until it confirms the save. Raw recordings are not stored.
+Token creation is limited to ten attempts per minute per login session and
+twenty across the single owner's sessions. Failed attempts count too; hanging
+up or logging in again does not reset the one-minute window.
 
 The call receives the same redacted profile, handback, status and recent chat
 context as typed chat. The `ask_bob` tool routes the **saved spoken words** through

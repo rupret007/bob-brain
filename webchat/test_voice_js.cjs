@@ -31,6 +31,7 @@ function fixture(options = {}) {
   const window={isSecureContext:true,AudioContext:Context,AudioWorkletNode:Worklet,WebSocket:Socket};
   const context={window,navigator:{mediaDevices:{getUserMedia:options.getUserMedia || (async()=>stream)}},
     AudioContext:Context,AudioWorkletNode:Worklet,WebSocket:Socket,crypto,setTimeout,clearTimeout,setInterval,clearInterval,
+    ...options.clock,
     TextDecoder,TextEncoder,Uint8Array,ArrayBuffer,DataView,atob,btoa};
   vm.runInNewContext(code,context);
   const controller = new window.BobVoice({api:async(route,data)=>{
@@ -147,6 +148,89 @@ test('suspended Safari output keeps Resume audio visible',async()=>{
   const f=fixture();await f.controller.start('chat');const s=f.controller.session;
   s.audio.state='suspended';f.controller.play(s,{data:btoa('\0'.repeat(4800)),mimeType:'audio/pcm;rate=24000'});
   assert.equal(f.states.at(-1).phase,'paused');await f.controller.resume();assert.equal(s.audio.state,'running');await f.controller.stop();
+});
+test('Safari suspension keeps Resume visible and blocks speech until an explicit resume',async t=>{
+  const f=fixture();t.after(()=>f.controller.stop());await f.controller.start('chat');const s=f.controller.session;
+  f.controller.event(s,{setupComplete:{}});
+  s.audio.state='suspended';s.audio.onstatechange();
+  const sent=s.socket.sent.length;
+  s.capture.port.onmessage({data:new ArrayBuffer(3200)});
+  assert.equal(s.socket.sent.length,sent,'speaking while suspended must not send packets');
+  for(const event of [{setupComplete:{}},{serverContent:{interrupted:true}},{serverContent:{turnComplete:true}}]) {
+    f.controller.event(s,event);
+    assert.equal(f.states.at(-1).phase,'paused','incoming events must preserve the resume action');
+  }
+  await f.controller.retrySave();assert.equal(f.states.at(-1).phase,'paused');
+  assert.equal(s.audio.state,'suspended','no automatic resume');
+  await f.controller.resume();
+  assert.equal(s.audio.state,'running');
+  s.capture.port.onmessage({data:new ArrayBuffer(3200)});
+  assert.equal(s.socket.sent.length,sent+1);
+  await f.controller.stop();
+});
+test('a late Safari resume cannot overwrite the ended-call state',async t=>{
+  const f=fixture();t.after(()=>f.controller.stop());await f.controller.start('chat');const s=f.controller.session;
+  const resume=deferred();s.audio.resume=()=>resume.promise;
+  const resuming=f.controller.resume();await f.controller.stop();resume.resolve();await resuming;
+  assert.equal(f.controller.active,false);assert.equal(f.states.at(-1).phase,'ended');
+});
+test('token expiry mid-call releases audio and saves interrupted speech without restarting',async()=>{
+  const timers=new Map();let next=0;
+  const f=fixture({clock:{
+    setTimeout:(callback,ms)=>{const id=++next;timers.set(id,{callback,ms});return id;},
+    clearTimeout:id=>timers.delete(id),
+    setInterval:(callback,ms)=>{const id=++next;timers.set(id,{callback,ms});return id;},
+    clearInterval:id=>timers.delete(id),
+  }});
+  await f.controller.start('chat');const s=f.controller.session;
+  f.controller.event(s,{setupComplete:{}});
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'Please keep this'},outputTranscription:{text:'Here is my reply'}}});
+  f.controller.play(s,{data:btoa('\0'.repeat(4800)),mimeType:'audio/pcm;rate=24000'});
+  const sources=[...s.sources];
+  assert.ok(timers.get(s.expiry).ms>599000 && timers.get(s.expiry).ms<=600000);
+  timers.get(s.expiry).callback();await pause();
+  assert.equal(f.controller.active,false);assert.equal(f.tracks[0].stopped,true);
+  assert.equal(s.audio.state,'closed');assert.equal(s.socket.closed,true);
+  assert.ok(sources.every(source=>source.stopped));assert.equal(timers.size,0);
+  assert.equal(f.requests.filter(r=>r.route.endsWith('/start')).length,1);
+  assert.equal(f.requests.filter(r=>r.route.endsWith('/end')).length,1);
+  const saved=f.requests.filter(r=>r.route.endsWith('/transcript')).flatMap(r=>r.data.entries);
+  assert.ok(saved.some(row=>row.role==='assistant' && row.interrupted));
+  assert.match(f.states.at(-1).text,/10-minute call has ended/);
+});
+test('barge-in during a dispatched tool preserves interrupted transcript on save retry',async t=>{
+  const dispatched=deferred();let savesFail=true;
+  const f=fixture({api:async(route,data)=>{
+    if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
+    if(route.endsWith('/transcript') && savesFail && data.entries.some(row=>row.interrupted))throw new Error('offline');
+    if(route.endsWith('/tool'))return dispatched.promise;
+    return {ok:true};
+  }});
+  t.after(()=>f.controller.stop());
+  await f.controller.start('chat');const s=f.controller.session;
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'Check my request'},outputTranscription:{text:'I am checking'}}});
+  s.inputTurn.lastInputAt=0;
+  f.controller.play(s,{data:btoa('\0'.repeat(4800)),mimeType:'audio/pcm;rate=24000'});
+  const sources=[...s.sources];
+  f.controller.event(s,{toolCall:{functionCalls:[{id:'slow',name:'ask_bob'}]}});
+  await pause();assert.equal(f.requests.filter(r=>r.route.endsWith('/tool')).length,1);
+  f.controller.event(s,{toolCallCancellation:{ids:['slow']},serverContent:{interrupted:true}});
+  assert.ok(sources.every(source=>source.stopped));
+  await f.controller.save(s);assert.equal(f.controller.pending.length,1);
+  dispatched.resolve({request_id:'r',conversation:{messages:[{role:'assistant',request_id:'r',status:'done',content:'Saved receipt'}]}});
+  await s.tools.get('slow');
+  assert.equal(s.socket.sent.filter(m=>m.toolResponse).length,0,'cancelled result cannot speak later');
+  f.controller.event(s,{toolCall:{functionCalls:[{id:'slow',name:'ask_bob'}]}});
+  assert.equal(f.requests.filter(r=>r.route.endsWith('/tool')).length,1,'replayed tool cannot dispatch twice');
+  savesFail=false;await f.controller.retrySave();assert.equal(f.controller.pending.length,0);
+  const saved=f.requests.filter(r=>r.route.endsWith('/transcript')).at(-1).data.entries;
+  assert.ok(saved.some(row=>row.role==='assistant' && row.interrupted && row.version>=2));
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'Try the next question'}}});
+  s.inputTurn.lastInputAt=0;
+  await f.controller.tool(s,{id:'next',name:'ask_bob'});
+  const requests=f.requests.filter(r=>r.route.endsWith('/tool'));
+  assert.equal(requests.length,2);assert.notEqual(requests[0].data.turn_id,requests[1].data.turn_id);
+  await f.controller.stop();
 });
 test('hangup releases the server lease even while transcript saving is blocked',async()=>{
   const pending=deferred();const f=fixture({api:async(route)=>{

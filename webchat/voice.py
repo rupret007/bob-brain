@@ -10,6 +10,7 @@ import json
 import shlex
 import time
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -21,6 +22,10 @@ MODEL = "gemini-3.8-live"
 TOKEN_URL = "https://generativelanguage.googleapis.com/v1beta/auth_tokens"
 SOCKET_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained"
 CALL_SECONDS = 600
+LEASE_SECONDS = 45
+TOKEN_RATE_SECONDS = 60
+TOKEN_SESSION_LIMIT = 10
+TOKEN_USER_LIMIT = 20  # This application has one password/owner across logins.
 VOICE_RULES = """
 You are Bob, in a live spoken call with Jeff. Use a warm, natural voice and short
 replies. Listen when interrupted. Do not read markdown or long URLs aloud.
@@ -54,7 +59,7 @@ def api_key(root):
                     return key
     except (OSError, ValueError):
         pass
-    raise VoiceError(503, "Live voice is not configured. The server needs GEMINI_API_KEY in conductor/keys.env.")
+    raise VoiceError(503, "Live voice is unavailable. Please try again later.")
 
 
 def create_token(root, setup, expires):
@@ -84,6 +89,26 @@ class VoiceCalls:
     def __init__(self, chat, token_factory=create_token):
         self.chat, self.token_factory = chat, token_factory
         self.calls = {}
+        self.token_attempts = {}
+        self.user_token_attempts = deque()
+
+    def reserve_token_attempt(self, owner):
+        # Caller holds chat.lock. Count before leaving the lock for the provider,
+        # including failed attempts; hanging up or logging out never refunds it.
+        now = time.monotonic()
+        for session, attempts in list(self.token_attempts.items()):
+            while attempts and attempts[0] <= now - TOKEN_RATE_SECONDS:
+                attempts.popleft()
+            if not attempts:
+                del self.token_attempts[session]
+        while self.user_token_attempts and self.user_token_attempts[0] <= now - TOKEN_RATE_SECONDS:
+            self.user_token_attempts.popleft()
+        attempts = self.token_attempts.get(owner, deque())
+        if len(attempts) >= TOKEN_SESSION_LIMIT or len(self.user_token_attempts) >= TOKEN_USER_LIMIT:
+            raise VoiceError(429, "Too many call attempts. Wait one minute and try again.")
+        attempts.append(now)
+        self.token_attempts[owner] = attempts
+        self.user_token_attempts.append(now)
 
     def active(self, conversation_id):
         return any(c["conversation_id"] == conversation_id and not c["ended"]
@@ -106,15 +131,16 @@ class VoiceCalls:
             conversation = copy.deepcopy(chat.get(conversation_id))
             if self.active(conversation_id) or conversation_id in chat.workers:
                 raise VoiceError(409, "Finish the current reply or call before starting a call here.")
-            if any(m.get("status") == "waiting" for m in conversation["messages"][-1:]):
-                raise VoiceError(409, "Stop the queued reply before starting a call.")
+            if any(m.get("status") in ("queued", "running", "waiting") for m in conversation["messages"]):
+                raise VoiceError(409, "Finish or stop the queued reply before starting a call.")
             now = time.time()
             self.calls = {k: c for k, c in self.calls.items() if c["expires"] + 3600 > now}
             if sum(not c["ended"] and min(c["expires"], c["lease_expires"]) > now for c in self.calls.values()) >= 2:
                 raise VoiceError(429, "Two voice calls are already open. End one first.")
+            self.reserve_token_attempt(owner)
             call_id = str(uuid.uuid4())
             call = {"conversation_id": conversation_id, "owner": owner, "expires": now + CALL_SECONDS,
-                    "ended": False, "tools": {}, "created_at": now, "lease_expires": now + 45}
+                    "ended": False, "tools": {}, "created_at": now, "lease_expires": now + LEASE_SECONDS}
             self.calls[call_id] = call
         try:
             # Same bounded, redacted snapshots used by typed chat, including profile.md.
@@ -183,7 +209,7 @@ class VoiceCalls:
                 if role == "user" and value["title"] == "New conversation":
                     value["title"] = content[:65]
             # Transcription can arrive after speech. Keep it before its reply.
-            rows = sorted((m for m in value["messages"] if m.get("voice_call_id") == call_id), key=lambda m: m["voice_order"])
+            rows = sorted((m for m in value["messages"] if m.get("voice_call_id") == call_id), key=lambda m: m.get("voice_order", 0))
             positions = [i for i, m in enumerate(value["messages"]) if m.get("voice_call_id") == call_id]
             for i, row in zip(positions, rows):
                 value["messages"][i] = row
@@ -218,7 +244,7 @@ class VoiceCalls:
     def pulse(self, call_id, owner):
         with self.chat.lock:
             call = self.get(call_id, owner)
-            call["lease_expires"] = time.time() + 45
+            call["lease_expires"] = time.time() + LEASE_SECONDS
             return {"ok": True}
 
     def logout(self, owner):

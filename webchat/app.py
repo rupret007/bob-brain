@@ -253,6 +253,8 @@ class Chat(TaskDispatch):
                 info["cancel"].set()
                 value = self.get(identifier)
                 pending = next((m for m in value["messages"] if m["id"] == info.get("reply_id")), None)
+                if pending is None and value["messages"]:
+                    pending = value["messages"][-1]
                 if pending and pending["status"] in ("queued", "running"):
                     pending.update(status="error",
                         content="This reply timed out. Tap Stop if it is still running, then send again.")
@@ -325,27 +327,29 @@ class Chat(TaskDispatch):
             self.sweep_stuck()
             if identifier in self.workers:
                 raise RequestError(409, "Bob is finishing another reply in this conversation. Stop it or wait, then try again.")
-            if conversation["messages"] and conversation["messages"][-1]["status"] == "waiting":
+            if any(m.get("status") == "waiting" for m in conversation["messages"]):
                 raise RequestError(409, "This conversation has a queued request. Stop it before sending another message.")
             intent_state = chat_intent.state_for(conversation)
             was_held = bool(intent_state["holds"])
             conversation["preferred_provider"] = provider
-            new_messages = [
-                {"id": str(uuid.uuid4()), "request_id": request_id, "preferred_provider": provider, "role": "user", "content": text,
-                 "status": "done", "created_at": time.time(), "requested_worker": worker},
-                {"id": str(uuid.uuid4()), "request_id": request_id, "role": "assistant", "content": "", "status": "queued",
-                 "provider": None, "attempts": [], "created_at": time.time()},
-            ]
+            user_message = {"id": str(uuid.uuid4()), "request_id": request_id, "preferred_provider": provider,
+                            "role": "user", "content": text, "status": "done", "created_at": time.time(),
+                            "requested_worker": worker}
+            reply_message = {"id": str(uuid.uuid4()), "request_id": request_id, "role": "assistant", "content": "",
+                             "status": "queued", "provider": None, "attempts": [], "created_at": time.time()}
             if source_voice:
                 source = next((m for m in conversation["messages"] if m["id"] == source_voice
                                and m["role"] == "user" and m.get("voice_call_id") and m["content"] == text), None)
                 if not source:
-                    raise RequestError(400, "The spoken request was not saved.")
-                source.update({k: v for k, v in new_messages[0].items() if k != "id"})
-                new_messages = new_messages[1:]
-                new_messages[0].update(voice_call_id=source["voice_call_id"],
-                    voice_turn_id=source["voice_turn_id"], voice_order=source["voice_order"] + 1)
-            conversation["messages"] += new_messages
+                    raise RequestError(400, "Request could not be processed. Please try again.")
+                source.update({k: v for k, v in user_message.items() if k != "id"})
+                reply_message.update(voice_call_id=source["voice_call_id"],
+                    voice_turn_id=source.get("voice_turn_id"), voice_order=source.get("voice_order", 0) + 1)
+            else:
+                conversation["messages"].append(user_message)
+            # Voice reuses its saved user row; every path creates an explicit
+            # reply without indexing a possibly empty message list.
+            conversation["messages"].append(reply_message)
             if conversation["title"] == "New conversation":
                 conversation["title"] = text[:65]
             transition = chat_intent.apply_turn(intent_state, text, request_id)
@@ -687,8 +691,11 @@ class Chat(TaskDispatch):
             info = self.workers.get(identifier)
             if info:
                 info["cancel"].set()
-            elif value["messages"] and value["messages"][-1]["status"] == "waiting":
-                value["messages"][-1].update(status="cancelled", content="Queued request stopped.")
+            else:
+                waiting = next((m for m in reversed(value["messages"]) if m.get("status") == "waiting"), None)
+                if waiting is None:
+                    return
+                waiting.update(status="cancelled", content="Queued request stopped.")
                 value.pop("retry_prompt", None)
                 self.save(value)
                 if hasattr(self.providers, "circuit"):
@@ -1135,6 +1142,8 @@ class Handler(BaseHTTPRequestHandler):
                 if (origins and origins != [self.origin]) or self.headers.get("Sec-Fetch-Site") in ("cross-site", "same-site"):
                     raise RequestError(403, "Cross-site requests are not allowed.")
                 if self.path_only.startswith("/api/"):
+                    # Shared by typed messages and every voice mutation,
+                    # including transcript, token creation and lease renewal.
                     csrf = self.headers.get("X-CSRF-Token", "")
                     if not hmac.compare_digest(csrf.encode(), session["csrf"].encode()):
                         raise RequestError(403, "Invalid request token. Reload the page.")

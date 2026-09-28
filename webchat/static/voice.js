@@ -9,7 +9,15 @@ class BobVoice {
     this.flushing = null;
   }
   get active() { return !!this.session; }
-  state(text, phase = "listening") { this.onState(text, phase); }
+  state(text, phase = "listening") {
+    // Incoming captions, tool results and save retries must not hide Safari's
+    // resume action while capture/output are still suspended.
+    const audio = this.session?.audio;
+    if (audio && !["running", "closed"].includes(audio.state) && ["listening", "speaking", "thinking"].includes(phase)) {
+      text = "Tap Resume audio to continue the call."; phase = "paused";
+    }
+    this.onState(text, phase);
+  }
   async start(conversationId) {
     if (this.active) return this.stop();
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
@@ -254,9 +262,14 @@ class BobVoice {
     catch (_) { this.state("Transcript hasn’t saved yet. Keep this page open and tap Retry save.", "unsaved"); }
   }
   async resume() {
-    if (!this.session) return;
-    try { await this.session.audio.resume(); this.state("Listening… speak naturally."); }
-    catch (_) { this.state("Could not resume audio. End this call and try again.", "error"); }
+    const s = this.session;
+    if (!s) return;
+    try {
+      await s.audio.resume();
+      if (this.session === s) this.state("Listening… speak naturally.");
+    } catch (_) {
+      if (this.session === s) this.state("Could not resume audio. End this call and try again.", "error");
+    }
   }
   fail(s, message) {
     if (this.session !== s) return;
