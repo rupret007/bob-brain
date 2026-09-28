@@ -161,6 +161,9 @@ def run_eval(root: Path | None = None) -> dict:
         for result in integration_eval(**scenario):
             rows.append(_case(result["name"], result["pass_check"], "; ".join(result["errors"])))
 
+    from instinct_eval import run_eval as instinct_eval
+    rows.extend(instinct_eval()["cases"])
+
     passed = sum(1 for r in rows if r["pass"])
     return {
         "total": len(rows),

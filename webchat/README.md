@@ -423,3 +423,54 @@ Restart normally afterward so drills are disabled. The broader
 but affects the entire process; prefer the scoped script on a live phone server.
 
 Final failover evidence and architecture review: `reviews/WEBCHAT-FAILOVER-RESULT.md`.
+
+### Instinct partnership thread (draft lane; not deployed)
+
+In authenticated Web Bob chat, use `Instinct status`, `latest Instinct replies`,
+`read Instinct thread`, `digest Instinct`, or `weekly Instinct partnership audit`.
+Each request reads the existing BlueBubbles allowlist with its read-only
+`config.db` credentials: up to 200 recent chats and 30 messages from the resolved
+thread. Status reports the observation time and message window, never delivery
+or partnership health inferred from an old message. Digests flag possible bills
+and deadlines, security, and appointments using keyword matches plus dated
+excerpts. Counts apply only to this window; attachments are not analyzed.
+
+The default resolver requires an exact `Instinct` display name and a verified
+single recipient. Duplicate transports may use the newest `lastMessage` only
+when their participant addresses are identical. Ambiguous recipients, tied or
+unknown duplicate timestamps, groups, and missing threads fail closed. If the
+thread has no display name or needs disambiguation, an operator can pin its
+already-verified BlueBubbles GUID using `BOB_INSTINCT_CHAT_GUID`; there is no
+fallback from a missing pin to another contact. No production mapping, phone
+number, thread content, or credential is checked into this branch.
+
+`draft reply to Instinct` suggests conservative wording based on the latest
+incoming text's categories. `draft reply to Instinct: exact body` uses the supplied
+body. Both show the exact recipient and body (including `[Bob via Andrea]`) in the
+existing texting card. Even `send a message to Instinct: ...` only creates a
+draft. A separate exact `yes wbtxt-…` in the same chat and authenticated session
+uses the existing one-shot Andrea bridge, with the same expiry, edit/cancel,
+durable consent, replay protection, and uncertain-delivery handling as texting.
+Missing Andrea support remains an honest blocked receipt. No direct BlueBubbles
+send, automatic reply, routine, watcher, or job is created. The older Bob skill's
+standing permission for tagged briefs does not apply to Web Bob.
+
+Incoming text is quoted as untrusted data and never evaluated or sent to a model.
+Suggestions use local templates. Instinct turns carry the existing `texting`
+privacy flag, so thread contents, draft bodies, and consent tokens stay out of
+provider context and operational handback logs. Read excerpts hide phone numbers
+and email handles; consent cards show recipients so Jeff can verify them.
+
+Offline validation (all messaging, including approved delivery, uses a synthetic
+loopback fixture):
+
+```bash
+cd webchat
+python3 -m pytest -q test_instinct.py test_texting.py test_texting_e2e.py
+python3 instinct_eval.py
+python3 bob_parity_eval.py
+```
+
+The Instinct rubric also runs inside the broader Bob parity eval. This lane must
+remain a draft PR with offline READY and live Gemini + MiniMax reviews. Neither a
+READY marker nor `GATE: BOTH_PASS` authorizes a merge or production deploy.

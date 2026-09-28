@@ -1,0 +1,26 @@
+........................................................................ [ 17%]
+........................................................................ [ 34%]
+.......F................................................................ [ 52%]
+...................................................................s.... [ 69%]
+................................................................F....... [ 87%]
+....................................................                     [100%]
+=================================== FAILURES ===================================
+_ PinnedDeploymentAssignments.test_nested_tracked_code_uses_its_git_root_with_pins_to_the_running_code _
+test_integrate_2057.py:187: in test_nested_tracked_code_uses_its_git_root_with_pins_to_the_running_code
+    self.assertEqual([records[key]["requested_worker"] for key in answer.get("task_ids", [])],
+E   AssertionError: Lists differ: [] != ['gemini', 'minimax']
+E   
+E   Second list contains 2 additional elements.
+E   First extra element 0:
+E   'gemini'
+E   
+E   - []
+E   + ['gemini', 'minimax']
+__________________ HandbackJobTests.test_bob_parity_eval_runs __________________
+test_webchat.py:1250: in test_bob_parity_eval_runs
+    self.assertEqual(result["total"], 96)
+E   AssertionError: 118 != 96
+=========================== short test summary info ============================
+FAILED test_integrate_2057.py::PinnedDeploymentAssignments::test_nested_tracked_code_uses_its_git_root_with_pins_to_the_running_code
+FAILED test_webchat.py::HandbackJobTests::test_bob_parity_eval_runs - Asserti...
+2 failed, 409 passed, 1 skipped in 61.02s (0:01:01)
