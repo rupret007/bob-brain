@@ -265,6 +265,32 @@ class UnitTests(unittest.TestCase):
             self.assertLessEqual(len(body.encode("utf-8")), PROFILE_MAX_BYTES + 200)
             self.assertIn("newest", body)
 
+    def test_append_profile_memory_concurrent_appends_not_lost(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            thread_count = 12
+            barrier = threading.Barrier(thread_count)
+            errors = []
+
+            def worker(index):
+                try:
+                    barrier.wait(timeout=5)
+                    append_profile_memory(root, f"concurrent fact {index}")
+                except Exception as exc:  # pragma: no cover - surfaced via errors list
+                    errors.append(exc)
+
+            threads = [threading.Thread(target=worker, args=(i,)) for i in range(thread_count)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(10)
+
+            self.assertEqual(errors, [])
+            body = (root / "bob-brain/memory/profile.md").read_text(encoding="utf-8")
+            for i in range(thread_count):
+                self.assertIn(f"concurrent fact {i}", body)
+            self.assertEqual(len(body.splitlines()), thread_count)
+
     def test_prune_captures_enforces_max_count(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)

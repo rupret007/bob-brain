@@ -1,6 +1,7 @@
 """Bob-the-Bot parity: durable memory, web research, and on-demand screenshots."""
 from __future__ import annotations
 
+import fcntl
 import json
 import re
 import secrets
@@ -11,6 +12,8 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+from failover import atomic_text
 
 REMEMBER = re.compile(r"^remember\s+that\s+(.+?)\s*\.?\s*$", re.I | re.S)
 MEMORY_CONFIRM = re.compile(r"^yes[,.]?\s*save\s+memory\s*$", re.I)
@@ -61,16 +64,11 @@ def memory_confirm_prompt(fact: str) -> str:
     return f"I can save this to durable memory:\n\n**{fact}**\n\nReply `yes, save memory` to confirm."
 
 
-def _trim_profile_file(path: Path, max_bytes: int = PROFILE_MAX_BYTES) -> None:
-    try:
-        if not path.is_file() or path.stat().st_size <= max_bytes:
-            return
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-        while lines and sum(len(entry) for entry in lines) > max_bytes:
-            lines.pop(0)
-        path.write_text("".join(lines), encoding="utf-8")
-    except OSError:
-        pass
+def _trim_profile_lines(lines: list[str], max_bytes: int = PROFILE_MAX_BYTES) -> list[str]:
+    trimmed = list(lines)
+    while trimmed and sum(len(entry) for entry in trimmed) > max_bytes:
+        trimmed.pop(0)
+    return trimmed
 
 
 def _prune_captures(folder: Path, max_count: int = CAPTURE_MAX_COUNT, max_age_days: int = CAPTURE_MAX_AGE_DAYS) -> None:
@@ -95,9 +93,11 @@ def append_profile_memory(root: Path, fact: str, when: datetime | None = None) -
     line = f"[{stamp}] {fact.strip()}\n"
     path = profile_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(line)
-    _trim_profile_file(path)
+    with (path.parent / "profile.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+        lines = _trim_profile_lines(existing.splitlines(keepends=True) + [line])
+        atomic_text(path, "".join(lines))
     return line.strip()
 
 
