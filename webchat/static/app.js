@@ -69,13 +69,23 @@ if ($("login-form")) {
   const stored = (key) => { try { return localStorage.getItem(key); } catch (_) { return null; } };
   const remember = (key, value) => { try { localStorage.setItem(key, value); } catch (_) {} };
   async function api(path, data, signal) {
-    const response = await fetch(path, { credentials: "same-origin", cache: "no-store",
-      keepalive: path === "/api/voice/end" || path === "/api/voice/transcript",
-      ...(data === undefined ? { signal: signal || AbortSignal.timeout(15000) } : { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: JSON.stringify(data) }) });
-    if (response.status === 401) { location.assign("/login"); throw new Error("Please log in."); }
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "Request failed.");
-    return result;
+    const requestSignal = signal || AbortSignal.timeout(data === undefined ? 15000 : 45000);
+    try {
+      const response = await fetch(path, { credentials: "same-origin", cache: "no-store", signal: requestSignal,
+        keepalive: path === "/api/voice/end" || path === "/api/voice/transcript",
+        ...(data === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: JSON.stringify(data) }) });
+      if (response.status === 401) { location.assign("/login"); throw new Error("Please log in."); }
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Request failed.");
+      return result;
+    } catch (error) {
+      // A timed-out mutation may already have reached the server. Keep the
+      // composer request identity and never replay it automatically.
+      if (data !== undefined && requestSignal.aborted && requestSignal.reason?.name === "TimeoutError") {
+        throw new Error("Request timed out. Check the result before retrying; it may still finish.");
+      }
+      throw error;
+    }
   }
   async function showJobResult(url, project = "Job result", task = "") {
     $("report-title").textContent = project;

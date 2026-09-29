@@ -1,4 +1,4 @@
-"""Fast, server-owned capability answers. These questions never perform actions."""
+"""Fast, server-owned capability and explanation answers; never perform actions."""
 import re
 
 
@@ -18,6 +18,12 @@ QUESTIONS = {
     'voice': ('can we talk', 'can you do voice calls', 'can i talk to you'),
     'workers': ('can you start workers', 'can you run coding jobs',
                 'can you use other models', 'can you run council'),
+    'git_force': ('what is a force push', 'what is a force-push', 'what does force push mean',
+                  'what does force-push mean', 'explain force push', 'explain force-push'),
+    'git_ready': ('what does undraft mean', 'what does undrafting a pr mean',
+                  'what does gh pr ready do', 'what does gh pr ready mean', 'explain gh pr ready'),
+    'git_merge': ('what does merging a pr mean', 'what does merging a pull request mean',
+                  'what does merge a pr mean', 'what is a pull request merge'),
 }
 
 
@@ -59,5 +65,11 @@ def reply(text, root):
         'voice': ('Yes—tap the call button and allow microphone access for a two-way voice conversation. '
                    'You can interrupt me or hang up; the transcript stays in this conversation.'),
         'workers': worker,
+        'git_force': ('A force push can replace the remote branch’s history, which can discard other people’s '
+                      'commits. Web Bob can explain it and help review alternatives; it cannot run a force push.'),
+        'git_ready': ('Removing draft status marks a pull request ready for review. The command “gh pr ready” '
+                      'does that; it does not merge the code. Web Bob keeps pull requests as drafts.'),
+        'git_merge': ('Merging a pull request integrates its changes into the target branch. Reviewing a PR '
+                      'or opening a draft does not merge it. Web Bob can prepare and review draft changes.'),
     }
     return answers.get(kind)

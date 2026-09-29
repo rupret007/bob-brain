@@ -14,6 +14,16 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
     let release;
     try {
       const context = await browser.newContext({viewport: {width: 390, height: 844}, reducedMotion: 'reduce'});
+      await context.addInitScript(() => {
+        const timeout = AbortSignal.timeout.bind(AbortSignal);
+        AbortSignal.timeout = ms => {
+          if (window.__shortPostTimeout && ms === 45000) {
+            window.__postTimeoutRequested = ms;
+            return timeout(250);
+          }
+          return timeout(ms);
+        };
+      });
       await context.route('**/*', route => new URL(route.request().url()).origin === origin.origin ? route.continue() : route.abort());
       const page = await context.newPage(), errors = [];
       page.on('pageerror', error => errors.push(error.message));
@@ -49,6 +59,50 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       const overview = page.waitForResponse(r => new URL(r.url()).pathname === '/api/overview');
       release();
       assert.equal((await overview).status(), 200);
+      // The synthetic reminder is accepted by the real server, but its HTTP
+      // acknowledgment is held. The UI must regain control without replaying it.
+      const requests = [];
+      let releasePost;
+      const postHeld = new Promise(resolve => { releasePost = resolve; });
+      const intercept = async route => {
+        requests.push(route.request().postDataJSON());
+        if (requests.length !== 1) return route.continue();
+        const response = await route.fetch();
+        await postHeld;
+        await route.fulfill({response}).catch(() => {});
+      };
+      await page.route('**/api/messages', intercept);
+      const pendingBody = engine + ' accepted once despite lost acknowledgment ' + Date.now();
+      const pendingText = 'remind me to ' + pendingBody + ' in 10 minutes';
+      const timeoutScreenshot = engine + '-post-timeout.png';
+      try {
+        await page.evaluate(() => { window.__shortPostTimeout = true; });
+        await page.locator('#message').fill(pendingText);
+        await page.locator('#send:enabled').click();
+        await page.locator('#notice').filter({hasText: 'Request timed out.'}).waitFor({timeout: 3000});
+        assert.equal(await page.evaluate(() => window.__postTimeoutRequested), 45000);
+        assert.equal(await page.locator('#message').inputValue(), pendingText);
+        assert.equal(await page.locator('#send').isEnabled(), true);
+        assert.equal(requests.length, 1, 'The UI must not automatically retry a mutation');
+        await page.screenshot({path: path.join(config.output, timeoutScreenshot), animations: 'disabled'});
+        releasePost();
+        await page.evaluate(() => { window.__shortPostTimeout = false; });
+        const retried = page.waitForResponse(r => new URL(r.url()).pathname === '/api/messages' && r.request().method() === 'POST');
+        await page.locator('#send:enabled').click();
+        const recovered = await (await retried).json();
+        assert.equal(requests.length, 2);
+        assert.deepEqual(requests[1], requests[0], 'A manual retry must retain the exact request identity');
+        assert.equal(recovered.messages.filter(m => m.role === 'user' && m.request_id === requests[0].request_id).length, 1);
+        const count = await page.evaluate(async body => {
+          const data = await (await fetch('/api/reminders')).json();
+          return data.reminders.filter(row => row.body === body).length;
+        }, pendingBody);
+        assert.equal(count, 1, 'The accepted reminder must not be created twice');
+      } finally {
+        releasePost();
+        await page.unroute('**/api/messages', intercept);
+        await page.evaluate(() => { window.__shortPostTimeout = false; });
+      }
       for (const width of [320, 390, 430]) {
         await page.setViewportSize({width, height: 844});
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
@@ -57,8 +111,8 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       const screenshot = engine + '-cold-chat.png';
       await page.screenshot({path: path.join(config.output, screenshot), animations: 'disabled'});
       assert.deepEqual(errors, []);
-      results.push({engine, passed: true, appearedAfterMs, screenshot,
-        checks: ['chat updates while initial overview is stalled', 'no false offline banner', 'composer remains available', 'overview recovers', 'phone layout']});
+      results.push({engine, passed: true, appearedAfterMs, screenshot, timeoutScreenshot,
+        checks: ['chat updates while initial overview is stalled', 'no false offline banner', 'composer remains available', 'overview recovers', 'bounded POST wait and honest uncertainty', 'manual retry retains identity with one accepted reminder', 'phone layout']});
       await context.close();
     } finally { if (release) release(); await browser.close(); }
   }

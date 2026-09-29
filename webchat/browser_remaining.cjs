@@ -35,6 +35,8 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
         ['Can you send texts?', 'confirm that draft separately'],
         ['Is my memory private?', 'future model context'],
         ['Can you text Instinct?', 'cannot be sent from Web Bob'],
+        ['What does force-push mean?', 'remote branch'],
+        ['Explain gh pr ready.', 'ready for review'],
       ]) {
         const value = await say(question);
         assert.equal(value.messages.at(-1).provider, 'capabilities');
