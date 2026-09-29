@@ -31,6 +31,12 @@ barge-in, a harmless version tool, persisted transcripts and resource cleanup
 must pass. These product calls never invoke model reviewers or coding workers.
 Synthetic microphone testing does not claim physical iPhone microphone proof.
 
+Improvement voice checks also complete a requested longer story through the real
+Gemini writing API and spoken playback, while retaining a brief-answer check.
+The isolated server uses private fixture history and permits only the Gemini API
+for writing, with no CLI fallback. Version checks require a new tool invocation
+and spoken response after earlier writing tools; old tool activity cannot pass.
+
 After a normal draft PR/clean-branch merge with the same tree, `deploy --root ROOT
 --feature FEATURE --previous FULL_SHA --pr URL --checks PATH --review PATH`
 checks the predecessor, saves fresh rollback snapshots, freezes the candidate,

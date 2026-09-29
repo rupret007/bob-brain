@@ -1,6 +1,6 @@
 /* Real Gemini Live proof against an explicitly supplied authenticated server.
    Browser microphone fixture -> real AudioWorklet -> Live -> real audio playback.
-   Only a version tool is invoked; no jobs, messages or credentials are emitted. */
+   Only writing and version tools are invoked; no jobs, messages or credentials are emitted. */
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -144,10 +144,12 @@ async function instrument(page) {
     results.checks.push('spoken input, native spoken reply, shared memory');
     await screenshot('iphone-memory');
     {
-      const before=await page.evaluate(()=>({turns:voiceProof.turns,replies:document.querySelectorAll('.call-bob').length,
+      const before=await page.evaluate(()=>({turns:voiceProof.turns,toolResponses:voiceProof.toolResponses,replies:document.querySelectorAll('.call-bob').length,
         outputPackets:voiceProof.outputPackets}));
       await feed('story-complete');
-      await page.waitForFunction(n=>voiceProof.turns>n,before.turns,{timeout:90000});
+      await page.waitForFunction(before=>voiceProof.toolResponses>before.toolResponses
+        && voiceProof.outputPackets>voiceProof.outputAtToolResponse
+        && voiceProof.turns>voiceProof.turnsAtToolResponse,before,{timeout:90000});
       assert.ok(await page.locator('.call-bob').count()>before.replies, 'A new completed story reply is required');
       const story=(await page.locator('.call-bob').last().textContent()).replace(/^Bob:\s*/, '');
       const words=story.trim().split(/\s+/).length;
@@ -159,6 +161,15 @@ async function instrument(page) {
       assert.match(story,/compass/i);
       assert.doesNotMatch(story,/(?:better at|prefer|can only|must|need to|have to)\s+(?:keep(?:ing)?\s+(?:things|it|replies)\s+)?(?:brief|short|casual)|can(?:not|'t)\s+(?:tell|write|give)\s+(?:you\s+)?(?:a\s+)?(?:long|story)/i);
       assert.ok(await page.evaluate(n=>voiceProof.outputPackets>n,before.outputPackets), 'Story must include actual audio');
+      const writtenStory=await page.evaluate(async()=>{
+        const id=localStorage.getItem('bob.conversation');
+        const conversation=await (await fetch('/api/conversations/'+id)).json();
+        if(conversation.messages.some(m=>m.task_id||m.task_ids?.length))throw new Error('Writing must not queue work');
+        return conversation.messages.find(m=>m.role==='assistant'&&m.provider==='gemini'&&m.status==='done'&&/compass/i.test(m.content));
+      });
+      assert.ok(writtenStory,'Story must use an actual Gemini product answer through the authenticated chat handler');
+      results.requested_story.written_words=writtenStory.content.trim().split(/\s+/).length;
+      assert.ok(results.requested_story.written_words>=100&&results.requested_story.written_words<=250);
       results.checks.push('requested longer story completes with real spoken audio while short answers stay brief');
       await screenshot('iphone-requested-story');
       await page.waitForFunction(()=>document.querySelector('#call-dialog').dataset.phase==='listening',null,{timeout:90000});
@@ -178,8 +189,9 @@ async function instrument(page) {
       await page.waitForFunction(()=>[...document.querySelectorAll('.call-bob')].some(e=>/\bok(?:ay)?\b.*\bjeff\b/i.test(e.textContent)),null,{timeout:45000});
       await page.waitForTimeout(2000);
       await page.waitForFunction(()=>document.querySelector('#call-dialog').dataset.phase==='listening',null,{timeout:45000});
+      const versionBefore=await page.evaluate(()=>({tools:voiceProof.tools,responses:voiceProof.toolResponses}));
       await feed('tool');
-      await page.waitForFunction(()=>voiceProof.tools>0,null,{timeout:45000});
+      await page.waitForFunction(n=>voiceProof.tools>n,versionBefore.tools,{timeout:45000});
       // The spoken acknowledgement can vary. Only the durable server receipt
       // proves that the actual request was dispatched.
       await page.waitForFunction(async()=>{
@@ -187,9 +199,9 @@ async function instrument(page) {
         const conversation=await (await fetch('/api/conversations/'+id)).json();
         return conversation.messages.some(m=>m.role==='assistant'&&m.provider==='dispatcher'&&/Web Bob|[0-9a-f]{7}/.test(m.content));
       },null,{timeout:45000});
-      await page.waitForFunction(()=>voiceProof.toolResponses>0
+      await page.waitForFunction(n=>voiceProof.toolResponses>n
         && voiceProof.outputPackets>voiceProof.outputAtToolResponse
-        && voiceProof.turns>voiceProof.turnsAtToolResponse,null,{timeout:45000});
+        && voiceProof.turns>voiceProof.turnsAtToolResponse,versionBefore.responses,{timeout:45000});
       const conversation = await page.evaluate(async()=>{
         const id=localStorage.getItem('bob.conversation');
         return (await fetch('/api/conversations/'+id)).json();
