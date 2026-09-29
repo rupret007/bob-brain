@@ -115,8 +115,21 @@ also refuses before health or screen operations, retaining evidence for explicit
 recovery. The launcher neither restarts an existing session nor clears or
 automatically recovers the journal. Different pinned code directories use the
 same lock. Direct `run.sh` invocations still rely on their caller's coordination;
-older launchers, release identity checks, supervisor recovery and runtime work
-admission remain outside this change.
+older launchers, supervisor recovery and runtime work admission remain outside
+this change.
+
+Startup resolves the currently selected Web Bob pin while holding ownership,
+then requires `/api/version` to match its full SHA and build timestamp before
+reporting healthy or ready. The launcher file's own directory is not assumed
+to be the selected application: a release may have changed pins before startup
+acquired the lock. Pin and manifest reads are bounded and reject links or
+nonregular files. Tracked checkouts retain the existing anchored Git identity
+fallback; unknown identities refuse startup. A responding Web Bob with a wrong,
+malformed or unavailable version refuses without a screen command or automatic
+restart. The existing login and unauthenticated API checks are still required.
+This checks reported identity; it does not attest every byte of a running process
+or recover an interrupted activation. All changes still require the full release
+gates before deployment.
 
 Always maintain at least 5 GiB free; recovery reserves and bounded atomic
 evidence writes are retained from the existing release tooling. Authentication

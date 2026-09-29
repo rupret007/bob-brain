@@ -2,6 +2,7 @@
 import contextlib
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -20,6 +21,9 @@ class StartSafetyTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix='webbob-start-safety-')
         self.addCleanup(temporary.cleanup)
         self.here = Path(temporary.name)
+        (self.here / 'conductor').mkdir()
+        (self.here / 'conductor/webbob-build.json').write_text(json.dumps(
+            dict(sha='a' * 40, built_at='2026-09-29T00:00:00+00:00')))
         self.addCleanup(os.umask, os.umask(0o077))
         contexts = contextlib.ExitStack()
         self.addCleanup(contexts.close)

@@ -304,7 +304,16 @@ use the explicit recovery procedure in [the release guide](../release/README.md)
 The launcher never clears that journal or recovers a release automatically.
 This coordination covers updated periodic launchers and release controllers.
 Direct `run.sh` invocations and older launchers remain outside it; it does not
-drain active chat or voice work or verify a healthy server's release identity.
+drain active chat or voice work.
+
+While holding ownership, startup resolves the current Web Bob application pin
+and its build identity, then requires the public `/api/version` response to match
+the full SHA and build timestamp before reporting healthy or ready. A responding
+server with a different or unverified identity is left for deliberate inspection;
+startup does not replace it or launch a second screen session. Malformed or
+unversioned selected code also refuses startup. Pin and manifest reads are bounded;
+tracked checkouts retain the existing anchored Git fallback when no manifest is
+present. This checks reported identity, not the full running process's source bytes.
 
 **macOS permission:** if `webchat-launchd.log` says `Operation not permitted`, open
 System Settings → Privacy & Security → Full Disk Access, add `/bin/bash` using

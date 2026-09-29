@@ -30,7 +30,7 @@ spec.loader.exec_module(launcher)
 launcher.HERE = Path(os.environ['BOB_ROOT']) / 'other code' / 'webchat'
 launcher.HERE.mkdir(parents=True)
 calls = 0
-def health():
+def health(expected):
     global calls
     calls += 1
     if sys.argv[2] == 'readiness' and calls == 1:
@@ -59,6 +59,9 @@ class StartupOwnershipTests(unittest.TestCase):
         self.root = Path(temporary.name).resolve()
         self.here = self.root / 'selected code' / 'webchat'
         self.here.mkdir(parents=True)
+        (self.root / 'conductor').mkdir()
+        (self.root / 'conductor/webbob-build.json').write_text(json.dumps(
+            dict(sha='a' * 40, built_at='2026-09-29T00:00:00+00:00')))
         self.addCleanup(os.umask, os.umask(0o077))
         contexts = contextlib.ExitStack()
         self.addCleanup(contexts.close)
