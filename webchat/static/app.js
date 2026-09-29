@@ -87,18 +87,65 @@ if ($("login-form")) {
       throw error;
     }
   }
-  async function showJobResult(url, project = "Job result", task = "") {
+  let jobResultRequest = null, jobResultRetry = null, jobResultOrigin = null;
+  function cancelJobResult() {
+    if (jobResultRequest) clearTimeout(jobResultRequest.timeout);
+    jobResultRequest?.controller.abort();
+    jobResultRequest = jobResultRetry = null;
+    $("report-body").setAttribute("aria-busy", "false");
+    $("retry-report").hidden = true;
+  }
+  async function showJobResult(url, project = "Job result", task = "", opener = document.activeElement) {
+    cancelJobResult();
+    if (!$("report").open) jobResultOrigin = { opener, url };
+    const request = { url, project, task, controller: new AbortController() };
+    jobResultRequest = request;
     $("report-title").textContent = project;
     $("report-date").textContent = task;
-    $("report-body").textContent = "Loading…";
-    $("report").showModal();
+    $("report-body").textContent = "";
+    $("report-body").setAttribute("aria-busy", "true");
+    $("report-status").textContent = "Loading result…";
+    if (!$("report").open) $("report").showModal();
+    // Supplying a cancellable signal must preserve api()'s normal read bound.
+    request.timeout = setTimeout(() => request.controller.abort(), 15000);
     try {
-      const result = await api(url);
+      const result = await api(url, undefined, request.controller.signal);
+      if (jobResultRequest !== request || !$("report").open) return;
+      if (request.controller.signal.aborted) throw new Error("Result read timed out");
       $("report-title").textContent = result.project || project;
       $("report-date").textContent = result.task || task;
       $("report-body").textContent = result.text;
-    } catch (_) { $("report-body").textContent = "This result could not be loaded. Please try again."; }
+      $("report-status").textContent = "";
+    } catch (_) {
+      if (jobResultRequest !== request || !$("report").open) return;
+      $("report-status").textContent = "This result could not be loaded. Try again.";
+      jobResultRetry = request;
+      $("retry-report").hidden = false;
+    } finally {
+      clearTimeout(request.timeout);
+      if (jobResultRequest === request) {
+        jobResultRequest = null;
+        $("report-body").setAttribute("aria-busy", "false");
+      }
+    }
   }
+  $("retry-report").addEventListener("click", () => {
+    if (jobResultRetry) return showJobResult(jobResultRetry.url, jobResultRetry.project, jobResultRetry.task);
+  });
+  $("close-report").addEventListener("click", () => { cancelJobResult(); $("report").close(); });
+  $("report").addEventListener("cancel", cancelJobResult);
+  // A queued close event from an earlier dismissal can arrive after reopening.
+  $("report").addEventListener("close", () => {
+    if ($("report").open) return;
+    cancelJobResult();
+    const origin = jobResultOrigin;
+    jobResultOrigin = null;
+    // Polling can replace the Jobs button while its report is open.
+    const opener = origin?.opener?.isConnected ? origin.opener
+      : [...document.querySelectorAll('[data-result-url], [data-job-id]')].find(node =>
+        (node.dataset.resultUrl || '/api/jobs/result?id=' + node.dataset.jobId) === origin?.url);
+    opener?.focus();
+  });
   function mediaKindFromFile(file) {
     const extension = file.name.split(".").pop().toLowerCase();
     if (["jpg", "jpeg", "png", "gif", "webp", "heic", "heif"].includes(extension)) return "image";
@@ -637,7 +684,7 @@ if ($("login-form")) {
   $("messages")?.addEventListener("click", async (event) => {
     const result = event.target.closest(".job-result-link[data-job-id]");
     if (result) {
-      await showJobResult("/api/jobs/result?id=" + result.dataset.jobId);
+      await showJobResult("/api/jobs/result?id=" + result.dataset.jobId, "Job result", "", result);
       return;
     }
     const btn = event.target.closest(".copy-code");
@@ -917,7 +964,6 @@ if ($("login-form")) {
     try { await voice.stop(); await api("/api/logout", {}); markSongClean(); location.assign("/login"); }
     catch (_) { $("settings-notice").textContent = "Could not log out. Please try again."; }
   });
-  $("close-report").addEventListener("click", () => $("report").close());
   let songProjectId = stored("bob.songProject") || "", songBusy = false;
   function setSongBusy(value) {
     songBusy = value;
@@ -1265,8 +1311,9 @@ if ($("login-form")) {
       if (job.result_url?.startsWith("/api/jobs/result?")) {
         const result = jobElement("button", "job-result-link", "View result");
         result.type = "button";
+        result.dataset.resultUrl = job.result_url;
         result.setAttribute("aria-label", `View result for ${job.project}: ${job.task}`);
-        result.addEventListener("click", () => showJobResult(job.result_url, job.project, job.task));
+        result.addEventListener("click", () => showJobResult(job.result_url, job.project, job.task, result));
         footer.append(result);
       }
       const external = jobLink(job.external_result_url, "View result");

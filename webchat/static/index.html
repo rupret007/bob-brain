@@ -238,10 +238,12 @@
     <button type="button" id="new-chat" class="sr-only" tabindex="-1" aria-hidden="true">New chat</button>
   </dialog>
 
-  <dialog id="report">
+  <dialog id="report" aria-labelledby="report-title">
     <div class="report-heading"><h2 id="report-title"></h2><button type="button" id="close-report" aria-label="Close report">Close</button></div>
     <p id="report-date" class="muted"></p>
-    <pre id="report-body"></pre>
+    <p id="report-status" role="status"></p>
+    <pre id="report-body" aria-busy="false"></pre>
+    <button type="button" id="retry-report" hidden>Try again</button>
   </dialog>
 
   <dialog id="call-dialog" class="call-dialog" aria-labelledby="call-title" aria-describedby="call-status">

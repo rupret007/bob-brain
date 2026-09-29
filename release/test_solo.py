@@ -227,6 +227,23 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, 'skipped'):
             self.verify()
 
+    def test_improve_requires_jobs_result_browser_and_still_requires_real_voice(self):
+        self.check['feature'] = 'improve'
+        for name in ('media-browser', 'voice-js', 'voice-browser', 'instinct-browser',
+                     'remaining-browser', 'bridge-contract', 'cold-browser', 'jobs-results-browser'):
+            self.check['results'][name] = dict(self.check['results']['browser'])
+        self.check['andrea'] = {'sha': solo.andrea_pin()['sha'], 'results': []}
+        solo.atomic_json(self.folder / 'bridge-contract.json', dict(
+            all_pass=True, andrea_sha=solo.andrea_pin()['sha'], real_texts_sent=0))
+        checks = self.folder / 'checks.json'
+        for missing in ('jobs-results-browser', 'voice-browser'):
+            with self.subTest(missing=missing):
+                value = copy.deepcopy(self.check)
+                del value['results'][missing]
+                solo.atomic_json(checks, value)
+                with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
+                    solo.verify_checks('a' * 40, 'improve', checks)
+
     def test_changed_log_rejected(self):
         self.log.write_text('Different bytes')
         with self.assertRaisesRegex(Exception, 'changed'):
