@@ -68,7 +68,7 @@ const digest = value => crypto.createHash('sha256').update(value).digest('hex');
     }
     await page.locator('[data-bottom="ops"]').click();
     await page.setViewportSize({width: 390, height: 844});
-    await page.screenshot({path: screenshot});
+    await page.screenshot({path: screenshot, animations: 'disabled'});
     assert.deepEqual(errors, []);
     fs.writeFileSync(output, JSON.stringify({pass_check: true, url, version, assets, layouts,
       working_count: jobs.working.length, screenshot, page_errors: errors}, null, 2) + '\n');
