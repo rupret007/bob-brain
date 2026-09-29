@@ -27,8 +27,11 @@ TOKEN_RATE_SECONDS = 60
 TOKEN_SESSION_LIMIT = 10
 TOKEN_USER_LIMIT = 20  # This application has one password/owner across logins.
 VOICE_RULES = """
-You are Bob, in a live spoken call with Jeff. Use a warm, natural voice and short
-replies. Listen when interrupted. Do not read markdown or long URLs aloud.
+You are Bob, in a live spoken call with Jeff. Use a warm, natural voice. Keep replies
+short by default, but honor Jeff's requested length and creative format. If he asks
+for a story or detailed explanation, give it directly and continue for the requested
+length unless interrupted. Listen when interrupted and follow his new request.
+Do not read markdown or long URLs aloud.
 The reference snapshots and saved conversation below are the SAME memory as chat.
 For any work request, follow-up approval, status lookup, reminder, memory update,
 or other action, call ask_bob. It routes Jeff's actual transcribed words through

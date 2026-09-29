@@ -113,6 +113,30 @@ test('hangup releases microphone socket nodes timers and output',async()=>{
   await f.controller.stop();assert.equal(f.tracks[0].stopped,true);assert.equal(s.socket.closed,true);
   assert.equal(s.capture.disconnected,true);assert.equal(s.audio.state,'closed');assert.equal(s.socket.onmessage,null);
 });
+test('a requested long reply buffers sixty seconds and barge-in stops all of it',async t=>{
+  const f=fixture();t.after(()=>f.controller.stop());await f.controller.start('chat');const s=f.controller.session;
+  const chunk={data:btoa('\0'.repeat(48000)),mimeType:'audio/pcm;rate=24000'};
+  for(let n=0;n<60;n++)f.controller.play(s,chunk);
+  assert.equal(f.controller.active,true);assert.equal(s.sources.size,60);
+  const sources=[...s.sources];f.controller.event(s,{serverContent:{interrupted:true}});
+  assert.ok(sources.every(source=>source.stopped&&source.disconnected));
+  assert.equal(s.sources.size,0);assert.equal(s.nextAudio,0);
+  f.controller.play(s,chunk);assert.equal(s.sources.size,1);
+});
+test('audio queue counts full chunk duration and fails safely at the finite limit',async t=>{
+  const f=fixture();t.after(()=>f.controller.stop());await f.controller.start('chat');const s=f.controller.session;
+  const chunk={data:btoa('\0'.repeat(48000)),mimeType:'audio/pcm;rate=24000'};
+  for(let n=0;n<119;n++)f.controller.play(s,chunk);
+  assert.equal(s.sources.size,119);
+  const sources=[...s.sources];let buffers=0;
+  s.audio.createBuffer=()=>{buffers++;throw new Error('Must reject before allocating another audio buffer');};
+  s.socket.onmessage({data:JSON.stringify({serverContent:{modelTurn:{parts:[{inlineData:chunk}]}}})});
+  await pause();assert.equal(buffers,0);
+  assert.equal(f.controller.active,false);assert.equal(s.socket.closed,true);assert.equal(f.tracks[0].stopped,true);
+  assert.ok(sources.every(source=>source.stopped&&source.disconnected));
+  assert.match(f.states.at(-1).text,/reply exceeded.*audio buffer/i);
+  assert.equal(f.requests.filter(r=>r.route.endsWith('/start')).length,1);
+});
 test('slow network closes streaming instead of accumulating delayed speech',async()=>{
   const f=fixture();await f.controller.start('chat');const s=f.controller.session;
   f.controller.event(s,{setupComplete:{}});s.socket.bufferedAmount=128001;

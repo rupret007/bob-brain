@@ -23,6 +23,7 @@ def probe(root, output, url=None, engines=('chromium', 'webkit')):
         private = Path(directory)
         phrases = {
             'question-short': 'What must Instinct never do? Please answer in one short sentence.',
+            'story-complete': 'Tell me a complete story about a sailor who finds a lost compass. Use about one hundred and fifty words. Start with the story itself.',
             'story': 'Tell me a very long story about a sailor. Start right away and keep going for several paragraphs.',
             'interrupt': 'Stop. Just say okay Jeff.',
             'tool': 'Please use your tool to check what version are you running, then read the version number.',
