@@ -1,6 +1,7 @@
 "use strict";
 /* Full-duplex Gemini Live audio. Dictation/read-aloud remain separate features.
    This controller owns every resource, including late microphone promises. */
+const MAX_QUEUED_AUDIO_SECONDS = 120;
 class BobVoice {
   constructor({ api, onState, onTranscript, onSaved }) {
     Object.assign(this, { api, onState, onTranscript, onSaved });
@@ -71,7 +72,11 @@ class BobVoice {
         try {
           const raw = typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
           this.event(s, JSON.parse(raw));
-        } catch (_) { this.fail(s, "The voice connection failed. Your saved transcript is in chat."); }
+        } catch (error) {
+          this.fail(s, error.code === "BOB_AUDIO_BACKLOG"
+            ? "This reply exceeded the audio buffer. Your transcript is in chat; try a shorter section in a new call."
+            : "The voice connection failed. Your saved transcript is in chat.");
+        }
       };
       s.socket.onerror = () => this.fail(s, "The voice connection failed. Check your connection and try again.");
       s.socket.onclose = () => this.fail(s, "Call disconnected. Tap the waveform to call again.");
@@ -181,13 +186,18 @@ class BobVoice {
     for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
     const rate = Number(/rate=(\d+)/.exec(data.mimeType)?.[1] || 24000);
     if (rate < 8000 || rate > 96000 || !bytes.length || bytes.length % 2) throw new Error("Invalid audio");
+    // Native speech can arrive much faster than playback for requested stories.
+    // Bound the entire queued duration (including this chunk) before allocating
+    // a float buffer or source. At 24 kHz the cap is about 11 MiB of PCM floats.
+    const when = Math.max(s.audio.currentTime + .02, s.nextAudio);
+    if (when + bytes.length / (2 * rate) - s.audio.currentTime > MAX_QUEUED_AUDIO_SECONDS) {
+      throw Object.assign(new Error("Audio backlog"), { code: "BOB_AUDIO_BACKLOG" });
+    }
     const buffer = s.audio.createBuffer(1, bytes.length / 2, rate), values = buffer.getChannelData(0);
     const pcm = new DataView(bytes.buffer);
     for (let i = 0; i < values.length; i++) values[i] = pcm.getInt16(i * 2, true) / 32768;
     const source = s.audio.createBufferSource(); source.buffer = buffer; source.connect(s.audio.destination);
     s.playingTurn = s.outputTurn;
-    const when = Math.max(s.audio.currentTime + .02, s.nextAudio);
-    if (when - s.audio.currentTime > 30) throw new Error("Audio backlog");
     s.nextAudio = when + buffer.duration; s.sources.add(source);
     source.onended = () => {
       s.sources.delete(source); source.disconnect();

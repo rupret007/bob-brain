@@ -16,13 +16,14 @@ sys.path[:0] = [str(CODE / d) for d in ('webchat', 'services', 'state')]
 def probe(root, output, url=None, engines=('chromium', 'webkit')):
     from app import Chat, Server
     from build_info import BUILD
-    from texting_fixture import OfflineProviders
+    from providers import Providers, run
     from voice import create_token
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='solo-voice-') as directory:
         private = Path(directory)
         phrases = {
             'question-short': 'What must Instinct never do? Please answer in one short sentence.',
+            'story-complete': 'Tell me a complete story about a sailor who finds a lost compass. Use about one hundred and fifty words. Start with the story itself.',
             'story': 'Tell me a very long story about a sailor. Start right away and keep going for several paragraphs.',
             'interrupt': 'Stop. Just say okay Jeff.',
             'tool': 'Please use your tool to check what version are you running, then read the version number.',
@@ -34,7 +35,15 @@ def probe(root, output, url=None, engines=('chromium', 'webkit')):
                             '-ar', '24000', '-ac', '1', str(wav)], check=True, timeout=15)
         chat = server = None
         if not url:
-            providers = OfflineProviders()
+            def product_api(argv, **kwargs):
+                # Actual Gemini writing with private fixture history. Credentials
+                # stay at their configured path; no copies or CLI/model fallback.
+                if argv != [sys.executable, str(CODE / 'webchat/api_call.py'), 'gemini']:
+                    raise RuntimeError('Voice proof permits only the Gemini product API')
+                kwargs['env'] = dict(kwargs['env'], BOB_ROOT=str(root))
+                return run(argv, **kwargs)
+            providers = Providers(private, lambda value: value, runner=product_api)
+            providers.route_order = lambda _conversation: ('gemini',)
             providers.snapshot = lambda **_: [dict(path='proof-memory', text='Instinct must never send messages; it may only read and draft.')]
             chat = Chat(private / 'conductor/webchat', private, providers)
             chat.voice.token_factory = lambda _root, setup, expires: create_token(root, setup, expires)
@@ -62,7 +71,7 @@ def probe(root, output, url=None, engines=('chromium', 'webkit')):
     results = [json.loads((output / (engine + '-proof.json')).read_text()) for engine in engines]
     if not all(r.get('ok') and r.get('real_provider') for r in results):
         raise RuntimeError('Voice proof lacked a real-provider pass')
-    return dict(all_pass=True, real_provider=True, synthetic_microphone=True, engines=list(engines),
+    return dict(all_pass=True, real_provider=True, real_product_writing=True, synthetic_microphone=True, engines=list(engines),
                 real_texts_sent=0, queued_workers=0)
 
 

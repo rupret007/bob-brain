@@ -27,9 +27,21 @@ TOKEN_RATE_SECONDS = 60
 TOKEN_SESSION_LIMIT = 10
 TOKEN_USER_LIMIT = 20  # This application has one password/owner across logins.
 VOICE_RULES = """
-You are Bob, in a live spoken call with Jeff. Use a warm, natural voice and short
-replies. Listen when interrupted. Do not read markdown or long URLs aloud.
+You are Bob, in a live spoken call with Jeff. Use a warm, natural voice.
+Keep casual exchanges concise. For stories, creative work and detailed explanations,
+develop the content fully to Jeff's requested length and format. His latest length
+request overrides earlier turns: a previous request for one sentence does not shorten
+a later story. For a word count, silently plan enough full sentences to reach it,
+using roughly fifteen spoken words per sentence, and aim within ten percent of the
+requested count. Speak the finished content directly; do not announce your plan.
+Continue until the requested content is complete unless interrupted. Listen when
+interrupted and follow his new request.
+Do not read markdown or long URLs aloud.
 The reference snapshots and saved conversation below are the SAME memory as chat.
+For creative writing, stories, or explicit word-count or multi-paragraph requests,
+call ask_bob to prepare the answer through the same writing path as typed chat.
+Read the returned writing naturally and in full, preserving its requested length;
+do not replace it with a summary or an offer to write it. Stop when interrupted.
 For any work request, follow-up approval, status lookup, reminder, memory update,
 or other action, call ask_bob. It routes Jeff's actual transcribed words through
 the existing chat handlers. It takes no arguments: NEVER rewrite a request into
@@ -165,7 +177,7 @@ class VoiceCalls:
                 "realtimeInputConfig": {"activityHandling": "START_OF_ACTIVITY_INTERRUPTS",
                     "automaticActivityDetection": {"silenceDurationMs": 500}},
                 "tools": [{"functionDeclarations": [{"name": "ask_bob",
-                    "description": "REQUIRED for Web Bob version/build/commit questions, current status, memory updates and work requests. Uses Jeff's saved spoken words through Bob's authenticated chat handlers. No arguments; do not answer these requests without this tool's result.",
+                    "description": "REQUIRED for creative writing, stories, explicit word-count/multi-paragraph requests, Web Bob version/build/commit questions, current status, memory updates and work requests. Uses Jeff's saved spoken words through Bob's authenticated chat handlers. No arguments; read returned writing in full and do not answer these requests without this tool's result.",
                     "parameters": {"type": "OBJECT", "properties": {}}}]}],
             }
             token = self.token_factory(chat.root, setup, call["expires"])

@@ -1,6 +1,6 @@
 /* Real Gemini Live proof against an explicitly supplied authenticated server.
    Browser microphone fixture -> real AudioWorklet -> Live -> real audio playback.
-   Only a version tool is invoked; no jobs, messages or credentials are emitted. */
+   Only writing and version tools are invoked; no jobs, messages or credentials are emitted. */
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -115,6 +115,17 @@ async function instrument(page) {
     });
     await page.reload();await page.waitForFunction(()=>!document.querySelector('#message').disabled);
     errors.length = 0; // Initial navigation may abort the previous page's fetches.
+    // Record only allowlisted playback diagnostics, never provider payloads or credentials.
+    await page.evaluate(()=>{
+      voiceProof.playbackErrors=[];voiceProof.maxQueuedAudioSeconds=0;
+      const play=window.BobVoice.prototype.play;
+      window.BobVoice.prototype.play=function(s,data){
+        try{return play.call(this,s,data);}
+        catch(error){voiceProof.playbackErrors.push({kind:['Audio backlog','Invalid audio'].includes(error.message)?error.message:'Playback error',
+          queuedSeconds:Math.max(0,s.nextAudio-s.audio.currentTime)});throw error;}
+        finally{voiceProof.maxQueuedAudioSeconds=Math.max(voiceProof.maxQueuedAudioSeconds,s.nextAudio-s.audio.currentTime);}
+      };
+    });
     const layout=await page.evaluate(()=>{
       const mic=document.querySelector('#mic').getBoundingClientRect(),call=document.querySelector('#live-call').getBoundingClientRect();
       return {overflow:document.documentElement.scrollWidth>innerWidth,right_of_mic:call.left>=mic.right,tap_width:call.width,tap_height:call.height,secure:isSecureContext};
@@ -128,8 +139,41 @@ async function instrument(page) {
     await feed('question-short');
     await page.waitForFunction(n=>voiceProof.turns>n,firstTurn,{timeout:45000});
     assert.match(await page.locator('.call-bob').last().textContent(),/send/i);
+    assert.ok((await page.locator('.call-bob').last().textContent()).trim().split(/\s+/).length <= 45,
+      'The explicitly short memory answer must remain brief');
     results.checks.push('spoken input, native spoken reply, shared memory');
     await screenshot('iphone-memory');
+    {
+      const before=await page.evaluate(()=>({turns:voiceProof.turns,toolResponses:voiceProof.toolResponses,replies:document.querySelectorAll('.call-bob').length,
+        outputPackets:voiceProof.outputPackets}));
+      await feed('story-complete');
+      await page.waitForFunction(before=>voiceProof.toolResponses>before.toolResponses
+        && voiceProof.outputPackets>voiceProof.outputAtToolResponse
+        && voiceProof.turns>voiceProof.turnsAtToolResponse,before,{timeout:90000});
+      assert.ok(await page.locator('.call-bob').count()>before.replies, 'A new completed story reply is required');
+      const story=(await page.locator('.call-bob').last().textContent()).replace(/^Bob:\s*/, '');
+      const words=story.trim().split(/\s+/).length;
+      results.requested_story={words,sha256:require('node:crypto').createHash('sha256').update(story).digest('hex'),
+        // These are our synthetic spoken requests, never owner chat history.
+        spoken_request:await page.locator('.call-you').last().textContent(),
+        reply_word_counts:await page.locator('.call-bob').evaluateAll(nodes=>nodes.map(n=>n.textContent.replace(/^Bob:\s*/, '').trim().split(/\s+/).length))};
+      assert.ok(words>=100 && words<=250, 'Requested roughly 150-word story; received '+words+' words');
+      assert.match(story,/compass/i);
+      assert.doesNotMatch(story,/(?:better at|prefer|can only|must|need to|have to)\s+(?:keep(?:ing)?\s+(?:things|it|replies)\s+)?(?:brief|short|casual)|can(?:not|'t)\s+(?:tell|write|give)\s+(?:you\s+)?(?:a\s+)?(?:long|story)/i);
+      assert.ok(await page.evaluate(n=>voiceProof.outputPackets>n,before.outputPackets), 'Story must include actual audio');
+      const writtenStory=await page.evaluate(async()=>{
+        const id=localStorage.getItem('bob.conversation');
+        const conversation=await (await fetch('/api/conversations/'+id)).json();
+        if(conversation.messages.some(m=>m.task_id||m.task_ids?.length))throw new Error('Writing must not queue work');
+        return conversation.messages.find(m=>m.role==='assistant'&&m.provider==='gemini'&&m.status==='done'&&/compass/i.test(m.content));
+      });
+      assert.ok(writtenStory,'Story must use an actual Gemini product answer through the authenticated chat handler');
+      results.requested_story.written_words=writtenStory.content.trim().split(/\s+/).length;
+      assert.ok(results.requested_story.written_words>=100&&results.requested_story.written_words<=250);
+      results.checks.push('requested longer story completes with real spoken audio while short answers stay brief');
+      await screenshot('iphone-requested-story');
+      await page.waitForFunction(()=>document.querySelector('#call-dialog').dataset.phase==='listening',null,{timeout:90000});
+    }
     {
       const before=await page.evaluate(()=>({interruptions:voiceProof.interruptions,stops:voiceProof.stops,starts:voiceProof.starts}));
       await feed('story');
@@ -145,8 +189,9 @@ async function instrument(page) {
       await page.waitForFunction(()=>[...document.querySelectorAll('.call-bob')].some(e=>/\bok(?:ay)?\b.*\bjeff\b/i.test(e.textContent)),null,{timeout:45000});
       await page.waitForTimeout(2000);
       await page.waitForFunction(()=>document.querySelector('#call-dialog').dataset.phase==='listening',null,{timeout:45000});
+      const versionBefore=await page.evaluate(()=>({tools:voiceProof.tools,responses:voiceProof.toolResponses}));
       await feed('tool');
-      await page.waitForFunction(()=>voiceProof.tools>0,null,{timeout:45000});
+      await page.waitForFunction(n=>voiceProof.tools>n,versionBefore.tools,{timeout:45000});
       // The spoken acknowledgement can vary. Only the durable server receipt
       // proves that the actual request was dispatched.
       await page.waitForFunction(async()=>{
@@ -154,9 +199,9 @@ async function instrument(page) {
         const conversation=await (await fetch('/api/conversations/'+id)).json();
         return conversation.messages.some(m=>m.role==='assistant'&&m.provider==='dispatcher'&&/Web Bob|[0-9a-f]{7}/.test(m.content));
       },null,{timeout:45000});
-      await page.waitForFunction(()=>voiceProof.toolResponses>0
+      await page.waitForFunction(n=>voiceProof.toolResponses>n
         && voiceProof.outputPackets>voiceProof.outputAtToolResponse
-        && voiceProof.turns>voiceProof.turnsAtToolResponse,null,{timeout:45000});
+        && voiceProof.turns>voiceProof.turnsAtToolResponse,versionBefore.responses,{timeout:45000});
       const conversation = await page.evaluate(async()=>{
         const id=localStorage.getItem('bob.conversation');
         return (await fetch('/api/conversations/'+id)).json();
@@ -178,7 +223,8 @@ async function instrument(page) {
     // transcript can finish before CLOSED; require completion within five seconds.
     await page.waitForFunction(()=>voiceProof.sockets.length > 0 && voiceProof.sockets.every(s=>s.readyState===3),null,{timeout:5000});
     results.media=await page.evaluate(()=>({inputPackets:voiceProof.inputPackets,outputPackets:voiceProof.outputPackets,outputBytes:voiceProof.outputBytes,
-      starts:voiceProof.starts,stops:voiceProof.stops,tracksEnded:voiceProof.tracks.every(t=>t.readyState==='ended'),socketsClosed:voiceProof.sockets.every(s=>s.readyState===3)}));
+      starts:voiceProof.starts,stops:voiceProof.stops,maxQueuedAudioSeconds:voiceProof.maxQueuedAudioSeconds,
+      playbackErrors:voiceProof.playbackErrors,tracksEnded:voiceProof.tracks.every(t=>t.readyState==='ended'),socketsClosed:voiceProof.sockets.every(s=>s.readyState===3)}));
     assert.ok(results.media.inputPackets>10&&results.media.outputBytes>10000&&results.media.starts>0);
     assert.ok(results.media.tracksEnded&&results.media.socketsClosed);results.checks.push('hangup releases microphone and audio transport');
     await page.locator('#end-call').click();await page.reload();
@@ -232,8 +278,10 @@ async function instrument(page) {
     await screenshot('failure').catch(()=>{});
     console.error(error.message);console.error('UI:',await page.locator('#call-status').textContent().catch(()=>''));
     console.error('Page errors:',errors);process.exitCode=1;
+    if(results.requested_story)console.error('Requested story diagnostics:',JSON.stringify(results.requested_story));
     console.error('Media diagnostics:',await page.evaluate(()=>({contexts:voiceProof.contexts.map(c=>c.state),microphone:voiceProof.microphoneContext?.state,
       tracks:voiceProof.tracks.map(t=>t.readyState),sockets:voiceProof.sockets.map(s=>s.readyState),closes:voiceProof.closes,input:voiceProof.inputPackets,output:voiceProof.outputPackets,
+      playbackErrors:voiceProof.playbackErrors,maxQueuedAudioSeconds:voiceProof.maxQueuedAudioSeconds,
       microphoneFunction: navigator.mediaDevices.getUserMedia.toString().slice(0,100)})).catch(()=>null));
   } finally {
     // Even a failed assertion must hang up its own call before closing the tab.
