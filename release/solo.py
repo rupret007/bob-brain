@@ -349,6 +349,12 @@ def gaps_replay(client, cid, root, *, real):
     require(stat.S_IMODE(profile_path(root).stat().st_mode) == 0o600 and
             stat.S_IMODE(profile_path(root).parent.stat().st_mode) == 0o700,
             'Memory file/directory permissions are not private')
+    saved_hash = digest(profile_path(root))
+    _, repeated = submit(client, cid, 'remember that ' + fact)
+    require(repeated.get('action_card', {}).get('state') == 'confirm', 'Repeated memory lacks confirmation')
+    _, confirmed = submit(client, cid, 'yes, save memory proposal ' + repeated['action_card']['proposal_id'])
+    require(confirmed.get('action_card', {}).get('state') == 'done' and
+            digest(profile_path(root)) == saved_hash, 'Repeated confirmed memory changed saved bytes')
     _, inspected = submit(client, cid, 'show my saved memories')
     require(inspected.get('provider') == 'memory' and inspected.get('private_memory') is True and
             fact.rstrip('.') in inspected['content'] and 'not all profile or chat context' in inspected['content'] and
@@ -363,6 +369,7 @@ def gaps_replay(client, cid, root, *, real):
     raw = client.open(urllib.request.Request(client.url + match[0], headers={'Origin': client.url}), parse=False)
     require(raw.startswith(b'\x89PNG\r\n\x1a\n'), 'Authenticated screenshot is not PNG')
     return [dict(check='confirmed private memory overlay; bounded direct private inspection; owner-only permissions; main unchanged', passed=True),
+            dict(check='separate confirmation of the same dated fact preserves saved memory bytes', passed=True),
             dict(check='web research with source', real_network=real, passed=True),
             dict(check='authenticated screenshot PNG', real_capture=real, sha256=hashlib.sha256(raw).hexdigest(), passed=True)]
 

@@ -2,12 +2,30 @@
 from contextlib import contextmanager
 import fcntl
 import os
+import re
 import secrets
 import stat
 import time
 
 MAX_BYTES = 512 * 1024
 LOCK_SECONDS = 3
+DATED_ROW = re.compile(r'^\[\d{4}-\d{2}-\d{2}\] [^\r\n]+\n$')
+
+
+def contains_single_line_fact(existing, line):
+    """Only skip an exact dated row, never a prefix of a multiline note.
+
+    Legacy multiline notes have no unambiguous record delimiter. Leave those
+    regions alone instead of trying to normalize or deduplicate their content.
+    """
+    if not DATED_ROW.fullmatch(line):
+        return False
+    rows = existing.splitlines(keepends=True)
+    for index, row in enumerate(rows):
+        if row == line and (index == 0 or DATED_ROW.fullmatch(rows[index - 1])) and (
+                index + 1 == len(rows) or DATED_ROW.fullmatch(rows[index + 1])):
+            return True
+    return False
 
 
 @contextmanager
@@ -92,6 +110,17 @@ def append_memory(root, line):
                 existing = read_at(folder, MAX_BYTES)['text']
             except FileNotFoundError:
                 existing = ''
+            # Compare under the same cross-process lock as the append. A no-op
+            # preserves the file, including old duplicates and oversized history.
+            if contains_single_line_fact(existing, line):
+                fd = regular_file(folder, 'profile.md', os.O_RDONLY)
+                try:
+                    os.fchmod(fd, 0o600)
+                finally:
+                    os.close(fd)
+                return
+            if existing and not existing.endswith('\n'):
+                existing += '\n'
             rows = (existing + line).splitlines(keepends=True)
             total = sum(len(row.encode('utf-8')) for row in rows)
             start = 0
