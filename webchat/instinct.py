@@ -212,7 +212,7 @@ class Instinct:
                 "Please wait for Jeff’s explicit approval before sending, spending, booking, calling, signing, or cancelling anything.")
 
     def handle(self, conversation, clean, actor, request_id, persist, redact):
-        if re.match(r'^remember\s+(?:that\s+)?', clean, re.I):
+        if re.match(r'^(?:remember\s+(?:that\s+)?|remind me\b|set (?:a )?routine\b)', clean, re.I):
             return False  # The explicit private memory command owns this turn.
         # Shared card edits/cancellation and exact yes tokens stay in Texting.
         if re.match(r"^(?:replace|edit|cancel) text draft\b", clean, re.I):

@@ -172,6 +172,8 @@ class Chat(TaskDispatch):
         self.texting = texting or Texting()
         self.texting.instinct.bind_state(folder)
         self.voice = VoiceCalls(self)
+        from reminders import Reminders
+        self.reminders = Reminders(folder)
         for path in self.state.glob("*.json"):
             if not UUID.fullmatch(path.stem):
                 continue
@@ -549,6 +551,21 @@ class Chat(TaskDispatch):
                 self.conversations[identifier] = copy.deepcopy(value)
             if self.texting.handle(conversation, text, actor, request_id, persist_texting, self.redact):
                 return self.public(conversation)
+            from reminders import ReminderError
+            try:
+                reminder = self.reminders.handle(text, identifier, request_id)
+            except ReminderError as exc:
+                reminder = str(exc)
+            if reminder is not None:
+                for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
+                    conversation.pop(key, None)
+                return self.intent_reply(conversation, self.redact(reminder), provider='reminders')
+            from teammates import handle as teammate_turn
+            teammate = teammate_turn(self, conversation, text, request_id)
+            if teammate is not None:
+                for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
+                    conversation.pop(key, None)
+                return self.intent_reply(conversation, self.redact(teammate), provider='teammates')
             from reply_authority import correcting_status
             if correcting_status(text, conversation):
                 return self.status_reply(conversation, text)
@@ -940,12 +957,35 @@ class Chat(TaskDispatch):
                     self.launch(value["id"])
                     return
 
+    def deliver_reminders(self):
+        with self.lock:
+            def deliver(row, notice):
+                conversation = self.conversations.get(row['conversation_id'])
+                if not conversation:
+                    return False
+                if any(m.get('reminder_notice') == notice for m in conversation['messages']):
+                    return True
+                if row['conversation_id'] in self.workers or self.voice.active(row['conversation_id']):
+                    return False  # Never insert into an active model/voice turn.
+                if any(m.get('status') in ('queued', 'running', 'waiting') for m in conversation['messages']):
+                    return False
+                value = copy.deepcopy(conversation)
+                from reminders import stamp
+                value['messages'].append(dict(id=str(uuid.uuid4()), role='assistant', status='done', provider='reminders',
+                    content=self.redact('Reminder: ' + row['body'] + ' (due ' + stamp(row['due_at']) + ').'),
+                    created_at=time.time(), reminder_notice=notice, reminder_id=row['id']))
+                self.save(value)
+                self.conversations[value['id']] = value
+                return True
+            self.reminders.deliver_due(deliver)
+
     def start_background(self):
         self.providers.start_probes()
         def loop():
             while not self.closing.wait(1):
                 try:
                     if not self.closing.is_set():
+                        self.deliver_reminders()
                         self.migrate_legacy_tasks()
                         self.reconcile_tasks()
                         self.retry_queued()
@@ -1512,10 +1552,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, chat.history(route.removeprefix("/api/conversations/")))
         if route in ("/api/status", "/api/review"):
             return self.send(200, chat.report("conductor/STATUS.md" if route.endswith("status") else "conductor/reviews/LATEST.md"))
+        if route == "/api/reminders":
+            return self.send(200, {"reminders": chat.reminders.listing(), "timezone": "America/Chicago", "read_at": time.time()})
         if route == "/api/jobs":
             return self.send(200, chat.jobs())
         if route == "/api/jobs/activity":
-            return self.send(200, json.loads(chat.redact(json.dumps(build_jobs_view(chat.root)))))
+            data = build_jobs_view(chat.root)
+            data['reminders'] = chat.reminders.listing()
+            from teammates import status as teammate_status
+            data['teammates'] = teammate_status(chat.root)['teammates']
+            data['dispatch_paused'] = (chat.root / 'conductor/MAINTENANCE').exists()
+            return self.send(200, json.loads(chat.redact(json.dumps(data))))
         if route == "/api/jobs/result":
             identifier = parse_qs(urlsplit(self.path).query).get("id", [""])[0]
             result = result_text(chat.root, identifier)

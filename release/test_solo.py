@@ -145,6 +145,17 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
             solo.verify_gates('a' * 40, 'instinct', checks, review)
 
+    def test_remaining_requires_reminder_browser_proof(self):
+        self.check['feature'] = self.review['feature'] = 'remaining'
+        for name in ('media-browser', 'voice-js', 'voice-browser', 'instinct-browser'):
+            self.check['results'][name] = self.check['results']['browser']
+        checks, review = self.folder / 'checks.json', self.folder / 'review.json'
+        solo.atomic_json(checks, self.check)
+        self.review['checks_sha256'] = solo.digest(checks)
+        solo.atomic_json(review, self.review)
+        with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
+            solo.verify_gates('a' * 40, 'remaining', checks, review)
+
     def test_skipped_required_checks_rejected(self):
         self.check['results']['webchat']['skipped'] = 1
         with self.assertRaisesRegex(Exception, 'skipped'):

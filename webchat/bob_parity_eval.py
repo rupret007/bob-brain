@@ -267,6 +267,9 @@ def run_eval(root: Path | None = None) -> dict:
     from instinct_eval import run_eval as instinct_eval
     rows.extend(instinct_eval()["cases"])
 
+    from remaining_eval import run_eval as remaining_eval
+    rows.extend(remaining_eval()["cases"])
+
     passed = sum(1 for r in rows if r["pass"])
     return {
         "total": len(rows),

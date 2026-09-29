@@ -580,3 +580,31 @@ The Instinct rubric also runs inside the broader Bob parity eval. Releases use
 consecutive live greens. No model council or worker preflight is required.
 
 Instinct identities learned from the verified mapping are retained in that private file across restarts. Direct thread IDs, renamed threads, alternate transports and groups containing a protected address remain read-only. Never put this private mapping in Git.
+
+### Personal reminders and read-only teammates
+
+Use `remind me to check the oven in 10 minutes`, `remind me to call Sam on
+2026-10-01 at 14:00`, `my reminders`, or `cancel reminder ID`. Local dates use
+America/Chicago; ambiguous daylight-saving times need an explicit ISO UTC offset.
+`remind me every 2 hours to stretch` (or `set a routine every 2 hours to stretch`)
+creates an interval notification, never an executable job. An interval day is
+24 hours, not a calendar-day clock rule. The store permits 200 pending reminders
+and retains bounded completed history; the saved chat keeps delivered notices.
+
+Reminders use Web Bob's existing one-second background loop; they do not start
+job-runner or another scheduler. Delivery is only a message in the originating
+chat and a Jobs entry. Closed browsers see it when reopened; server downtime
+catches up on return. Active voice/model turns defer delivery until idle.
+A durable notification identity prevents duplicate messages after a crash between
+chat persistence and store acknowledgement. Missed recurring intervals produce
+one catch-up notice, not a burst. No OS push, email, SMS or calendar integration
+is claimed. A reminder's body is plain text, never a command to execute.
+
+`Karen QA status` reports the saved `wt-webjam-polish/PRE_KAREN_QA.md` with its
+source and save time; it never implies a new independent review or contacts her.
+`band desk status` and `band desk digest [for Stalemate]` use the already-pinned
+read-only watch mappings in `bin/band_messages_watch_run.py`, parsed as data
+without importing or executing that watch. Band messages are private, bounded,
+dated quotes and never reach model context. No new polling or outbound action
+is started. Existing Texts provides separate reviewable drafts. The Jobs view
+also displays reminder and teammate status.
