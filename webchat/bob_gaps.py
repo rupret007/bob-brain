@@ -39,7 +39,8 @@ PROFILE_MAX_BYTES = 512 * 1024
 
 
 def profile_path(root: Path) -> Path:
-    return root / "bob-brain/memory/profile.md"
+    # User data must never dirty the bob-brain checkout (which may be on main).
+    return root / "conductor/webchat/memory/profile.md"
 
 
 def parse_remember(text: str) -> str | None:
@@ -207,6 +208,7 @@ def needs_web_search(text: str) -> bool:
 
 
 def web_search(query: str, opener=urllib.request.urlopen) -> dict:
+    query = re.sub(r"^(?:please\s+)?(?:search\s+(?:the\s+)?web|look\s+up|google)\s+(?:for\s+)?", "", query.strip(), flags=re.I)
     url = "https://api.duckduckgo.com/?" + urllib.parse.urlencode(
         {"q": query, "format": "json", "no_redirect": 1, "no_html": 1, "skip_disambig": 1}
     )
@@ -215,7 +217,12 @@ def web_search(query: str, opener=urllib.request.urlopen) -> dict:
         headers={"User-Agent": "WebBob/1.0 (bob-gaps web research)"},
     )
     with opener(request, timeout=20) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+        raw = response.read(1024 * 1024 + 1)
+    if len(raw) > 1024 * 1024:
+        raise ValueError("Search response exceeded the size limit")
+    payload = json.loads(raw.decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Search response was not an object")
     answer = (payload.get("AbstractText") or "").strip()
     source = (payload.get("AbstractURL") or "").strip()
     heading = (payload.get("Heading") or "").strip()
@@ -227,7 +234,9 @@ def web_search(query: str, opener=urllib.request.urlopen) -> dict:
                 break
     if not answer:
         answer = "I searched the web but did not get a clear instant answer. Try a more specific query."
-    return {"answer": answer, "source": source, "heading": heading}
+    if urllib.parse.urlsplit(source).scheme not in ("http", "https"):
+        source = ""
+    return {"answer": answer[:16000], "source": source[:2000], "heading": heading[:500]}
 
 
 def format_web_search_reply(result: dict) -> str:

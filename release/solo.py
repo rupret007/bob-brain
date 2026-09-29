@@ -76,7 +76,7 @@ def submit(client, cid, prompt, request=None):
         value = client.call('/api/conversations/' + cid)
 
 
-def replay(client, root, sha, *, real_reads=False):
+def replay(client, root, sha, *, real_reads=False, feature='texting'):
     """Authenticated no-send regression; sensitive message content stays in sessions."""
     client.login()
     require(client.call('/api/version')['sha'] == sha, 'Live version differs from candidate')
@@ -116,6 +116,8 @@ def replay(client, root, sha, *, real_reads=False):
     _, stale = submit(client, cid, token)
     require('already used, cancelled, or replaced' in stale['content'], 'Cancelled token was accepted')
     receipts.append(dict(check='exact draft, bare approval, cancel, stale token', passed=True))
+    if ORDER.index(feature) >= ORDER.index('gaps'):
+        receipts.extend(gaps_replay(client, cid, root, real=real_reads))
     from task_dispatch import task_queue
     require(not any(r['conversation_id'] == cid for r in task_queue.tasks(root).values()), 'Replay queued work')
     saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
@@ -123,7 +125,32 @@ def replay(client, root, sha, *, real_reads=False):
     return dict(all_pass=True, conversation_id=cid, checks=receipts, real_texts_sent=0, queued_workers=0)
 
 
-def staging(root, sha):
+def gaps_replay(client, cid, root, *, real):
+    from bob_gaps import profile_path
+    fact = 'Instinct may digest and flag bills, security and appointments, and draft replies, but must never send.'
+    base = root / 'bob-brain/memory/profile.md'
+    original_hash = digest(base) if base.exists() else None
+    _, proposal = submit(client, cid, 'remember that ' + fact)
+    require(proposal.get('action_card', {}).get('state') == 'confirm', 'Memory lacks confirmation')
+    _, saved = submit(client, cid, 'yes, save memory proposal ' + proposal['action_card']['proposal_id'])
+    require(saved.get('action_card', {}).get('state') == 'done' and fact.rstrip('.') in profile_path(root).read_text(),
+            'Confirmed memory was not persisted')
+    require((digest(base) if base.exists() else None) == original_hash, 'Memory modified main checkout')
+    _, search = submit(client, cid, 'look up Python programming language')
+    require(search['provider'] == 'state' and 'python' in search['content'].lower() and 'https://' in search['content'],
+            'Web research lacked a supported answer/source')
+    _, shot = submit(client, cid, 'take a screenshot')
+    match = re.search(r'/api/captures/([0-9a-f]{16})', shot['content'])
+    require(match is not None, 'Screenshot capture failed')
+    import urllib.request
+    raw = client.open(urllib.request.Request(client.url + match[0], headers={'Origin': client.url}), parse=False)
+    require(raw.startswith(b'\x89PNG\r\n\x1a\n'), 'Authenticated screenshot is not PNG')
+    return [dict(check='confirmed memory overlay; main unchanged', passed=True),
+            dict(check='web research with source', real_network=real, passed=True),
+            dict(check='authenticated screenshot PNG', real_capture=real, sha256=hashlib.sha256(raw).hexdigest(), passed=True)]
+
+
+def staging(root, sha, feature):
     from app import Chat, Server
     # No model inference needed for these deterministic commands. Real messaging reads
     # are reserved for production. No fixture can authorize a real send.
@@ -138,7 +165,18 @@ def staging(root, sha):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            proof = replay(Client(f'http://127.0.0.1:{server.server_port}', chat.folder / '.password'), private, sha)
+            from contextlib import ExitStack
+            from unittest.mock import patch
+            with ExitStack() as stack:
+                if ORDER.index(feature) >= ORDER.index('gaps'):
+                    def fake_capture(root, target=None):
+                        path = root / 'conductor/webchat/captures/0123456789abcdef.png'
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(b'\x89PNG\r\n\x1a\n')
+                        return path.stem, path
+                    stack.enter_context(patch('app.capture_screenshot', side_effect=fake_capture))
+                    stack.enter_context(patch('app.web_search', return_value=dict(answer='Python is a programming language.', source='https://www.python.org/')))
+                proof = replay(Client(f'http://127.0.0.1:{server.server_port}', chat.folder / '.password'), private, sha, feature=feature)
             require(not mock.sends and not mock.unexpected_writes, 'Staging attempted messaging write')
             return dict(scope='real isolated HTTP; synthetic messaging; no workers', **proof)
         finally:
@@ -202,7 +240,7 @@ def checks(root, feature):
     passed = all(r['exit'] == 0 and r['skipped'] == 0 for r in results.values())
     record = dict(sha=sha, feature=feature, all_pass=passed, results=results, at=time.time())
     if passed:
-        record['staging'] = staging(root, sha)
+        record['staging'] = staging(root, sha, feature)
     atomic_json(out / 'checks.json', record)
     require(passed, 'Offline check failed; inspect ' + str(out))
     print(str(out / 'checks.json'), flush=True)
@@ -404,7 +442,7 @@ def deploy(args):
 
     def live():
         pair = versions(root, sha)
-        results = [replay(Client(url, root / 'conductor/webchat/.password'), root, sha, real_reads=True)
+        results = [replay(Client(url, root / 'conductor/webchat/.password'), root, sha, real_reads=True, feature=args.feature)
                    for url in ('http://127.0.0.1:8787', origin)]
         number = len(record.get('rounds', [])) + 1
         browser_path = folder / f'browser-round-{number}.json'

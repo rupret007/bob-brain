@@ -65,16 +65,42 @@ class GapFixture(unittest.TestCase):
 
 
 class MemoryGapTests(GapFixture):
+    def test_memory_overlay_preserves_main_checkout_and_invalidates_context(self):
+        from providers import Providers
+        base = self.root / 'bob-brain/memory/profile.md'
+        base.parent.mkdir(parents=True)
+        base.write_text('Existing baseline memory\n')
+        provider = Providers(self.root, lambda text: text)
+        self.chat.providers = provider
+        provider.snapshot()
+        provider.snapshot(lite=True)
+        self.submit('remember that Instinct must never send replies automatically')
+        self.submit('yes, save memory')
+        self.assertEqual(base.read_text(), 'Existing baseline memory\n')
+        for lite in (False, True):
+            memory = next(r for r in provider.snapshot(lite=lite) if r['path'] == 'conductor/webchat/memory/profile.md')
+            self.assertIn('Instinct must never send', memory['text'])
+
+    def test_texting_or_version_turn_revokes_pending_memory(self):
+        for interruption in ('texting help', 'what version are you?'):
+            with self.subTest(interruption=interruption):
+                self.submit('remember that stale memory must not be written')
+                self.submit(interruption)
+                reply = self.submit('yes, save memory')['messages'][-1]
+                self.assertEqual(reply['provider'], 'state')
+                self.assertIn('No memory is waiting', reply['content'])
+                self.assertFalse((self.folder / 'memory/profile.md').exists())
+
     def test_remember_requires_confirmation_then_appends_profile(self):
         fact = "I prefer to use Claude for creative writing tasks"
         first = self.submit(f"remember that {fact}")
         assistant = first["messages"][-1]
         self.assertEqual(assistant["action_card"]["state"], "confirm")
         self.assertIn(fact, assistant["content"])
-        profile = self.root / "bob-brain/memory/profile.md"
+        profile = self.root / "conductor/webchat/memory/profile.md"
         self.assertFalse(profile.exists())
         second = self.submit("yes, save memory")
-        self.assertIn("Saved to", second["messages"][-1]["content"])
+        self.assertIn("Saved to durable memory", second["messages"][-1]["content"])
         body = profile.read_text(encoding="utf-8")
         self.assertIn(fact, body)
         self.assertRegex(body, r"\[\d{4}-\d{2}-\d{2}\]")
@@ -84,7 +110,7 @@ class MemoryGapTests(GapFixture):
         result = self.submit("cancel")
         self.assertIn("cancelled", result["messages"][-1]["content"].lower())
         self.assertEqual(result["messages"][-1]["action_card"]["state"], "cancelled")
-        profile = self.root / "bob-brain/memory/profile.md"
+        profile = self.root / "conductor/webchat/memory/profile.md"
         self.assertFalse(profile.exists())
 
     def test_stale_memory_proposal_is_rejected(self):
@@ -94,7 +120,7 @@ class MemoryGapTests(GapFixture):
         result = self.submit(f"yes, save memory proposal {stale_id}")
         self.assertIn("stale", result["messages"][-1]["content"].lower())
         self.assertEqual(result["messages"][-1]["action_card"]["state"], "refused")
-        profile = self.root / "bob-brain/memory/profile.md"
+        profile = self.root / "conductor/webchat/memory/profile.md"
         self.assertFalse(profile.exists())
 
     def test_memory_turn_skipped_for_non_auto_provider(self):
@@ -218,6 +244,15 @@ class CaptureApiTests(GapFixture):
 
 
 class UnitTests(unittest.TestCase):
+    def test_search_rejects_oversized_and_nonobject_responses(self):
+        for body in (b'x' * (1024 * 1024 + 1), b'[]'):
+            response = MagicMock()
+            response.__enter__.return_value = response
+            response.read.return_value = body
+            with self.assertRaises(ValueError):
+                web_search('Python', opener=lambda *args, **kwargs: response)
+            response.read.assert_called_once_with(1024 * 1024 + 1)
+
     def test_parsers(self):
         self.assertEqual(parse_remember("remember that I like tea"), "I like tea")
         self.assertTrue(needs_web_search("what was the score of the Mets game last night?"))
@@ -253,12 +288,12 @@ class UnitTests(unittest.TestCase):
             line = append_profile_memory(root, "test fact", when=when)
             expected = when.astimezone().strftime("%Y-%m-%d")
             self.assertIn(f"[{expected}]", line)
-            self.assertIn("test fact", (root / "bob-brain/memory/profile.md").read_text())
+            self.assertIn("test fact", (root / "conductor/webchat/memory/profile.md").read_text())
 
     def test_append_profile_memory_trims_when_oversized(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            path = root / "bob-brain/memory/profile.md"
+            path = root / "conductor/webchat/memory/profile.md"
             path.parent.mkdir(parents=True)
             path.write_text("x" * (PROFILE_MAX_BYTES + 100) + "\n", encoding="utf-8")
             append_profile_memory(root, "newest")
@@ -287,7 +322,7 @@ class UnitTests(unittest.TestCase):
                 thread.join(10)
 
             self.assertEqual(errors, [])
-            body = (root / "bob-brain/memory/profile.md").read_text(encoding="utf-8")
+            body = (root / "conductor/webchat/memory/profile.md").read_text(encoding="utf-8")
             for i in range(thread_count):
                 self.assertIn(f"concurrent fact {i}", body)
             self.assertEqual(len(body.splitlines()), thread_count)
@@ -306,7 +341,7 @@ class UnitTests(unittest.TestCase):
     def test_append_profile_memory_lock_open_failure_raises_oserror(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            lock_path = root / "bob-brain/memory/profile.lock"
+            lock_path = root / "conductor/webchat/memory/profile.lock"
             lock_path.mkdir(parents=True)
             with self.assertRaises(OSError) as ctx:
                 append_profile_memory(root, "should not save")
@@ -369,7 +404,7 @@ class UnitTests(unittest.TestCase):
             return MagicMock(
                 __enter__=lambda self: self,
                 __exit__=lambda *args: None,
-                read=lambda: json.dumps({"AbstractText": "ok", "RelatedTopics": []}).encode(),
+                read=lambda size: json.dumps({"AbstractText": "ok", "RelatedTopics": []}).encode(),
             )
 
         web_search("test query", opener=fake_opener)

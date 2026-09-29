@@ -294,6 +294,9 @@ class Providers:
         self._snapshot_cache_lite = None
         self._snapshot_cache_lite_at = 0.0
 
+    def invalidate_snapshot(self):
+        self._snapshot_cache = self._snapshot_cache_lite = None
+
     def drill(self, conversation_id=None):
         forced = {name.strip(): "nonzero_exit" for name in os.environ.get("BOB_WEBCHAT_FORCE_FAIL", "").split(",") if name.strip() in (*ORDER, "claude")}
         value = {"force_fail": forced}
@@ -372,6 +375,7 @@ class Providers:
         if lite:
             rows = (
                 ("BOB-HANDOFF.md", 6000, False),
+                ("conductor/webchat/memory/profile.md", 8000, True),
                 ("conductor/STATUS.md", 3500, False),
                 ("conductor/handback/BOB-STATE.md", 4000, False),
                 ("conductor/handback/HANDBACK-SUMMARY.md", 3500, True),
@@ -385,6 +389,7 @@ class Providers:
                 ("BOB-HANDOFF.md", 24000, False),
                 ("bob-brain/README.md", 3000, False),
                 ("bob-brain/memory/profile.md", 28000, True),
+                ("conductor/webchat/memory/profile.md", 16000, True),
                 ("conductor/STATUS.md", 8000, False),
                 ("conductor/MAINTENANCE", 1000, False),
                 ("conductor/reviews/LATEST.md", 10000, False),

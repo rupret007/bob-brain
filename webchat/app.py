@@ -249,6 +249,8 @@ class Chat(TaskDispatch):
             return None
         pending_memory = conversation.get("pending_memory")
         memory_confirm, memory_proposal = parse_memory_confirm(text)
+        if memory_confirm and not pending_memory:
+            return self.intent_reply(conversation, "No memory is waiting for confirmation. Ask me to remember it again.", provider="state")
         if memory_confirm and pending_memory:
             expected = conversation.get("pending_memory_id")
             if memory_proposal and (not expected or memory_proposal != expected):
@@ -279,13 +281,16 @@ class Chat(TaskDispatch):
                 return self.public(conversation)
             conversation["messages"][-1].update(
                 status="done",
-                content=f"Saved to `bob-brain/memory/profile.md`:\n\n`{saved}`",
+                content=f"Saved to durable memory:\n\n`{saved}`",
                 provider="state",
                 action_card={"id": request_id, "state": "done", "executable": False, "reason": "Memory saved"},
             )
             self.save(conversation)
             self.conversations[identifier] = conversation
-            self.record_turn(conversation_id=identifier, ask=text, provider="state", jobs=[], files=["bob-brain/memory/profile.md"],
+            invalidate = getattr(self.providers, "invalidate_snapshot", None)
+            if invalidate:
+                invalidate()
+            self.record_turn(conversation_id=identifier, ask=text, provider="state", jobs=[], files=["conductor/webchat/memory/profile.md"],
                         commits=[], confirmations=[pending_memory[:200]], refusals=[], open_items=[], request_id=request_id)
             state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
             return self.public(conversation)
@@ -341,7 +346,7 @@ class Chat(TaskDispatch):
             try:
                 result = web_search(text)
                 reply = format_web_search_reply(result)
-            except (OSError, URLError, json.JSONDecodeError, TimeoutError) as exc:
+            except (OSError, URLError, ValueError, TimeoutError) as exc:
                 reply = f"I could not complete a web search right now ({exc})."
             conversation["messages"][-1].update(status="done", content=reply, provider="state")
             self.save(conversation)
@@ -480,6 +485,9 @@ class Chat(TaskDispatch):
             ]
             if conversation["title"] == "New conversation":
                 conversation["title"] = text[:65]
+            if not parse_memory_confirm(text)[0] and not parse_remember(text) and not MEMORY_DISMISS.match(text):
+                conversation.pop("pending_memory", None)
+                conversation.pop("pending_memory_id", None)
             if VERSION_QUESTION.search(text):
                 return self.intent_reply(conversation, BUILD["short_sha"])
             # Text intent and confirmations never enter generic job/provider routing.
