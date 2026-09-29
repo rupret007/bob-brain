@@ -49,7 +49,7 @@ class StickyGreetingTests(Fixture):
 
     def test_requested_literal_greeting_is_not_rejected(self):
         provider = Providers(self.root, lambda value: value)
-        conversation = dict(id=self.identifier, messages=[dict(role='user', content='Say exactly: Ready when you are.')])
+        conversation = dict(id=self.identifier, messages=[dict(role='user', content='Go ahead and say exactly: Ready when you are.')])
         with patch.object(provider, 'route_order', return_value=('gemini',)), \
                 patch.object(provider, 'prompt', return_value='Say exactly: Ready when you are.'), \
                 patch.object(provider, '_call_timed', return_value=('Ready when you are.', None)) as call:

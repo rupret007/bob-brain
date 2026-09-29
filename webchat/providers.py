@@ -674,6 +674,7 @@ class Providers:
                 from chat_intent import command
                 user_text = next((m['content'] for m in reversed(conversation['messages']) if m['role'] == 'user'), '')
                 if (re.match(r'^(?:go(?:\s+ahead)?|resume|restart)\b', command(user_text), re.I)
+                        and not re.search(r'\bready when you are\b', user_text, re.I)
                         and re.fullmatch(r"ready when you are[.!\s]*", answer.strip(), re.I)):
                     # A sticky greeting does not answer a substantive resume.
                     # Discard it and use the normal bounded provider failover.
