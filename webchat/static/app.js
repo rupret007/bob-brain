@@ -1162,6 +1162,33 @@ if ($("login-form")) {
     return (rows || []).filter((row) => { if (seen.has(row.key)) return false; seen.add(row.key); return true; });
   }
   function renderJobs(data) {
+    const teammates = $('teammate-cards');
+    if (teammates) {
+      teammates.replaceChildren();
+      for (const row of data.teammates || []) {
+        const card = jobElement('article', 'job-card');
+        card.append(jobElement('h4', 'job-task', row.name), jobElement('p', '', row.summary));
+        if (row.source) card.append(jobElement('p', 'muted', 'Source: ' + row.source + (row.modified_at ? ' · saved ' + new Date(row.modified_at * 1000).toLocaleString() : '')));
+        teammates.append(card);
+      }
+    }
+    const reminders = $("reminder-cards");
+    if (reminders) {
+      reminders.replaceChildren();
+      const rows = (data.reminders || []).filter(r => r.state !== 'cancelled').slice(0, 20);
+      for (const row of rows) {
+        const card = jobElement('article', 'job-card');
+        card.append(jobElement('p', 'job-task', row.body));
+        const when = new Date(row.due_at * 1000).toLocaleString();
+        card.append(jobElement('p', 'muted', `${row.state === 'fired' ? 'Delivered' : 'Due'} ${when}${row.interval_seconds ? ' · Repeating' : ''}`));
+        const open = jobElement('button', 'job-result-link', 'Open reminder chat');
+        open.type = 'button';
+        open.addEventListener('click', () => { if (setBottomTab('chat')) { $('conversations').value = row.conversation_id; $('conversations').dispatchEvent(new Event('change')); } });
+        card.append(open);
+        reminders.append(card);
+      }
+      if (!rows.length) reminders.append(jobElement('p', 'muted', 'No reminders yet.'));
+    }
     const rows = uniqueJobs(data.working);
     const complete = data.inspection?.screens_available && data.inspection?.processes_available && data.inspection?.queue_available;
     $("working-count").hidden = !rows.length;
@@ -1237,6 +1264,8 @@ if ($("login-form")) {
     $("jobs-empty").hidden = true;
     $("finished-empty").hidden = true;
     $("working-count").hidden = true;
+    $("teammate-cards")?.replaceChildren(jobElement("p", "muted", "Teammate status unavailable."));
+    $("reminder-cards")?.replaceChildren(jobElement("p", "muted", "Reminder list unavailable."));
     $("live-jobs").replaceChildren();
     $("finished-jobs").replaceChildren();
     $("jobs-detail-body").replaceChildren(jobElement("p", "muted", "Live check unavailable."));

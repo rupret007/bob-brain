@@ -129,12 +129,21 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
     _, stale = submit(client, cid, token)
     require('already used, cancelled, or replaced' in stale['content'], 'Cancelled token was accepted')
     receipts.append(dict(check='exact draft, bare approval, cancel, stale token', passed=True))
+    _, newer = submit(client, cid, 'draft reply to ' + target + ': Version interruption check. Do not send.')
+    require(newer.get('text_draft', {}).get('state') == 'pending', 'Interruption-check draft failed')
+    confirmation = newer['text_draft']['confirm_message']
+    submit(client, cid, 'what version are you?')
+    _, revoked = submit(client, cid, confirmation)
+    require('already used, cancelled, or replaced' in revoked['content'], 'Version lookup retained stale text consent')
+    receipts.append(dict(check='version lookup revokes previous text consent', passed=True))
     if ORDER.index(feature) >= ORDER.index('gaps'):
         receipts.extend(gaps_replay(client, cid, root, real=real_reads))
     if ORDER.index(feature) >= ORDER.index('media'):
         receipts.extend(media_replay(client, root, real=real_reads))
     if ORDER.index(feature) >= ORDER.index('instinct'):
         receipts.extend(instinct_replay(client, cid))
+    if feature == 'remaining':
+        receipts.extend(remaining_replay(client, cid))
     from task_dispatch import task_queue
     require(not any(r['conversation_id'] == cid for r in task_queue.tasks(root).values()), 'Replay queued work')
     saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
@@ -161,6 +170,39 @@ def instinct_replay(client, cid):
     require('Nothing sent.' in cancelled['content'], 'Instinct cancellation failed')
     return [dict(check='verified Instinct digest, all flag categories, read-only draft, confirmations refused, cancel',
                  answer_sha256=digest_hash, passed=True)]
+
+
+def remaining_replay(client, cid):
+    import uuid
+    body = 'Web Bob local reminder replay ' + uuid.uuid4().hex[:8]
+    _, saved = submit(client, cid, 'remind me to ' + body + ' in 1 second')
+    require(saved.get('provider') == 'reminders' and 'Reminder saved' in saved['content'], 'Reminder was not saved')
+    deadline = time.monotonic() + 10
+    while True:
+        history = client.call('/api/conversations/' + cid)
+        notices = [m for m in history['messages'] if m.get('reminder_notice') and body in m['content']]
+        if notices:
+            break
+        require(time.monotonic() < deadline, 'Due reminder did not reach chat through the background loop')
+        time.sleep(.2)
+    require(len(notices) == 1, 'Duplicate reminder delivery')
+    _, repeated = submit(client, cid, 'remind me every 1 minute to ' + body + ' recurring')
+    match = re.search(r'ID ([0-9a-f]{16})', repeated['content'])
+    require(match is not None, 'Recurring reminder did not save')
+    identifier = match[1]
+    _, cancelled = submit(client, cid, 'cancel reminder ' + identifier)
+    require('cancelled' in cancelled['content'], 'Recurring reminder cancellation failed')
+    rows = client.call('/api/reminders')['reminders']
+    require(next(r for r in rows if r['id'] == identifier)['state'] == 'cancelled', 'Cancellation was not durable')
+    for command in ('Karen QA status', 'band desk status'):
+        _, answer = submit(client, cid, command)
+        require(answer.get('provider') == 'teammates' and 'Source:' in answer['content'], 'Teammate status lacks its source')
+    _, digest = submit(client, cid, 'band desk digest')
+    evidence = digest.get('teammate_evidence', {})
+    require(digest.get('provider') == 'teammates' and evidence.get('all_read') is True and
+            bool(evidence.get('band_reads')), 'Configured Band Desk read failed')
+    return [dict(check='real due reminder, exactly once, repeating cancellation, sourced Karen/Band Desk status and read-only digest',
+                 passed=True, answer_sha256=hashlib.sha256(digest['content'].encode()).hexdigest())]
 
 
 def gaps_replay(client, cid, root, *, real):
@@ -267,6 +309,18 @@ def staging(root, sha, feature):
                 return super().reply(conversation, cancel, progress)
         chat = Chat(private / 'conductor/webchat', private, StagingProviders(),
                     texting=Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token)))
+        if feature == 'remaining':
+            band = private / 'bin/band_messages_watch_run.py'
+            band.parent.mkdir()
+            band.write_text("CHATS = [{'name': 'Stalemate', 'chat_guid': 'fixture-band'}]\n")
+            mock.chats.append(dict(guid='fixture-band', displayName='Stalemate', participants=[]))
+            qa = private / 'wt-webjam-polish/PRE_KAREN_QA.md'
+            qa.parent.mkdir()
+            qa.write_text('Karen remains pending.')
+            from unittest.mock import Mock
+            chat.providers.start_probes = lambda: None
+            chat.providers.circuit = Mock()
+            chat.start_background()
         server = Server(('127.0.0.1', 0), chat)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -308,6 +362,8 @@ def checks(root, feature):
         commands['voice-browser'] = [sys.executable, 'release/voice_probe.py', '--root', str(root), '--output', str(out / 'voice-browser')]
     if ORDER.index(feature) >= ORDER.index('instinct'):
         commands['instinct-browser'] = [sys.executable, 'webchat/instinct_proof.py', '--output-dir', str(out / 'instinct-browser')]
+    if feature == 'remaining':
+        commands['remaining-browser'] = [sys.executable, 'webchat/remaining_proof.py', '--output-dir', str(out / 'remaining-browser')]
     for path in sorted((CODE / 'webchat').glob('test_*.mjs')):
         commands[path.stem] = ['node', str(path)]
 
@@ -373,6 +429,8 @@ def verify_gates(sha, feature, check_path, review_path):
         required.update(('voice-js', 'voice-browser'))
     if ORDER.index(feature) >= ORDER.index('instinct'):
         required.add('instinct-browser')
+    if feature == 'remaining':
+        required.add('remaining-browser')
     required.update(p.stem for p in (CODE / 'webchat').glob('test_*.mjs'))
     require(required <= check['results'].keys(), 'Missing mandatory suite')
     for name in required:
