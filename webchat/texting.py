@@ -348,6 +348,7 @@ class Texting:
     def provider_view(conversation):
         value = copy.deepcopy(conversation)
         value.pop("_texting", None)
+        value.pop("pending_memory_removal", None)
         if any(m.get("texting") for m in value["messages"]):
             value["title"] = "Conversation with private texting history"
         if any(m.get('private_memory') for m in value['messages']):

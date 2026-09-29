@@ -205,6 +205,7 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
         receipts.extend(remaining_replay(client, cid))
     if feature == 'improve':
         receipts.extend(capability_replay(client, cid, root))
+        receipts.extend(memory_removal_replay(client, cid, root, real=real_reads))
         if real_reads:
             receipts.extend(delivered_notice_replay(client, root))
     from task_dispatch import task_queue
@@ -212,6 +213,30 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
     saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
     require(not saved.get('_texting', {}).get('audit'), 'Replay attempted delivery')
     return dict(all_pass=True, conversation_id=cid, checks=receipts, real_texts_sent=0, queued_workers=0)
+
+
+def memory_removal_replay(client, cid, root, *, real):
+    import uuid
+    from bob_gaps import profile_path
+    path = profile_path(root)
+    before = path.read_bytes()
+    _, answer = submit(client, cid, 'manage saved memories')
+    require(answer.get('provider') == 'memory' and answer.get('private_memory') and not answer.get('attempts'),
+            'Memory management must stay private and deterministic')
+    if real:
+        # Production replay may inspect/cancel but never remove an owner note.
+        _, refusal = submit(client, cid, 'yes, remove saved note proposal ' + str(uuid.uuid4()))
+        require('stale' in refusal['content'], 'Unbound removal approval was accepted')
+        require(path.read_bytes() == before, 'Memory inspection/refusal modified owner notes')
+        return [dict(check='private memory management and unbound removal refusal; owner notes unchanged', passed=True)]
+    choices = answer.get('memory_notes', [])
+    require(bool(choices), 'Synthetic staging notes are missing removal choices')
+    _, proposed = submit(client, cid, 'remove saved note ' + choices[0]['id'])
+    require(path.read_bytes() == before, 'Review changed memory before confirmation')
+    _, removed = submit(client, cid, 'yes, remove saved note proposal ' + proposed['action_card']['proposal_id'])
+    require('Removed one saved Web Bob note' in removed['content'], 'Synthetic removal failed')
+    require(path.read_bytes() == b''.join(before.splitlines(keepends=True)[1:]), 'Removal changed another note')
+    return [dict(check='synthetic staging exact-note review and separate removal confirmation', passed=True)]
 
 
 def capability_replay(client, cid, root):
@@ -522,6 +547,7 @@ def checks(root, feature):
         commands['cold-browser'] = [sys.executable, 'webchat/cold_start_proof.py', '--output-dir', str(out / 'cold-browser')]
         commands['voice-availability-browser'] = [sys.executable, 'webchat/voice_availability_proof.py', '--output-dir', str(out / 'voice-availability-browser')]
         commands['jobs-results-browser'] = [sys.executable, 'webchat/jobs_results_proof.py', '--output-dir', str(out / 'jobs-results-browser')]
+        commands['memory-removal-browser'] = [sys.executable, 'webchat/memory_removal_proof.py', '--output-dir', str(out / 'memory-removal-browser')]
         commands['reply-lifecycle-browser'] = [sys.executable, 'webchat/reply_lifecycle_proof.py', '--output-dir', str(out / 'reply-lifecycle-browser')]
     for path in sorted((CODE / 'webchat').glob('test_*.mjs')):
         commands[path.stem] = ['node', str(path)]
@@ -594,7 +620,7 @@ def verify_checks(sha, feature, check_path):
     if ORDER.index(feature) >= ORDER.index('remaining'):
         required.add('remaining-browser')
     if feature == 'improve':
-        required.update(('cold-browser', 'voice-availability-browser', 'jobs-results-browser', 'reply-lifecycle-browser'))
+        required.update(('cold-browser', 'voice-availability-browser', 'jobs-results-browser', 'reply-lifecycle-browser', 'memory-removal-browser'))
     if ORDER.index(feature) >= ORDER.index('bridge'):
         required.add('bridge-contract')
         require(check.get('andrea', {}).get('sha') == andrea_pin()['sha'], 'Andrea exact-tip evidence missing')

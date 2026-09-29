@@ -192,7 +192,7 @@ class EvidenceTests(unittest.TestCase):
     def test_improve_requires_voice_availability_browser_without_replacing_real_audio(self):
         self.check['feature'] = 'improve'
         for name in ('media-browser', 'voice-js', 'voice-browser', 'instinct-browser',
-                     'remaining-browser', 'cold-browser', 'bridge-contract', 'jobs-results-browser', 'reply-lifecycle-browser'):
+                     'remaining-browser', 'cold-browser', 'bridge-contract', 'jobs-results-browser', 'reply-lifecycle-browser', 'memory-removal-browser'):
             self.check['results'][name] = self.check['results']['browser']
         sha = solo.andrea_pin()['sha']
         self.check['andrea'] = dict(sha=sha, results=[])
@@ -204,6 +204,11 @@ class EvidenceTests(unittest.TestCase):
         self.check['results']['voice-availability-browser'] = self.check['results']['browser']
         solo.atomic_json(checks, self.check)
         solo.verify_checks('a' * 40, 'improve', checks)
+        memory = self.check['results'].pop('memory-removal-browser')
+        solo.atomic_json(checks, self.check)
+        with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
+            solo.verify_checks('a' * 40, 'improve', checks)
+        self.check['results']['memory-removal-browser'] = memory
         del self.check['results']['voice-browser']
         solo.atomic_json(checks, self.check)
         with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
@@ -251,7 +256,7 @@ class EvidenceTests(unittest.TestCase):
         self.check['feature'] = 'improve'
         for name in ('media-browser', 'voice-js', 'voice-browser', 'instinct-browser',
                      'remaining-browser', 'bridge-contract', 'cold-browser', 'jobs-results-browser',
-                     'voice-availability-browser', 'reply-lifecycle-browser'):
+                     'voice-availability-browser', 'reply-lifecycle-browser', 'memory-removal-browser'):
             self.check['results'][name] = dict(self.check['results']['browser'])
         self.check['andrea'] = {'sha': solo.andrea_pin()['sha'], 'results': []}
         solo.atomic_json(self.folder / 'bridge-contract.json', dict(

@@ -258,7 +258,7 @@ class Chat(TaskDispatch):
 
     def public(self, value):
         excluded = {"codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job",
-                    "pending_memory", "pending_memory_id"}
+                    "pending_memory", "pending_memory_id", "pending_memory_removal"}
         # Extensions never see core-private state or mutable conversation objects.
         filtered = {k: copy.deepcopy(v) for k, v in value.items() if k not in excluded}
         public = {k: v for k, v in self.texting.public(filtered).items() if k not in excluded}
@@ -551,6 +551,11 @@ class Chat(TaskDispatch):
             if not parse_memory_confirm(text)[0] and not parse_remember(text) and not MEMORY_DISMISS.match(text):
                 conversation.pop("pending_memory", None)
                 conversation.pop("pending_memory_id", None)
+            from memory_removal import handle as memory_removal_turn
+            removal = memory_removal_turn(self, conversation, text, request_id, source_voice=source_voice,
+                                         provider=provider, worker=worker, attachments=public_attachments)
+            if removal is not None:
+                return removal
             if VERSION_QUESTION.search(text):
                 self.texting.invalidate(conversation)
                 return self.intent_reply(conversation, BUILD["short_sha"])

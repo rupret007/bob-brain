@@ -388,6 +388,10 @@ if ($("login-form")) {
     }
   });
   $("provider-choice").addEventListener("change", () => remember("bob.provider", $("provider-choice").value));
+  $("manage-memory")?.addEventListener("click", () => {
+    setBottomTab("chat");
+    submitChatText("manage saved memories");
+  });
   $("show-memory")?.addEventListener("click", () => {
     setBottomTab("chat");
     submitChatText("show my saved memories");
@@ -429,14 +433,24 @@ if ($("login-form")) {
       const body = document.createElement("div"); body.className = "body";
       if (pending) body.textContent = providers[message.provider] ? `${providers[message.provider]} is replying…` : "One moment…";
       else if (message.role === "assistant" && !message.texting && !message.private_memory) body.innerHTML = renderMarkdown(message.content || "");
-      else body.textContent = message.content;
+      else body.textContent = message.private_memory && message.memory_action_label || message.content;
       article.append(body);
+      if (message.private_memory && Array.isArray(message.memory_notes)) {
+        for (const note of message.memory_notes) {
+          const card = document.createElement("div"); card.className = "action-card memory-note";
+          const content = document.createElement("div"); content.textContent = note.text;
+          const review = document.createElement("button"); review.type = "button";
+          review.textContent = "Review removal";
+          review.addEventListener("click", () => submitChatText(`remove saved note ${note.id}`));
+          card.append(content, review); article.append(card);
+        }
+      }
       appendMessageAttachments(article, message.attachments);
       const messageTools = document.createElement("div");
       messageTools.className = "message-tools";
       if (message.text_draft) article.append(textDraftCard(message.text_draft));
       {
-        const raw = (message.content || "").trim();
+        const raw = (message.private_memory && message.memory_action_label || message.content || "").trim();
         const copyBtn = document.createElement("button");
         copyBtn.type = "button";
         copyBtn.className = "msg-copy quiet";
@@ -482,20 +496,21 @@ if ($("login-form")) {
         if (message.action_card.state === "confirm" && message.action_card.executable) {
           const actions = document.createElement("div"); actions.className = "action-card-actions";
           const council = /council/i.test(message.action_card.reason || "");
+          const removal = message.action_card.kind === "memory-remove";
           const memory = message.action_card.kind === "memory" || /^memory:/i.test(message.action_card.reason || "");
           const proposalId = message.action_card.proposal_id || message.action_card.id || "";
           const approve = document.createElement("button");
           approve.type = "button"; approve.className = "action-approve";
-          approve.textContent = memory ? "Save memory" : council ? "Start review" : "Start job";
+          approve.textContent = removal ? "Remove this note" : memory ? "Save memory" : council ? "Start review" : "Start job";
           approve.addEventListener("click", () => {
             const suffix = proposalId ? ` proposal ${proposalId}` : "";
-            submitChatText(memory ? `yes, save memory${suffix}` : council ? `yes, run council${suffix}` : `yes, start job${suffix}`);
+            submitChatText(removal ? `yes, remove saved note${suffix}` : memory ? `yes, save memory${suffix}` : council ? `yes, run council${suffix}` : `yes, start job${suffix}`);
           });
           const deny = document.createElement("button");
           deny.type = "button"; deny.className = "action-deny";
-          deny.textContent = memory ? "Dismiss" : council ? "Dismiss" : "Not now";
+          deny.textContent = removal ? "Keep note" : memory ? "Dismiss" : council ? "Dismiss" : "Not now";
           deny.addEventListener("click", () => {
-            submitChatText(memory ? "never mind memory" : council ? "never mind council" : "never mind");
+            submitChatText(removal || memory ? "never mind memory" : council ? "never mind council" : "never mind");
           });
           actions.append(approve, deny);
           card.append(actions);

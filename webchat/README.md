@@ -610,3 +610,14 @@ without importing or executing that watch. Band messages are private, bounded,
 dated quotes and never reach model context. No new polling or outbound action
 is started. Existing Texts provides separate reviewable drafts. The Jobs view
 also displays reminder and teammate status.
+
+Saved note removal: Settings → Saved memory → Manage saved notes lists recent
+single-line Web Bob notes. Review an exact note, then use **Remove this note** or
+**Keep note**. Each confirmation belongs to one conversation and one complete
+file snapshot; a changed file requires a new review. Removal affects one entry,
+including only one copy of a duplicate. Other notes, chat history, other profile
+context and information already sent to models remain. Ambiguous legacy multiline
+or oversized files are inspectable but not removable through this control.
+Management and review stay out of model chat history; removal requires typed Chat
+with Auto selected. Tests use private synthetic notes; live release replay only
+inspects and refuses unbound approvals without deleting owner notes.
