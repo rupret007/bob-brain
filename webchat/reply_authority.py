@@ -54,7 +54,8 @@ STICKY_REPLY = re.compile(r"(?:(?:ready when you are|(?:hi|hey|hello)(?:[, ]+Jef
 
 def sticky_reply(text, content):
     # A literal-output request is content, not an accidental greeting.
-    literal = (re.search(r"\b(?:say|reply|return|write|print|output|translate)\b", text, re.I)
+    literal = (re.search(r"\b(?:say|reply|return|write|print|output)\s+(?:with\s+)?"
+                         r"(?:exactly|verbatim|the (?:exact|literal) (?:text|words|string))\b", text, re.I)
                and not re.search(r"\b(?:never|not|don[’']t)\b", text, re.I))
     if literal and re.search(r"\b(?:ready when you are|ready to help|hi|hey|hello)\b", text, re.I):
         return False

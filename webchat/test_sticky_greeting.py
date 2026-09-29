@@ -189,7 +189,8 @@ class StickyGreetingTests(Fixture):
 
     def test_sticky_output_for_non_resume_request_fails_over(self):
         for prompt in ('Explain why the sky is blue.', 'Only use Gemini and MiniMax for this project.',
-                       START_PROMPT, 'Never reply Ready when you are. Explain the issue.'):
+                       START_PROMPT, 'Never reply Ready when you are. Explain the issue.',
+                       'Write an explanation of the Ready when you are bug.'):
             with self.subTest(prompt=prompt):
                 provider = Providers(self.root / str(uuid.uuid4()), lambda value: value)
                 conversation = dict(id=self.identifier, messages=[dict(role='user', content=prompt)])
