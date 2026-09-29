@@ -215,6 +215,14 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
 def capability_replay(client, cid, root):
     from capabilities import reply
     checks = []
+    jobs = client.call('/api/jobs/activity')
+    solo_mode = (root / 'conductor/SOLO-WORKER').exists()
+    paused = solo_mode or (root / 'conductor/MAINTENANCE').exists()
+    require(jobs.get('dispatch', {}).get('mode') == ('solo' if solo_mode else 'paused' if paused else 'enabled')
+            and jobs.get('dispatch_paused') == paused, 'Jobs must explain the current dispatch pause')
+    require(jobs['dispatch']['queued'] == (jobs['details']['queued'] if jobs['inspection']['queue_available'] else None),
+            'Jobs waiting count must agree with the inspected queue')
+    checks.append(dict(check='Jobs dispatch mode and honest waiting count', passed=True))
     for prompt in ('Can you send texts?', 'What can you do?', 'Can you remember things?',
                    'Can you start workers?', 'Can you text Instinct?', 'Can you set reminders?',
                    'Can you watch videos?', 'Can we talk?'):

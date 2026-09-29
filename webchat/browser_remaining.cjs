@@ -51,6 +51,22 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       await page.locator('#reminder-cards').getByText(engine + ' stretch', {exact: true}).waitFor();
       await page.locator('#teammate-cards').getByText('Karen', {exact: true}).waitFor();
       assert((await page.locator('#teammate-cards').textContent()).includes('pending'));
+      // Synthetic responses exercise display/recovery only; no worker runs.
+      const activity = await (await context.request.get(config.url + '/api/jobs/activity')).json();
+      await page.route('**/api/jobs/activity', route => route.fulfill({json: {
+        ...activity, checked_at: Date.now() / 1000, dispatch: {paused: true, mode: 'solo', queued: 2},
+      }}));
+      await page.locator('#refresh-jobs:enabled').click();
+      await page.locator('#jobs-dispatch').getByText('Solo mode: additional workers and council are paused. 2 jobs are waiting.', {exact: true}).waitFor();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      await page.unroute('**/api/jobs/activity');
+      await page.route('**/api/jobs/activity', route => route.fulfill({status: 503, json: {error: 'fixture offline'}}));
+      await page.locator('#refresh-jobs:enabled').click();
+      await page.locator('#jobs-notice').getByText('Live work is unavailable. Retrying…', {exact: true}).waitFor();
+      assert.equal(await page.locator('#jobs-dispatch').isVisible(), false);
+      await page.unroute('**/api/jobs/activity');
+      await page.locator('#refresh-jobs:enabled').click();
+      await page.locator('#reminder-cards').getByText(engine + ' stretch', {exact: true}).waitFor();
       const reminder = page.locator('#reminder-cards article').filter({hasText: engine + ' stretch'});
       await reminder.getByRole('button', {name: 'Open reminder chat'}).click();
       await page.locator('#view-chat:visible').waitFor();
@@ -63,7 +79,7 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       await page.screenshot({path: path.join(config.output, screenshot), animations: 'disabled'});
       assert.deepEqual(errors, []);
-      results.push({engine, passed: true, screenshot, checks: ['capability answers visible without model calls', 'real due notification without worker scheduler', 'recurring reminder visible in Jobs', 'open reminder chat', 'cancel', 'saved Karen status', 'private band digest', 'phone overflow']});
+      results.push({engine, passed: true, screenshot, checks: ['dispatch pause/queue visible, stale status cleared and recovered', 'capability answers visible without model calls', 'real due notification without worker scheduler', 'recurring reminder visible in Jobs', 'open reminder chat', 'cancel', 'saved Karen status', 'private band digest', 'phone overflow']});
       await context.close();
     } finally { await browser.close(); }
   }

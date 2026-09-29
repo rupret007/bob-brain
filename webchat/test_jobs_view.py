@@ -62,6 +62,31 @@ class JobsViewTests(unittest.TestCase):
         row = next(row for row in view["working"] if row["key"] == "lane-webbob-clean")
         self.assertEqual(row["models"], ["Codex · gpt-fixture", "Claude · opus"])
 
+    def test_one_process_sample_drives_cards_and_inspection_failure(self):
+        with patch('live_status_snapshot.process_table', side_effect=[None, parse_processes(PS)]) as sample, \
+                patch('worker_activity.process_table', side_effect=AssertionError('must reuse observation')):
+            view = build_jobs_view(self.root)
+        sample.assert_called_once()
+        self.assertFalse(view['inspection']['processes_available'])
+        self.assertTrue(all(r['state'] == 'unverified' for r in view['working']))
+        self.assertTrue(all(r['elapsed_seconds'] is None for r in view['working']))
+
+    def test_dispatch_markers_are_current_and_do_not_hide_live_activity(self):
+        self.queue(dict(id='waiting', status='queued', title='Queued draft'))
+        for marker, mode in (('SOLO-WORKER', 'solo'), ('MAINTENANCE', 'paused')):
+            path = self.write('conductor/' + marker, 'disabled')
+            view = build_jobs_view(self.root)
+            self.assertEqual(view['dispatch'], dict(paused=True, mode=mode, queued=1))
+            self.assertTrue(view['working'])
+            self.assertTrue(view['dispatch_paused'])
+            path.unlink()
+        self.assertEqual(build_jobs_view(self.root)['dispatch'], dict(paused=False, mode='enabled', queued=1))
+
+    def test_unreadable_queue_does_not_claim_zero_waiting(self):
+        self.write('conductor/state/queue.jsonl', '{bad json')
+        view = build_jobs_view(self.root)
+        self.assertIsNone(view['dispatch']['queued'])
+
     def test_standalone_task_header_supplies_project_and_task(self):
         with patch("live_status_snapshot._screen_sessions", return_value={}), patch("live_status_snapshot.process_table", return_value=parse_processes(
                 "10 1 04:00 S codex exec Follow-up 4 on draft/webbob-clean-0927: redesign Web Bob's Jobs tab. Private details\n")):

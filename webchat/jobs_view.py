@@ -10,7 +10,7 @@ from urllib.parse import quote, urlsplit
 
 from lane_collector import collect_bob_lanes
 from live_status_snapshot import _job_bucket, _latest_jobs, observe_work, provider_health
-from worker_activity import WORKER_NAMES, process_table
+from worker_activity import WORKER_NAMES
 
 PROJECTS = ((r"web\s*bob|bob-brain", "Web Bob"), (r"web\s*jam", "WebJam"),
             (r"adopt\s*iq", "AdoptIQ"), (r"story\s*board|\bsb\b", "StoryBoard"), (r"\bshelf\b", "Shelf"))
@@ -173,8 +173,9 @@ def _lane_card(lane: dict) -> dict:
 def build_jobs_view(root: Path, *, now=None):
     now = time.time() if now is None else now
     observed = observe_work(root, now=now)
-    processes = process_table(root)
-    bob = collect_bob_lanes(root, now=now, sessions=observed["sessions"], processes=processes)
+    # One sample establishes both cards and inspection health. Retrying a
+    # failed sample can otherwise invent a live lane while reporting failure.
+    bob = collect_bob_lanes(root, now=now, observed=observed)
     records = {key: row for key, row in observed["records"].items() if not is_drill(row)}
     grouped = {}
     unconfirmed = 0
@@ -243,7 +244,13 @@ def build_jobs_view(root: Path, *, now=None):
     recent.sort(key=lambda row: number(row.get("finished_at")) or 0, reverse=True)
     recent = recent[:5]
     health = provider_health(root, now)
+    solo = (root / 'conductor/SOLO-WORKER').exists()
+    paused = solo or (root / 'conductor/MAINTENANCE').exists()
+    queued = sum(_job_bucket(row) == 'queued' for row in records.values())
+    dispatch = dict(paused=paused, mode='solo' if solo else 'paused' if paused else 'enabled',
+                    queued=queued if observed['inspection']['queue_available'] else None)
     return dict(checked_at=now, inspection=observed["inspection"], working=working, recently_finished=recent,
+                dispatch=dispatch, dispatch_paused=paused,
                 details=dict(queued=sum(_job_bucket(row) == "queued" for row in records.values()),
                              unconfirmed=unconfirmed, costs=costs(root),
                              health=[dict(provider=WORKER_NAMES[name], state=row["state"],
