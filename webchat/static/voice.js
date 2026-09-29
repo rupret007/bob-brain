@@ -35,13 +35,21 @@ class BobVoice {
       // user activation to unlock output, even when microphone access is granted.
       s.audio = new AudioContext();
       const unlocked = s.audio.resume();
+      // Permission may outlive hangup. Attach a rejection handler immediately;
+      // the original promise is still awaited below when this call is current.
+      unlocked.catch(() => {});
       const microphone = navigator.mediaDevices.getUserMedia({ audio: {
         echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1,
       }});
       s.connectTimeout = setTimeout(() => this.fail(s, "The call took too long to connect. Tap the waveform to retry."), 30000);
       s.stream = await microphone;
       if (this.session !== s) { s.stream.getTracks().forEach(t => t.stop()); return; }
-      await unlocked;
+      try { await unlocked; }
+      catch (_) {
+        if (this.session === s) this.fail(s, "Audio could not start. Tap the waveform to try again.");
+        return;
+      }
+      if (this.session !== s) return;
       for (const track of s.stream.getTracks()) {
         track.addEventListener("ended", () => this.fail(s, "Microphone disconnected. Tap the waveform to call again."));
       }
@@ -216,7 +224,9 @@ class BobVoice {
       }
       if (this.session !== s || s.cancelledTools.has(tool.id)) return;
       this.send(s, { toolResponse: { functionResponses: [{ id: tool.id, name: tool.name,
-        response: { result: answer?.texting
+        response: { result: answer?.private_memory
+          ? "The saved memory view is ready in chat. Ask Jeff to read it on screen; do not claim to know the displayed notes."
+          : answer?.texting
           ? "The private text result is ready in this chat. Ask Jeff to read it on screen; do not claim to know its contents."
           : answer?.content || "No result was returned.", status: answer?.status || "error" } }] } });
     } catch (error) {
