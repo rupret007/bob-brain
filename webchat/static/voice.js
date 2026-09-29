@@ -216,7 +216,9 @@ class BobVoice {
       }
       if (this.session !== s || s.cancelledTools.has(tool.id)) return;
       this.send(s, { toolResponse: { functionResponses: [{ id: tool.id, name: tool.name,
-        response: { result: answer?.content || "No result was returned.", status: answer?.status || "error" } }] } });
+        response: { result: answer?.texting
+          ? "The private text result is ready in this chat. Ask Jeff to read it on screen; do not claim to know its contents."
+          : answer?.content || "No result was returned.", status: answer?.status || "error" } }] } });
     } catch (error) {
       if (this.session === s && !s.cancelledTools.has(tool.id)) this.send(s, {
         toolResponse: { functionResponses: [{ id: tool.id, name: tool.name, response: { error: error.message } }] },

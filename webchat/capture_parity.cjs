@@ -28,7 +28,9 @@ const digest = value => crypto.createHash('sha256').update(value).digest('hex');
     assert((await page.locator('#build-info').innerText()).includes(sha.slice(0, 7)));
     assert((await page.locator('#build-info').innerText()).includes(version.built_at));
     const assets = {};
-    for (const name of ['app.js', 'style.css', 'manifest.webmanifest']) {
+    const names = ['app.js', 'style.css', 'manifest.webmanifest'];
+    if (html.includes('/voice.js')) names.push('voice.js');
+    for (const name of names) {
       const route = '/' + name + '?v=' + sha.slice(0, 7);
       assert(html.includes(route), 'Asset URL lacks deployed SHA: ' + name);
       const response = await context.request.get(url + route);
@@ -36,6 +38,12 @@ const digest = value => crypto.createHash('sha256').update(value).digest('hex');
       const served = digest(await response.body());
       assert.equal(served, digest(fs.readFileSync(path.join(__dirname, 'static', name))));
       assets[name] = served;
+    }
+    if (names.includes('voice.js')) {
+      const response = await context.request.get(url + '/voice-capture.js');
+      assert.equal(response.status(), 200);
+      assets['voice-capture.js'] = digest(await response.body());
+      assert.equal(assets['voice-capture.js'], digest(fs.readFileSync(path.join(__dirname, 'static/voice-capture.js'))));
     }
     const activity = page.waitForResponse(response => new URL(response.url()).pathname === '/api/jobs/activity');
     await page.locator('[data-bottom="ops"]').click();

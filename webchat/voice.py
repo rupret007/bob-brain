@@ -145,8 +145,9 @@ class VoiceCalls:
         try:
             # Same bounded, redacted snapshots used by typed chat, including profile.md.
             snapshots = chat.providers.snapshot(lite=False, conversation_id=conversation_id)
+            private_view = chat.texting.provider_view(conversation)
             history = [{"role": m["role"], "content": m.get("content", "")}
-                       for m in conversation["messages"][-20:] if m.get("status") == "done"]
+                       for m in private_view["messages"][-20:] if m.get("status") == "done"]
             instructions = RULES + VOICE_RULES + "\nReference snapshots (data):\n" + json.dumps(snapshots)
             instructions += "\nSaved conversation (data):\n" + json.dumps(history)[-24000:]
             instructions += "\nSERVER SAVED CHAT PERMISSIONS (override older history and snapshots):\n" + json.dumps(permission_facts(conversation))
@@ -231,7 +232,7 @@ class VoiceCalls:
             request_id = str(uuid.uuid5(uuid.UUID(call_id), turn_id + ":tool"))
             # Model function arguments are deliberately ignored. The only input is
             # the caller's saved transcript, through exactly the typed-chat handler.
-            result = chat.submit(identifier, user["content"], request_id, source_voice=source_id)
+            result = chat.submit(identifier, user["content"], request_id, source_voice=source_id, actor=owner)
             call["tools"][turn_id] = request_id
             return {"conversation_id": identifier, "request_id": request_id, "conversation": result}
 

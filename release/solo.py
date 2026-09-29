@@ -265,6 +265,9 @@ def checks(root, feature):
     commands['browser'] = [sys.executable, 'webchat/texting_proof.py', '--output-dir', str(out / 'texting-browser')]
     if ORDER.index(feature) >= ORDER.index('media'):
         commands['media-browser'] = [sys.executable, 'webchat/media_browser_test.py', '--screenshots', str(out / 'media-browser')]
+    if ORDER.index(feature) >= ORDER.index('voice'):
+        commands['voice-js'] = ['node', '--test', 'webchat/test_voice_js.cjs']
+        commands['voice-browser'] = [sys.executable, 'release/voice_probe.py', '--root', str(root), '--output', str(out / 'voice-browser')]
     for path in sorted((CODE / 'webchat').glob('test_*.mjs')):
         commands[path.stem] = ['node', str(path)]
 
@@ -326,6 +329,8 @@ def verify_gates(sha, feature, check_path, review_path):
     required = {'webchat', 'services', 'reviews', 'release', 'eval', 'browser'}
     if ORDER.index(feature) >= ORDER.index('media'):
         required.add('media-browser')
+    if ORDER.index(feature) >= ORDER.index('voice'):
+        required.update(('voice-js', 'voice-browser'))
     required.update(p.stem for p in (CODE / 'webchat').glob('test_*.mjs'))
     require(required <= check['results'].keys(), 'Missing mandatory suite')
     for name in required:
@@ -524,6 +529,11 @@ def deploy(args):
              folder / f'browser-round-{number}.png', browser_path], env=env)
         browser = json.loads(browser_path.read_text())
         require(browser['pass_check'], 'Live browser check failed')
+        if ORDER.index(args.feature) >= ORDER.index('voice'):
+            from voice_probe import probe
+            for name, url in (('local', 'http://127.0.0.1:8787'), ('public', origin)):
+                results.append(probe(root, folder / f'voice-{name}-round-{number}', url,
+                                     engines=('chromium',) if name == 'local' else ('webkit',)))
         return dict(all_pass=all(r['all_pass'] for r in results), versions=pair, endpoints=results,
                     browser=dict(path=str(browser_path), sha256=digest(browser_path), passed=True))
 

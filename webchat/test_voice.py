@@ -52,6 +52,25 @@ class VoiceTests(fixtures.Fixture):
         with self.assertRaises(VoiceError) as cm: self.chat.voice.start(self.identifier, self.owner)
         self.assertEqual(cm.exception.status, 409)
 
+    def test_private_text_history_is_not_in_voice_token_context(self):
+        self.chat.voice.end(self.call, self.owner)
+        value = self.chat.conversations[self.identifier]
+        value['messages'].append(dict(id=str(uuid.uuid4()), role='assistant', status='done',
+                                      content='Private message body and wbtxt-secret', texting=True))
+        self.chat.voice.start(self.identifier, self.owner)
+        prompt = json.dumps(self.configs[-1])
+        self.assertNotIn('Private message body', prompt)
+        self.assertNotIn('wbtxt-secret', prompt)
+
+    def test_voice_text_command_marks_its_source_with_later_transcripts_present(self):
+        source = self.entry('texting help')
+        self.save_entries(source, self.entry('Later words', order=1))
+        result = self.chat.voice.tool(self.call, self.owner, source['turn_id'])
+        rows = result['conversation']['messages']
+        self.assertTrue(rows[0]['texting'])
+        self.assertFalse(rows[1].get('texting', False))
+        self.assertEqual(rows[-1]['provider'], 'texting')
+
     def test_voice_inherits_current_saved_permissions_after_typed_resume(self):
         self.chat.voice.end(self.call, self.owner)
         for text in ("Hold off on Web Bob.", "Resume Web Bob."):
@@ -77,7 +96,8 @@ class VoiceTests(fixtures.Fixture):
         ask("Resume Web Bob.", 2)
         queued = ask("Start a job: improve the Web Bob mobile call tests.", 3)
         self.assertEqual(queued["provider"], "dispatcher")
-        self.assertIn("Queued", queued["content"])
+        self.assertIn("queued", queued["content"].lower())
+        self.assertTrue(queued["task_id"])
         self.assertTrue(queued["task_id"])
         self.assertEqual(self.fake.calls, [])
 
@@ -113,7 +133,8 @@ class VoiceTests(fixtures.Fixture):
         rows = self.chat.history(self.identifier)["messages"]
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["content"], user["content"])
-        self.assertIn("Queued", rows[1]["content"])
+        self.assertIn("queued", rows[1]["content"].lower())
+        self.assertTrue(rows[1]["task_id"])
         self.assertEqual(self.fake.calls, [])
         with self.assertRaises(VoiceError): self.save_entries(dict(user, content="start a job: changed request"))
 

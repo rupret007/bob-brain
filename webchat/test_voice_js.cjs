@@ -135,6 +135,19 @@ test('cancelled tools cannot dispatch or speak after a barge-in',async()=>{
   s.cancelledTools.add('cancelled');await f.controller.tool(s,{id:'cancelled',name:'ask_bob'});
   assert.equal(f.requests.filter(r=>r.route.endsWith('/tool')).length,0);await f.controller.stop();
 });
+test('private text results and confirmation tokens never reach voice provider',async t=>{
+  const f=fixture({api:async(route)=>{
+    if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
+    if(route.endsWith('/tool'))return {request_id:'r',conversation:{messages:[{role:'assistant',request_id:'r',status:'done',texting:true,content:'Private thread wbtxt-secret'}]}};
+    return {ok:true};
+  }});
+  t.after(()=>f.controller.stop());await f.controller.start('chat');const s=f.controller.session;
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'texts'}}});s.inputTurn.lastInputAt=0;
+  await f.controller.tool(s,{id:'private',name:'ask_bob'});
+  const sent=JSON.stringify(s.socket.sent);
+  assert.ok(!sent.includes('Private thread')&&!sent.includes('wbtxt-secret'));
+  assert.match(sent,/read it on screen/);
+});
 test('an interrupted turn cannot swallow the next spoken utterance',async()=>{
   const f=fixture();await f.controller.start('chat');const s=f.controller.session;
   f.controller.event(s,{serverContent:{inputTranscription:{text:'Tell me a story'},outputTranscription:{text:'Once upon a time'}}});

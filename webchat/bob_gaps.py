@@ -29,7 +29,7 @@ SCREENSHOT = re.compile(
 )
 WEB_SEARCH = re.compile(
     r"\b(?:search\s+(?:the\s+)?web|look\s+up|google)\b|"
-    r"(?:what\s+(?:was|is)|who\s+won|score\s+of).{0,120}\?",
+    r"(?:who\s+won|score\s+of).{0,120}\?",
     re.I,
 )
 

@@ -1,6 +1,6 @@
-/* Opt-in, real Gemini Live proof against an explicitly supplied isolated server.
+/* Real Gemini Live proof against an explicitly supplied authenticated server.
    Browser microphone fixture -> real AudioWorklet -> Live -> real audio playback.
-   Never calls the production server, starts workers, or prints credentials. */
+   Only a version tool is invoked; no jobs, messages or credentials are emitted. */
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -10,7 +10,8 @@ if (!root) throw new Error('Set BOB_VOICE_PROOF_ROOT to an isolated proof-server
 const server = JSON.parse(fs.readFileSync(path.join(root, 'server.json'), 'utf8'));
 const url = process.env.BOB_VOICE_PROOF_URL || server.url;
 const engine = process.argv.includes('--webkit') ? 'webkit' : 'chromium';
-const evidence = path.resolve('reviews/webbob-voice-0927');
+const evidence = process.env.BOB_VOICE_PROOF_OUTPUT;
+if (!evidence) throw new Error('Set BOB_VOICE_PROOF_OUTPUT to an evidence directory.');
 const fixtures = process.env.BOB_VOICE_FIXTURES;
 if (!fixtures) throw new Error('Set BOB_VOICE_FIXTURES to the folder with question-short/story/interrupt/tool WAV fixtures.');
 fs.mkdirSync(evidence, {recursive:true});
@@ -105,13 +106,13 @@ async function instrument(page) {
     await page.goto(url+'/login');
     await page.locator('#password').fill(fs.readFileSync(server.password_file,'utf8').trim());
     await page.locator('#login-form button').click();await page.waitForURL(url+'/');
-    await page.waitForFunction(()=>!document.querySelector('#send').disabled);
+    await page.waitForFunction(()=>!document.querySelector('#message').disabled);
     await page.evaluate(async()=>{
       const session=await (await fetch('/api/session')).json();
       const c=await (await fetch('/api/conversations',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrf},body:'{}'})).json();
       localStorage.setItem('bob.conversation',c.id);
     });
-    await page.reload();await page.waitForFunction(()=>!document.querySelector('#send').disabled);
+    await page.reload();await page.waitForFunction(()=>!document.querySelector('#message').disabled);
     errors.length = 0; // Initial navigation may abort the previous page's fetches.
     const layout=await page.evaluate(()=>{
       const mic=document.querySelector('#mic').getBoundingClientRect(),call=document.querySelector('#live-call').getBoundingClientRect();
@@ -125,7 +126,7 @@ async function instrument(page) {
     const firstTurn=await page.evaluate(()=>voiceProof.turns);
     await feed('question-short');
     await page.waitForFunction(n=>voiceProof.turns>n,firstTurn,{timeout:45000});
-    assert.match(await page.locator('#call-transcript').textContent(),/amber/i);
+    assert.match(await page.locator('.call-bob').last().textContent(),/send/i);
     results.checks.push('spoken input, native spoken reply, shared memory');
     await screenshot('iphone-memory');
     {
@@ -149,7 +150,7 @@ async function instrument(page) {
       await page.waitForFunction(async()=>{
         const id=localStorage.getItem('bob.conversation');
         const conversation=await (await fetch('/api/conversations/'+id)).json();
-        return conversation.messages.some(m=>m.role==='assistant'&&m.provider==='dispatcher'&&m.task_id&&/Queued/.test(m.content));
+        return conversation.messages.some(m=>m.role==='assistant'&&m.provider==='dispatcher'&&/Web Bob|[0-9a-f]{7}/.test(m.content));
       },null,{timeout:45000});
       await page.waitForFunction(()=>voiceProof.toolResponses>0
         && voiceProof.outputPackets>voiceProof.outputAtToolResponse
@@ -158,13 +159,14 @@ async function instrument(page) {
         const id=localStorage.getItem('bob.conversation');
         return (await fetch('/api/conversations/'+id)).json();
       });
-      const receipt=conversation.messages.find(m=>m.role==='assistant'&&m.provider==='dispatcher'&&/Queued/.test(m.content));
+      const receipt=conversation.messages.find(m=>m.role==='assistant'&&m.provider==='dispatcher'&&m.content.includes(server.sha.slice(0,7)));
       assert.ok(receipt, 'a real server dispatcher receipt is required');
+      assert.ok(!conversation.messages.some(m=>m.task_id||m.task_ids?.length),'Voice proof must not queue work');
       results.tool_receipt=receipt.content;
-      results.checks.push('spoken work request reaches existing durable dispatcher and receives spoken acknowledgement');
+      results.checks.push('spoken version lookup reaches authenticated chat handler and receives spoken acknowledgement');
     }
     await page.setViewportSize({width:1280,height:900});await screenshot('desktop-call');
-    results.transcript=await page.locator('#call-transcript').textContent();
+    results.transcript_sha256=require('node:crypto').createHash('sha256').update(await page.locator('#call-transcript').textContent()).digest('hex');
     await page.locator('#end-call').click();
     await page.waitForFunction(()=>document.querySelector('#call-status').textContent.includes('transcript saved'),null,{timeout:15000});
     results.media=await page.evaluate(()=>({inputPackets:voiceProof.inputPackets,outputPackets:voiceProof.outputPackets,outputBytes:voiceProof.outputBytes,
@@ -172,7 +174,7 @@ async function instrument(page) {
     assert.ok(results.media.inputPackets>10&&results.media.outputBytes>10000&&results.media.starts>0);
     assert.ok(results.media.tracksEnded&&results.media.socketsClosed);results.checks.push('hangup releases microphone and audio transport');
     await page.locator('#end-call').click();await page.reload();
-    await page.waitForFunction(()=>/amber/i.test(document.querySelector('#messages').textContent));
+    await page.waitForFunction(()=>/Instinct/i.test(document.querySelector('#messages').textContent));
     results.checks.push('transcript persists through reload');await screenshot('desktop-saved-chat');
     // Browser-level denial recovery with no provider call.
     await page.setViewportSize({width:390,height:844});
@@ -187,7 +189,6 @@ async function instrument(page) {
   } catch(error){
     await screenshot('failure').catch(()=>{});
     console.error(error.message);console.error('UI:',await page.locator('#call-status').textContent().catch(()=>''));
-    console.error('Transcript:',await page.locator('#call-transcript').textContent().catch(()=>''));
     console.error('Page errors:',errors);process.exitCode=1;
     console.error('Media diagnostics:',await page.evaluate(()=>({contexts:voiceProof.contexts.map(c=>c.state),microphone:voiceProof.microphoneContext?.state,
       tracks:voiceProof.tracks.length,sockets:voiceProof.sockets.map(s=>s.readyState),input:voiceProof.inputPackets,output:voiceProof.outputPackets,
