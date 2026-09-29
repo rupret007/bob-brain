@@ -140,7 +140,8 @@ async function instrument(page) {
       results.checks.push('real provider barge-in clears queued playback');await screenshot('iphone-interrupted');
       // Listening during the interruption is not the end of the new utterance.
       // Wait for Bob's short reply and its completed turn before the next ask.
-      await page.waitForFunction(()=>[...document.querySelectorAll('.call-bob')].some(e=>/okay.*jeff/i.test(e.textContent)),null,{timeout:45000});
+      // Native transcription may spell the same spoken acknowledgement "Ok".
+      await page.waitForFunction(()=>[...document.querySelectorAll('.call-bob')].some(e=>/\bok(?:ay)?\b.*\bjeff\b/i.test(e.textContent)),null,{timeout:45000});
       await page.waitForTimeout(2000);
       await page.waitForFunction(()=>document.querySelector('#call-dialog').dataset.phase==='listening',null,{timeout:45000});
       await feed('tool');
