@@ -124,6 +124,16 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, 'Missing'):
             self.verify()
 
+    def test_voice_requires_audio_browser_and_js_suites(self):
+        self.check['feature'] = self.review['feature'] = 'voice'
+        self.check['results']['media-browser'] = self.check['results']['browser']
+        checks, review = self.folder / 'checks.json', self.folder / 'review.json'
+        solo.atomic_json(checks, self.check)
+        self.review['checks_sha256'] = solo.digest(checks)
+        solo.atomic_json(review, self.review)
+        with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
+            solo.verify_gates('a' * 40, 'voice', checks, review)
+
     def test_skipped_required_checks_rejected(self):
         self.check['results']['webchat']['skipped'] = 1
         with self.assertRaisesRegex(Exception, 'skipped'):

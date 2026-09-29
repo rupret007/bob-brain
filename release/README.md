@@ -15,6 +15,14 @@ candidate SHA and hash-checked. Review the source and record a separate self-rev
 with `reviewer: "Codex solo"`, exact `sha`/`feature`, `verdict: "PASS"`, concrete
 `findings`, `checks_sha256`, and no `unresolved_blockers`.
 
+Media and later releases also require Chromium/WebKit attachment proofs. Voice
+and later releases require the voice JS/worklet suite and real Gemini audio in
+both browsers on an isolated server, then real local Chromium/public WebKit
+audio in each production round. Speech is synthesized locally; shared memory,
+barge-in, a harmless version tool, persisted transcripts and resource cleanup
+must pass. These product calls never invoke model reviewers or coding workers.
+Synthetic microphone testing does not claim physical iPhone microphone proof.
+
 After a normal draft PR/clean-branch merge with the same tree, `deploy --root ROOT
 --feature FEATURE --previous FULL_SHA --pr URL --checks PATH --review PATH`
 checks the predecessor, saves fresh rollback snapshots, freezes the candidate,

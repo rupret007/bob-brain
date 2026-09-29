@@ -259,6 +259,8 @@ class UnitTests(unittest.TestCase):
         self.assertEqual(parse_screenshot("take a screenshot of the Calculator app"), "Calculator app")
 
     def test_needs_web_search_negative_cases(self):
+        for query in ('What is my favorite color?', 'What was my previous preference?', 'What is in my uploaded file?'):
+            self.assertFalse(needs_web_search(query))
         self.assertFalse(needs_web_search(""))
         self.assertFalse(needs_web_search("   "))
         self.assertFalse(needs_web_search("hello there"))

@@ -37,3 +37,4 @@ webchat/node_modules/
 state/task-runs/
 state/dispatch-code-root
 reviews/.texting-proof-*/
+.voice-work/

@@ -25,7 +25,10 @@ class ServicesTest(unittest.TestCase):
         for module in (api,budget,jobs,lanes,runtime,state,worker,workspaces):
             for name,value in [('ROOT',self.root),('CONDUCTOR',self.core)]:
                 if hasattr(module,name):self.patches.append(patch.object(module,name,value))
-        self.patches += [patch.object(runtime,'HEARTBEATS',self.core/'heartbeats'),patch.object(runtime,'SERVICES',self.core/'services'),patch.dict(os.environ,{'BOB_ROOT':str(self.root)})]
+        self.patches += [patch.object(runtime,'HEARTBEATS',self.core/'heartbeats'),patch.object(runtime,'SERVICES',self.core/'services'),patch.dict(os.environ,{'BOB_ROOT':str(self.root)}),
+                         # The sandbox protects the fixture's core, even when
+                         # TMPDIR is inside the real source checkout.
+                         patch.object(workspaces,'__file__',str(self.core/'services/workspaces.py'))]
         for p in self.patches:p.start()
     def tearDown(self):
         for p in reversed(self.patches):p.stop()

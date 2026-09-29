@@ -22,7 +22,7 @@ if ($("login-form")) {
   const MEDIA_LIMITS = { image: 12 * 1024 * 1024, video: 35 * 1024 * 1024, file: 8 * 1024 * 1024 };
   const MAX_PENDING_ATTACHMENTS = 6;
   let lastQuietHoursActive = null, lastQuietHoursFetchedAt = 0, lastBootstrapCommand = "";
-  const providers = { codex: "Codex", cursor: "Cursor", gemini: "Gemini", minimax: "MiniMax", claude: "Claude", texting: "Texts · private" };
+  const providers = { voice: "Bob voice", codex: "Codex", cursor: "Cursor", gemini: "Gemini", minimax: "MiniMax", claude: "Claude", texting: "Texts · private" };
   function escapeHtml(text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
@@ -70,6 +70,7 @@ if ($("login-form")) {
   const remember = (key, value) => { try { localStorage.setItem(key, value); } catch (_) {} };
   async function api(path, data, signal) {
     const response = await fetch(path, { credentials: "same-origin", cache: "no-store",
+      keepalive: path === "/api/voice/end" || path === "/api/voice/transcript",
       ...(data === undefined ? { signal: signal || AbortSignal.timeout(15000) } : { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: JSON.stringify(data) }) });
     if (response.status === 401) { location.assign("/login"); throw new Error("Please log in."); }
     const result = await response.json();
@@ -404,7 +405,7 @@ if ($("login-form")) {
       if (message.role === "assistant" && providers[message.provider] && !pending) {
         const hint = document.createElement("div");
         hint.className = "provider-hint";
-        hint.textContent = providers[message.provider];
+        hint.textContent = (providers[message.provider] || message.provider) + (message.voice_interrupted ? " · interrupted (may include unplayed words)" : "");
         messageTools.append(hint);
       }
       article.append(messageTools);
@@ -837,160 +838,60 @@ if ($("login-form")) {
     try { await api("/api/cancel", { conversation_id: current }); $("notice").textContent = "Stopping this reply…"; }
     catch (error) { $("notice").textContent = error.message; }
   });
-  let callSession = null;
-  async function drainCallQueue(session) {
-    if (!session || session.drainRunning || callSession !== session) return;
-    session.drainRunning = true;
-    try {
-      while (callSession === session && session.queue.length) {
-        const { transcript, heardAt } = session.queue.shift();
-        if (heardAt !== session.lastHeardAt) continue;
-        await handleCallUtterance(transcript, session.id);
-      }
-    } finally {
-      if (session === callSession) session.drainRunning = false;
-    }
-  }
-  function enqueueCallUtterance(transcript, session) {
-    if (!session || callSession !== session) return;
-    const norm = transcript.trim().toLowerCase();
-    if (norm.length < 3) return;
-    const last = session.queue.at(-1);
-    if (last && last.transcript.trim().toLowerCase() === norm) return;
-    const heardAt = Date.now();
-    session.lastHeardAt = heardAt;
-    session.queue.push({ transcript: transcript.trim(), heardAt });
-    drainCallQueue(session);
-  }
-  function appendCallLine(role, text) {
-    const host = $("call-transcript");
-    if (!host || !text) return;
-    const row = document.createElement("p");
-    row.className = role === "you" ? "call-you" : "call-bob";
-    row.textContent = (role === "you" ? "You: " : "Bob: ") + text.trim();
-    host.append(row);
-    host.scrollTop = host.scrollHeight;
-  }
-  async function speakCallReply(text) {
-    if (!("speechSynthesis" in window) || !text) return;
-    await ensureSpeechVoices();
-    return new Promise((resolve) => {
-      const utter = new SpeechSynthesisUtterance(speechText(text).slice(0, 2000));
-      utter.rate = 1.05;
-      const voices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith("en"));
-      if (voices.length) utter.voice = voices.find((v) => /samantha|daniel|english/i.test(v.name)) || voices[0];
-      utter.onend = utter.onerror = () => resolve();
-      if (callSession) callSession.speaking = utter;
-      speechSynthesis.speak(utter);
-    });
-  }
-  function stopLiveCall() {
-    if (callSession?.recognition) {
-      try { callSession.recognition.stop(); } catch (_) { /* ignore */ }
-    }
-    speechSynthesis.cancel();
-    callSession = null;
-    $("live-call")?.classList.remove("call-active");
-    $("call-dialog")?.close();
-    $("call-status").textContent = "";
-    $("call-transcript").replaceChildren();
-  }
-  async function handleCallUtterance(transcript, sessionId) {
-    if (!callSession || callSession.id !== sessionId || !transcript.trim()) return;
-    if (callSession.busy) return;
-    callSession.busy = true;
-    appendCallLine("you", transcript);
-    $("call-status").textContent = "Bob is thinking…";
-    speechSynthesis.cancel();
-    try {
-      const requestId = crypto.randomUUID();
-      const convId = callSession.convId || current;
-      const payload = {
-        conversation_id: convId,
-        message: transcript,
-        provider: $("provider-choice").value,
-        request_id: requestId,
-      };
-      await api("/api/messages", payload);
-      const value = await waitForReply(convId, requestId);
-      if (!callSession || callSession.id !== sessionId) return;
-      const msg = value.messages.find((m) => m.role === "assistant" && m.request_id === requestId);
-      const body = msg?.content || "No reply yet.";
-      appendCallLine("bob", body);
-      $("call-status").textContent = "Listening… speak anytime, or tap End call.";
-      await speakCallReply(body);
-    } catch (error) {
-      $("call-status").textContent = error.message || "Call error";
-    } finally {
-      if (callSession?.id === sessionId) callSession.busy = false;
-    }
-  }
-  $("live-call")?.addEventListener("click", () => {
-    if (callSession) { stopLiveCall(); return; }
-    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Speech) {
-      $("notice").textContent = "Live call needs Safari on iPhone (HTTPS) or Chrome. Use the mic for dictation.";
-      return;
-    }
-    const rec = new Speech();
-    callSession = {
-      id: crypto.randomUUID(),
-      convId: current,
-      recognition: rec,
-      speaking: null,
-      resultIndex: 0,
-      busy: false,
-      queue: [],
-      drainRunning: false,
-      lastHeardAt: 0,
-    };
-    $("call-dialog")?.showModal();
-    $("call-transcript").replaceChildren();
-    $("call-status").textContent = "Listening… speak naturally. Bob will answer out loud.";
-    $("live-call").classList.add("call-active");
-    rec.lang = "en-US";
-    rec.interimResults = true;
-    rec.continuous = true;
-    rec.onresult = (event) => {
-      if (!callSession) return;
-      let heardInterim = false;
-      for (let index = callSession.resultIndex; index < event.results.length; index += 1) {
-        const row = event.results[index];
-        const said = (row[0]?.transcript || "").trim();
-        if (!row.isFinal && said.length > 1) heardInterim = true;
-        if (!row.isFinal) continue;
-        callSession.resultIndex = index + 1;
-        if (said.length > 2) enqueueCallUtterance(said, callSession);
-      }
-      if (heardInterim && callSession.speaking) {
-        speechSynthesis.cancel();
-        callSession.speaking = null;
-        $("call-status").textContent = "Listening… (interrupted Bob)";
-      }
-    };
-    rec.onerror = (event) => {
-      if (!callSession) return;
-      if (event.error === "not-allowed") $("call-status").textContent = "Microphone blocked — allow mic in Settings.";
-      else if (event.error !== "aborted") $("call-status").textContent = "Mic error — try again or type in chat.";
-    };
-    rec.onend = () => {
-      if (callSession?.recognition === rec) {
-        callSession.resultIndex = 0;
-        try { rec.start(); } catch (_) { /* restart loop while call open */ }
-      }
-    };
-    callSession.resultIndex = 0;
-    try { rec.start(); } catch (_) {
-      stopLiveCall();
-      $("notice").textContent = "Could not start live call.";
-    }
+  const voice = new BobVoice({
+    api,
+    onState(text, phase) {
+      $("call-status").textContent = text;
+      $("call-dialog").dataset.phase = phase;
+      $("live-call").classList.toggle("call-active", voice.active);
+      $("live-call").setAttribute("aria-pressed", String(voice.active));
+      $("live-call").setAttribute("aria-label", voice.active ? "Hang up voice call" : "Start live voice call");
+      $("end-call").textContent = voice.active ? "Hang up" : "Back to chat";
+      $("resume-call").hidden = phase !== "paused";
+      $("retry-voice-save").hidden = phase !== "unsaved";
+      $("call-hint").textContent = voice.active ? "Your transcript saves to this chat." : "You can start another call from the waveform button.";
+    },
+    onTranscript(entries) {
+      const rows = entries.filter(e => e.content.trim()).map(entry => {
+        const row = document.createElement("p");
+        row.className = entry.role === "user" ? "call-you" : "call-bob";
+        row.textContent = (entry.role === "user" ? "You: " : "Bob: ") + entry.content + (entry.interrupted ? " [interrupted]" : "");
+        return row;
+      });
+      $("call-transcript").replaceChildren(...rows);
+      $("call-transcript").scrollTop = $("call-transcript").scrollHeight;
+    },
+    onSaved() { revision = ""; },
   });
-  $("end-call")?.addEventListener("click", () => stopLiveCall());
-  $("call-dialog")?.addEventListener("close", () => stopLiveCall());
+  $("live-call").addEventListener("click", () => {
+    if (voice.active) { voice.stop(); return; }
+    if (busy || sending || !current) { $("notice").textContent = "Wait for Bob’s reply before starting a call."; return; }
+    if (micRecognition) { micRecognition.abort(); micRecognition = null; $("mic").classList.remove("mic-active"); $("mic").setAttribute("aria-pressed", "false"); }
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
+    $("call-transcript").replaceChildren();
+    $("call-dialog").showModal();
+    voice.start(current);
+  });
+  $("end-call").addEventListener("click", () => {
+    if (voice.active) voice.stop();
+    else $("call-dialog").close();
+  });
+  $("resume-call").addEventListener("click", () => voice.resume());
+  $("retry-voice-save").addEventListener("click", () => voice.retrySave());
+  $("call-dialog").addEventListener("close", () => voice.stop());
+  window.addEventListener("pagehide", () => voice.stop());
+  window.addEventListener("offline", () => voice.stop("Connection lost. Your transcript will save when you reconnect."));
+  window.addEventListener("online", () => voice.retrySave());
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && voice.active) voice.stop("Call ended when you left this page. Tap the waveform to call again.");
+  });
+  window.addEventListener("beforeunload", event => {
+    if (voice.pending.length) { event.preventDefault(); event.returnValue = ""; }
+  });
   $("logout").addEventListener("click", async () => {
     if (!(await confirmLeaveSongEdits())) return;
     $("settings-notice").textContent = "";
-    try { await api("/api/logout", {}); markSongClean(); location.assign("/login"); }
+    try { await voice.stop(); await api("/api/logout", {}); markSongClean(); location.assign("/login"); }
     catch (_) { $("settings-notice").textContent = "Could not log out. Please try again."; }
   });
   $("close-report").addEventListener("click", () => $("report").close());
@@ -1408,10 +1309,12 @@ if ($("login-form")) {
       primeSpeechVoices();
       const recognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
       $("mic").hidden = !recognition;
-      $("live-call").hidden = !recognition || !("speechSynthesis" in window);
+      // Live audio uses getUserMedia + Web Audio; it does not require either
+      // browser dictation or device read-aloud support.
+      $("live-call").hidden = false;
       $("speak").hidden = !("speechSynthesis" in window);
-      $("voice-status").textContent = recognition ? "Use the microphone in Chat to dictate. Voice chat listens and reads replies aloud."
-        : "Use your keyboard’s microphone to dictate. Voice chat is unavailable in this browser.";
+      $("voice-status").textContent = (recognition ? "Tap the microphone to dictate. " : "Use your keyboard’s microphone to dictate. ")
+        + "Tap the waveform to talk with Bob in an AI voice. Interrupt anytime, then tap Hang up. Your transcript saves to this chat. Keep this page open during the call.";
       const preference = stored("bob.provider");
       if ([...$("provider-choice").options].some((option) => option.value === preference)) $("provider-choice").value = preference;
       csrf = (await api("/api/session")).csrf; current = stored("bob.conversation");

@@ -339,7 +339,8 @@ class Texting:
             # An intervening turn also withdraws consent, including unsupported edits.
             self.invalidate(conversation)
             return False
-        conversation["messages"][-2]["texting"] = True
+        source = next(m for m in conversation["messages"] if m.get("request_id") == request_id and m["role"] == "user")
+        source["texting"] = True
         answer = conversation["messages"][-1]
         answer.update(texting=True, provider="texting", status="done")
         try:
