@@ -192,7 +192,7 @@ class EvidenceTests(unittest.TestCase):
     def test_improve_requires_voice_availability_browser_without_replacing_real_audio(self):
         self.check['feature'] = 'improve'
         for name in ('media-browser', 'voice-js', 'voice-browser', 'instinct-browser',
-                     'remaining-browser', 'cold-browser', 'bridge-contract', 'jobs-results-browser', 'reply-lifecycle-browser', 'memory-removal-browser'):
+                     'remaining-browser', 'cold-browser', 'startup-recovery-browser', 'bridge-contract', 'jobs-results-browser', 'reply-lifecycle-browser', 'memory-removal-browser'):
             self.check['results'][name] = self.check['results']['browser']
         sha = solo.andrea_pin()['sha']
         self.check['andrea'] = dict(sha=sha, results=[])
@@ -256,7 +256,7 @@ class EvidenceTests(unittest.TestCase):
         self.check['feature'] = 'improve'
         for name in ('media-browser', 'voice-js', 'voice-browser', 'instinct-browser',
                      'remaining-browser', 'bridge-contract', 'cold-browser', 'jobs-results-browser',
-                     'voice-availability-browser', 'reply-lifecycle-browser', 'memory-removal-browser'):
+                     'voice-availability-browser', 'reply-lifecycle-browser', 'memory-removal-browser', 'startup-recovery-browser'):
             self.check['results'][name] = dict(self.check['results']['browser'])
         self.check['andrea'] = {'sha': solo.andrea_pin()['sha'], 'results': []}
         solo.atomic_json(self.folder / 'bridge-contract.json', dict(
@@ -264,7 +264,7 @@ class EvidenceTests(unittest.TestCase):
         checks = self.folder / 'checks.json'
         solo.atomic_json(checks, self.check)
         solo.verify_checks('a' * 40, 'improve', checks)
-        for missing in ('jobs-results-browser', 'reply-lifecycle-browser', 'voice-browser'):
+        for missing in ('jobs-results-browser', 'reply-lifecycle-browser', 'voice-browser', 'startup-recovery-browser'):
             with self.subTest(missing=missing):
                 value = copy.deepcopy(self.check)
                 del value['results'][missing]

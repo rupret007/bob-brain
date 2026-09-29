@@ -21,6 +21,10 @@ and WebKit: stale-response exclusion, close/Escape cancellation, the actual
 15-second read bound and manual GET-only retry. This adds a gate; it does not
 replace real voice or count independent offline supplements as release greens.
 
+Startup recovery is also mandatory in Chromium and WebKit: initial session,
+conversation-list and history failures, bounded read timeout, unauthenticated
+redirect, automatic read-only recovery and continued polling with no mutations.
+
 `check --root ROOT --feature FEATURE` runs full webchat, services, historical
 release-guard and new solo-guard suites, parity evals, JS checks, the texting
 browser proof and authenticated staging replay. Evidence is bound to a clean

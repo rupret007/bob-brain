@@ -19,6 +19,7 @@ if ($("login-form")) {
   let pendingAttachments = [];
   let uploading = false, quickRequest = null;
   const composerDrafts = new Map();
+  let chatReady = false, connecting = false, authRedirecting = false, connectFailures = 0, connectAfter = 0;
   const MEDIA_LIMITS = { image: 12 * 1024 * 1024, video: 35 * 1024 * 1024, file: 8 * 1024 * 1024 };
   const MAX_PENDING_ATTACHMENTS = 6;
   let lastQuietHoursActive = null, lastQuietHoursFetchedAt = 0, lastBootstrapCommand = "";
@@ -74,7 +75,7 @@ if ($("login-form")) {
       const response = await fetch(path, { credentials: "same-origin", cache: "no-store", signal: requestSignal,
         keepalive: path === "/api/voice/end" || path === "/api/voice/transcript",
         ...(data === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: JSON.stringify(data) }) });
-      if (response.status === 401) { location.assign("/login"); throw new Error("Please log in."); }
+      if (response.status === 401) { authRedirecting = true; location.assign("/login"); throw new Error("Please log in."); }
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Request failed.");
       return result;
@@ -277,15 +278,15 @@ if ($("login-form")) {
   function composerState() {
     const hasText = Boolean($("message").value.trim());
     const hasAttach = pendingAttachments.length > 0;
-    $("send").disabled = busy || sending || uploading || !current || (!hasText && !hasAttach);
+    $("send").disabled = !chatReady || busy || sending || uploading || !current || (!hasText && !hasAttach);
     $("stop").hidden = !busy || replyStopping;
-    $("message").disabled = !current;
+    $("message").disabled = !chatReady || !current;
     const attachBtn = $("attach-plus");
-    if (attachBtn) attachBtn.disabled = !current || busy || sending || uploading;
-    $("conversations").disabled = sending || uploading;
-    $("new-chat").disabled = sending || uploading;
-    $("conversations-dialog").disabled = sending || uploading;
-    $("new-chat-dialog").disabled = sending || uploading;
+    if (attachBtn) attachBtn.disabled = !chatReady || !current || busy || sending || uploading;
+    $("conversations").disabled = !chatReady || sending || uploading;
+    $("new-chat").disabled = !chatReady || sending || uploading;
+    $("conversations-dialog").disabled = !chatReady || sending || uploading;
+    $("new-chat-dialog").disabled = !chatReady || sending || uploading;
     document.querySelectorAll(".attach-remove").forEach((button) => { button.disabled = sending; });
     const dot = $("status-dot");
     if (dot) dot.classList.toggle("busy", busy || sending);
@@ -297,7 +298,7 @@ if ($("login-form")) {
     stop: "stop current job (draft only)",
   };
   async function submitChatText(text, { confirmStop = false, confirmMessage } = {}) {
-    if (!text || !current) return;
+    if (!chatReady || !text || !current) return;
     if (confirmStop && !window.confirm(confirmMessage || "Stop this job?")) return;
     if (uploading || ((busy || sending) && !confirmStop)) {
       $("notice").textContent = "Wait for the current reply to finish, then try again.";
@@ -630,19 +631,11 @@ if ($("login-form")) {
     throw new Error("Reply timed out — check chat.");
   }
   async function poll() {
-    if (!current || polling) return;
+    if (!chatReady || authRedirecting || !current || polling) return;
     polling = true;
     try {
       render(await api(`/api/conversations/${current}`));
-      pollFailures = 0;
-      $("connection").textContent = "Connected to Bob";
-      const dot = $("status-dot");
-      if (dot) {
-        dot.classList.remove("warn");
-        dot.classList.add("connected");
-        dot.setAttribute("aria-label", "Connected");
-      }
-      $("offline-banner")?.setAttribute("hidden", "");
+      connectionRestored();
       if (!busy && $("notice").textContent === "Stopping this reply…") $("notice").textContent = "";
     } catch (error) {
       pollFailures += 1;
@@ -705,7 +698,7 @@ if ($("login-form")) {
   $("composer").addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = $("message").value.trim();
-    if ((!message && !pendingAttachments.length) || busy || sending || uploading) return;
+    if (!chatReady || (!message && !pendingAttachments.length) || busy || sending || uploading) return;
     const provider = $("provider-choice").value;
     const attachIds = pendingAttachments.map((row) => row.media_id);
     if (!draftRequest || draftRequest.message !== message || draftRequest.conversation_id !== current || draftRequest.provider !== provider
@@ -731,7 +724,7 @@ if ($("login-form")) {
   $("attach-input")?.addEventListener("change", async (event) => {
     const files = [...(event.target.files || [])];
     event.target.value = "";
-    if (!files.length || uploading || sending || busy || !current) return;
+    if (!chatReady || !files.length || uploading || sending || busy || !current) return;
     if (pendingAttachments.length + files.length > MAX_PENDING_ATTACHMENTS) {
       $("notice").textContent = `At most ${MAX_PENDING_ATTACHMENTS} attachments per message.`;
       return;
@@ -773,14 +766,14 @@ if ($("login-form")) {
     }
   });
   $("conversations").addEventListener("change", async () => {
-    if (uploading || sending) return;
+    if (!chatReady || uploading || sending) return;
     if (!setBottomTab("chat")) { $("conversations").value = current; return; }
     $("chats-dialog").close();
     switchConversation($("conversations").value);
     await poll(); $("messages").scrollTop = $("messages").scrollHeight;
   });
   $("new-chat").addEventListener("click", async () => {
-    if (uploading || sending) return;
+    if (!chatReady || uploading || sending) return;
     if (!setBottomTab("chat")) return;
     $("chats-dialog").close();
     try { const conversation = await api("/api/conversations", {}); switchConversation(conversation.id); await refreshList(); render(conversation); $("message").focus(); }
@@ -911,6 +904,7 @@ if ($("login-form")) {
     } catch (error) { $("notice").textContent = error.message; }
   });
   $("stop").addEventListener("click", async () => {
+    if (!chatReady) return;
     try { await api("/api/cancel", { conversation_id: current }); $("notice").textContent = "Stopping this reply…"; }
     catch (error) { $("notice").textContent = error.message; }
   });
@@ -941,7 +935,7 @@ if ($("login-form")) {
   });
   $("live-call").addEventListener("click", () => {
     if (voice.active) { voice.stop(); return; }
-    if (busy || sending || !current) { $("notice").textContent = "Wait for Bob’s reply before starting a call."; return; }
+    if (!chatReady || busy || sending || !current) { $("notice").textContent = "Wait for chat to load and Bob’s reply to finish before starting a call."; return; }
     if (micRecognition) { micRecognition.abort(); micRecognition = null; $("mic").classList.remove("mic-active"); $("mic").setAttribute("aria-pressed", "false"); }
     if ("speechSynthesis" in window) speechSynthesis.cancel();
     $("call-transcript").replaceChildren();
@@ -1245,7 +1239,57 @@ if ($("login-form")) {
     }
   }
   document.querySelectorAll("[data-refresh]").forEach((button) => button.addEventListener("click", refreshOverview));
-  async function init() {
+  function connectionRestored() {
+    pollFailures = 0;
+    $("connection").textContent = "Connected to Bob";
+    const dot = $("status-dot");
+    if (dot) {
+      dot.classList.remove("warn");
+      dot.classList.add("connected");
+      dot.setAttribute("aria-label", "Connected");
+    }
+    $("offline-banner")?.setAttribute("hidden", "");
+  }
+  const STARTUP_RETRY_MESSAGE = "Cannot connect to Bob yet. Retrying shortly…";
+  async function connectChat(force = false) {
+    if (chatReady || connecting || authRedirecting || (!force && Date.now() < connectAfter)) return;
+    connecting = true;
+    try {
+      // Retry only bounded reads. Do not enable mutations with a remembered
+      // conversation ID until its current server history has actually loaded.
+      csrf = (await api("/api/session")).csrf;
+      await refreshList();
+      const conversation = await api(`/api/conversations/${current}`);
+      if (conversation.id !== current) throw new Error("Conversation changed while connecting");
+      chatReady = true;
+      connectFailures = 0;
+      connectAfter = 0;
+      if ($("notice").textContent === STARTUP_RETRY_MESSAGE) $("notice").textContent = "";
+      render(conversation);
+      connectionRestored();
+      $("messages").scrollTop = $("messages").scrollHeight;
+      void Promise.allSettled([refreshJobs(), refreshOverview()]);
+    } catch (_) {
+      chatReady = false;
+      if (!authRedirecting) {
+        connectFailures += 1;
+        connectAfter = Date.now() + Math.min(30000, 5000 * 2 ** Math.min(connectFailures - 1, 3));
+        $("notice").textContent = STARTUP_RETRY_MESSAGE;
+        $("connection").textContent = "Reconnecting to Bob";
+        $("offline-banner")?.removeAttribute("hidden");
+        const dot = $("status-dot");
+        if (dot) { dot.classList.add("warn"); dot.setAttribute("aria-label", "Reconnecting"); }
+      }
+    } finally { connecting = false; composerState(); }
+  }
+  function refreshAfterReconnect() {
+    if (document.hidden || authRedirecting) return;
+    if (!chatReady) { void connectChat(true); return; }
+    if (Date.now() - overviewFetchedAt > 30000) clearOverview();
+    if (Date.now() - jobsFetchedAt > 30000) clearJobs();
+    refreshJobs(); refreshOverview(); poll();
+  }
+  function init() {
     try {
       primeSpeechVoices();
       const recognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -1258,18 +1302,15 @@ if ($("login-form")) {
         + "Tap the waveform to talk with Bob in an AI voice. Interrupt anytime, then tap Hang up. Your transcript saves to this chat. Keep this page open during the call.";
       const preference = stored("bob.provider");
       if ([...$("provider-choice").options].some((option) => option.value === preference)) $("provider-choice").value = preference;
-      csrf = (await api("/api/session")).csrf; current = stored("bob.conversation");
-      await refreshList(); await poll(); $("messages").scrollTop = $("messages").scrollHeight;
-      const boot = [refreshJobs(), refreshOverview()];
-      // Secondary tabs must not hold up chat polling or reconnect listeners.
-      // Each refresh owns its errors and loading guard; observe all rejections.
-      void Promise.allSettled(boot);
-      setInterval(() => { if (!document.hidden) { refreshJobs(); refreshOverview(); } }, 8000);
-      setInterval(() => { if (!document.hidden) poll(); }, 1200);
+      current = stored("bob.conversation");
+      // Install once, before the first network read. A failed bootstrap must
+      // leave its own recovery path alive, without adding timers on retries.
+      setInterval(() => { if (chatReady && !authRedirecting && !document.hidden) { refreshJobs(); refreshOverview(); } }, 8000);
+      setInterval(() => { if (!document.hidden) { if (chatReady) poll(); else void connectChat(); } }, 1200);
       setInterval(() => { if (overviewFetchedAt && Date.now() - overviewFetchedAt > 30000) clearOverview(); if (jobsFetchedAt && Date.now() - jobsFetchedAt > 30000) clearJobs(); }, 1000);
-      document.addEventListener("visibilitychange", () => {
-        if (!document.hidden) { if (Date.now() - overviewFetchedAt > 30000) clearOverview(); if (Date.now() - jobsFetchedAt > 30000) clearJobs(); refreshJobs(); refreshOverview(); poll(); }
-      });
+      document.addEventListener("visibilitychange", refreshAfterReconnect);
+      window.addEventListener("online", refreshAfterReconnect);
+      void connectChat();
     } catch (error) { $("notice").textContent = error.message; }
   }
   composerState(); init();
