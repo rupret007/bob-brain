@@ -114,6 +114,25 @@ def submit(client, cid, prompt, request=None, attachments=None):
         value = client.call('/api/conversations/' + cid)
 
 
+def bridge_replay_target(chat):
+    """Select a personal direct recipient; SMS short codes are not send targets."""
+    from texting import recipient, TextingError
+    try:
+        target = recipient(chat)
+        if len(target['addresses']) != 1 or not re.fullmatch(r'(?:iMessage|SMS|RCS);-;[^;\s]+', target['guid']):
+            return False
+        address = target['addresses'][0].strip().lower()
+        guid_address = target['guid'].split(';')[2].strip().lower()
+        if address != guid_address:
+            return False
+        if '@' in address:
+            return bool(re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}", address))
+        return bool(re.fullmatch(r'\+?[0-9 ().-]+', address) and
+                    10 <= len(re.sub(r'\D', '', address)) <= 15)
+    except (TextingError, KeyError, TypeError):
+        return False
+
+
 def replay(client, root, sha, *, real_reads=False, feature='texting'):
     """Authenticated no-send regression; sensitive message content stays in sessions."""
     client.login()
@@ -150,8 +169,7 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
         protected.bind_state(root / 'conductor/webchat')
         protected.observe(chats)
         choices = [c for c in chats if not protected.is_target(recipient(c)) and
-                   (feature != 'bridge' or (len(recipient(c)['addresses']) == 1 and
-                    re.fullmatch(r'(?:iMessage|SMS|RCS);-;[^;\s]+', c['guid'])))]
+                   (feature != 'bridge' or bridge_replay_target(c))]
         require(bool(choices), 'No ordinary messaging thread available for no-send replay')
         target = choices[0]['guid']
     _, drafted = submit(client, cid, 'draft reply to ' + target + ': Web Bob no-send verification. Cancel this draft.')
