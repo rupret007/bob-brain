@@ -1,0 +1,22 @@
+Regression test: exploratory-only answer fails deliverable check
+Target: services/test_result_acceptance.py; result_acceptance.check_deliverables
+Setup: prompt from services/fixtures/texting_jobcompletion_1035.json (contains "Your independent subtask:" and "Review and regression test-case drafts"); answer contains architecture findings and grep commands but no concrete drafts.
+Action: Call check_deliverables(prompt, exploratory_answer, kind="test-writing")
+Expected: Raise ResultRejected containing "Missing concrete regression test drafts"
+
+Regression test: complete draft with plan passes deliverable check
+Target: services/test_result_acceptance.py; result_acceptance.check_deliverables
+Setup: prompt from services/fixtures/texting_jobcompletion_1035.json; answer contains two Regression test headings with Target, Setup, Action, Expected lines plus Unblock plan with Change, Validation, Exit condition lines and Findings/limits sentence and completion JSON block.
+Action: Call check_deliverables(prompt, complete_answer, kind="test-writing")
+Expected: No exception raised; check_completion_json validates the JSON block silently.
+
+Unblock plan:
+Change: If the named unblock 1035 is the missing-drafts failure shown in the fixture, validate that services/test_result_acceptance.py already covers the concrete-drafts pass/fail cases (test_concrete_drafts_and_conditional_unblock_plan_reach_semantic_review, test_drafts_without_resolution_plan_and_empty_case_labels_fail_closed); if a different unblock, use its actual evidence.
+Validation: Run python3 -m unittest discover -s services -p 'test_*.py' and require zero failures; obtain fresh Gemini/MiniMax review on a bounded replay report.
+Exit condition: Web Bob unblock 1035 remains blocked until actual saved reports contain the two regression drafts and unblock plan and every replay job passes acceptance; structural checks and proposed tests alone cannot close it.
+
+```json
+{"accepted": true, "reason": "Delivered two regression test drafts grounded in result_acceptance.py and existing test_result_acceptance.py coverage; tests are unexecuted and original lane assignment is unavailable."}
+```
+
+Findings/limits: The regression drafts trace check_deliverables with the literal fixture prompt; existing AcceptanceTests already cover the failure/control cases, but tests were not executed in this report. The original unblock 1035 assignment was not recorded, so the plan is conditional on the actual blocker evidence.

@@ -1,0 +1,15 @@
+test_changed_clean_ref_cannot_pass (test_deploy_ancestry_1307.CleanAncestry) ... ok
+test_changed_tree_cannot_pass (test_deploy_ancestry_1307.CleanAncestry) ... ok
+test_exit128_refetches_and_retries (test_deploy_ancestry_1307.CleanAncestry) ... ok
+test_fetches_merge_into_release_repo_without_feature_object (test_deploy_ancestry_1307.CleanAncestry) ... ok
+test_nonancestor_is_rejected_without_object_retry (test_deploy_ancestry_1307.CleanAncestry) ... ok
+test_persistent_exit128_is_repository_error (test_deploy_ancestry_1307.CleanAncestry) ... ok
+test_bad_fresh_review_gate_never_activates (test_deploy_texting_1307.TextingReleaseGuards) ... ok
+test_failed_1035_completion_revokes_claim_and_restores_a777736 (test_deploy_texting_1307.TextingReleaseGuards) ... ok
+test_failed_smoke_restores_and_verifies_a777736 (test_deploy_texting_1307.TextingReleaseGuards) ... ok
+test_rollback_revokes_extra_1035_regression_conversation (test_deploy_texting_1307.TextingReleaseGuards) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.379s
+
+OK

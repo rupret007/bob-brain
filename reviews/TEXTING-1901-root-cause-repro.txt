@@ -1,0 +1,6 @@
+Read-only reproduction: original runner --help with relative PYTHONPATH and child cwd=worktree/webchat.
+exit=1
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/deploy_texting_1803.py", line 18, in <module>
+    from deploy_parity import restart as restart_services, run, write
+ModuleNotFoundError: No module named 'deploy_parity'

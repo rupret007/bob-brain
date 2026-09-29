@@ -1,0 +1,61 @@
+......................F................................................................................................F..F.....F...............................2026-09-28T13:19:06.524+00:00 Task queued codex task-1
+2026-09-28T13:19:06.524+00:00 codex ('running', 1)
+2026-09-28T13:19:06.524+00:00 Task answered in chat codex task-1
+....................................................................................................s.................................F....F.fatal: not a git repository (or any of the parent directories): .git
+............................fatal: not a git repository (or any of the parent directories): .git
+.fatal: not a git repository (or any of the parent directories): .git
+.fatal: not a git repository (or any of the parent directories): .git
+......quiet_hours_js: OK
+....................................................
+======================================================================
+FAIL: test_exact_live_going_question_uses_server_status_without_generation (test_chat_intent.IntentTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/webchat/test_chat_intent.py", line 62, in test_exact_live_going_question_uses_server_status_without_generation
+    self.assertIn("I don't see active work", answer["content"])
+AssertionError: "I don't see active work" not found in 'Codex, Claude, Cursor, Gemini and MiniMax are idle.'
+
+======================================================================
+FAIL: test_empty_status_says_idle_and_queued_assignments_are_not_idle (test_integrate_2057.IntegratedSessions)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/webchat/test_integrate_2057.py", line 334, in test_empty_status_says_idle_and_queued_assignments_are_not_idle
+    self.assertIn("Gemini is on", answer["content"])
+AssertionError: 'Gemini is on' not found in 'Codex, Gemini and MiniMax have work waiting to run. Claude and Cursor are idle.'
+
+======================================================================
+FAIL: test_health_probes_and_unattributed_processes_are_not_task_execution (test_integrate_2057.IntegratedSessions)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/webchat/test_integrate_2057.py", line 432, in test_health_probes_and_unattributed_processes_are_not_task_execution
+    self.assertIn("Codex has CLI activity, but no recorded task", reply["content"])
+AssertionError: 'Codex has CLI activity, but no recorded task' not found in "Codex has activity I can't confirm yet. Claude, Cursor, Gemini and MiniMax are idle."
+
+======================================================================
+FAIL: test_verbose_completion_is_concise_with_full_report_available (test_integrate_2057.IntegratedSessions)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/webchat/test_integrate_2057.py", line 449, in test_verbose_completion_is_concise_with_full_report_available
+    self.assertFalse(style_errors(completion["content"]))
+AssertionError: ['raw diagnostic dump'] is not false
+
+======================================================================
+FAIL: test_progress_status_is_local_plain_and_does_not_start_duplicate_work (test_webchat.HTTPTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/webchat/test_webchat.py", line 335, in test_progress_status_is_local_plain_and_does_not_start_duplicate_work
+    self.assertEqual(answer["content"].count("running for"), 4)
+AssertionError: 0 != 4
+
+======================================================================
+FAIL: test_bob_parity_eval_runs (test_webchat.HandbackJobTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/webchat/test_webchat.py", line 1250, in test_bob_parity_eval_runs
+    self.assertEqual(result["total"], 96)
+AssertionError: 99 != 96
+
+----------------------------------------------------------------------
+Ran 389 tests in 44.016s
+
+FAILED (failures=6, skipped=1)

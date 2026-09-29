@@ -1,0 +1,34 @@
+```json
+{
+  "regression_tests": [
+    {
+      "name": "missing completion JSON fails closed",
+      "target": "services/result_acceptance.py::check_completion_json",
+      "setup": "prompt='Return JSON with accepted/reason fields.'; answer='Findings only.'",
+      "action": "check_completion_json(prompt, answer)",
+      "expected": {
+        "guard_outcome": "reject"
+      }
+    },
+    {
+      "name": "complete accepted/reason JSON passes the completion guard",
+      "target": "services/result_acceptance.py::check_completion_json",
+      "setup": "prompt='Return JSON with accepted/reason fields.'; answer='{\"accepted\": true, \"reason\": \"Delivered bounded unexecuted drafts.\"}'",
+      "action": "check_completion_json(prompt, answer)",
+      "expected": {
+        "guard_outcome": "pass"
+      }
+    }
+  ],
+  "plan": {
+    "change": "Validate existing CompletionContractTests in services/test_replay_completion.py for Web Bob unblock 1035; the completion guard in result_acceptance.py::check_completion_json already implements the required accepted/reason validation, and the original task prompt is unavailable as noted in the evidence.",
+    "validation": "python3 -m unittest discover -s services -p 'test_*.py' cannot be executed by this worker; proposed validation only.",
+    "exit_condition": "Web Bob unblock 1035 remains blocked until its actual worker results, fresh task prompt, and live replay gates pass; these unexecuted drafts do not close the lane."
+  },
+  "completion": {
+    "accepted": true,
+    "reason": "Delivered two completion-JSON guard drafts (missing/reject and complete/pass) with literal inputs from api_worker.py::completion_guard_examples(); validated existing CompletionContractTests coverage; cannot execute unittest due to no execution capability."
+  },
+  "findings_limits": "Original task prompt for Web Bob unblock 1035 is not recorded per services/fixtures/texting_jobcompletion_1035.json error message. Existing CompletionContractTests.test_missing_malformed_or_ambiguous_json_cannot_win_a_positive_vote and test_valid_worker_json_still_requires_independent_semantic_review in services/test_replay_completion.py provide guard coverage. Drafts are unexecuted per api_worker.py guidance. Cannot run validation command; plan requires actual worker results and live gates to exit blocked state."
+}
+```

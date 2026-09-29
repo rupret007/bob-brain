@@ -25,7 +25,8 @@ STALL_SECONDS = 600
 
 _STATUS_RE = re.compile(
     r"^(?:status|what(?:'s| is) (?:the )?status|anything (?:i need to do|running)|"
-    r"what(?:'s| is) running\??|quick status)\s*[.!?]*$",
+    r"what(?:'s| is) running\??|quick status|update\??|any updates\??|"
+    r"how(?:'s| is) (?:it|things)(?: going)?\??)\s*[.!?]*$",
     re.I,
 )
 _HANDOFF_CONTEXT_RE = re.compile(
@@ -38,6 +39,29 @@ _DRILL_NOISE_RE = re.compile(
     r"\b(?:handback drill|drill open item|drill-r\d|Reply with exactly:\s*drill|abc1234)\b",
     re.I,
 )
+_STATUS_SNAPSHOT_TTL = 2.0
+_status_snapshot_cache: dict[str, tuple[float, dict, str | None]] = {}
+
+
+def invalidate_status_snapshot(root: Path | None = None) -> None:
+    """Drop cached status reads after ledger mutations (handback, inbox, asks)."""
+    if root is None:
+        _status_snapshot_cache.clear()
+    else:
+        _status_snapshot_cache.pop(str(root.resolve()), None)
+
+
+def _status_snapshot(root: Path) -> tuple[dict, str | None]:
+    """Short TTL cache so back-to-back status asks avoid re-reading STATE + NOW."""
+    key = str(root.resolve())
+    now = time.time()
+    cached = _status_snapshot_cache.get(key)
+    if cached and now - cached[0] < _STATUS_SNAPSHOT_TTL:
+        return cached[1], cached[2]
+    state = load_state(root)
+    now_line = read_now_line(root)
+    _status_snapshot_cache[key] = (now, state, now_line)
+    return state, now_line
 
 
 def _visible_open_asks(state: dict) -> list:
@@ -57,6 +81,28 @@ def purge_drill_open_asks(root: Path) -> int:
         save_state(root, state)
         write_catchup(root)
     return changed
+
+
+def compact_dropped_drill_open_asks(root: Path) -> int:
+    """Remove already-dropped drill noise from open_asks (shrinks catch-up; idempotent)."""
+    if _drill_fixture_ledger(root):
+        return 0
+    state = load_state(root)
+    before = len(state.get("open_asks") or [])
+    kept = [
+        ask
+        for ask in state.get("open_asks") or []
+        if not (ask.get("status") == "dropped" and _DRILL_NOISE_RE.search(ask.get("body") or ""))
+    ]
+    removed = before - len(kept)
+    if removed:
+        state["open_asks"] = kept
+
+        def _apply(s: dict) -> None:
+            s["open_asks"] = kept
+
+        _mutate(root, _apply, catchup=True)
+    return removed
 
 
 def _folder(root: Path) -> Path:
@@ -168,6 +214,7 @@ def _mutate(root: Path, fn, *, inbox: bool = False, now_line: str | None = None,
         if catchup:
             _write_catchup_body(root, state)
             save_state(root, state)
+        invalidate_status_snapshot(root)
         return result
     finally:
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
@@ -497,9 +544,8 @@ def try_status_reply(root: Path, text: str) -> str | None:
         return None
     if not _STATUS_RE.match(stripped) and "status" not in stripped.lower():
         return None
-    state = load_state(root)
+    state, now = _status_snapshot(root)
     parts: list[str] = []
-    now = read_now_line(root)
     if now:
         parts.append(now)
     jobs = [j for j in state.get("jobs") or [] if j.get("live")]

@@ -1,0 +1,83 @@
+=== lane-proj-webjam @ 2026-09-27 20:19:51 CDT ===
+-rw-r--r--@ 1 jeffstory  staff  1040791 Sep 27 20:19 /Users/jeffstory/Documents/bob-overnight-inject/logs/proj-webjam-2004.log
+--- tail ---
++
++    owner, method = {
++        "load": (take_project, "load_take_project"),
++        "render": (take_export, "_write_project_track"),
++        "publication": (take_export, "_write_checksum_manifest"),
++    }[phase]
++    original_method = getattr(owner, method)
++
++    def change_after_call(*args, **kwargs):
++        result = original_method(*args, **kwargs)
++        change_manifest()
++        return result
++
++    monkeypatch.setattr(owner, method, change_after_call)
++    destination = tmp_path / "exports"
++    with pytest.raises(TakeExportError, match="manifest"):
++        export_track_package(take, destination_root=destination)
++
++    assert changed
++    assert not destination.exists() or not list(destination.iterdir())
++    assert {path: path.read_bytes() for path in sources} == before
++
++
++@pytest.mark.skipif(os.name != "posix", reason="POSIX directory permissions")
++@pytest.mark.parametrize("project_manifest", [False, True])
++@pytest.mark.parametrize("fail", [False, True])
++def test_export_preserves_existing_destination_permissions(
++    tmp_path, monkeypatch, project_manifest, fail
++):
++    from core import take_export
++
++    take, _tracks, _sources = _reordered_project_take(tmp_path)
++    if not project_manifest:
++        (take.path / "webjam-take.json").unlink()
++    destination = tmp_path / "Shared exports"
++    destination.mkdir()
++    destination.chmod(0o750)
++    sentinel = destination / "existing.txt"
++    sentinel.write_text("Existing shared work", encoding="utf-8")
++
++    if fail:
++        def fail_render(*args, **kwargs):
++            raise OSError("disk full")
++
++        method = "_write_project_track" if project_manifest else "_write_aligned_stem"
++        monkeypatch.setattr(take_export, method, fail_render)
++        with pytest.raises(OSError, match="disk full"):
++            export_track_package(take, destination_root=destination)
++        assert list(destination.iterdir()) == [sentinel]
++    else:
++        result = export_track_package(take, destination_root=destination)
++        assert stat.S_IMODE(result.folder.stat().st_mode) == 0o700
++        assert all(
++            stat.S_IMODE(path.stat().st_mode) == 0o600
++            for path in result.folder.iterdir()
++        )
++    assert stat.S_IMODE(destination.stat().st_mode) == 0o750
++    assert sentinel.read_text(encoding="utf-8") == "Existing shared work"
++
++
++@pytest.mark.skipif(os.name != "posix", reason="POSIX directory permissions")
++@pytest.mark.parametrize("project_manifest", [False, True])
++def test_new_export_destination_is_private(tmp_path, project_manifest):
++    take, _tracks, _sources = _reordered_project_take(tmp_path)
++    if not project_manifest:
++        (take.path / "webjam-take.json").unlink()
++    destination = tmp_path / "exports"
++
++    export_track_package(take, destination_root=destination)
++
++    assert stat.S_IMODE(destination.stat().st_mode) == 0o700
++
++
+ def test_schema2_raw_export_preserves_one_stereo_logical_source(tmp_path):
+     take_dir = tmp_path / "Stereo Local Take"
+     take_dir.mkdir()
+
+codex
+The run is past halfway: 226 of 454 modules completed, with 5,530 tests passed and no failures. The native-room and notes-recovery tests have passed so far.
+

@@ -1,0 +1,34 @@
+```json
+{
+  "regression_tests": [
+    {
+      "name": "missing completion JSON fails closed",
+      "target": "services/result_acceptance.py::check_completion_json",
+      "setup": "prompt='Return JSON with accepted/reason fields.'; answer='Findings only.'",
+      "action": "check_completion_json(prompt, answer)",
+      "expected": {
+        "guard_outcome": "reject"
+      }
+    },
+    {
+      "name": "complete accepted/reason JSON passes the completion guard",
+      "target": "services/result_acceptance.py::check_completion_json",
+      "setup": "prompt='Return JSON with accepted/reason fields.'; answer='{\"accepted\": true, \"reason\": \"Delivered bounded unexecuted drafts.\"}'",
+      "action": "check_completion_json(prompt, answer)",
+      "expected": {
+        "guard_outcome": "pass"
+      }
+    }
+  ],
+  "plan": {
+    "change": "Validate existing coverage in services/test_replay_completion.py::CompletionContractTests, which already tests the behavior targeted by these drafts for the completion JSON guard.",
+    "validation": "python3 -m unittest discover -s services -p 'test_*.py'; require zero failures.",
+    "exit_condition": "The lane-webbob-texting-regression-drafts-fix-1658 task requires its actual worker results and live gates to pass; these unexecuted drafts and validation of existing coverage do not close it."
+  },
+  "completion": {
+    "accepted": true,
+    "reason": "Delivered the two required unexecuted regression drafts for the completion guard and an actionable plan to validate existing test coverage for the ongoing task."
+  },
+  "findings_limits": "The supplied regression drafts target the completion JSON guard in services/result_acceptance.py. Existing test coverage for this guard is present in services/test_replay_completion.py. Drafts are unexecuted and the original task prompt for #1658 was not supplied."
+}
+```

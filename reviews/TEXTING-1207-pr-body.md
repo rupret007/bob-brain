@@ -1,0 +1,5 @@
+The live MiniMax replay still failed at 6670444: its large snapshot omitted the implementation, its draft fields did not satisfy the output contract, and its proposed assertions could not be grounded by the acceptance reviewer. This change supplies focused implementation evidence, preserves room for named files, places an explicit draft/plan contract around the snapshot, and gives the existing semantic reviewer that same evidence.
+
+The exact rejected dd47c4cb answer remains a failing fixture. Structural rejection, semantic review, coding verification, texting consent, and casual status replies remain enforced. Dispatch and legacy API workers share the existing report prompt path.
+
+Validation on the candidate: 389 webchat/API tests, 152 services tests, 104/104 parity evals, zero skips; isolated texting browser smoke and four deployment/rollback guards passed. Fresh live worker probes and Gemini/MiniMax release-review receipts are recorded in conductor/reviews. Production deployment requires BOTH_PASS and a regular clean-branch merge with the identical tested tree; any failed replay restores a777736.

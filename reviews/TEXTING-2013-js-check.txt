@@ -1,0 +1,4 @@
+Command: node --check webchat/static/app.js
+Working directory: /Users/jeffstory/Documents/bob-overnight-inject/workspaces/wt-webbob-texting-0927
+Exit status: 0 (PASS)
+Output: none

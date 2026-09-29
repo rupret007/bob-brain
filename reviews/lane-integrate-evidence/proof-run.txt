@@ -1,0 +1,40 @@
+2026-09-27T13:56:03+00:00 scheduler: 3 reserved workers across 6 lanes
+{
+  "result": "PASS",
+  "assignments": [
+    {
+      "queue_id": "queue-webchat-20260927-0856-d0a187dd",
+      "status": "running",
+      "started": true,
+      "lane": "gemini",
+      "execution_id": "gemini-queue-webchat-20260927-0856-d0a187dd-5547a6dc",
+      "worker_pid": 86192,
+      "heartbeat": 1790517364.0042791,
+      "reason": "worker launched",
+      "screen_observed": true
+    },
+    {
+      "queue_id": "queue-webchat-20260927-0856-17ebb82d",
+      "status": "running",
+      "started": true,
+      "lane": "minimax",
+      "execution_id": "minimax-queue-webchat-20260927-0856-17ebb82d-9c8c88ba",
+      "worker_pid": 86193,
+      "heartbeat": 1790517364.205886,
+      "reason": "worker launched",
+      "screen_observed": true
+    },
+    {
+      "queue_id": "queue-webchat-20260927-0856-0455a003",
+      "status": "running",
+      "started": true,
+      "lane": "codex",
+      "execution_id": "codex-queue-webchat-20260927-0856-0455a003-3fa5dcc8",
+      "worker_pid": 86194,
+      "heartbeat": 1790517364.212947,
+      "reason": "worker launched",
+      "screen_observed": true
+    }
+  ],
+  "reply": "Queued draft job `webchat-20260927-0856-6612dde3.md`. Started lane `cursor` for `queue-webchat-20260927-0856-6612dde3` (worker `cursor-queue-webchat-20260927-0856-6612dde3-71ea9c9c`)."
+}

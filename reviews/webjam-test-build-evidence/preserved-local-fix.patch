@@ -1,0 +1,13 @@
+diff --git a/tests/test_art_host_platforms.py b/tests/test_art_host_platforms.py
+index 778ffa7..99e8cce 100644
+--- a/tests/test_art_host_platforms.py
++++ b/tests/test_art_host_platforms.py
+@@ -178,7 +178,7 @@ def test_profile_start_and_back_changes_keep_current_art_next_action(door, platf
+     assert "Start Paint along as the host" in dialog._host_button.accessibleDescription()
+     _select_profile(dialog, "music")
+     assert not dialog._host_button.isEnabled()
+-    assert "macOS" in dialog._choice_helper.text()
++    assert "macOS" in dialog._host_reason.text()
+     dialog.show_join()
+     dialog.show_choices()
+     assert not dialog._host_button.isEnabled()

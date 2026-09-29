@@ -1,0 +1,21 @@
+Regression test: missing completion JSON fails closed
+Target: services/result_acceptance.py::check_completion_json
+Setup: prompt='Return JSON with accepted/reason fields.'; answer='Findings only.'
+Action: check_completion_json(prompt, answer)
+Expected: raises ResultRejected('Missing or ambiguous required completion JSON output block')
+
+Regression test: complete accepted/reason JSON passes the completion guard
+Target: services/result_acceptance.py::check_completion_json
+Setup: prompt='Return JSON with accepted/reason fields.'; answer='{"accepted": true, "reason": "Delivered bounded unexecuted drafts."}'
+Action: check_completion_json(prompt, answer)
+Expected: returns None
+
+Action plan:
+Change: Validate existing CompletionContractTests.test_missing_malformed_or_ambiguous_json_cannot_win_a_positive_vote and test_inline_escaped_json_fixture_does_not_hide_real_completion_block in services/test_replay_completion.py for lane # lane-webbob-texting-replay-json-fix-1508; check_completion_json guard already rejects missing/ambiguous JSON and validates accepted/reason fields per services/result_acceptance.py lines 37-61.
+Validation: python3 -m unittest discover -s services -p 'test_*.py'; existing tests confirm the guard behavior; proposed validation only, not executed.
+Exit condition: Lane # lane-webbob-texting-replay-json-fix-1508 stays blocked until its actual worker results, fresh semantic review and live replay gates pass; these unexecuted drafts and existing test coverage validation cannot close the lane without real execution evidence.
+
+```json
+{"accepted": true, "reason": "Delivered two completion-JSON guard regression drafts for lane # lane-webbob-texting-replay-json-fix-1508; validated existing CompletionContractTests coverage in services/test_replay_completion.py; plan ties to the named lane; drafts are unexecuted."}
+```
+Findings/limits: check_completion_json already exists and is tested in CompletionContractTests (test_missing_malformed_or_ambiguous_json_cannot_win_a_positive_vote, test_inline_escaped_json_fixture_does_not_hide_real_completion_block, test_exact_1403_failure_and_corrected_control); drafts are unexecuted and no live worker results for lane # lane-webbob-texting-replay-json-fix-1508 were supplied.

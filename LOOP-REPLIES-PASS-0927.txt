@@ -1,0 +1,127 @@
+PASS
+SHA: dff84e37169b30014ff0f48502b8cc66542cf737
+Draft PR: https://github.com/rupret007/bob-brain/pull/12
+Rollback: /Users/jeffstory/Documents/bob-overnight-inject/rollbacks/webbob-replies-20260927-174638
+Tests: full webchat/services discovery + JavaScript; reviews/WEBBOB-REPLIES-TESTS-0927.txt
+Live: exact session messages, four actual executions, existing parity completion, public assets/Jobs.
+Only webchat and job-runner were restarted.
+
+Started project jobs:
+WebJam — codex — webchat-8795122dce1b5ee39cf00e3b47dbb853
+AdoptIQ — cursor — webchat-0332db7759f15016ae68eb42bbfcb84e
+StoryBoard — codex — webchat-5609f2bc835e56d0af787cf919a94e28
+Fantasy Football — cursor — webchat-db70b9f9e6455168bca668226a0b7ba6
+
+User: Ok start up all the projects we were working on taking everything to the max.
+Before: Okay, I'll focus on getting all the projects running at full capacity.
+After: Which projects should I work on?
+
+User: Ok what’s working on what?
+Before: Right now, there are no active jobs running in the queue.
+
+The services are all healthy:
+
+*   `reviewer` is running and completed a review cycle 3 minutes ago.
+*   `dashboard-updater` is running and completed a cycle 3 minutes ago.
+*   `watchdog` is running and completed a cycle 1 minute ago.
+*   `webchat` is also running.
+
+ MiniMax is busy with an unknown task. Codex, Cursor, and Gemini are all ready.
+After: Yes — 4 workers are running.
+Codex: Web Bob (conductor): Live Web Bob (conductor repo) gives bad replies — running for 28 min | Web Bob (conductor): Read docs/MULTI-LLM-SWARM-ARCH-0927.md — running for 16 min | Web Bob (conductor): Do extensive long-form web research (cite real URLs, verify each claim, no fabrication) on what exists TODAY (2026) for orchestrating MULTIPLE different LLMs/co — running for 14 min | Web Bob (conductor): Dash redesign — lane-dash-redesign; logs/dash-redesign-1738.log; last: +} — running for 7 min.
+Claude: idle; resets 6:20 PM CT.
+Cursor: idle.
+Gemini: idle.
+MiniMax: idle.
+Other sessions: Web Bob (conductor): Web Bob llm reviews — lane-webbob-llm-reviews; logs/webbob-llm-reviews-1726.log; last: Sun Sep 27 17:37:38 2026 MINIMAX draft/webbob-voice-0927 cd5e8e2 ok — session open; worker activity unconfirmed; age 19 min.
+Job runner: 0 claimed, 0 queued.
+
+User: Ok we can’t have unknown tasks. We need to also know what’s going on what resources.
+Before: Yes — 1 worker is running.
+
+- Task details unavailable — Cursor — running for less than a minute.
+
+Job runner: 0 claimed, 0 queued.
+
+Nothing else is waiting in the queue.
+
+Chat health: Codex — last reply succeeded; Claude — last reply succeeded; Cursor — last reply succeeded; Gemini — last reply succeeded; MiniMax — last reply succeeded.
+
+Service sessions: dashboard updater, disk watch, job runner, reviewer, watchdog, webbob reviewers, webchat.
+
+Recent logs: job runner updated less than a minute ago; dashboard updater updated less than a minute ago; webchat updated less than a minute ago; watchdog updated 2 min ago.
+
+4 of 4 monitored services are healthy.
+
+Disk space: 9.45 GB free.
+After: Yes — 4 workers are running.
+Codex: Web Bob (conductor): Live Web Bob (conductor repo) gives bad replies — running for 28 min | Web Bob (conductor): Read docs/MULTI-LLM-SWARM-ARCH-0927.md — running for 16 min | Web Bob (conductor): Do extensive long-form web research (cite real URLs, verify each claim, no fabrication) on what exists TODAY (2026) for orchestrating MULTIPLE different LLMs/co — running for 14 min | Web Bob (conductor): Dash redesign — lane-dash-redesign; logs/dash-redesign-1738.log; last: +} — running for 7 min.
+Claude: idle; resets 6:20 PM CT.
+Cursor: idle.
+Gemini: idle.
+MiniMax: idle.
+Other sessions: Web Bob (conductor): Web Bob llm reviews — lane-webbob-llm-reviews; logs/webbob-llm-reviews-1726.log; last: Sun Sep 27 17:37:38 2026 MINIMAX draft/webbob-voice-0927 cd5e8e2 ok — session open; worker activity unconfirmed; age 19 min.
+Job runner: 0 claimed, 0 queued.
+
+User: This needs to be way better
+Before: I understand. I'll focus on providing more detailed and useful updates.
+After: Yes — 4 workers are running.
+Codex: Web Bob (conductor): Live Web Bob (conductor repo) gives bad replies — running for 28 min | Web Bob (conductor): Read docs/MULTI-LLM-SWARM-ARCH-0927.md — running for 16 min | Web Bob (conductor): Do extensive long-form web research (cite real URLs, verify each claim, no fabrication) on what exists TODAY (2026) for orchestrating MULTIPLE different LLMs/co — running for 14 min | Web Bob (conductor): Worker process — process 81044; logs/dash-redesign-1738.log; last: +} — running for 7 min.
+Claude: activity unconfirmed; resets 6:20 PM CT.
+Cursor: activity unconfirmed.
+Gemini: activity unconfirmed.
+MiniMax: activity unconfirmed.
+Job runner: 0 claimed, 0 queued. Some live checks failed; this list may be incomplete.
+
+User: What’s going on each LLM
+Before: Here's the status of each LLM:
+
+*   **Codex:** Ready. Last reply succeeded.
+ It resets at 6:20 PM America/Chicago time.
+*   **Cursor:** Ready. Last reply succeeded.
+*   **Gemini:** Ready. Last reply succeeded.
+*   **MiniMax:** Ready. Last reply succeeded.
+After: Yes — 4 workers are running.
+Codex: Web Bob (conductor): Live Web Bob (conductor repo) gives bad replies — running for 28 min | Web Bob (conductor): Read docs/MULTI-LLM-SWARM-ARCH-0927.md — running for 16 min | Web Bob (conductor): Do extensive long-form web research (cite real URLs, verify each claim, no fabrication) on what exists TODAY (2026) for orchestrating MULTIPLE different LLMs/co — running for 14 min | Web Bob (conductor): Dash redesign — lane-dash-redesign; logs/dash-redesign-1738.log; last: +} — running for 7 min.
+Claude: idle; resets 6:20 PM CT.
+Cursor: idle.
+Gemini: idle.
+MiniMax: idle.
+Other sessions: Web Bob (conductor): Web Bob llm reviews — lane-webbob-llm-reviews; logs/webbob-llm-reviews-1726.log; last: Sun Sep 27 17:37:38 2026 MINIMAX draft/webbob-voice-0927 cd5e8e2 ok — session open; worker activity unconfirmed; age 19 min.
+Job runner: 0 claimed, 0 queued.
+
+User: Ok we want it to start up at max all the projects we were working on before. Remember. WebJam, AdoptIQ, Stkryboard, Fantasy Football. All of these need to be developed to the max using and and all resources. This is a stress test essentially.
+Before: There are live service sessions on the mini; no task worker is confirmed.
+
+Job runner: 0 claimed, 0 queued.
+
+No jobs are waiting in the queue.
+
+Chat health: Codex — last reply succeeded; Claude — last reply succeeded; Cursor — last reply succeeded; Gemini — last reply succeeded; MiniMax — last reply succeeded.
+
+Service sessions: dashboard updater, disk watch, job runner, reviewer, watchdog, webbob reviewers, webchat.
+
+Recent logs: job runner updated less than a minute ago; webchat updated less than a minute ago; disk watch updated 1 min ago; watchdog updated 1 min ago.
+
+4 of 4 monitored services are healthy.
+
+Disk space: 9.45 GB free.
+After: WebJam: Finished on codex — job webchat-8795122dce1b5ee39cf00e3b47dbb853.
+AdoptIQ: Finished on cursor — job webchat-0332db7759f15016ae68eb42bbfcb84e.
+StoryBoard: Started on Codex — job webchat-5609f2bc835e56d0af787cf919a94e28.
+Fantasy Football: Started on Cursor — job webchat-db70b9f9e6455168bca668226a0b7ba6.
+
+Final verification: 256 webchat + 121 service tests passed; JavaScript and whitespace checks passed.
+All four stress jobs completed. Their PRs were separately confirmed OPEN and DRAFT:
+WebJam — codex — https://github.com/rupret007/webjam/pull/165
+AdoptIQ — cursor — https://github.com/rupret007/AdoptIQ/pull/28
+StoryBoard — codex — https://github.com/rupret007/StoryBoard/pull/51
+Fantasy Football — cursor — https://github.com/rupret007/Storyland-Fantasy-Football/pull/3
+
+Parity PR #161 actual reviewer: gemini (Claude cooldown fallback).
+Public Jobs screenshot: /Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/WEBBOB-REPLIES-JOBS-0927.png
+Deployment/live/parity/browser evidence: conductor/reviews/WEBBOB-REPLIES-*.json.
+First attempt 6eeb0ce rolled back after malformed Cursor result-review JSON. Fixed with a bounded format-only retry; strict rejection remains.
+First-attempt evidence: conductor/reviews/webbob-replies-attempt1-6eeb0ce/.
+
+Final screen recheck: every unrelated screen retains its pre-deploy identity. The initial screen sample temporarily omitted watchdog; the original PID 53542 was verified still running with over seven hours of uptime.

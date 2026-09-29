@@ -4,14 +4,14 @@
     {
       "tag": "iphone-14",
       "viewport": 844,
-      "messages_px": 612,
-      "messages_ratio": 0.7248778139810427
+      "messages_px": 645,
+      "messages_ratio": 0.764218009478673
     },
     {
       "tag": "iphone-14-pro-max",
       "viewport": 932,
-      "messages_px": 700,
-      "messages_ratio": 0.750855007908375
+      "messages_px": 730,
+      "messages_ratio": 0.7835635484032365
     }
   ]
 }

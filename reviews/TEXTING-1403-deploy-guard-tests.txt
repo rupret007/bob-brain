@@ -1,0 +1,27 @@
+test_authoritative_attempt6_optional_exit_passes (test_deploy_screens_1403.ScreenIsolation) ... ok
+test_each_durable_peer_disappearance_fails (test_deploy_screens_1403.ScreenIsolation) ... ok
+test_each_durable_peer_identity_change_fails (test_deploy_screens_1403.ScreenIsolation) ... ok
+test_expected_exits_cannot_exempt_a_durable_screen (test_deploy_screens_1403.ScreenIsolation) ... ok
+test_new_durable_peer_does_not_change_existing_peers (test_deploy_screens_1403.ScreenIsolation) ... ok
+test_optional_and_nondurable_churn_passes (test_deploy_screens_1403.ScreenIsolation) ... ok
+test_other_webbob_lane_blocks_preflight (test_deploy_screens_1403.ScreenIsolation) ... ok
+test_own_lane_and_service_screens_pass_preflight (test_deploy_screens_1403.ScreenIsolation) ... ok
+test_restart_error_is_not_masked (test_deploy_screens_1403.ScreenIsolation) ... ok
+test_restart_uses_original_raw_snapshots_and_records_policy (test_deploy_screens_1403.ScreenIsolation) ... ok
+test_restarted_pair_identity_change_passes (test_deploy_screens_1403.ScreenIsolation) ... ok
+test_changed_clean_ref_cannot_pass (test_deploy_ancestry_1403.CleanAncestry) ... ok
+test_changed_tree_cannot_pass (test_deploy_ancestry_1403.CleanAncestry) ... ok
+test_exit128_refetches_and_retries (test_deploy_ancestry_1403.CleanAncestry) ... ok
+test_fetches_merge_into_release_repo_without_feature_object (test_deploy_ancestry_1403.CleanAncestry) ... ok
+test_nonancestor_is_rejected_without_object_retry (test_deploy_ancestry_1403.CleanAncestry) ... ok
+test_persistent_exit128_is_repository_error (test_deploy_ancestry_1403.CleanAncestry) ... ok
+test_bad_fresh_review_gate_never_activates (test_deploy_texting_1403.TextingReleaseGuards) ... ok
+test_durable_screen_failure_restores_and_verifies_a777736 (test_deploy_texting_1403.TextingReleaseGuards) ... ok
+test_failed_1035_completion_revokes_claim_and_restores_a777736 (test_deploy_texting_1403.TextingReleaseGuards) ... ok
+test_failed_smoke_restores_and_verifies_a777736 (test_deploy_texting_1403.TextingReleaseGuards) ... ok
+test_rollback_revokes_extra_1035_regression_conversation (test_deploy_texting_1403.TextingReleaseGuards) ... ok
+
+----------------------------------------------------------------------
+Ran 22 tests in 0.425s
+
+OK

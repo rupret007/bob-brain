@@ -1,0 +1,17 @@
+test_bad_fresh_review_gate_never_activates (reviews.test_deploy_texting_0916.TextingReleaseGuards) ... ok
+test_failed_smoke_restores_and_verifies_a777736 (reviews.test_deploy_texting_0916.TextingReleaseGuards) ... FAIL
+
+======================================================================
+FAIL: test_failed_smoke_restores_and_verifies_a777736 (reviews.test_deploy_texting_0916.TextingReleaseGuards)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/test_deploy_texting_0916.py", line 83, in test_failed_smoke_restores_and_verifies_a777736
+    self.exercise(True)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/test_deploy_texting_0916.py", line 70, in exercise
+    self.assertEqual(restart.call_count,2)
+AssertionError: 0 != 2
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.014s
+
+FAILED (failures=1)

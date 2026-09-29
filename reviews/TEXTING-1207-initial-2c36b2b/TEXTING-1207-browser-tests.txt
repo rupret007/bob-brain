@@ -1,0 +1,1 @@
+{"ok": true, "url": "http://127.0.0.1:49193", "screenshots": ["WEBBOB-TEXTING-0927-phone-summary.png", "WEBBOB-TEXTING-0927-phone-draft.png", "WEBBOB-TEXTING-0927-phone-revised.png", "WEBBOB-TEXTING-0927-phone-not-sent.png", "WEBBOB-TEXTING-0927-desktop-confirmed-not-sent.png"], "real_texts_sent": 0, "delivery": "blocked_andrea_bridge_unavailable", "mock_sends": 0}

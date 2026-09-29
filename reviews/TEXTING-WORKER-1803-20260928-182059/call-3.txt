@@ -1,0 +1,32 @@
+{
+  "regression_tests": [
+    {
+      "name": "missing completion JSON fails closed",
+      "target": "services/result_acceptance.py::check_completion_json",
+      "setup": "prompt='Project: Web Bob\nYour independent subtask:\nReview and regression test-case drafts for # lane-webbob-texting-replay-json-fix-1508.\nDeliver concrete findings and an actionable plan.\nOngoing task:\n# lane-webbob-texting-replay-json-fix-1508'; answer='Findings only. The replay JSON fix requires validation.'",
+      "action": "check_completion_json(prompt, answer)",
+      "expected": {
+        "guard_outcome": "reject"
+      }
+    },
+    {
+      "name": "complete accepted/reason JSON passes the completion guard",
+      "target": "services/result_acceptance.py::check_completion_json",
+      "setup": "prompt='Project: Web Bob\nYour independent subtask:\nReview and regression test-case drafts for # lane-webbob-texting-replay-json-fix-1508.\nDeliver concrete findings and an actionable plan.\nOngoing task:\n# lane-webbob-texting-replay-json-fix-1508'; answer='{\"accepted\": true, \"reason\": \"Delivered bounded unexecuted drafts for replay JSON fix validation.\"}'",
+      "action": "check_completion_json(prompt, answer)",
+      "expected": {
+        "guard_outcome": "pass"
+      }
+    }
+  ],
+  "plan": {
+    "change": "Validate existing CompletionContractTests in services/test_replay_completion.py for lane-webbob-texting-replay-json-fix-1508; the check_completion_json guard in services/result_acceptance.py already enforces accepted/reason output and rejects malformed or missing JSON.",
+    "validation": "Run python3 -m unittest discover -s services -p 'test_*.py' and require zero failures; the existing test_replay_completion.py::CompletionContractTests covers the completion guard contracts.",
+    "exit_condition": "Lane # lane-webbob-texting-replay-json-fix-1508 stays blocked until actual worker results, fresh semantic reviews and live replay gates pass; these unexecuted regression drafts validate the guard behavior but cannot close the lane."
+  },
+  "completion": {
+    "accepted": true,
+    "reason": "Delivered two regression test drafts (failure and control) for check_completion_json guard; validated existing test coverage in services/test_replay_completion.py; lane 1508 exit requires live worker results not provided in evidence."
+  },
+  "findings_limits": "The check_completion_json guard in services/result_acceptance.py (lines 60-85) rejects missing, ambiguous or invalid accepted/reason JSON; CompletionContractTests.test_missing_malformed_or_ambiguous_json_cannot_win_a_positive_vote and test_valid_worker_json_still_requires_independent_semantic_review provide existing coverage; drafts are unexecuted and the original lane 1508 task prompt/evidence were not supplied in full."
+}

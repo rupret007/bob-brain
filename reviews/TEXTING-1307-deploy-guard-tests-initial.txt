@@ -1,0 +1,58 @@
+usage: python3 -m unittest [-h] [--report REPORT]
+python3 -m unittest: error: unrecognized arguments: discover -s /Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews -p *1307.py -v
+record_texting_deploy_1307 (unittest.loader._FailedTest) ... ERROR
+test_changed_clean_ref_cannot_pass (test_deploy_ancestry_1307.CleanAncestry) ... ok
+test_changed_tree_cannot_pass (test_deploy_ancestry_1307.CleanAncestry) ... ok
+test_exit128_refetches_and_retries (test_deploy_ancestry_1307.CleanAncestry) ... ok
+test_fetches_merge_into_release_repo_without_feature_object (test_deploy_ancestry_1307.CleanAncestry) ... ok
+test_nonancestor_is_rejected_without_object_retry (test_deploy_ancestry_1307.CleanAncestry) ... ok
+test_persistent_exit128_is_repository_error (test_deploy_ancestry_1307.CleanAncestry) ... ok
+test_bad_fresh_review_gate_never_activates (test_deploy_texting_1307.TextingReleaseGuards) ... ok
+test_failed_1035_completion_revokes_claim_and_restores_a777736 (test_deploy_texting_1307.TextingReleaseGuards) ... FAIL
+test_failed_smoke_restores_and_verifies_a777736 (test_deploy_texting_1307.TextingReleaseGuards) ... FAIL
+test_rollback_revokes_extra_1035_regression_conversation (test_deploy_texting_1307.TextingReleaseGuards) ... ok
+
+======================================================================
+ERROR: record_texting_deploy_1307 (unittest.loader._FailedTest)
+----------------------------------------------------------------------
+ImportError: Failed to import test module: record_texting_deploy_1307
+Traceback (most recent call last):
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/loader.py", line 436, in _find_test_path
+    module = self._get_module_from_name(name)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/loader.py", line 377, in _get_module_from_name
+    __import__(name)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/record_texting_deploy_1307.py", line 22, in <module>
+    REPORT = parser.parse_args().report.resolve()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/argparse.py", line 1821, in parse_args
+    self.error(msg % ' '.join(argv))
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/argparse.py", line 2575, in error
+    self.exit(2, _('%(prog)s: error: %(message)s\n') % args)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/argparse.py", line 2562, in exit
+    _sys.exit(status)
+SystemExit: 2
+
+
+======================================================================
+FAIL: test_failed_1035_completion_revokes_claim_and_restores_a777736 (test_deploy_texting_1307.TextingReleaseGuards)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/test_deploy_texting_1307.py", line 99, in test_failed_1035_completion_revokes_claim_and_restores_a777736
+    self.exercise(True, completion_failure=True)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/test_deploy_texting_1307.py", line 76, in exercise
+    self.assertEqual(restart.call_count,2)
+AssertionError: 0 != 2
+
+======================================================================
+FAIL: test_failed_smoke_restores_and_verifies_a777736 (test_deploy_texting_1307.TextingReleaseGuards)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/test_deploy_texting_1307.py", line 92, in test_failed_smoke_restores_and_verifies_a777736
+    self.exercise(True)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/test_deploy_texting_1307.py", line 76, in exercise
+    self.assertEqual(restart.call_count,2)
+AssertionError: 0 != 2
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.364s
+
+FAILED (failures=2, errors=1)

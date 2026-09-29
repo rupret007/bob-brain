@@ -1,0 +1,15 @@
+Regression test: missing_plan_or_findings_fails_check_answer
+Target: services/test_result_acceptance.py; result_acceptance.check_answer
+Setup: prompt = "Project: Web Bob\nYour independent subtask:\nReview and regression test-case drafts for the following ongoing task.\nOngoing task:\nObserved active lane: Web Bob unblock 1035. Its original task prompt was not recorded.\n"; answer = "Regression test: example_test\nTarget: services/test_result_acceptance.py; check_answer\nSetup: minimal fixture without plan\nAction: check_answer(prompt, answer)\nExpected: raises ResultRejected("Missing actionable unblock plan") or raises ResultRejected("Missing concrete Findings/limits")
+Regression test: complete_answer_with_all_required_sections_passes_check_answer
+Target: services/test_result_acceptance.py; result_acceptance.check_answer
+Setup: prompt = "Project: Web Bob\nYour independent subtask:\nReview and regression test-case drafts for the following ongoing task.\nOngoing task:\nObserved active lane: Web Bob unblock 1035. Its original task prompt was not recorded.\n"; answer = "Regression test: valid_draft\nTarget: services/test_result_acceptance.py; check_answer\nSetup: prompt with unblock lane; answer with concrete Target/Setup/Action/Expected and Change/Validation/Exit condition lines\nAction: check_answer(prompt, answer)\nExpected: raises ResultRejected(\"Missing or ambiguous required completion JSON\")\n```json\n{\"accepted\": true, \"reason\": \"Unexecuted drafts for unblock 1035 coverage; original task prompt not recorded.\"}\n```\nFindings/limits: These unexecuted drafts verify check_answer rejects incomplete deliverables for the unblock 1035 lane; actual live execution and lane state validation remain unavailable without the missing original task prompt.
+
+Unblock plan:
+Change: Validate existing ReportRepositoryTests coverage in services/test_result_acceptance.py for lane-webbob-unblock-1035; existing test_concrete_drafts_and_conditional_unblock_plan_reach_semantic_review covers the passing case when all required sections are present.
+Validation: Run python3 -m unittest discover -s services -p 'test_*.py'; require zero failures; propose additional targeted coverage for the missing_plan_or_findings_fails_check_answer case if no existing test exercises that rejection path.
+Exit condition: The named task Web Bob unblock 1035 requires the original task prompt and actual worker result to validate resolution; a structural test draft alone cannot close the unblock.
+
+```json
+{"accepted": true, "reason": "Delivered two unexecuted regression test drafts grounded in check_answer and existing test_result_acceptance.py coverage; original unblock 1035 task prompt is missing, limiting scope to bounded implementation evidence."}
+```

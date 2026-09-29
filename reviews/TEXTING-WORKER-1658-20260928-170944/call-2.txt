@@ -1,0 +1,3 @@
+```json
+{"accepted": true, "reason": "Worker delivered two grounded regression test drafts (failure and control) for result_acceptance.accept with test-writing kind, each with Target/Setup/Action/Expected fields. The unblock plan includes Change/Validation/Exit condition with a supported test command (python3 -m unittest discover) and ties to the named Web Bob unblock 1035 task. Completion JSON and Findings/limits are present. Original task prompt limitation is acknowledged. Drafts are marked unexecuted."}
+```

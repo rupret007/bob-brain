@@ -1,0 +1,33 @@
+................................................................................................................................................................2026-09-28T13:21:51.326+00:00 Task queued codex task-1
+2026-09-28T13:21:51.326+00:00 codex ('running', 1)
+2026-09-28T13:21:51.326+00:00 Task answered in chat codex task-1
+....................................................................................................F........................................fatal: not a git repository (or any of the parent directories): .git
+............................fatal: not a git repository (or any of the parent directories): .git
+.fatal: not a git repository (or any of the parent directories): .git
+.fatal: not a git repository (or any of the parent directories): .git
+......quiet_hours_js: OK
+....................................................
+======================================================================
+FAIL: test_browser_proof_when_playwright_available (test_texting_e2e.TextingE2ETest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/webchat/test_texting_e2e.py", line 103, in test_browser_proof_when_playwright_available
+    self.assertEqual(result.returncode, 0, (result.stderr or "") + (result.stdout or ""))
+AssertionError: 1 != 0 : Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/webchat/texting_proof.py", line 92, in <module>
+    main()
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/webchat/texting_proof.py", line 52, in main
+    raise RuntimeError(result.stderr)
+RuntimeError: page.waitForFunction: EvalError: Refused to evaluate a string as JavaScript because 'unsafe-eval' is not an allowed source of script in the following Content Security Policy directive: "script-src 'self'".
+
+    at eval (<anonymous>)
+    at predicate (eval at evaluate (:234:30), <anonymous>:11:37)
+    at next (eval at evaluate (:234:30), <anonymous>:32:31)
+    at /Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/webchat/browser_texting.cjs:26:16
+
+
+
+----------------------------------------------------------------------
+Ran 389 tests in 45.792s
+
+FAILED (failures=1)

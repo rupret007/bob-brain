@@ -1,0 +1,3 @@
+{"engine":"webkit","ok":true,"checks":["photos/videos/files in+out","video playback/seek","download","HEIC preview","quick action isolation","conversation drafts","idempotent retry","upload errors and progress","44px targets","CSP","reduced and landscape viewport"]}
+{"engine":"chromium","ok":true,"checks":["photos/videos/files in+out","video playback/seek","download","HEIC preview","quick action isolation","conversation drafts","idempotent retry","upload errors and progress","44px targets","CSP","reduced and landscape viewport"]}
+{"ok": true, "isolation": "temporary root, loopback port, stub provider"}

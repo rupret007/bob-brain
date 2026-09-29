@@ -1,0 +1,3 @@
+```json
+{"accepted": true, "reason": "Delivered two regression test drafts with Target/Setup/Action/Expected fields for check_completion_json failure and control paths; included Unblock plan with Change/Validation/Exit condition; included completion JSON with accepted/reason; disclosed missing original task prompt and unexecuted drafts limitation. Ground and validation are appropriate for the unavailable lane."}
+```

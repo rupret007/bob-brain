@@ -1,0 +1,7 @@
+test_bad_fresh_review_gate_never_activates (__main__.TextingReleaseGuards) ... ok
+test_failed_smoke_restores_and_verifies_a777736 (__main__.TextingReleaseGuards) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.025s
+
+OK

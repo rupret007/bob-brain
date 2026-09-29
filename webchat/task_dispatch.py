@@ -1,0 +1,159 @@
+"""Chat task submission and durable result delivery, independent of chat models."""
+from __future__ import annotations
+
+import copy
+import re
+import sys
+import time
+import uuid
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
+import task_queue
+
+WORK = re.compile(
+    r"^(?:(?:please|bob)[,:]?\s+)*(?:(?:can|could|would|will) you\s+|i (?:want|need) you to\s+)?"
+    r"(?:review|analy[sz]e|audit|research|investigate|inspect|check|compare|summari[sz]e|calculate|"
+    r"write|draft|create|build|implement|fix|repair|debug|test|trace|update|refactor|add|remove)\b.+", re.I | re.S)
+ROUTED = re.compile(r"^(?:(?:please|bob)[,:]?\s+)*(?:ask|use|assign(?:\s+to)?|delegate(?:\s+to)?)\s+"
+                    r"(codex|claude|cursor-agent|cursor|gemini|minimax|grok)\b\s*(?:to\b|[:,])?\s*(.+)$", re.I | re.S)
+PREFIX = re.compile(r"^(?:worker\s*[:=]\s*)?(codex|claude|cursor-agent|cursor|gemini|minimax|grok)\s*:\s*(.+)$", re.I | re.S)
+CODING = re.compile(r"\b(?:fix|repair|implement|refactor|debug|build|run|execute|install|edit|change|modify)\b|"
+                    r"\b(?:write|add|create|update|remove)\b.{0,60}\b(?:code|file|test|function|service|script|app|feature)\b", re.I | re.S)
+
+
+def parse_work(text):
+    lane = re.fullmatch(r"(?:start|run)\s+(?:a\s+)?lane\s+(codex|cursor-agent|cursor|claude|gemini|minimax|grok)\s*:\s*(.+)", text.strip(), re.I | re.S)
+    if lane:
+        return lane[2].strip(), lane[1].lower()
+    routed = ROUTED.match(text.strip()) or PREFIX.match(text.strip())
+    if routed:
+        return routed.group(2).strip(), routed.group(1).lower()
+    if WORK.match(text.strip()):
+        return text.strip(), "auto"
+    return None, "auto"
+
+
+def task_kind(prompt):
+    # An analysis of code is still analysis; actual edits/execution need a CLI.
+    if re.search(r"\bread[- ]only\b", prompt, re.I) and re.search(r"\b(?:review|audit|analysis|inspection)\b", prompt, re.I):
+        return "analysis"
+    if re.match(r"^(?:please\s+)?(?:review|analy[sz]e|audit|compare|summari[sz]e|research|draft|calculate)\b", prompt, re.I):
+        return "analysis"
+    return "coding" if CODING.search(prompt) else "analysis"
+
+
+class TaskDispatch:
+    def submit_task(self, conversation, description, request_id, worker="auto"):
+        from app import hard_rule_refusal
+        identifier = conversation["id"]
+        message = conversation["messages"][-1]
+        # parse_start's normalized lane description preserves routing across
+        # both the legacy queue and the durable dispatcher.
+        lane = re.match(r"Lane: (codex|cursor-agent|cursor|claude|gemini|minimax|grok)\n(.+)", description, re.S)
+        if lane:
+            worker, description = lane[1], lane[2]
+        routed_prompt, routed_worker = parse_work(description)
+        if routed_worker != "auto":
+            description, worker = routed_prompt, routed_worker
+        try:
+            worker = task_queue.worker_name(worker)
+            kind = task_kind(description)
+            if kind == "coding" and worker in ("gemini", "minimax", "claude"):
+                raise ValueError("Code changes require codex or cursor-agent; choose an analysis task for this worker.")
+            refusal = hard_rule_refusal(description)
+            if refusal:
+                raise ValueError(refusal)
+            if self.ledger_root(identifier) != self.root:
+                raise ValueError("Worker dispatch is disabled in a drill overlay. Use a normal conversation.")
+            if (self.root / "conductor/MAINTENANCE").exists():
+                raise ValueError("Scheduling is paused for maintenance; this task was not queued.")
+        except ValueError as exc:
+            message.update(status="done", content=str(exc), action_card={"state": "refused", "executable": False})
+            self.save(conversation)
+            self.conversations[identifier] = conversation
+            return self.public(conversation)
+        # Save the originating message AND intent before the queue side effect.
+        # Startup/reconciliation retries this idempotently after either write fails.
+        message.update(status="done", content="Saving your task for a worker…",
+                       dispatch_intent=dict(prompt=description, worker=worker, kind=kind, request_id=request_id))
+        self.save(conversation)
+        self.conversations[identifier] = conversation
+        self.reconcile_tasks()
+        return self.public(self.conversations[identifier])
+
+    def reconcile_tasks(self):
+        with self.lock:
+            for identifier, current in list(self.conversations.items()):
+                value = copy.deepcopy(current)
+                changed = False
+                for message in value["messages"]:
+                    intent = message.get("dispatch_intent")
+                    if not intent or message.get("task_id"):
+                        continue
+                    row = task_queue.enqueue(self.root, identifier, intent["request_id"], intent["prompt"],
+                                             worker=intent["worker"], kind=intent["kind"])
+                    message.update(task_id=row["id"], status="done", provider="dispatcher",
+                                   content="Queued for " + (row["requested_worker"] if row["requested_worker"] != "auto" else "an available worker") +
+                                   ". I’ll post the result here when it finishes.",
+                                   action_card={"id": message["request_id"], "state": "queued", "executable": False,
+                                                "queue_id": row["id"], "task_id": row["id"], "goal_text": row["prompt"][:160]})
+                    changed = True
+                if changed:
+                    self.save(value)
+                    self.conversations[identifier] = value
+            for row in task_queue.tasks(self.root).values():
+                identifier = row["conversation_id"]
+                if row["status"] not in task_queue.TERMINAL or row.get("delivered_at") or identifier not in self.conversations:
+                    continue
+                value = copy.deepcopy(self.conversations[identifier])
+                # Ordinary model replies still address the last message. Wait
+                # until they finish before appending an asynchronous task result.
+                if identifier in self.workers or (value["messages"] and value["messages"][-1]["status"] == "waiting"):
+                    continue
+                message_id = str(uuid.uuid5(uuid.NAMESPACE_URL, row["id"] + ":result"))
+                if not any(m["id"] == message_id for m in value["messages"]):
+                    success = row["status"] == "succeeded"
+                    content = (row["worker"] + " finished:\n\n" + row["result"] if success else
+                               "Task failed after " + str(row["attempts"]) + " attempts on " + str(row["worker"]) + ": " + row.get("error", "Unknown worker failure"))
+                    value["messages"].append(dict(id=message_id, request_id=row["request_id"], task_id=row["id"],
+                                                  role="assistant", status="done", provider=row["worker"],
+                                                  content=self.redact(content), created_at=time.time(),
+                                                  task_status=row["status"], claimed_at=row["claimed_at"],
+                                                  started_at=row.get("started_at"), finished_at=row["finished_at"]))
+                    for message in value["messages"]:
+                        if message.get("task_id") == row["id"] and message.get("action_card"):
+                            message["action_card"].update(state="done" if success else "blocked", worker=row["worker"])
+                    self.save(value)  # Commit the answer BEFORE acknowledging outbox delivery.
+                    self.conversations[identifier] = value
+                task_queue.delivered(self.root, row["id"], message_id)
+
+    def migrate_legacy_tasks(self):
+        """Recover accepted pre-dispatch jobs using their saved chat queue receipts."""
+        with self.lock:
+            self._migrate_legacy_tasks()
+
+    def _migrate_legacy_tasks(self):
+        for current in list(self.conversations.values()):
+            value = copy.deepcopy(current)
+            changed = False
+            for message in value["messages"]:
+                card = message.get("action_card") or {}
+                filename = card.get("queue_id") or ""
+                if card.get("state") != "queued" or not filename.endswith(".md") or Path(filename).name != filename or message.get("task_id"):
+                    continue
+                path = self.root / "next-prompts" / filename
+                if not path.is_file():
+                    continue
+                match = re.search(r"##\s*Task\s*\n+(.+?)(?:\n##|\Z)", path.read_text(), re.S | re.I)
+                if not match:
+                    continue
+                prompt = match.group(1).strip()
+                row = task_queue.enqueue(self.root, value["id"], message["request_id"], prompt,
+                                         kind=task_kind(prompt), source_file=filename)
+                message["task_id"] = row["id"]
+                card["task_id"] = row["id"]
+                changed = True
+            if changed:
+                self.save(value)
+                self.conversations[value["id"]] = value

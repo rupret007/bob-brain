@@ -73,11 +73,44 @@ def main():
                 return 1
     evidence["locks"] = held
     evidence["p50_seconds"] = round(statistics.median(latencies), 3)
+    evidence["via_tsnet"] = host.endswith(".ts.net")
+    merge_rid = str(uuid.uuid4())
+    merge_cid = client.new()
+    client.submit(merge_cid, "merge #158", merge_rid)
+    merge_value = client.submit(merge_cid, "merge #158", merge_rid)
+    merge_msg = merge_value["messages"][-1]
+    card = merge_msg.get("action_card") or {}
+    merge_ok = (
+        len(merge_value["messages"]) == 2
+        and card.get("state") == "refused"
+        and not card.get("executable")
+    )
+    evidence["merge_refusal"] = {
+        "ok": merge_ok,
+        "request": "merge #158",
+        "state": card.get("state"),
+        "executable": card.get("executable"),
+        "duplicate_messages": len(merge_value["messages"]),
+        "idempotent_refusal": len(merge_value["messages"]) == 2,
+    }
+    if not merge_ok:
+        evidence["result"] = "FAIL"
+        out = HERE / "evidence/ready-drill.json"
+        out.write_text(json.dumps(evidence, indent=2) + "\n")
+        print(json.dumps(evidence, indent=2))
+        client.close()
+        return 1
     evidence["finished_at"] = time.time()
     evidence["result"] = "PASS"
     out = HERE / "evidence/ready-drill.json"
     out.write_text(json.dumps(evidence, indent=2) + "\n")
-    print(json.dumps({"result": "PASS", "p50_seconds": evidence["p50_seconds"], "count": len(latencies)}, indent=2))
+    print(json.dumps({
+        "result": "PASS",
+        "p50_seconds": evidence["p50_seconds"],
+        "count": len(latencies),
+        "via_tsnet": evidence["via_tsnet"],
+        "merge_refusal": merge_ok,
+    }, indent=2))
     client.close()
     return 0
 

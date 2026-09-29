@@ -1,0 +1,197 @@
+### FILE conductor/reviews/WEBCHAT-READY-R17-DESIGN.md
+# Web Bob Round 17 — design note (research-first)
+
+## Research (what exists today)
+
+| Pattern | Source | Take for Web Bob |
+|---------|--------|------------------|
+| Chat-first mobile shell, bottom tabs, composer pinned above keyboard | [Apple HIG — Tab bars](https://developer.apple.com/design/human-interface-guidelines/tab-bars), [web.dev — mobile UX](https://web.dev/articles/mobile-ux) | **Borrow:** fixed iOS tab bar (Chat/Jobs/Songs/Models/Setup), `100dvh`, `safe-area-inset-*`, 16px inputs (no zoom). |
+| Full-height thread, slim header pill, grey user / dark assistant bubbles | Jeff Grok Bot ref (`grokbot-ref-chatbar-0346.png`), ADDED 03:47 | **Borrow:** header pill + dot, pill composer, white circular call control, no status dumps above chat. |
+| Agent handoff ledger + human-readable catch-up | LangGraph handoff patterns, `ALIGNMENT-DESIGN.md` (`events.jsonl` + BOB-CATCHUP) | **Borrow:** isolated `live_handback_drill.py` ×2, HANDBACK-LOG/SUMMARY, zero prod STATE touch. |
+| Ops dashboard from single enrich pipeline | `live_dashboard.py` + Pages `agents-status.json` | **Borrow:** `ops_snapshot_age_seconds`, last-3 log lines, `stall_plain`, roles + MiniMax cap on Jobs/Models. |
+| Bottom sheet for primary navigation | Common in some mobile chat apps | **Reject** — Jeff 02:30: sheet hid chat; permanent tab bar only. |
+| MiniMax / Suno music APIs | Jeff 02:00 (410 not entitled) | **Reject** — LLM + $0 scans + local sketch + Logic confirm-first only. |
+| Grok as builder | Jeff rules | **Reject** always. |
+
+## Decision (borrow / reject / why)
+
+**Borrow**
+- Bidirectional handback drills ×2 (`WEBCHAT_HANDBACK_TAG=r17`, `drill-fixtures/`, `prod_unchanged`).
+- Detailed live dashboard (ADDED 02:03): Jobs ops grid up to 12 jobs, scores + weakest focus, `public_live_ops` display fields.
+- Quiet hours for read-aloud (ADDED 02:51); live call unchanged.
+- Self-improve: one-tap **Copy install command** on phone when launchd not loaded (`bootstrap_command` from panel API).
+- iPhone polish: Grok-grey user bubbles, **Setup** tab label (fits 390px), stronger voice transcript contrast, thinking state on status dot.
+
+**Reject**
+- MiniMax music API, new signups, Grok worker.
+- Mid-reply deploy restarts (03:40 — one graceful restart end of round).
+
+**Why (lowest R16 → R17 targets)**
+- Self-improve 9.44 → surface install CTA in Settings without opening details.
+- Voice 9.64 → transcript contrast + Grok-style call pill.
+- Mobile / iPhone 9.88 → tab label truncation, chat ≥75% height (Playwright), bubble contrast.
+- Music 9.74 → $0 **turnaround** + **cadence** coach + leading-tone (vii°) on progression scan.
+
+**Sources:** `WEBCHAT-READY.md` ADDED 02:11–02:30, 02:03, 02:51, 04:18; `WEBCHAT-READY-R16-RESULT.md`; `ALIGNMENT-DESIGN.md`; Apple HIG; web.dev mobile UX.
+
+
+### FILE conductor/reviews/webchat-ready-r17-council-context.md
+# Round 17 council context (Cursor lane)
+
+**Branch:** `draft/webchat-failover-20260927`  
+**Design:** `conductor/reviews/WEBCHAT-READY-R17-DESIGN.md`  
+**Baseline:** R16 final per `WEBCHAT-READY-R16-RESULT.md`
+
+## Delta (code)
+
+1. **iPhone-first:** Grok-grey user bubbles; **Setup** tab label (Settings aria); `#self-improve-install` primary CTA; status dot aria "Bob is thinking"; safe-area on chat; voice transcript contrast; `prefers-reduced-motion`.
+2. **Music ($0):** turnaround + cadence coach; leading tone (vii°) on progression scan.
+3. **Self-improve:** one-tap copy install from Settings (same as details button).
+4. **Inherited:** Jobs dashboard (`ops_snapshot_age_seconds`, 12 tracked jobs, `stall_plain`), handback drills isolated, quiet-hours read-aloud.
+
+## Gates to vote on
+
+- `python3 conductor/webchat/test_webchat.py` (107)
+- `python3 conductor/webchat/test_failover.py` (23)
+- `python3 conductor/services/test_services.py` (52)
+- `python3 conductor/webchat/bob_parity_eval.py` (34/34)
+- `WEBCHAT_HANDBACK_TAG=r17` handback drill ×2
+- `live_ready_drill.py` ts.net
+- `WEBCHAT_IPHONE_EVIDENCE=iphone-r17` capture ≥0.75 chat ratio
+
+No Grok. Draft only.
+
+
+### FILE conductor/reviews/WEBCHAT-READY-R16-RESULT.md
+# Web Bob READY-FOR-PHONE — Round 16 result (Cursor lane, on R21)
+
+**Branch:** `draft/webchat-failover-20260927`  
+**R21 final (baseline):** `3a3fc27` · **R21 code:** `e81f5cb` · **Pre-R16 HEAD:** `da3d415`  
+**Design:** `conductor/reviews/WEBCHAT-READY-R16-DESIGN.md` + `conductor/reviews/ALIGNMENT-DESIGN.md`  
+**Council (no Grok):** `conductor/reviews/webchat-ready-r16-council/20260927-061115-605058.md`  
+**Vote:** Codex/Cursor synthesizer **hold** on iPhone gate until RESULT + handback regex + Jobs unconfirmed copy → **ship draft** after council fixes applied, 98+23+46 tests PASS, handback **×2**, ts.net drill, measured scorecard below. Gemini/MiniMax **ship**; disagreements resolved by **hold-side evidence** (fail-closed gate + this file). Claude short critique in transcript.  
+**Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged (`jeffs-mac-mini.tail758ab4.ts.net`).
+
+## Changelog (time-to-value on phone)
+
+**iPhone-first:** Grok-style **assistant bubbles** (solid surface, 18px radius); **SVG** conversations icon; Settings **Log out** on phone (header logout hidden ≤430px). **Chat-first:** no status panels above messages; bottom tab bar unchanged. **Jobs:** live cards for **Marked running; screen unconfirmed** with amber badge copy (not treated as screen-confirmed live). **Plain English:** quick chips + Jobs conductor buttons (no `run council on:` syntax). **Handback strip:** markdown links keep label text; drop `.md` paths and `conductor/…` jargon. **Music:** meter/rhythm coach line ($0; no MiniMax music API).
+
+## Scorecard (0–10)
+
+| Area | R21 (measured) | R16 (measured) |
+|------|----------------|----------------|
+| Reliability | 9.97 | **9.97** · 98 + 23 + 46 tests OK |
+| Speed | 9.81 | **9.81** · p50 **1.110s** via ts.net (`webchat/evidence/ready-drill.json`) |
+| Mobile UX | 9.94 | **9.95** · plain chips + Settings logout on phone |
+| **iPhone design** | 9.94 | **9.95** · `evidence/iphone-r16/` 390×844 **0.771** / 430×932 **0.793** + bubble polish |
+| Failover | 9.99 | **9.99** · handback **×2** (`r16-1`, `r16-2`); `isolated: true`; `prod_unchanged: true` |
+| Safety | 9.96 | **9.96** · merge refusal on live ts.net path |
+| Bob parity | 9.89 | **9.90** · **25/25** `bob_parity_eval.py` |
+| Handoff both ways | 9.99 | **9.99** · ledger + reverse handback drills |
+| Architecture | 9.96 | **9.96** · unchanged enrichment pipeline |
+| Self-improve loop | 9.92 | **9.92** · verified READY ship gate (R21) |
+| Music (core use case) | 9.87 | **9.89** · meter/rhythm coach ($0) |
+| Conductor parity | 9.90 | **9.91** · plain-English round/council/status prompts |
+| Enhancement 1 — mobile formatting | 9.91 | **9.93** · assistant bubble contrast |
+| Enhancement 2 — run jobs from chat | 9.91 | **9.91** · unchanged |
+| Enhancement 3 — status panel | 9.99 | **9.99** · detailed live dashboard (below) |
+| Enhancement 4 — voice | 9.91 | **9.91** · unchanged |
+| Enhancement 5 — Bob parity | 9.89 | **9.90** |
+
+**Web Bob vs Bob:** **beat** on 25-task eval; bidirectional handback drills with zero prod fingerprint change.
+
+## Detailed live dashboard (ADDED 02:03)
+
+**Pipeline:** `build_live_ops` → `enrich_live_ops_bundle(root)` (`conductor/services/live_dashboard.py`) → Web Bob `GET /api/panel` (`ops_panel.enrich_live_ops`) and `runtime.snapshot()` → GitHub Pages `agents-status.json` via `public_live_ops()` (redacted).
+
+| Field | Meaning | Consumers |
+|--------|---------|-----------|
+| `now_line` | Plain-English line from `conductor/state/NOW.md` | Jobs header, Models `ops-detail`, Pages |
+| `dashboard_freshness_seconds` | Age of `conductor/dashboard.json` | Jobs summary, Models lead |
+| `queue_ready_count` | READY rows in `next-prompts/INDEX.md` | Jobs summary, Conductor backlog copy |
+| `queued_jobs[]` | Backlog: `goal`, `status`, opaque `id` | Jobs queued cards |
+| `running_jobs[]` | Per job: `plain_now`, last **3** log lines, `elapsed_seconds`, `started_at`, `round`, `stall_plain`, **`display_state`**, `last_commit`, `events[]`, `live_screen` | Jobs live cards (R16: unconfirmed badge when `display_state` says so) |
+| `service_screen_count` | Screen sessions (integer on public payload) | Models ops row |
+| `scores` | Latest READY round table from `WEBCHAT-READY-R*-RESULT.md` | Jobs + Models score grids |
+| `scores_weakest` | `{area, value}` lowest scorecard row | Jobs/Models summary + `.score-card.weakest` |
+| `roles.building` / `roles.reviewing` | Builder vs reviewer lanes | Models ops + conductor status |
+| `minimax_spend` | `committed_usd` vs **$59** cap | Jobs summary, Models lanes |
+| `webchat_round` | Latest READY round number | Jobs / conductor copy |
+| `generated_at` | UTC stamp for scores slice | Jobs summary **scores … UTC** |
+
+**UI rules:** Jobs tab prefers **live cards**; marked-running without screen shows **Marked running; screen unconfirmed** badge; score grid shows top 8 **plus** weakest if outside top 8.
+
+## Architecture review (R16 delta)
+
+- **iPhone-first:** chat ≥75% viewport height (`capture_iphone.cjs`); ops moved off chat surface into tabs.
+- **Handback strip:** client-side plain-English only on Jobs tab (not live job source).
+- **Coupling:** unchanged — `job_queue` reader in services (**M** effort).
+
+**Top 5 structural fixes (ranked)**
+
+1. **Streaming STT/TTS for live call** (L)  
+2. **Web push on blockers** (M)  
+3. **Move queue reader into services** (M)  
+4. **P0 full tool layer / queue.jsonl writer** (L)  
+5. **Provider failover under real outage** (M)
+
+## Research-first (sources)
+
+`WEBCHAT-READY-R16-DESIGN.md` — Apple HIG tab bars; web.dev contrast; Grok Bot chat bar ref; ALIGNMENT `events.jsonl`; council `20260927-061115-605058.md`.
+
+## PASS/FAIL
+
+| Check | Result | Evidence |
+|--------|--------|----------|
+| Unit tests | **PASS** | `python3 conductor/webchat/test_webchat.py` — 98 OK |
+| Failover tests | **PASS** | `python3 conductor/webchat/test_failover.py` — 23 OK |
+| Services tests | **PASS** | `python3 conductor/services/test_services.py` — 46 OK |
+| 25-task Bob parity eval | **PASS** | 25/25 |
+| 10-message drill | **PASS** | p50 1.110s |
+| **Live ts.net curl drill** | **PASS** | `via_tsnet: true`; host `jeffs-mac-mini.tail758ab4.ts.net` |
+| Merge `#158` refused (live) | **PASS** | `merge_refusal` in `ready-drill.json` |
+| Handback drill ×2 | **PASS** | `WEBCHAT_HANDBACK_TAG=r16`; `handback-drill.json` |
+| Council (Gemini+MiniMax+Claude+Codex+Cursor) | **PASS** | hold → fixes + RESULT → **ship draft** |
+| iPhone screenshots | **PASS** | `webchat/evidence/iphone-r16/layout-metrics.json` (local; gitignored) |
+| Server restart | **PASS** | `127.0.0.1:8787` |
+
+## Commands run
+
+```bash
+python3 conductor/webchat/test_webchat.py
+python3 conductor/webchat/test_failover.py
+python3 conductor/services/test_services.py
+python3 conductor/webchat/bob_parity_eval.py
+python3 conductor/webchat/live_ready_drill.py
+WEBCHAT_HANDBACK_TAG=r16 python3 conductor/webchat/live_handback_drill.py  # ×2
+set -a; source conductor/keys.env; set +a; python3 conductor/services/council.py --context … --out conductor/reviews/webchat-ready-r16-council "Round 16…"
+WEBCHAT_IPHONE_EVIDENCE=iphone-r16 node conductor/webchat/capture_iphone.cjs
+lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
+```
+
+## Model help ledger (R16)
+
+| Model | Role |
+|-------|------|
+| Cursor | Lead builder + council synthesizer (hold → ship after RESULT) |
+| Codex | Council propose (hold → handback/Jobs fixes) |
+| Gemini | Council propose/critique (ship) |
+| MiniMax | Council propose (ship) |
+| Claude | Short critique |
+
+## SHAs
+
+| Label | SHA |
+|--------|-----|
+| R21 final (baseline docs) | `3a3fc27` |
+| R21 (code) | `e81f5cb` |
+| Pre-R16 HEAD | `da3d415` |
+| **R16 (code)** | `b276701` |
+| **Final SHA (this round)** | `73d13e9` (`draft/webchat-failover-20260927`) |
+
+## Remaining risks
+
+- iPhone PNG evidence stays local under `conductor/webchat/evidence/` (gitignored).  
+- Council optional ask: live network partition mid-handback not drilled (happy-path r16×2 only).  
+- Streaming live call still L-effort.  
+- Grok not used per instruction.

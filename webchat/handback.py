@@ -267,6 +267,18 @@ def append_turn(root: Path, *, ask: str, provider: str | None, jobs: list[str], 
     except (OSError, ImportError):
         pass
     refresh_summary(root)
+    if open_items:
+        try:
+            import sys
+
+            state_dir = root / "conductor/state"
+            if str(state_dir) not in sys.path:
+                sys.path.insert(0, str(state_dir))
+            import ledger as state_ledger  # noqa: WPS433
+
+            state_ledger.write_catchup(root)
+        except (OSError, ImportError):
+            pass
     return True
 
 

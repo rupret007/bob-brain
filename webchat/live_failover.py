@@ -59,8 +59,16 @@ class Curl:
     def new(self):
         return self.json("/api/conversations", {})["id"]
 
-    def submit(self, cid, message, request_id=None):
-        return self.json("/api/messages", {"conversation_id": cid, "message": message, "request_id": request_id or str(uuid.uuid4())})
+    def submit(self, cid, message, request_id=None, provider="auto"):
+        return self.json(
+            "/api/messages",
+            {
+                "conversation_id": cid,
+                "message": message,
+                "request_id": request_id or str(uuid.uuid4()),
+                "provider": provider,
+            },
+        )
 
     def wait(self, cid, status=("done", "waiting", "error", "cancelled"), timeout=240):
         started = time.monotonic()

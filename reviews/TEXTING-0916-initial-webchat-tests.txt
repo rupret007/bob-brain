@@ -1,0 +1,23 @@
+................................................................................................................................................................2026-09-28T14:30:09.122+00:00 Task queued codex task-1
+2026-09-28T14:30:09.122+00:00 codex ('running', 1)
+2026-09-28T14:30:09.122+00:00 Task answered in chat codex task-1
+...........................................................................................................................................E.fatal: not a git repository (or any of the parent directories): .git
+............................fatal: not a git repository (or any of the parent directories): .git
+.fatal: not a git repository (or any of the parent directories): .git
+.fatal: not a git repository (or any of the parent directories): .git
+......quiet_hours_js: OK
+....................................................
+======================================================================
+ERROR: test_bob_parity_eval_runs (test_webchat.HandbackJobTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/webchat/test_webchat.py", line 1249, in test_bob_parity_eval_runs
+    result = run_eval(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/webchat/bob_parity_eval.py", line 171, in run_eval
+    from result_acceptance import check_coding_answer, ResultRejected
+ModuleNotFoundError: No module named 'result_acceptance'
+
+----------------------------------------------------------------------
+Ran 389 tests in 47.129s
+
+FAILED (errors=1)

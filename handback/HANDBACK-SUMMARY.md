@@ -1,6 +1,6 @@
 # HANDBACK-SUMMARY
 
-Updated 2026-09-27 01:55:17 CT · digest since Bob last saw handback (.bob-last-seen)
+Updated 2026-09-28 21:27:40 CT · digest since Bob last saw handback (.bob-last-seen)
 
 ## Bob state (snapshot)
 # BOB-STATE (written by Grok Bot Bob) — updated 2026-09-27 00:27 CT
@@ -13,58 +13,96 @@ Rules: drafts only, no merge/undraft/force-push, no texts/emails without yes, no
 
 
 ## Done (ranked recent)
-_None logged._
+- Hi (cursor)
+- Hi (cursor)
+- Hi (gemini)
+- Hi (cursor)
+- Hi (cursor)
+- Hi (gemini)
+- Hi (cursor)
+- Hi (cursor)
+- Hi (gemini)
+- Hi (cursor)
+- Hi (gemini)
+- Hi (cursor)
 
 ## Running
 - Running: svc-webchat-ready (Cursor, WEBCHAT-READY.md), svc-webchat-failover (Codex, WEBCHAT-FAILOVER.md), svc-self-improve-r3 (Cursor, SELF-IMPROVE-R3.md), svc-
 
 ## Waiting on Jeff
-- Reply with exactly: drill A5 (gemini)
-- Reply with exactly: drill B5 (gemini)
-- Reply with exactly: drill A1 (gemini)
-- Reply with exactly: drill B1 (gemini)
-- Reply with exactly: drill A2 (gemini)
-- Reply with exactly: drill B2 (gemini)
-- Reply with exactly: drill A3 (gemini)
-- Reply with exactly: drill B3 (gemini)
-- Reply with exactly: drill A4 (gemini)
-- Reply with exactly: drill B4 (gemini)
-- Reply with exactly: drill A5 (gemini)
-- Reply with exactly: drill B5 (gemini)
+_No open confirmations._
 
 ## Risks
-- merge #158 (none)
+- Drafts only; no merge/send/spend without yes.
+
+## Latest pickup (ledger + recent commits)
+- Draft HEAD: 6e3216d9a526
+- Open ask 33362523: Ok try again. What each resource working on now.
+- Open ask a168973a: Give a useful two-sentence explanation of how to verify that conversation history survived a restart.
+- Open ask 4219776b: run command: uptime
+- Open ask 0b858361: repo status: conductor
+- Open ask 596adf5d: run command: git push --force
+- Open ask a4ddcb35: Ok great just do whatever it takes to makes this work amazingly well.
+- Open ask 25e1e0c3: Remember that my imaginary boat is named Copper Heron. Suggest one short motto that fits the name.
+- Open ask e3715c9d: What is my imaginary boat called, and why does your motto suit that name?
+- Open ask 6b3c25f3: Ok how’s that’s going?
+- Open ask 9735b7ce: Ok and are all LLMs in use?
+- Open ask d59bee1b: Ok great app of them to the max?
 
 ## Web Bob turns since last seen (detail)
-## 2026-09-27 01:54:57 CT
-- **Ask:** Reply with exactly: drill A2
+## 2026-09-28 15:40:58 CT
+- **Ask:** Hi
+- **Provider:** cursor
+- **Request:** e7b51f78-cf5d-4cc3-aff2-89895be8aeab
+- **Commits/SHAs:** 6e3216d
+- **Open:** Hi
+- **Outcome:** chat
+## 2026-09-28 16:39:02 CT
+- **Ask:** Hi
+- **Provider:** cursor
+- **Request:** 0dd645d0-d454-41ae-859e-e69e0c0c8bb1
+- **Commits/SHAs:** 6e3216d
+- **Open:** Hi
+- **Outcome:** chat
+## 2026-09-28 16:39:16 CT
+- **Ask:** Hi
 - **Provider:** gemini
-- **Open:** Reply with exactly: drill A2
-## 2026-09-27 01:55:00 CT
-- **Ask:** Reply with exactly: drill B2
+- **Request:** 03485a55-2079-4105-bee3-a3796bcd9a0c
+- **Commits/SHAs:** 6e3216d
+- **Open:** Hi
+- **Outcome:** chat
+## 2026-09-28 17:33:22 CT
+- **Ask:** Hi
+- **Provider:** cursor
+- **Request:** 341dccfd-4234-41e6-bf3f-4db144db4098
+- **Commits/SHAs:** 6e3216d
+- **Open:** Hi
+- **Outcome:** chat
+## 2026-09-28 19:20:55 CT
+- **Ask:** Hi
+- **Provider:** cursor
+- **Request:** 806bc7a2-d021-41fc-b57b-20746b74e25d
+- **Commits/SHAs:** 6e3216d
+- **Open:** Hi
+- **Outcome:** chat
+## 2026-09-28 19:21:09 CT
+- **Ask:** Hi
 - **Provider:** gemini
-- **Open:** Reply with exactly: drill B2
-## 2026-09-27 01:55:03 CT
-- **Ask:** Reply with exactly: drill A3
-- **Provider:** gemini
-- **Open:** Reply with exactly: drill A3
-## 2026-09-27 01:55:07 CT
-- **Ask:** Reply with exactly: drill B3
-- **Provider:** gemini
-- **Open:** Reply with exactly: drill B3
-## 2026-09-27 01:55:09 CT
-- **Ask:** Reply with exactly: drill A4
-- **Provider:** gemini
-- **Open:** Reply with exactly: drill A4
-## 2026-09-27 01:55:12 CT
-- **Ask:** Reply with exactly: drill B4
-- **Provider:** gemini
-- **Open:** Reply with exactly: drill B4
-## 2026-09-27 01:55:14 CT
-- **Ask:** Reply with exactly: drill A5
-- **Provider:** gemini
-- **Open:** Reply with exactly: drill A5
-## 2026-09-27 01:55:17 CT
-- **Ask:** Reply with exactly: drill B5
-- **Provider:** gemini
-- **Open:** Reply with exactly: drill B5
+- **Request:** 47c5218c-6494-4a0b-8263-f054732043e2
+- **Commits/SHAs:** 6e3216d
+- **Open:** Hi
+- **Outcome:** chat
+## 2026-09-28 20:24:12 CT
+- **Ask:** Hi
+- **Provider:** cursor
+- **Request:** 20e6609b-eb88-4a00-a37d-9dba487bc279
+- **Commits/SHAs:** 6e3216d
+- **Open:** Hi
+- **Outcome:** chat
+## 2026-09-28 20:24:29 CT
+- **Ask:** Hi
+- **Provider:** cursor
+- **Request:** 20f9b1f2-b372-449a-9691-1b3a435df421
+- **Commits/SHAs:** 6e3216d
+- **Open:** Hi
+- **Outcome:** chat

@@ -1,0 +1,3 @@
+```json
+{"accepted": true, "reason": "Both regression drafts correctly target check_completion_json with literal inputs and trace its rejection/return behavior. The failure case matches the guard's 'Missing or ambiguous required completion JSON output block' error when a non-JSON answer is supplied; the successful control correctly expects returns None for a valid accepted/reason JSON. The Action plan references existing CompletionContractTests in services/test_replay_completion.py, validates existing guard coverage, and names lane-webbob-texting-replay-json-fix-1508 as the exit condition. Completion JSON, Findings/limits, and all required outer fields are present. No contradiction with supplied implementation."}
+```

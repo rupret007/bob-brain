@@ -1,0 +1,23 @@
+# Texting deployment tooling, 2055
+
+Base: `c87cb73cbb0fd1a2162bbf939c86170fd26715a5`, the latest committed tip of `lane-webbob-texting-disk-evidence-fix-2003` (newer than `8260f80`).
+
+Attempt 12 exhausted disk while checkpointing LIVE_REPLAY. Attempt 13 already fixed that failure: smoke and 19 turns passed with a 330,375-byte evidence record and healthy disk; a separate MiniMax report failed semantic acceptance and automatic rollback restored `a777736b3f0a37c82b0c4c62be8c91117c4c9881`.
+
+The report generator instructed every Web Bob task to reuse two completion-JSON guard cases, even when the task concerned other behavior. The successor removes that contradiction, retains substantive worker-authored JSON fields, and makes guard examples optional for explicitly related tasks. The independent semantic reviewer and all deterministic acceptance checks remain unchanged. The rejected answer actually contained the outer `Findings/limits:` line; the prior semantic reviewer wrongly claimed it was absent. That observation does not erase its relevance rejection or grant acceptance.
+
+Bare `# lane-webbob-...-fix-...` headings were also treated as substantive task evidence because the slug contained “fix.” The collector now treats those headings as metadata, allowing the existing explicit missing-task limitation to reach report workers. Real Task/Goal/Assignment sentences remain task evidence.
+
+An import audit also found that app.py selected ledger code from the persistent data root rather than the candidate. The successor pins that module to the candidate while preserving the data root argument; a subprocess regression places a failing decoy module in the data root.
+
+The 2055 harness uses its own lane, branch, immutable attempt receipts and fresh review paths. It retains the 5 GiB exact-byte floor, 1 MiB atomic compact evidence bound, 64 MiB physically allocated recovery reserve, rollback journal, rollback-first error recovery, exact SHA/remote/draft/clean-tree checks, service isolation, and named historical worker regressions. A maximum of five actual activations is enforced; rejected preflights do not consume an activation.
+
+WEB BOB ONLY: historical sessions include six coding jobs that would publish other projects' draft PRs. Nine Web Bob turns will run on production. The remaining ten exact historical turns must pass the same assertions in a private same-SHA HTTP instance, with private committed project copies and local bare remotes. Actual worker execution, semantic acceptance, saved hashes, coding checks, and local ref/draft-SHA verification are required. The local draft protocol is a test adapter, not GitHub publication. Private proof is required before activation and checked again before LIVE_PASS; no claim of 19 production turns will be made.
+
+Disk cleanup records: `TEXTING-2055-disk-prune.json` and `TEXTING-2055-worktree-prune.json`. Obsolete Web Bob rollback copies and 19 clean inactive worktrees were pruned. Current live pins, live rollback, source tip, candidate and queued feature workspaces were retained; dirty worktrees were skipped. Shared disk cleanup has since raised available capacity to approximately 11 GiB. Deployment preflights will measure exact bytes again.
+
+Further preflight findings led to three corrections. MiniMax now has the same bounded 180-second response deadline as the existing reasoning provider. Private worker scheduling waits for shared provider cooldowns before claiming work. A truncated historical fixture that requires field projection is omitted instead of exposing a partial rejected answer. The structured-report prompt clarifies JSON object types and distinguishes completion of an unexecuted draft report from the lane's pending validation. The captured malformed result still receives the identical rejection.
+
+A real product-quality failure was also reproduced: a plain `Hi` received an unsolicited operational update that the authority filter missed. The narrow greeting policy removes those operational sentences and preserves natural greetings and follow-up conversation. The original greeting rubric remains unchanged. The private replay provider uses private prompt context while retaining real shared transport, locks, metering and circuit state.
+
+At `c63dc2fb3d3b55eaaf6c8bf00275cd64290cde6e`, 746 automated tests, parity 125/125 and browser texting proof pass. The private conversational replay passes 10/10 turns. The fresh MiniMax worker probe still produced an invalid control draft with required action/expected fields buried inside setup. That result remains rejected, and no 2055 activation has occurred. Current results are recorded in `TEXTING-DEPLOY-2055.md`.

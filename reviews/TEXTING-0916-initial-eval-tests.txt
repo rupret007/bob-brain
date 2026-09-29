@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/webchat/bob_parity_eval.py", line 204, in <module>
+    sys.exit(main())
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/webchat/bob_parity_eval.py", line 195, in main
+    result = run_eval(root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-onto-a777736-0420/webchat/bob_parity_eval.py", line 171, in run_eval
+    from result_acceptance import check_coding_answer, ResultRejected
+ModuleNotFoundError: No module named 'result_acceptance'

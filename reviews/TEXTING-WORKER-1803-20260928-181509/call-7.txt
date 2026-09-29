@@ -1,0 +1,30 @@
+```json
+{
+  "regression_tests": [
+    {
+      "name": "check_deliverables rejects report with single draft",
+      "target": "services/result_acceptance.py::check_deliverables",
+      "setup": "prompt='Project: Web Bob\\nYour independent subtask:\\nReview and regression test-case drafts for the following ongoing task.'; answer='Regression test: only one case\\nTarget: a\\nSetup: b\\nAction: c\\nExpected: d\\nFindings/limits: e'; kind='test-writing'",
+      "action": "check_deliverables(prompt, answer, kind=kind)",
+      "expected": "raises ResultRejected('Missing concrete regression test drafts (setup, action and expected assertion required)')"
+    },
+    {
+      "name": "check_deliverables accepts report with two drafts",
+      "target": "services/result_acceptance.py::check_deliverables",
+      "setup": "prompt='Project: Web Bob\\nYour independent subtask:\\nReview and regression test-case drafts for the following ongoing task.'; answer='Regression test: case one\\nTarget: a\\nSetup: b\\nAction: c\\nExpected: d\\nRegression test: case two\\nTarget: a2\\nSetup: b2\\nAction: c2\\nExpected: d2\\nFindings/limits: e'; kind='test-writing'",
+      "action": "check_deliverables(prompt, answer, kind=kind)",
+      "expected": "returns None"
+    }
+  ],
+  "plan": {
+    "change": "Add test coverage to services/test_result_acceptance.py to validate that check_deliverables requires exactly two regression test drafts when the task is 'test-writing' and contains 'Your independent subtask:'.",
+    "validation": "python3 -m unittest discover -s services -p 'test_*.py'",
+    "exit_condition": "The hold on lane-webbob-texting-regression-drafts-fix-1658 should be retained until the proposed test coverage is implemented, passes, and is merged, and any related worker results pass live gates."
+  },
+  "completion": {
+    "accepted": true,
+    "reason": "Delivered two unexecuted regression test drafts targeting the two-draft requirement in check_deliverables and a concrete action plan for the ongoing task."
+  },
+  "findings_limits": "The check_deliverables function in services/result_acceptance.py correctly enforces that exactly two regression test drafts are required for specific task types. The supplied test drafts are unexecuted and based on static analysis of the provided code. The original task prompt for lane-webbob-texting-regression-drafts-fix-1658 was not supplied."
+}
+```

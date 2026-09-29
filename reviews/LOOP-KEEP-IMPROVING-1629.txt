@@ -1,0 +1,565 @@
+=== LOOP FILES ===
+---- LOOP-DEPLOY-TESTS-0927.txt ----
+........................................................................ [ 38%]
+........................................................................ [ 76%]
+............................................                             [100%]
+188 passed in 15.01s
+---- LOOP-LIVE-VERIFY-0927.txt ----
+BASE http://127.0.0.1:8787
+SEND going is it going now?
+RESP going ERR HTTP Error 401: Unauthorized / HTTP Error 401: Unauthorized
+SEND claude161 have Claude review PR #161
+RESP claude161 ERR HTTP Error 401: Unauthorized / HTTP Error 401: Unauthorized
+SEND push2 push WebJam and AdoptIQ
+RESP push2 ERR HTTP Error 401: Unauthorized / HTTP Error 401: Unauthorized
+SEND hold
+ERR HTTP Error 401: Unauthorized / HTTP Error 401: Unauthorized
+SEND go
+ERR HTTP Error 401: Unauthorized / HTTP Error 401: Unauthorized
+JOB_FILES [PosixPath('/Users/jeffstory/Documents/bob-overnight-inject/conductor/jobs-imported-v2.json'), PosixPath('/Users/jeffstory/Documents/bob-overnight-inject/conductor/jobs-imported.json')]
+{
+  "ok": {
+    "going": false,
+    "claude161": false,
+    "push2": false,
+    "go": true
+  },
+  "all_pass": false,
+  "base": "http://127.0.0.1:8787"
+}
+ROLLBACK_TO /Users/jeffstory/Documents/bob-overnight-inject/rollbacks/webchat-20260927-152243
+RESTORED_WEBCHAT
+---- LOOP-LAST-GOOD-ROLLBACK.txt ----
+/Users/jeffstory/Documents/bob-overnight-inject/rollbacks/webchat-20260927-152243
+---- LOOP-CAPTURE-0927.txt ----
+{"ok":true,"folder":"/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r8","layout":[{"tag":"iphone-14","viewport":844,"messages_px":645,"messages_ratio":0.764218009478673},{"tag":"iphone-14-pro-max","viewport":932,"messages_px":730,"messages_ratio":0.7835635484032365}]}
+---- WEBBOB-REDEPLOY-FAIL-0927.md ----
+Branch/worktree: `draft/webbob-redeploy-0927` / `wt-webbob-redeploy-0927`  
+Fresh rollback: `/Users/jeffstory/Documents/bob-overnight-inject/rollbacks/webchat-20260927-160618`
+
+## Exact failing check
+
+**`claude161` failed execution.** The literal ask `have Claude review PR #161` created a real durable job and was claimed by Claude. Claude exited with code 1. The scheduler retried on Gemini, which could not access the PR. Result acceptance rejected that answer and delivered a failed-job message. The journal does not record a more specific cause for the Claude CLI exit; it must not be guessed.
+
+Job: `webchat-2fbdaf20f5a453a1a0af6c88fea5f0f9`
+
+> Worker reported a blocker: BLOCKER: I need access to the pull request system to review PR #161. I do not have the capability to access external systems or web pages.
+
+| Live check | Initial authenticated acceptance | Final evidence |
+| --- | --- | --- |
+| `going`: `is it going now?` | PASS | Server reported the two actual Codex lanes, Fantasy audit and Web Bob redeploy. Detailed follow-up included all stable worker/service screens. No status job was created. |
+| `claude161`: `have Claude review PR #161` | PASS | **FAIL** after execution: Claude exit 1, Gemini fallback lacked PR access, result rejected. |
+| `push2`: `push WebJam and AdoptIQ` | PASS | Two real coding jobs, claimed by Codex and Cursor; HTTP replay did not duplicate jobs. |
+| `go`: `hold`, then `go` | PASS | Hold created and cleared in saved session state. Follow-up answered `Ready when you are.` No extra job. |
+
+The initial verifier measured HTTP/queue acceptance and finished before the asynchronous Claude failure. Follow-through changed the final evidence to `all_pass=false`; the original acceptance result is retained as `initial_acceptance_all_pass=true`. The deploy log's initial four PASS lines are not a release approval.
+
+## Additional release blocker: old UI assets
+
+The authenticated phone browser reached the public HTTPS site but timed out waiting for `/api/jobs/activity` after opening Jobs. No valid new-Jobs screenshot was produced. Both the local and public `/app.js` responses matched the old live data directory, not the clean candidate.
+
+Root cause: `webchat/app.py` uses `HERE = Path(os.environ.get("BOB_WEBCHAT_DIR", ...))` for both persistent data and static files. The service launcher sets `BOB_WEBCHAT_DIR` to `conductor/webchat`. Pinning the Python code to the clean checkout therefore left the old UI in use. Source assets need their own code-relative path; password, sessions and locks must keep their existing data paths.
+
+| app.js source | SHA-256 |
+| --- | --- |
+| local | `e9bdfe357a2987a24580f6ee0872d1e792882963a3fa7833db0a3ca12d1c2674` |
+| public | `e9bdfe357a2987a24580f6ee0872d1e792882963a3fa7833db0a3ca12d1c2674` |
+| candidate | `eba7c83e2a4318146243ed172dcc70ab0f04aacb45c1626d903982dc738d4c03` |
+| live_data_directory | `e9bdfe357a2987a24580f6ee0872d1e792882963a3fa7833db0a3ca12d1c2674` |
+
+## Original 15:22 failure
+
+`going`, `claude161`, and `push2` failed with HTTP 401 Unauthorized. `hold` and `go` also returned 401, yet `go` was incorrectly marked true. Both earlier `e2e_live.py` invocations omitted required `--output`. The initial worktree creation failed because the MiniMax branch was already checked out; execution then fell back to dirty `conductor` at `6e3216d`. Thus the earlier green tests did not prove the intended deployment.
+
+## Candidate and validation
+
+Clean tip `7ab7f1311f70262932a9e8dcc7f78c096e996567` is included, along with MiniMax implementation `f2af459` and requested proof commit `855be8b5c9056e4f8d356b958cf6f136504d1ddb`. The candidate fixes the two missed exact phrases and adds session-cookie/CSRF authentication, durable job checks, replay checks and saved-hold checks. HTTP errors fail closed.
+
+- 241 chat tests passed, including authentication failure, hold/go HTTP failure, exact status/push phrases and scoped hold persistence.
+- 111 service tests passed, including MiniMax result acceptance.
+- JavaScript test and syntax, bootstrap syntax and whitespace checks passed.
+- All four checks passed in a private authenticated rehearsal with actual private queue writes and model calls forbidden.
+- Isolated Jobs browser proof passed at 320/390/430/900 px, light/dark, including source-failure cases. The isolated proof did not reproduce the production data-directory override.
+
+## Rollback and retained work
+
+Rollback completed: 2026-09-27T21:09:33.008+00:00. Both deployment pins now point to `/Users/jeffstory/Documents/bob-overnight-inject/rollbacks/webchat-20260927-160618/deployed-code`. Webchat health was verified and job-runner reacquired its lifetime lock. Only webchat and job-runner were restarted for deployment and rollback; every unrelated screen identity stayed unchanged. Persistent queues, sessions and already launched project workers were retained.
+
+| Job | Project/request | State observed after rollback | Worker |
+| --- | --- | --- |
+| `webchat-2fbdaf20f5a453a1a0af6c88fea5f0f9` | PR #161 | failed | gemini |
+| `webchat-8a205eb9c55a5f9aad2c2cb6decaca5d` | WebJam | failed | codex |
+| `webchat-848df09c919951d4a896392b0f2ccff2` | AdoptIQ | running | cursor |
+
+Evidence: [live checks](WEBBOB-REDEPLOY-LIVE-0927.json), [deployment/rollback](WEBBOB-REDEPLOY-DEPLOYMENT-0927.json), [chat tests](WEBBOB-REDEPLOY-TESTS-0927.txt), [service tests](WEBBOB-REDEPLOY-SERVICES-0927.txt), [isolated rehearsal](WEBBOB-REDEPLOY-REHEARSAL-0927.json), [browser rehearsal](WEBBOB-REDEPLOY-BROWSER-0927.json).
+
+The draft remains open. No merge, undraft, force-push, Grok/xAI call, or password disclosure occurred.
+---- WEBBOB-REDEPLOY-TESTS-0927.txt ----
+........................................................................................................2026-09-27T21:02:13.147+00:00 Task queued codex task-1
+2026-09-27T21:02:13.147+00:00 codex ('running', 1)
+2026-09-27T21:02:13.148+00:00 Task answered in chat codex task-1
+..................................................fatal: not a git repository (or any of the parent directories): .git
+...........................fatal: not a git repository (or any of the parent directories): .git
+.fatal: not a git repository (or any of the parent directories): .git
+.fatal: not a git repository (or any of the parent directories): .git
+......quiet_hours_js: OK
+....................................................
+----------------------------------------------------------------------
+Ran 241 tests in 19.289s
+
+OK
+---- WEBBOB-REDEPLOY-SERVICES-0927.txt ----
+2026-09-27T20:57:05+00:00 council propose gemini ok
+2026-09-27T20:57:05+00:00 council critique codex FAILED: critique transport failed
+2026-09-27T20:57:05+00:00 council critique cursor FAILED: critique transport failed
+2026-09-27T20:57:05+00:00 council critique minimax FAILED: critique transport failed
+2026-09-27T20:57:05+00:00 council critique gemini FAILED: critique transport failed
+2026-09-27T20:57:05+00:00 council critique claude FAILED: critique transport failed
+.2026-09-27T20:57:05+00:00 council propose codex ok
+2026-09-27T20:57:05+00:00 council propose cursor FAILED: provider unavailable
+2026-09-27T20:57:05+00:00 council propose minimax FAILED: provider unavailable
+2026-09-27T20:57:05+00:00 council propose gemini FAILED: provider unavailable
+.2026-09-27T20:57:05+00:00 council propose codex ok
+2026-09-27T20:57:05+00:00 council propose cursor ok
+2026-09-27T20:57:05+00:00 council propose minimax ok
+2026-09-27T20:57:05+00:00 council propose gemini FAILED: failure [REDACTED]
+2026-09-27T20:57:05+00:00 council critique codex ok
+2026-09-27T20:57:05+00:00 council critique cursor ok
+2026-09-27T20:57:05+00:00 council critique minimax ok
+2026-09-27T20:57:05+00:00 council critique claude ok
+2026-09-27T20:57:05+00:00 council synthesize cursor ok
+.2026-09-27T20:57:05+00:00 council propose codex ok
+2026-09-27T20:57:05+00:00 council propose cursor ok
+2026-09-27T20:57:05+00:00 council propose minimax ok
+2026-09-27T20:57:05+00:00 council propose gemini ok
+2026-09-27T20:57:05+00:00 council critique codex ok
+2026-09-27T20:57:05+00:00 council critique cursor ok
+2026-09-27T20:57:05+00:00 council critique minimax ok
+2026-09-27T20:57:05+00:00 council critique gemini ok
+2026-09-27T20:57:05+00:00 council critique claude ok
+2026-09-27T20:57:05+00:00 council synthesize cursor FAILED: synthesizer unavailable
+2026-09-27T20:57:05+00:00 council synthesize codex ok
+......2026-09-27T20:57:05+00:00 assessment complete: synthesized
+....2026-09-27T20:57:05+00:00 Web Bob claimed webchat-27479a1d8b215a1f96834e51b2483318 worker=claude group=None
+.....2026-09-27T20:57:05+00:00 Web Bob claimed webchat-27479a1d8b215a1f96834e51b2483318 worker=gemini group=None
+2026-09-27T20:57:06+00:00 Web Bob claimed webchat-343e2493afed594f841b1b9c1ed84bd6 worker=minimax group=None
+....2026-09-27T20:57:06+00:00 Web Bob claimed webchat-27479a1d8b215a1f96834e51b2483318 worker=cursor group=None
+......2026-09-27T20:57:06+00:00 Web Bob claimed webchat-61ef860e60ef5f1b8b09fc70640d38f1 worker=claude group=None
+2026-09-27T20:57:06+00:00 Web Bob claimed webchat-cc0aef2fd8545c26802ad4c9fc9d07a4 worker=gemini group=None
+2026-09-27T20:57:06+00:00 Web Bob claimed webchat-236627485e9a506b80774361ef4ed87f worker=claude group=None
+2026-09-27T20:57:06+00:00 Web Bob claimed webchat-7684f1d4070c55b68dee3549bc9a2c61 worker=claude group=None
+2026-09-27T20:57:06+00:00 Web Bob claimed webchat-68c7588196f55ccab1c0f0258b9be7bc worker=claude group=None
+..2026-09-27T20:57:06+00:00 Reaped expired Web Bob worker webchat-task
+...2026-09-27T20:57:06+00:00 Web Bob claimed webchat-61ef860e60ef5f1b8b09fc70640d38f1 worker=codex group=group
+2026-09-27T20:57:06+00:00 Web Bob claimed webchat-cc0aef2fd8545c26802ad4c9fc9d07a4 worker=claude group=group
+2026-09-27T20:57:06+00:00 Web Bob claimed webchat-236627485e9a506b80774361ef4ed87f worker=cursor group=group
+2026-09-27T20:57:06+00:00 Web Bob claimed webchat-7684f1d4070c55b68dee3549bc9a2c61 worker=gemini group=group
+2026-09-27T20:57:06+00:00 Web Bob claimed webchat-68c7588196f55ccab1c0f0258b9be7bc worker=minimax group=group
+2026-09-27T20:57:06+00:00 Web Bob claimed webchat-201f21f8e4575c3680ed6632b3fdd7f3 worker=codex group=None
+...2026-09-27T20:57:06+00:00 Web Bob claimed webchat-27479a1d8b215a1f96834e51b2483318 worker=gemini group=None
+2026-09-27T20:57:06+00:00 Web Bob claimed webchat-f1fe7bd78b865cb2bd4e9faf2df99190 worker=minimax group=None
+............2026-09-27T20:57:06+00:00 Web Bob claimed webchat-27479a1d8b215a1f96834e51b2483318 worker=minimax group=None
+.............................2026-09-27T20:57:07+00:00 HTTP attempt 1/3 failed: HTTP 503 curl_rc=0
+.........................2026-09-27T20:57:08+00:00 restarted svc-reviewer verified=True
+2026-09-27T20:57:08+00:00 restarted svc-reviewer verified=True
+2026-09-27T20:57:08+00:00 restarted svc-reviewer verified=True
+2026-09-27T20:57:08+00:00 reviewer restart capped at 3/hour
+..
+----------------------------------------------------------------------
+Ran 111 tests in 2.622s
+
+OK
+---- LANE-INTEGRATE-RESULT.md ----
+**FAIL** on missing `parse_do_more`; intermediate runs exposed the overlay-pin
+and parity inconsistencies described above. Those failures were fixed, and the
+final complete suites shown here passed without excluding tests.
+
+## Proof 1: three queued jobs assigned through state/queue.jsonl
+
+**PASS.** After the full suites, ran:
+
+```sh
+python3 services/lane_integration_smoke.py --evidence reviews/lane-integrate-evidence/proof.md
+```
+
+Three `queue_add` calls first produced exactly three `queued` journal entries.
+The harness removed INDEX.md before calling the real scheduler tick. Each request
+then acquired a distinct lane, named screen, worker PID and fresh heartbeat.
+INDEX.md remained absent throughout this assignment.
+
+| Durable queue id | Assigned lane | Worker PID | Result |
+| --- | --- | --- | --- |
+| `queue-webchat-20260927-0856-d0a187dd` | `gemini` | `86192` | PASS |
+| `queue-webchat-20260927-0856-17ebb82d` | `minimax` | `86193` | PASS |
+| `queue-webchat-20260927-0856-0455a003` | `codex` | `86194` | PASS |
+
+The exact queued rows, journal contents at assignment, execution ids, heartbeat
+values and separate draft worktrees are in [the proof](lane-integrate-evidence/proof.md).
+
+## Proof 2: Web Bob same-reply replay
+
+**PASS.** A real `Chat.submit()` received exactly `I need you to do more` and
+returned `status=done`, `provider=tools`, `action_card.state=started`:
+
+> Queued draft job `webchat-20260927-0856-6612dde3.md`. Started lane `cursor` for `queue-webchat-20260927-0856-6612dde3` (worker `cursor-queue-webchat-20260927-0856-6612dde3-71ea9c9c`).
+
+The reply's queue id is `queue-webchat-20260927-0856-6612dde3`. Its `cursor` worker PID
+is `86236`, and the receipt recorded `screen_observed=true`.
+The journal contains both its initial queued row and its assigned running row.
+The production Web Bob dispatch client and a real scheduler subprocess carried
+the JSON receipt back before this reply returned. There were **0 chat-provider
+calls** and **1 scheduler-subprocess call**. Replaying the same request twice,
+including after chat restart, left exactly **4 requests and 4 executions** total
+(the three scheduler-proof jobs plus the one chat job).
+
+[Full proof](lane-integrate-evidence/proof.md) · [standalone run output](lane-integrate-evidence/proof-run.txt)
+
+## Boundaries and remaining limitations
+
+**PASS — local integration only.** No repository branch was pushed; no PR was
+opened; no `svc-webchat` restart or deployment was performed. The original
+`60680.svc-webchat` screen and `59555.svc-webchat-ready-r20` screen were unchanged
+across final validation. Temporary proof screens and worktrees were removed.
+See [boundary evidence](lane-integrate-evidence/boundaries.txt).
+
+The proofs use real queue writes, scheduler assignment, subprocess transport,
+screen workers, Git worktrees and heartbeat receipts. Provider availability and
+model responses use explicitly labeled fixture adapters; this does not claim
+live-provider quality, production rollout, or a completed production job. The
+proof performs no push at all. Inherited Git regression tests exercise pushes
+only against temporary local bare repositories; PR calls in those tests are mocked.
+Name-only lane start/stop tools remain logged requests; immediate verified start
+requires a durable queue id with `lane=auto`.
+---- WEBBOB-VERIFY5-0927.md ----
+start a job: write one sentence confirming you ran, into your answer. Include the exact phrase 'WEBBOB-VERIFY5-0927-d8f5a3e9 <worker>'.
+```
+
+Worker acceptance requires the requested confirmation as well as the queue/claim/completion/chat-identity checks. “Lifecycle/receipt” below isolates the explicit queue checks: the job exists, every claim names the requested worker, execution and successful finish are recorded, and the completed chat reply contains that same real job ID and worker. All five passed those checks. MiniMax fails the answer check; its API execution and routing are not in dispute.
+
+All claim times below are UTC on 2026-09-27. “Finish seconds” is `finished_at - created_at` from the queue, including waiting; “After claim” is `finished_at - claimed_at`.
+
+| Worker | Verdict | Job ID | Claim time (UTC) | Finish seconds | After claim (s) | Lifecycle/receipt |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| codex | **PASS** | `webchat-a0eee97f6aff5f8098916e3edcf7da1d` | 17:58:38.923 | 8.172 | 5.999 | PASS; exact `codex` claim |
+| claude | **PASS** | `webchat-2bbd4e4fd3195866abe41e1a758c6129` | 17:59:33.658 | 79.671 | 22.802 | PASS; exact `claude` claim |
+| gemini | **PASS** | `webchat-3b41c30c9a755e26beba0fca6abdb678` | 17:58:38.953 | 3.301 | 1.175 | PASS; exact `gemini` claim |
+| minimax | **FAIL** | `webchat-d54cc740a7765f8e9def8b7e47caa0b8` | 17:58:38.976 | 9.525 | 7.412 | PASS; exact `minimax` claim |
+| cursor | **PASS** | `webchat-99ce71e0b0d85fabb29ebf245431333b` | 17:58:38.997 | 11.703 | 9.608 | PASS; exact `cursor` claim |
+
+Each job had one attempt, a recorded worker PID and execution timestamp, exactly one completed chat result, a matching result SHA-256, matching `conductor/state/task-runs/<job-id>/RESULT.md`, and a durable delivery event. Claude waited 56.868 seconds before its claim; its worker then completed in 22.802 seconds.
+
+Queue evidence (one-based line numbers in [queue.jsonl](../state/queue.jsonl)):
+
+| Worker | Enqueued | Claimed | Executing | Succeeded | Delivered |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| codex | 695 | 700 | 708 | 714 | 715 |
+| claude | 696 | 720 | 722 | 725 | 726 |
+| gemini | 697 | 701 | 709 | 712 | 713 |
+| minimax | 698 | 702 | 710 | 716 | 717 |
+| cursor | 699 | 703 | 711 | 718 | 719 |
+
+The final chat reply for every worker begins `Job <its job ID> finished on <its worker>:` (with the ID rendered in backticks). Actual worker answer excerpts:
+
+| Worker | Returned answer |
+| --- | --- |
+| codex | I ran and confirm WEBBOB-VERIFY5-0927-d8f5a3e9 codex. |
+| claude | I ran successfully — WEBBOB-VERIFY5-0927-d8f5a3e9 claude. |
+| gemini | I ran the task. WEBBOB-VERIFY5-0927-d8f5a3e9 gemini |
+| minimax | “I cannot access or work with the Git worktree … or perform the described actions …” followed by generic offers of help and a “Verification phrase” containing the run marker. |
+| cursor | I ran the Web Bob verification task in the assigned worktree and include the exact phrase **WEBBOB-VERIFY5-0927-d8f5a3e9 cursor** in this confirmation. |
+
+MiniMax failure: the task asked only for a sentence in the answer. Its result instead refuses filesystem/worktree actions that were not requested. The dispatcher still recorded `status: succeeded`, and chat announced “finished on minimax.” The full refusal is preserved in the evidence JSON and the worker’s [RESULT.md](../state/task-runs/webchat-d54cc740a7765f8e9def8b7e47caa0b8/RESULT.md). This is an answer-acceptance failure despite passing all routing, lifecycle, and receipt checks.
+
+Provider status: **PASS**. Sent `What is the current chat provider status for codex, claude, gemini, minimax, and cursor?` in the test chat. The server replied at `2026-09-27T17:58:36+00:00`:
+
+> Chat provider health: codex=ready; claude=ready; cursor=ready; gemini=ready; minimax=ready.
+
+| Provider | Health file | Chat reply | `/api/lanes` | Verdict |
+| --- | --- | --- | --- | --- |
+| codex | ready | ready | ready | PASS |
+| claude | ready | ready | ready | PASS |
+| gemini | ready | ready | ready | PASS |
+| minimax | ready | ready | ready | PASS |
+| cursor | ready | ready | ready | PASS |
+
+Compared against `conductor/webchat/sessions/provider-health.json` read immediately before and after the status turn; the file entries were stable. Every provider had zero failures, no reason/cooldown, and a recorded last success. All persisted health fields also matched the authenticated `/api/lanes?conversation_id=<test-chat>` response. This verifies chat generation health; scheduler lane occupancy is a separate state.
+
+No-job queue claim: **PASS**. Before submitting any jobs, the first message in the empty new chat was exactly `did you queue it`. The answer began:
+
+> No, I didn't queue anything in this turn.
+
+There were zero queue rows for this conversation before and after that turn, no new job IDs anywhere in the queue during it, no task ID, and no queued action card. The reply did not falsely claim that a job was queued. Its additional statement “I can't directly queue jobs from this chat” is misleading capability wording, as the subsequent five dispatches demonstrate; it does not change the no-false-queue result.
+
+Complete raw requests, accepted receipts, completed chat messages, queue transition rows with line numbers, health snapshots, HTTP statuses, timing calculations, result-integrity checks, and service identity are saved in [WEBBOB-VERIFY5-0927.evidence.json](WEBBOB-VERIFY5-0927.evidence.json). No credentials or authentication tokens are included.
+---- WEBBOB-E2E-0927.md ----
+
+## Failover and history durability
+
+**17 live checks passed** on a temporary local server using the same chat/provider code and real credentials. Fault injection was scoped to test conversations; production drill routes remain disabled. Every successful fallback made an actual model call. [e2e-0927-isolated.json](/Users/jeffstory/Documents/bob-overnight-inject/worktrees/webbob-e2e-0927/webchat/evidence/e2e-0927-isolated.json).
+
+| Injected primary failure | Real answering provider |
+|---|---|
+| codex | cursor |
+| cursor | codex |
+| gemini | codex |
+| minimax | codex |
+| claude | codex |
+
+Additional failures of the entire preceding chain reached Gemini, MiniMax and Claude. All five failing saved a waiting turn; clearing the faults and retrying produced exactly one answer, with the original two-message conversation intact.
+
+The preexisting audit conversation `ce987867-6a68-4140-a314-364e373956b9` retained its 2 messages byte-for-byte across the final service restart. The previous cookie was invalidated, fresh HTTPS login succeeded, and saved conversations and completed lane answers were reread afterward. [e2e-0927-final-history.json](/Users/jeffstory/Documents/bob-overnight-inject/worktrees/webbob-e2e-0927/webchat/evidence/e2e-0927-final-history.json).
+
+## Commands, repository status and a real lane
+
+The mobile tests actually ran `uptime` on the mini and `git status --short --branch` in the configured conductor repository, with exit-zero receipts and provider `mini`. Shell operators, credential reads, arbitrary repository paths and Git mutations are refused. Larger jobs use the durable task dispatcher.
+
+Through the public chat API, `start lane gemini: E2E0927 read-only review…` created task `webchat-de836fc057e05162994c45ffdfa1afba` in conversation `0fd88d64-be56-4d25-b18d-4c1f43571736`. The real Gemini worker completed it in 1 attempt(s), and exactly one result appeared in that same chat. Repeating the HTTP request ID created no duplicate execution.
+
+- Claimed: 2026-09-27T15:54:56+00:00; execution: 2026-09-27T15:54:56+00:00; finished: 2026-09-27T15:54:58+00:00; delivered: 2026-09-27T15:54:58+00:00.
+- Result SHA-256: `514d96c2f7bf007a122457d5983c2c3aa224fb3790b247a6f0d83351227f483f`; draft branch: `draft/webchat-de836fc057e05162994c45ffdfa1afba`.
+- Receipt and actual answer: [e2e-0927-public-lane.json](/Users/jeffstory/Documents/bob-overnight-inject/worktrees/webbob-e2e-0927/webchat/evidence/e2e-0927-public-lane.json). No direct queue insertion or manual completion was used.
+
+## Defects repaired and regression coverage
+
+1. Added Claude to the full provider chain and all five primary choices; fixed exhausted fast-path timing that could skip or repeat providers. Claude receives prompts on stdin rather than process arguments.
+2. Added bounded, redacted mini-command and repository-status execution with real exit receipts, durable history and request deduplication. Unsupported commands are visibly refused.
+3. Fixed the Start job chip and council phrasing. Explicit lane requests reach the durable dispatcher. A read-only review saying “Do not change files” stays an analysis task.
+4. Integrated durable claims, lease recovery, lane selection, result delivery to the original chat and delivery deduplication. Legacy Web Bob queue rows cannot start a second execution. Fixed duplicate sidecar-field handling in the legacy scheduler.
+5. Corrected code imports that depended on the data checkout or test fixture. Launchers, API transport, dashboard modules and detached workers now load the selected release while reading the original data root. The web service has its own dispatcher; its lock coordinates with the job runner. Coding workers cannot modify the running release.
+6. Disabled production drills by default. A slow health probe no longer kills an existing service. The restart helper requires authenticated idle status and verifies the exact listener before stopping it.
+7. Added private exception-type auditing without logging exception text, prompts or credentials. Secrets, sessions, evidence and worker outputs are excluded from Git.
+
+Final offline gate: **274 passed** (170 webchat + 104 services). Python compilation, JavaScript syntax, launcher shell syntax and `git diff --check` passed. The gate hashes the code before and after tests and refuses a restart if files changed. [e2e-0927-test-gate.json](/Users/jeffstory/Documents/bob-overnight-inject/worktrees/webbob-e2e-0927/webchat/evidence/e2e-0927-test-gate.json), [e2e-0927-webchat-tests.txt](/Users/jeffstory/Documents/bob-overnight-inject/worktrees/webbob-e2e-0927/webchat/evidence/e2e-0927-webchat-tests.txt), [e2e-0927-services-tests.txt](/Users/jeffstory/Documents/bob-overnight-inject/worktrees/webbob-e2e-0927/webchat/evidence/e2e-0927-services-tests.txt).
+
+## Deployment interference, logs and secrets
+
+Independent workers switched/reset the shared checkout and replaced `svc-webchat` during this task. An early passing run therefore ceased to describe the live application. The tested work was recovered without dropping the stash or overwriting their changes and moved into the isolated release above. Interrupted public/browser runs returned 502 and were treated as failures, retained privately, and rerun after the final controlled deployment. They were not counted as passes.
+
+The automatic deployment loop also kept selecting older code. Its existing `~/STOP-WEBBOB` flag is now set to prevent new rounds. After waiting for the current round, its Cursor/MCP/tool processes and the overlapping integration worker were paused with SIGSTOP, without termination, to prevent further deployments. They retain their process state; their files and other workers were preserved. Twelve process identities were preserved in total; the audit worker had no matching live agent to pause. The flag and pauses are intentionally left in place to keep phone chat stable. Before resuming automatic deployments, carry these tested fixes into the improvement branch. Pause receipt: [e2e-0927-autopilot-pause.json](/Users/jeffstory/Documents/bob-overnight-inject/worktrees/webbob-e2e-0927/webchat/evidence/e2e-0927-autopilot-pause.json). A PID/start-time/command-verified resume helper is [resume-paused-improvement.py](/Users/jeffstory/Documents/bob-overnight-inject/worktrees/webbob-e2e-0927/webchat/evidence/resume-paused-improvement.py); use `--resume` only after coordinating the next deployment. It keeps the stop flag for later rounds.
+
+Final log audit: no runtime error/exception/traceback/failed/permission-error lines in active `logs/webchat-*.log`; no provider failure, all-down, request/reply/queue/dispatch error events since the final restart. Expected cancellation/refusal events are retained. [e2e-0927-logs.json](/Users/jeffstory/Documents/bob-overnight-inject/worktrees/webbob-e2e-0927/webchat/evidence/e2e-0927-logs.json).
+
+A public rerun selected MiniMax during an existing network cooldown and correctly received a useful Codex fallback. That run was not counted as a successful MiniMax primary check; the cooldown was allowed to expire before retrying. Receipt: [e2e-0927-public-cooldown-fallback.json](/Users/jeffstory/Documents/bob-overnight-inject/worktrees/webbob-e2e-0927/webchat/evidence/e2e-0927-public-cooldown-fallback.json).
+
+The failover audit retains historical events: {'live-drill': 33, 'production': 9}. These predate the final restart and are disclosed rather than erased. The separate earlier launchd permission-error log was preserved at `/Users/jeffstory/Documents/bob-overnight-inject/logs/archive/webchat-launchd-before-e2e-0927.log` (SHA-256 `6c58064737c4c14b281b1f6b610def83eeaa454a235866060d134ddb31e06781`); it contains 302 old error lines, followed by healthy checks. The active launchd log retained the subsequent healthy history.
+
+Known-secret scan: 814 Git-visible files checked against 3 actual secret values; zero matches. [e2e-0927-secret-scan.json](/Users/jeffstory/Documents/bob-overnight-inject/worktrees/webbob-e2e-0927/webchat/evidence/e2e-0927-secret-scan.json). Passwords, cookies, CSRF tokens and API keys are absent from this report and were not added to Git.
+
+No merge, push, force-push, undraft, external message, or remote PR action was performed by this E2E task.
+
+## Use from the phone
+
+Open the Tailscale URL and use the existing Web Bob password. Try `run command: uptime`, `repo status: conductor`, or `start lane gemini: review these notes…`. Settings selects the first provider; failures fall through the remaining chain. Saved conversations are available from the chat icon.
+
+Reproduction and release-start commands are in [/Users/jeffstory/Documents/bob-overnight-inject/worktrees/webbob-e2e-0927/webchat/README.md](/Users/jeffstory/Documents/bob-overnight-inject/worktrees/webbob-e2e-0927/webchat/README.md).
+---- WEBBOB-DISPATCH-0927.md ----
+3. **Claim → worker:** claims are atomic across processes, reserve one task per worker, carry a unique fencing token, and expire after 90 seconds. Workers hold the shared lane and task locks, renew leases every ten seconds, and persist actual execution start/PID. A duplicate launcher cannot invalidate the real owner. Lane contention releases the claim without spending an attempt. Expired or dead claims are recovered, with bounded retries and visible terminal failures. The expired-worker reaper verifies PID, task ID and claim token before stopping only its owned process tree.
+4. **Worker → execution:** both the webchat launcher and detached worker launcher source `conductor/keys.env` without logging values; the runner already reloaded it each cycle. Code jobs use private local clones with independent Git metadata, draft branches, no origin remote, and a rejecting push hook. Uncommitted code changes cannot count as success. The existing live-core write boundary remains enforced.
+5. **Execution → chat:** the final answer is saved in the fenced task record before the worker releases its lane. Web Bob writes a deterministic result-message ID into the originating conversation, then acknowledges delivery in the journal. A chat save or acknowledgement failure retries safely after restart. An in-flight ordinary chat reply cannot be overwritten by an asynchronous job result.
+6. **Live-discovered Codex break:** the first Codex job reached execution but failed to read a file because its inner sandbox could not initialize inside `sandbox-exec`. The initial task exhausted three bounded attempts and reported its failure in chat. Codex now uses the existing outer OS boundary; analysis denies writes to both the worktree and Git metadata. Real macOS tests prove file reads succeed and writes fail. The replacement Codex request read `services/command.py` and returned line-specific findings.
+7. **Deployment/recovery break:** maintenance initially prevented runner startup. Later, the bootstrap guard reported transient validation failures and restored the stale `last-good` (`d900498`), removing the dispatcher. Syntax checks of the affected files pass. The guard now serializes recovery, retries a failed validation, and refuses to roll back local changes. Preserved local edits were restored, and the tested local dispatch commit is installed as the new `last-good` recovery version before maintenance is cleared. This is a local recovery-tag update; no remote update or merge is involved.
+
+Execution is retried after an interrupted attempt; it is not a claim of exactly-once external side effects. Claim fencing and deterministic chat message IDs prevent a superseded worker or delivery retry from publishing duplicate terminal answers. Tasks stay local and draft-only.
+
+## Tests
+
+| File set | Command | Result |
+|---|---|---|
+| Shared tree before concurrent rewrites | `python3 -m unittest discover -s services -p 'test_*.py'` | 98 passed (2.017 s) |
+| Shared tree before concurrent rewrites | `python3 -m unittest discover -s webchat -p 'test_*.py'` | 166 passed (13.405 s) |
+| Isolated commit contents | `python3 -m unittest discover -s services -p 'test_*.py'` | 82 passed (2.159 s) |
+| Isolated commit contents | `python3 -m unittest discover -s webchat -p 'test_*.py'` | 124 passed (10.285 s) |
+
+`python3 bootstrap.py check`, Python compilation of the new queue/chat modules, and `bash -n` on the launchers pass. Regression coverage includes concurrent claims, torn writes, stale-token completion, real process death, hung-worker ownership checks, lane contention, lease renewal, idle refill, crash recovery before/after enqueue, original-chat delivery, save/ack failure deduplication, credential loading, no Grok, and the real macOS sandbox boundary.
+
+The isolated commit check excludes unrelated ongoing frontend and review changes. Small preexisting queue-parser/provider/card helpers required by the committed app and its existing tests are included so the dispatch commit is self-contained.
+
+## Live attempts and restart checks
+
+| Worker | Task | Outcome | Attempts | Chat timestamp |
+|---|---|---|---|---|
+| codex | `webchat-260071f0845f59359813ff1df7f5e351` | failed | 3 | 2026-09-27T14:57:29.138+00:00 |
+| gemini | `webchat-507705c0221650c1995512863cfb2807` | succeeded | 1 | 2026-09-27T14:56:06.322+00:00 |
+| minimax | `webchat-c0e540c8d9885245b307a6c9b758bd32` | succeeded | 1 | 2026-09-27T14:56:30.348+00:00 |
+| codex | `webchat-c970316bc444501d8ec69fe7bbaaea34` | succeeded | 1 | 2026-09-27T14:59:45.209+00:00 |
+| gemini | `webchat-24159ec0a957569cb19a656a81be2dae` | succeeded | 1 | 2026-09-27T15:00:50.079+00:00 |
+| minimax | `webchat-988ce808940f5f529a7da4242878f1e8` | succeeded | 1 | 2026-09-27T15:03:39.180+00:00 |
+| gemini | `webchat-04d526dcaaa857fd8958eb2d2749887b` | succeeded | 1 | 2026-09-27T15:25:37.746+00:00 |
+| codex | `webchat-c96d2c7fba4452dc8ad2cbb5fc65e875` | succeeded | 1 | 2026-09-27T15:26:49.507+00:00 |
+| gemini | `webchat-2acc32a044d75285b1261d348a2e00dc` | succeeded | 1 | 2026-09-27T15:27:27.713+00:00 |
+| minimax | `webchat-7cc70a31b3d6542b9899e5dd5a4876c2` | succeeded | 1 | 2026-09-27T15:29:09.015+00:00 |
+
+The initial Gemini/MiniMax tasks were real code/protocol critiques. Their model opinions are retained in chat as execution evidence, not treated as validation of correctness; deterministic tests validate those invariants. The later latency tasks returned checked arithmetic. The initial API preflight, before the affected processes were fully deployed, returned no task ID and is not counted as a successful dispatch. Task `webchat-04d526dcaaa857fd8958eb2d2749887b` was queued before the recovery/deployment maintenance window; its long wait is explicit in the journal. It was retained through maintenance and completed automatically when dispatch resumed. The three primary rows above are fresh tasks submitted after deployment activation.
+
+Only `svc-webchat` and `svc-job-runner` were restarted for this work. Each controlled restart recorded the other service screen identities and verified they were unchanged. Subsequent unrelated service activity is outside these restart operations.
+
+- 2026-09-27T14:55:50.496627+00:00: `svc-webchat`, `svc-job-runner`; other checked service identities unchanged: `True`.
+- 2026-09-27T14:59:18.414389+00:00: `svc-webchat`, `svc-job-runner`; other checked service identities unchanged: `True`.
+- 2026-09-27T15:00:21.094231+00:00: `svc-webchat`, `svc-job-runner`; other checked service identities unchanged: `True`.
+- 2026-09-27T15:09:09.080461+00:00: `svc-job-runner`; other checked service identities unchanged: `True`.
+- 2026-09-27T15:25:38.006313+00:00: `svc-webchat`, `svc-job-runner`; other checked service identities unchanged: `True`.
+- 2026-09-27T15:30:51.703449+00:00: `svc-webchat`, `svc-job-runner`; other checked service identities unchanged: `True`.
+- 2026-09-27T15:00:42.294+00:00: authenticated history recheck of 4 saved task results: all original answers present exactly once.
+- 2026-09-27T15:02:00.189+00:00: authenticated history recheck of 5 saved task results: all original answers present exactly once.
+- 2026-09-27T15:04:49.150+00:00: authenticated history recheck of 6 saved task results: all original answers present exactly once.
+- 2026-09-27T15:26:12.987+00:00: authenticated history recheck of 7 saved task results: all original answers present exactly once.
+- 2026-09-27T15:29:49.538+00:00: authenticated history recheck of 10 saved task results: all original answers present exactly once.
+- 2026-09-27T15:31:19.302+00:00: authenticated history recheck of 10 saved task results: all original answers present exactly once.
+
+## Reproduce and inspect locally
+
+`python3 webchat/live_dispatch_proof.py submit` sends three new real worker tasks through the authenticated chat API. `verify` checks saved message IDs and exact answer content; `refill` submits a fresh task after restart. The harness reads the password locally into memory and never prints credentials, cookies, CSRF values, or API keys.
+
+Deployment code and data roots plus source hashes are recorded in `state/dispatch-deployment-0927.json`. Private raw receipts: `state/dispatch-proof-0927.json`, `state/dispatch-restarts-0927.json`, `state/queue.jsonl`, and `state/task-runs/<task-id>/RESULT.md`. Model transport receipts are in `model-runs.jsonl` and the existing metering journals. Runtime receipts, task logs, sessions and credentials remain outside Git.
+
+The code is committed locally on the new draft branch in `../workspaces/webbob-dispatch-0927-service`. The two affected launchers read `state/dispatch-code-root` and execute that tested checkout using the existing queue, logs, credentials and chat sessions. This isolates service code from concurrent edits and branch switches in the shared checkout. The deployed checkout itself is protected by the worker sandbox. No merge, push, force-push, undraft, or remote PR operation was performed.
+=== ROLLBACK LIVE ===
+total 0
+drwxr-xr-x@   4 jeffstory  staff    128 Sep 27 16:06 .
+drwxr-xr-x@ 746 jeffstory  staff  23872 Sep 27 15:56 ..
+drwxr-xr-x@   4 jeffstory  staff    128 Sep 27 15:22 webchat-20260927-152243
+drwx------@   5 jeffstory  staff    160 Sep 27 16:06 webchat-20260927-160618
+rollback sha file:
+(eval):13: no matches found: /Users/jeffstory/Documents/bob-overnight-inject/rollbacks/webchat-20260927-160618/SHA*
+(eval):13: no matches found: /Users/jeffstory/Documents/bob-overnight-inject/rollbacks/webchat-20260927-160618/meta*
+deployed-code
+manifest.json
+redeploy.py
+=== CANDIDATE BRANCH TIPS ===
+draft/webbob-minimax-0927: 855be8b
+draft/webbob-texting-0927: 687923e
+draft/webbob-voice-0927: 8e2996c
+draft/webbob-media-0927: cfea813
+draft/webbob-dispatch-0927: 1f62705
+=== JOBS/UI PNGS ===
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/grokbot-ref-chatbar-0346.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/chat-desktop.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r14/iphone-14-settings-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r14/iphone-14-pro-max-lanes-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r14/iphone-14-pro-max-chat-modal.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r14/iphone-14-pro-max-chat.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r14/iphone-14-pro-max-settings-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r14/iphone-14-ops-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r14/iphone-14-pro-max-ops-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r14/iphone-14-chat-modal.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r14/iphone-14-pro-max-song-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r14/iphone-14-song-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r14/iphone-14-chat.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r14/iphone-14-lanes-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r13/iphone-14-settings-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r13/iphone-14-pro-max-lanes-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r13/iphone-14-pro-max-chat.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r13/iphone-14-pro-max-settings-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r13/iphone-14-ops-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r13/iphone-14-pro-max-ops-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r13/iphone-14-pro-max-song-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r13/iphone-14-song-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r13/iphone-14-chat.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r13/iphone-14-lanes-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r25/iphone-14-settings-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r25/iphone-14-pro-max-lanes-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r25/iphone-14-pro-max-chat.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r25/iphone-14-pro-max-settings-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r25/iphone-14-ops-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r25/iphone-14-pro-max-ops-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r25/iphone-14-pro-max-song-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r25/iphone-14-song-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r25/iphone-14-chat.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r25/iphone-14-lanes-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r22/iphone-14-settings-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r22/iphone-14-pro-max-lanes-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r22/iphone-14-pro-max-chat.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r22/iphone-14-pro-max-settings-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r22/iphone-14-ops-tab.png
+/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/evidence/iphone-r22/iphone-14-pro-max-ops-tab.png
+=== REDEPLOY LOG TAIL ===
++from app import Server
++from live_redeploy_check import CHECKS, CheckFailure, Client, verify_four
++from test_webchat import Fixture
++
++
++class ReleaseChecks(Fixture):
++    def setUp(self):
++        super().setUp()
++        self.server = Server(("127.0.0.1", 0), self.chat)
++        threading.Thread(target=self.server.serve_forever, daemon=True).start()
++        self.url = f"http://127.0.0.1:{self.server.server_port}"
++        self.client = Client(self.url, self.folder / ".password")
++        self.output = self.root / "result.json"
++
++    def tearDown(self):
++        self.server.shutdown()
++        self.server.server_close()
++        super().tearDown()
++
++    def verify(self):
++        with contextlib.redirect_stdout(io.StringIO()):
++            return verify_four(self.client, self.root, self.output)
++
++    def test_login_failure_marks_all_four_failed_and_writes_no_jobs(self):
++        password = self.folder / "wrong-password"
++        password.write_text("deliberately-invalid")
++        self.client.password_file = password
++        result = self.verify()
++        self.assertFalse(result["all_pass"])
++        self.assertEqual(set(result["checks"]), set(CHECKS))
++        for check in result["checks"].values():
++            self.assertFalse(check["pass_check"])
++            self.assertIn("HTTP 401", check["error"])
++        self.assertFalse((self.root / "conductor/state/queue.jsonl").exists())
++        self.assertNotIn("deliberately-invalid", self.output.read_text())
++
++    def test_authenticated_four_checks_use_real_http_and_durable_jobs(self):
++        result = self.verify()
++        self.assertTrue(result["all_pass"], json.dumps(result))
++        self.assertFalse(self.fake.calls)
++        self.assertNotIn(self.chat.password, self.output.read_text())
++        self.assertEqual(len(result["checks"]["push2"]["jobs"]), 2)
++
++    def test_go_http_error_cannot_be_mistaken_for_cleared_hold(self):
++        original = self.client.call
++        def expired_session(route, data=None):
++            if data and data.get("message") == "go":
++                raise CheckFailure("HTTP 401 at /api/messages")
++            return original(route, data)
++        with patch.object(self.client, "call", side_effect=expired_session):
++            result = self.verify()
++        self.assertFalse(result["all_pass"])
++        self.assertFalse(result["checks"]["go"]["pass_check"])
++        self.assertEqual(result["checks"]["go"]["error"], "HTTP 401 at /api/messages")
++        self.assertTrue(all(result["checks"][name]["pass_check"] for name in CHECKS if name != "go"))
+diff --git a/wt-webbob-redeploy-0927/webchat/test_reply_authority.py b/wt-webbob-redeploy-0927/webchat/test_reply_authority.py
+index 26b5b3a6b920dd9dad565b5b0439ea8763940024..60cf821b92ce7931bcbe5afa3e54992cfc66c881
+--- a/wt-webbob-redeploy-0927/webchat/test_reply_authority.py
++++ b/wt-webbob-redeploy-0927/webchat/test_reply_authority.py
+@@ -70,7 +70,7 @@
+             root = Path(folder)
+             (root / "conductor").mkdir()
+             (root / "conductor/jobs.jsonl").write_text('{"job_id":"shelf-load-1659","state":"harvested"}\n')
+-            for text in ("Ok great is it moving along now?", "Is anything running?", "Are things making progress?", "What's running?",
++            for text in ("is it going now?", "Ok great is it moving along now?", "Is anything running?", "Are things making progress?", "What's running?",
+                          "Status without internal IDs or raw diagnostics, please"):
+                 with self.subTest(text=text):
+                     answer = enforce(root, text, dict(provider="gemini", content=
+
+tokens used
+156,212
+Redeploy failed final verification and was rolled back to `webchat-20260927-160618`. Webchat is healthy.
+
+- `claude161` failed: Claude exited; Gemini fallback couldn’t access the PR.
+- Browser verification also caught old UI assets being served.
+- 352 Python tests passed. Fixes, clean tip, and MiniMax are in `7c9ed94`, [draft PR #10](https://github.com/rupret007/bob-brain/pull/10).
+
+Only webchat and job-runner were restarted. No ready-to-test file was written.
+
+[Exact failure report](/Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/WEBBOB-REDEPLOY-FAIL-0927.md)
+=== SIGSTOP leftover? ===
+  PID STAT COMMAND
+=== BUILD SHA LIVE ENDPOINT (if any) ===
+{"error": "Not found."}
+/bin/zsh -c builtin export PATH="/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"; snap=$(command cat <&3); builtin unsetopt aliases 2>/dev/null; builtin unalias -m '*' 2>/dev/null || true; builtin eval "$snap" && { builtin unsetopt nounset 2>/dev/null || true; builtin eval "${__CURSOR_SANDBOX_ENV_RESTORE:-}" 2>/dev/null; builtin export PWD="$(builtin pwd)"; builtin setopt aliases 2>/dev/null; builtin eval "$1" < /dev/null; }; COMMAND_EXIT_CODE=$?; dump_zsh_state >&4; builtin exit $COMMAND_EXIT_CODE -- cd /Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat && BOB_PLAYWRIGHT_MODULE=./node_modules/playwright node capture_iphone.cjs 2>&1
+/bin/zsh -c builtin export PATH="/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"; snap=$(command cat <&3); builtin unsetopt aliases 2>/dev/null; builtin unalias -m '*' 2>/dev/null || true; builtin eval "$snap" && { builtin unsetopt nounset 2>/dev/null || true; builtin eval "${__CURSOR_SANDBOX_ENV_RESTORE:-}" 2>/dev/null; builtin export PWD="$(builtin pwd)"; builtin setopt aliases 2>/dev/null; builtin eval "$1" < /dev/null; }; COMMAND_EXIT_CODE=$?; dump_zsh_state >&4; builtin exit $COMMAND_EXIT_CODE -- cd /Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat && BOB_PLAYWRIGHT_MODULE=./node_modules/playwright node capture_iphone.cjs 2>&1
+/bin/zsh -c builtin export PATH="/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"; snap=$(command cat <&3); builtin unsetopt aliases 2>/dev/null; builtin unalias -m '*' 2>/dev/null || true; builtin eval "$snap" && { builtin unsetopt nounset 2>/dev/null || true; builtin eval "${__CURSOR_SANDBOX_ENV_RESTORE:-}" 2>/dev/null; builtin export PWD="$(builtin pwd)"; builtin setopt aliases 2>/dev/null; builtin eval "$1" < /dev/null; }; COMMAND_EXIT_CODE=$?; dump_zsh_state >&4; builtin exit $COMMAND_EXIT_CODE -- cd /Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat && BOB_PLAYWRIGHT_MODULE=./node_modules/playwright node capture_iphone.cjs 2>&1
+/bin/zsh -c builtin export PATH="/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"; snap=$(command cat <&3); builtin unsetopt aliases 2>/dev/null; builtin unalias -m '*' 2>/dev/null || true; builtin eval "$snap" && { builtin unsetopt nounset 2>/dev/null || true; builtin eval "${__CURSOR_SANDBOX_ENV_RESTORE:-}" 2>/dev/null; builtin export PWD="$(builtin pwd)"; builtin setopt aliases 2>/dev/null; builtin eval "$1" < /dev/null; }; COMMAND_EXIT_CODE=$?; dump_zsh_state >&4; builtin exit $COMMAND_EXIT_CODE -- cd /Users/jeffstory/Documents/bob-overnight-inject && WEBCHAT_IPHONE_EVIDENCE=iphone-r20 node conductor/webchat/capture_iphone.cjs
+node conductor/webchat/capture_iphone.cjs
+KICKED_DEPLOY_SCREEN

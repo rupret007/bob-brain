@@ -134,9 +134,10 @@ def load_live_ops(root: Path, *, max_age: float = LIVE_OPS_MAX_AGE) -> dict:
 
 
 def enrich_live_ops(live_ops: dict, root: Path | None = None) -> dict:
-    """Plain-English display fields + dashboard_plain for Jobs (phone)."""
-    services = Path(__file__).resolve().parent.parent / "services"
-    if str(services) not in sys.path:
+    """Plain-English display fields for Jobs dashboard (phone)."""
+    # Code comes from the installed app, even when data uses a fixture root.
+    services = Path(__file__).resolve().parents[1] / "services"
+    if services.is_dir() and str(services) not in sys.path:
         sys.path.insert(0, str(services))
     import live_dashboard
 

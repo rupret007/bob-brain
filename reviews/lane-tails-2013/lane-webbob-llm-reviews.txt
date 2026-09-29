@@ -1,0 +1,83 @@
+=== lane-webbob-llm-reviews @ 2026-09-27 20:19:51 CDT ===
+-rw-r--r--@ 1 jeffstory  staff  4635 Sep 27 20:18 /Users/jeffstory/Documents/bob-overnight-inject/logs/webbob-llm-reviews-1726.log
+--- tail ---
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+error: could not fetch bob-brain
+git@github.com: Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+error: could not fetch bob-brain
+git@github.com: Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+error: could not fetch bob-brain
+git@github.com: Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+error: could not fetch bob-brain
+git@github.com: Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+error: could not fetch bob-brain
+Sun Sep 27 18:46:20 2026 GEMINI brain/draft/webbob-gaps-1725 9242839 ok
+Sun Sep 27 18:47:18 2026 GEMINI draft/webbob-gaps-1725 9242839 ok
+Sun Sep 27 18:48:27 2026 MINIMAX draft/webbob-media-0927 a46d68c ok
+git@github.com: Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+error: could not fetch bob-brain
+Sun Sep 27 18:59:46 2026 MINIMAX brain/draft/webbob-texting-0927 78fa870 ok
+Sun Sep 27 19:02:18 2026 MINIMAX draft/webbob-texting-0927 78fa870 ok
+git@github.com: Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+error: could not fetch bob-brain
+git@github.com: Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+error: could not fetch bob-brain
+git@github.com: Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+error: could not fetch bob-brain
+git@github.com: Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+error: could not fetch bob-brain
+git@github.com: Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+error: could not fetch bob-brain
+git@github.com: Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+error: could not fetch bob-brain
+Sun Sep 27 20:14:08 2026 MINIMAX bob-brain/draft/webbob-evals-1724 659428e ok
+Sun Sep 27 20:14:59 2026 GEMINI bob-brain/draft/webbob-gaps-1725 9242839 ok
+Sun Sep 27 20:17:53 2026 MINIMAX bob-brain/draft/webbob-media-0927 7c6a6cb ok
+Sun Sep 27 20:18:55 2026 MINIMAX bob-brain/draft/webbob-replies-1720 dff84e3 ok

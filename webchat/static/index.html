@@ -34,24 +34,27 @@
     <section id="view-chat" class="main-view active" data-view="chat">
       <main id="messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions text"></main>
       <div id="notice" class="notice" role="status"></div>
-      <div class="quick-chips" id="quick-chips" role="toolbar" aria-label="Quick actions">
-        <button type="button" class="chip" data-chip="status">Status</button>
-        <button type="button" class="chip" data-chip="round">Start round</button>
-        <button type="button" class="chip" data-chip="council">Ask council</button>
-        <button type="button" class="chip" data-chip="song">New song</button>
+      <div class="quick-chips-row">
+        <div class="quick-chips" id="quick-chips" role="toolbar" aria-label="Quick actions">
+          <button type="button" class="chip" data-chip="status">Status</button>
+          <button type="button" class="chip" data-chip="round">Start round</button>
+          <button type="button" class="chip" data-chip="council">Ask council</button>
+          <button type="button" class="chip" data-chip="song">New song</button>
+        </div>
+        <button type="button" id="toggle-chips" class="quiet chips-toggle" aria-expanded="true" aria-controls="quick-chips">Less</button>
       </div>
       <form id="composer" class="composer">
         <label class="sr-only" for="message">Message Bob</label>
         <button type="button" id="attach-plus" class="composer-plus quiet icon-btn" aria-label="Attach file" title="Attach (coming soon)" disabled>+</button>
         <div class="composer-pill">
-          <button type="button" id="mic" class="composer-mic quiet icon-btn" aria-label="Voice input" title="Voice input">🎤</button>
-          <textarea id="message" name="message" placeholder="Ask Bob…" rows="1" maxlength="6000" required enterkeyhint="send"></textarea>
+          <button type="button" id="mic" class="composer-mic quiet icon-btn" aria-label="Voice input" title="Tap to dictate · hold for voice clip">🎤</button>
+          <textarea id="message" name="message" placeholder="Ask Bob the Bot" rows="1" maxlength="6000" required enterkeyhint="send"></textarea>
+          <button type="button" id="live-call" class="call-btn call-in-pill" aria-label="Live voice call" title="Live call">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 10v4h2l3 3V7L6 10H4zm12.5 2c0-1.77-1.02-3.29-2.5-4.03v8.06c1.48-.74 2.5-2.26 2.5-4.03zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+          </button>
         </div>
         <button type="button" id="speak" class="quiet icon-btn composer-speak" aria-label="Read last reply aloud" title="Read aloud">🔊</button>
-        <button type="button" id="live-call" class="call-btn" aria-label="Live voice call" title="Live call">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 10v4h2l3 3V7L6 10H4zm12.5 2c0-1.77-1.02-3.29-2.5-4.03v8.06c1.48-.74 2.5-2.26 2.5-4.03zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
-        </button>
-        <button type="button" id="stop" hidden>Stop</button>
+        <button type="button" id="stop" class="stop-reply quiet" hidden>Stop</button>
         <button type="submit" id="send" class="primary send-btn" aria-label="Send">↑</button>
       </form>
     </section>
@@ -88,7 +91,10 @@
 
     <section id="view-lanes" class="main-view" data-view="lanes" hidden>
       <div class="view-scroll">
-        <h2 class="view-title">Models</h2>
+        <div class="view-title-row">
+          <h2 class="view-title">Models</h2>
+          <button type="button" id="refresh-dashboard" class="refresh-dash" aria-label="Refresh live dashboard">Refresh</button>
+        </div>
         <p id="lanes-summary" class="view-lead muted"></p>
         <div id="ops-detail" class="ops-detail" aria-label="Live dashboard detail" hidden></div>
         <div id="scores-table" class="scores-grid" aria-label="Latest Web Bob scores"></div>
@@ -146,6 +152,8 @@
         <div class="settings-group">
           <h3 class="settings-group-title">Self-improve</h3>
           <p id="self-improve-status" class="muted">Checking…</p>
+          <p id="self-improve-next" class="view-hint muted" hidden></p>
+          <button type="button" id="copy-bootstrap" class="quiet" hidden>Copy install command</button>
         </div>
         <div class="settings-group">
           <h3 class="settings-group-title">What’s new</h3>
@@ -157,7 +165,8 @@
             <li><strong>Chat</strong> — talk to Bob; quick chips for status, rounds, council, songs.</li>
             <li><strong>Jobs</strong> — live work on the mini (not old handback text).</li>
             <li><strong>Songs</strong> — lyrics notebook, local sketch demo, audio upload.</li>
-            <li><strong>Models</strong> — who’s busy, spend meters, latest scores.</li>
+            <li><strong>Models</strong> — who’s busy, spend meters, latest scores; tap Refresh for a fresh snapshot.</li>
+            <li><strong>Settings</strong> — who answers, voice, verified READY ship, install self-improve on the mini.</li>
           </ul>
         </div>
         <p class="view-hint muted">Drafts stay drafts. Confirm before merge, send, or spend.</p>

@@ -6,91 +6,100 @@
       "conversation": 0,
       "text": "Reply with exactly: drill A1",
       "status": "done",
-      "provider": "state",
-      "elapsed_seconds": 0.206,
+      "provider": "gemini",
+      "elapsed_seconds": 1.514,
       "busy_in_attempts": false
     },
     {
       "conversation": 1,
       "text": "Reply with exactly: drill B1",
       "status": "done",
-      "provider": "state",
-      "elapsed_seconds": 0.209,
+      "provider": "gemini",
+      "elapsed_seconds": 1.171,
       "busy_in_attempts": false
     },
     {
       "conversation": 0,
       "text": "Reply with exactly: drill A2",
       "status": "done",
-      "provider": "state",
-      "elapsed_seconds": 0.236,
+      "provider": "gemini",
+      "elapsed_seconds": 1.77,
       "busy_in_attempts": false
     },
     {
       "conversation": 1,
       "text": "Reply with exactly: drill B2",
       "status": "done",
-      "provider": "state",
-      "elapsed_seconds": 0.207,
+      "provider": "gemini",
+      "elapsed_seconds": 1.154,
       "busy_in_attempts": false
     },
     {
       "conversation": 0,
       "text": "Reply with exactly: drill A3",
       "status": "done",
-      "provider": "state",
-      "elapsed_seconds": 0.22,
+      "provider": "gemini",
+      "elapsed_seconds": 1.221,
       "busy_in_attempts": false
     },
     {
       "conversation": 1,
       "text": "Reply with exactly: drill B3",
       "status": "done",
-      "provider": "state",
-      "elapsed_seconds": 0.211,
+      "provider": "gemini",
+      "elapsed_seconds": 0.944,
       "busy_in_attempts": false
     },
     {
       "conversation": 0,
       "text": "Reply with exactly: drill A4",
       "status": "done",
-      "provider": "state",
-      "elapsed_seconds": 0.209,
+      "provider": "gemini",
+      "elapsed_seconds": 1.63,
       "busy_in_attempts": false
     },
     {
       "conversation": 1,
       "text": "Reply with exactly: drill B4",
       "status": "done",
-      "provider": "state",
-      "elapsed_seconds": 0.218,
+      "provider": "gemini",
+      "elapsed_seconds": 1.181,
       "busy_in_attempts": false
     },
     {
       "conversation": 0,
       "text": "Reply with exactly: drill A5",
       "status": "done",
-      "provider": "state",
-      "elapsed_seconds": 0.21,
+      "provider": "gemini",
+      "elapsed_seconds": 1.183,
       "busy_in_attempts": false
     },
     {
       "conversation": 1,
       "text": "Reply with exactly: drill B5",
       "status": "done",
-      "provider": "state",
-      "elapsed_seconds": 0.219,
+      "provider": "gemini",
+      "elapsed_seconds": 1.146,
       "busy_in_attempts": false
     }
   ],
-  "started_at": 1790522002.823138,
+  "started_at": 1790529808.170982,
   "locks": [
-    "codex: drill holds background lock",
-    "cursor: drill holds background lock",
-    "gemini: drill holds background lock",
-    "minimax: drill holds background lock"
+    "codex: background job holds lock",
+    "cursor: background job holds lock",
+    "gemini: background job holds lock",
+    "minimax: background job holds lock"
   ],
-  "p50_seconds": 0.21,
-  "finished_at": 1790522004.9677398,
+  "p50_seconds": 1.182,
+  "via_tsnet": true,
+  "merge_refusal": {
+    "ok": true,
+    "request": "merge #158",
+    "state": "refused",
+    "executable": false,
+    "duplicate_messages": 2,
+    "idempotent_refusal": true
+  },
+  "finished_at": 1790529821.1744142,
   "result": "PASS"
 }

@@ -1,0 +1,5 @@
+MiniMax's regression-test assignment could return architecture notes and search commands without the requested drafts, causing live deployment attempt 3 to roll back. Workers now receive a shared completion contract, missing drafts or unblock steps fail before publication, and semantic acceptance still checks the substance. Relevant source files and existing tests receive priority within API evidence snapshots.
+
+The captured 1035 failure is covered alongside the previous casual-status and incomplete-verification regressions. Release validation on `6670444bd932409b39044c65d651ae4715f2218f`: 389 webchat/API tests, 148 services tests, 103/103 parity checks, texting browser smoke, and four deployment guards. Fresh Gemini and MiniMax release receipts are in `conductor/reviews/TEXTING-LIVE-1107.md`.
+
+This draft supersedes merged draft #21 for the texting completion fix. Deployment remains limited to texting and requires BOTH_PASS plus complete live replay, including the exact 1035 MiniMax task. A fresh rollback restores and verifies `a777736` on any failure. Gaps, media, Instinct, voice and UI remain held until texting LIVE_PASS.

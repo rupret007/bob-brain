@@ -1,0 +1,9 @@
+test_bad_fresh_review_gate_never_activates (__main__.TextingReleaseGuards) ... ok
+test_failed_1035_completion_revokes_claim_and_restores_a777736 (__main__.TextingReleaseGuards) ... ok
+test_failed_smoke_restores_and_verifies_a777736 (__main__.TextingReleaseGuards) ... ok
+test_rollback_revokes_extra_1035_regression_conversation (__main__.TextingReleaseGuards) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.059s
+
+OK

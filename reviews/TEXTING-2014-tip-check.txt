@@ -1,0 +1,9 @@
+Branch: draft/webbob-texting-0927
+Local HEAD: 97513468016488ebe42ca1919e507db99fc0a15f
+Remote brain/draft/webbob-texting-0927: 97513468016488ebe42ca1919e507db99fc0a15f
+Regular push: PASS
+Validated source hashes still match: 169/169
+Committed/validated match: webchat/texting.py 91ee6c366ef8f5cd43d8946cf9dd4d0636a9a038a7047ddc517e0f7a31dac2bf
+Committed/validated match: webchat/test_texting.py 22a4f13e35eb02275d2e8430d3f1c4d4406dc0630db0100152f7eafacc7eb922
+Committed/validated match: webchat/test_texting_e2e.py a30042670eef37c37b3330e9d3327ee606600fea3c85983d4cbe33afa438ca63
+Committed/validated match: webchat/texting_fixture.py a30613a30a1b4c653c65db38ac4222a942338d2b3ddc0d5cbfa3121bd3c2e22a

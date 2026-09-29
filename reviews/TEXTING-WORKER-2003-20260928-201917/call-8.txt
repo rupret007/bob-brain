@@ -1,0 +1,6 @@
+```json
+{
+ "accepted": true,
+ "reason": "The worker has provided two regression test drafts, one for a failure case and one for a successful control, targeting `services/result_acceptance.py::check_completion_json`. The drafts correctly specify `Target`, `Setup`, `Action`, and `Expected` fields with concrete values. The `Action plan` section is also present with `Change`, `Validation`, and `Exit condition` fields, and the completion JSON and Findings/limits section are included as required. The worker correctly identifies that the targeted behavior is already covered by existing tests and proposes validating that coverage."
+}
+```

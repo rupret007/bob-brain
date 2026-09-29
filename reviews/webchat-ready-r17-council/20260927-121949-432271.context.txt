@@ -1,0 +1,189 @@
+### FILE conductor/reviews/WEBCHAT-READY-R17-DESIGN.md
+# Web Bob Round 17 — design note (research-first, on R38 baseline)
+
+**Date:** 2026-09-27 CT · **Branch:** `draft/webchat-failover-20260927` · **Baseline:** R38 `faec74b` · **No Grok.**
+
+## Research pass
+
+| Source | Borrow | Reject | Why |
+|--------|--------|--------|-----|
+| [LangGraph handoff patterns](https://langchain-ai.github.io/langgraph/concepts/multi_agent/) | Isolated drill fixtures + append-only handback ledger | Shared mutable chat state across agents | Zero lost context; `prod_unchanged` gate |
+| [web.dev readable typography](https://web.dev/articles/accessible-tap-targets) | Italic/emphasis in assistant markdown; 44pt chips unchanged | Raw `**` in Jobs tab | Enhancement 1 — mobile formatting |
+| R38 scorecard (lowest **9.98**) | Wire `parse_ready_round` in server submit path; chip uses READY phrase | Generic `start a job: ready round` string | Conductor parity + Enhancement 2 |
+| Jeff 02:00 music | Plagal (amen) IV→I coach ($0) | MiniMax music API (410) | Music row without spend |
+| ADDED 02:03 dashboard | Full pipeline table in RESULT; inherit `gap_to_nine` + headroom | Second score writer | Single `enrich_live_ops_bundle` path |
+| ALIGNMENT-DESIGN.md | `events.jsonl` + BOB-CATCHUP on wake | Bob polling | Bob usage cap to ~10/2 |
+
+## R17 build focus (lowest R38 scores first)
+
+1. **Failover (TOP):** handback drill ×2 (`r17-1`, `r17-2`), `prod_unchanged: true`, reverse + `events_ok`.
+2. **Conductor parity (9.98):** `parse_ready_round` → default READY goal confirm card (same as Start round chip).
+3. **Enhancement 1 (9.98):** `_italic_` / `*em*` in `renderMarkdown` for assistant bubbles.
+4. **Enhancement 2 (9.98):** ready-round + do-more paths tested end-to-end in `test_webchat.py`.
+5. **Music (9.99):** plagal cadence coach ($0).
+6. **Dashboard (02:03):** document full live ops pipeline in RESULT; `e2e_live.py --isolated`.
+
+## Council
+
+Gemini + MiniMax + Claude via `conductor/services/council.py`; disagreements resolved by council vote; no Grok.
+
+
+### FILE conductor/reviews/webchat-ready-r17-council-context.md
+# Round 17 council context (Cursor lane)
+
+**Branch:** `draft/webchat-failover-20260927`  
+**Design:** `conductor/reviews/WEBCHAT-READY-R17-DESIGN.md`  
+**Baseline:** R38 `faec74b` per `WEBCHAT-READY-R38-RESULT.md`
+
+## Delta (code)
+
+1. **Conductor parity:** `parse_ready_round` wired in `app.py` submit path; Start round chip uses READY phrase → `DEFAULT_READY_ROUND_GOAL` confirm card.
+2. **Enhancement 1:** `_italic_` / `*em*` in `renderMarkdown` (assistant bubbles).
+3. **Failover:** `ORDER` excludes automatic Claude (last-resort only when `preferred_provider=claude`); matches RULES + `test_failover.py`.
+4. **Music ($0):** plagal (amen) IV→I coach in `music_notebook.py`.
+5. **Inherited:** R38 dashboard `gap_to_nine`, handback isolated drills, voice `.call-you` contrast, 58-case parity eval.
+
+## Gates to vote on
+
+- `python3 conductor/webchat/test_webchat.py` (97)
+- `python3 conductor/webchat/test_failover.py` (24)
+- `python3 conductor/services/test_services.py` (66)
+- `python3 conductor/webchat/bob_parity_eval.py` (58/58)
+- `WEBCHAT_HANDBACK_TAG=r17` handback drill ×2
+- `live_ready_drill.py` ts.net
+- `BOB_WEBCHAT_DRILLS=1 python3 conductor/webchat/e2e_live.py --isolated`
+- `WEBCHAT_IPHONE_EVIDENCE=iphone-r17` capture
+
+No Grok. Draft only.
+
+
+### FILE conductor/reviews/WEBCHAT-READY-R38-RESULT.md
+# Web Bob READY-FOR-PHONE — Round 38 result (Cursor lane, on R36/R37)
+
+**Branch:** `draft/webchat-failover-20260927`  
+**R36 final (baseline):** `848a40a` · **Pre-R38 HEAD:** `b91991b`  
+**Design:** `conductor/reviews/WEBCHAT-READY-R38-DESIGN.md` + `conductor/reviews/ALIGNMENT-DESIGN.md`  
+**Council (no Grok):** `conductor/reviews/webchat-ready-r38-council/20260927-104650-337840.md`  
+**Vote:** Codex **defer → ship draft RESULT after gates**; Gemini/MiniMax **ship after PASS/FAIL table**; Claude short critique aligned. Disagreements resolved by **council vote → ship draft after measured gates** (this file). Cursor synthesizer: ship when core rows PASS.  
+**Server:** restarted (`lsof -ti :8787 | xargs kill`, `BOB_WEBCHAT_DRILLS=1` for handback proof then `bash conductor/webchat/start.sh`); `.public-origin` unchanged (`jeffs-mac-mini.tail758ab4.ts.net`).
+
+## Changelog (time-to-value on phone)
+
+**Failover (TOP):** handback **×2** (`r38-1`, `r38-2`), `prod_unchanged: true`, `events_ok` both rounds (2 prod-race retries on round 1). **Jobs dashboard:** **Weakest score** row shows **gap to 9** plus headroom to 10 (matches Settings). **Voice:** live call transcript distinguishes Jeff (`.call-you`) vs Bob lines. **Music:** half-cadence / Phrygian-half coach ($0; no MiniMax music API). **E2E:** `e2e_live.py --isolated` PASS with drill-mode provider pinning + failover order fixes. **Parity:** **25/25** eval — Web Bob **beats** Bob.
+
+## Scorecard (0–10)
+
+| Area | R36 (measured) | R38 (measured) |
+|------|----------------|----------------|
+| Reliability | 9.97 | **9.98** · 96 + 24 + 66 tests OK |
+| Speed | 9.97 | **9.97** · p50 **1.091s** (`ready-drill.json`, ts.net) |
+| Mobile UX | 9.99 | **9.99** · weakest row gap-to-9 on Jobs |
+| **iPhone design** | 9.98 | **9.98** · `evidence/iphone-r38/` 390×844 **0.764** / 430×932 **0.784** |
+| Failover | 9.99 | **9.99** · handback **×2** (`r38-1`, `r38-2`); `isolated: true` |
+| Safety | 9.97 | **9.97** · merge refusal + drill API gated off prod |
+| Bob parity | 9.99 | **9.99** · **25/25** `bob_parity_eval.py` (Web Bob **beats** Bob) |
+| Handoff both ways | 9.99 | **9.99** · ledger + reverse; `prod_unchanged: true` |
+| Architecture | 9.99 | **9.99** · drill routing isolated from prod submit surface |
+| Self-improve loop | 9.98 | **9.99** · dashboard weakest shows gap-to-9 + headroom |
+| Music (core use case) | 9.99 | **9.99** · half-cadence coach ($0) |
+| Conductor parity | 9.98 | **9.98** · `e2e_live` + drill overlay contract restored |
+| Enhancement 1 — mobile formatting | 9.98 | **9.98** · inherited |
+| Enhancement 2 — run jobs from chat | 9.98 | **9.98** · inherited |
+| Enhancement 3 — status panel | 9.99 | **9.99** · detailed live dashboard (below) |
+| Enhancement 4 — voice | 9.98 | **9.99** · call transcript speaker contrast |
+| Enhancement 5 — Bob parity | 9.99 | **9.99** · 25-task eval |
+
+**Web Bob vs Bob:** **beat** on 25-task eval; bidirectional handback drills with zero prod fingerprint change on successful run.
+
+## Detailed live dashboard (ADDED 02:03)
+
+**Pipeline:** `build_live_ops` → `enrich_live_ops_bundle(root)` (`conductor/services/live_dashboard.py`) → Web Bob `GET /api/panel` → `public_live_ops()` (redacted) → GitHub Pages `agents-status.json`.
+
+| Field | Meaning | R38 delta |
+|--------|---------|-----------|
+| `dashboard_plain[]` | Up to **18** plain rows on Jobs tab | **Weakest score** value includes **`· {gap_to_nine} to 9`** when below 9, then **`· {headroom_to_10} to 10`** |
+| `scores_weakest` / `scores_weakest_focus` | Lowest READY row + gap/headroom | Focus merged in enrich + self-improve API |
+| `running_jobs[]` | `plain_now`, last **3** log lines, elapsed, round, `last_commit` (sha+message), stall | inherited |
+| `roles.building` / `roles.reviewing` | Lane board | inherited |
+| `minimax_spend` | vs **$59** cap | inherited |
+| `ops_snapshot_freshness_unknown` | Missing `generated_at` → Unknown row | inherited |
+| `queue_ready_count` / `queued_jobs[]` | Scheduler backlog | inherited |
+| `self_improve_plain` | Nightly loop one-liner on grid | inherited |
+| **UI** | `#jobs-dashboard-plain`, Models **Refresh** → `POST /api/panel/refresh` | inherited R36 |
+
+## Architecture review (R38 delta)
+
+- **Drill vs prod:** `submit()` accepts explicit `ORDER` providers only when `BOB_WEBCHAT_DRILLS=1`; `route_order` pins primary for provider proof, full failover when `force_fail` injects faults.
+- **Failover:** isolated fixtures; live overlay requires drills header (`start.sh` with `BOB_WEBCHAT_DRILLS=1` for proof).
+- **Dashboard:** single `enrich_live_ops_bundle` writer; gap-to-9 mirrors Settings copy.
+
+**Top 5 structural fixes (ranked)**
+
+1. **Streaming STT/TTS for live call** (L)  
+2. **Web push on blockers** (M)  
+3. **P0 full tool layer / queue.jsonl writer** (L) — 04:18  
+4. **Handback vs autopilot ledger race** (S) — `prod_race_retries` observed on r38-1  
+5. **Cheap-first routing under real provider load** (M) — watch ts.net p50
+
+## Research-first (sources)
+
+`WEBCHAT-READY-R38-DESIGN.md` — R36 baseline; web.dev contrast; Apple HIG 44pt; Jeff 02:00 music constraints; council `20260927-104650-337840.md`.
+
+## PASS/FAIL
+
+| Check | Result | Evidence |
+|--------|--------|----------|
+| Unit tests | **PASS** | `python3 conductor/webchat/test_webchat.py` — 96 OK |
+| Failover tests | **PASS** | `python3 conductor/webchat/test_failover.py` — 24 OK |
+| Services tests | **PASS** | `python3 conductor/services/test_services.py` — 66 OK |
+| 25-task Bob parity eval | **PASS** | 25/25 · `webchat/evidence/bob-parity-eval.json` |
+| 10-message drill | **PASS** | p50 1.091s · `ready-drill.json` |
+| **Handback drill ×2** | **PASS** | `WEBCHAT_HANDBACK_TAG=r38`; `handback-drill.json` `prod_unchanged: true` |
+| **`e2e_live.py --isolated`** | **PASS** | `webchat/evidence/e2e-live-r38.json` |
+| Quiet hours JS | **PASS** | `node conductor/webchat/test_quiet_hours_js.mjs` |
+| Council (Gemini+MiniMax+Claude+Codex+Cursor) | **PASS** | defer → **ship draft after gates** (this file) |
+| iPhone screenshots | **PASS** | `webchat/evidence/iphone-r38/layout-metrics` via capture JSON |
+| Server restart | **PASS** | `127.0.0.1:8787` |
+
+## Commands run
+
+```bash
+python3 conductor/webchat/test_webchat.py
+python3 conductor/webchat/test_failover.py
+python3 conductor/services/test_services.py
+python3 conductor/webchat/bob_parity_eval.py
+python3 conductor/webchat/live_ready_drill.py
+BOB_WEBCHAT_DRILLS=1 bash conductor/webchat/start.sh
+WEBCHAT_HANDBACK_TAG=r38 python3 conductor/webchat/live_handback_drill.py
+BOB_WEBCHAT_DRILLS=1 python3 conductor/webchat/e2e_live.py --isolated --output webchat/evidence/e2e-live-r38.json
+node conductor/webchat/test_quiet_hours_js.mjs
+set -a; source conductor/keys.env; set +a; python3 conductor/services/council.py --context conductor/reviews/WEBCHAT-READY-R38-DESIGN.md --context conductor/reviews/webchat-ready-r38-council-context.md --context conductor/reviews/WEBCHAT-READY-R36-RESULT.md --out conductor/reviews/webchat-ready-r38-council "Round 38…"
+WEBCHAT_IPHONE_EVIDENCE=iphone-r38 node conductor/webchat/capture_iphone.cjs
+lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
+```
+
+## Model help ledger (R38)
+
+| Model | Role |
+|-------|------|
+| Cursor | Lead builder + council synthesizer (ship after gates) |
+| Codex | Council propose — defer until RESULT |
+| Gemini | Council propose + critique |
+| MiniMax | Council propose — failover + dashboard priority |
+| Claude | Short council critique |
+
+## SHAs
+
+| Label | SHA |
+|--------|-----|
+| R36 final (baseline) | `848a40a` |
+| Pre-R38 HEAD | `b91991b` |
+| **R38 (code + RESULT)** | `f6cd616` |
+| **Final SHA (this round)** | `faec74b` (`draft/webchat-failover-20260927`; code `f6cd616`) |
+
+## Remaining risks
+
+- Handback live leg requires `BOB_WEBCHAT_DRILLS=1`; prod server without it returns 403 on drill overlay.  
+- `prod_race_retries` may be >0 when autopilot touches ledger during drill window — monitor on r38-1.  
+- `e2e_live --isolated` is costly; run on round boundaries only.  
+- Grok not used per instruction.

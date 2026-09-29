@@ -1,0 +1,3 @@
+```json
+{"accepted": true, "reason": "Worker delivered two valid regression test drafts targeting check_completion_json guard with literal Setup/Action/Expected fields, a conditional Action plan with Change/Validation/Exit condition lines, a valid completion JSON block, and Findings/limits acknowledging unexecuted status and missing original lane evidence. Tests trace actual implementation behavior in services/result_acceptance.py."}
+```

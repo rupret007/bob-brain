@@ -1,0 +1,122 @@
+# Web Bob READY-FOR-PHONE — Round 18 result (Cursor lane, on R27)
+
+**Branch:** `draft/webchat-failover-20260927`  
+**R27 final (baseline):** `4b6fb34` · **Pre-R18 HEAD:** `7f7bee5`  
+**Design:** `conductor/reviews/WEBCHAT-READY-R18-DESIGN.md` + `conductor/reviews/ALIGNMENT-DESIGN.md`  
+**Council (no Grok):** `conductor/reviews/webchat-ready-r18-council/20260927-070812-510509.md`  
+**Vote:** Codex/Cursor **hold** until R18 RESULT + gates → **ship draft** after 109+23+53 tests PASS, parity **36/36**, `WEBCHAT_HANDBACK_TAG=r18` ×2 (`rounds: 2`, `prod_unchanged: true`), ts.net drill p50 **1.013s**, `iphone-r18` ≥0.75. Gemini/MiniMax **ship after gates**; disagreement resolved by **synthesizer hold-side evidence** (fail-closed until this file).  
+**Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged (`jeffs-mac-mini.tail758ab4.ts.net`).
+
+## Changelog (time-to-value on phone)
+
+**iPhone-first (TOP):** Bottom tab **Settings** (readable label); **Less/More** collapsible quick chips; stronger dialog backdrop + `modal-open`; hide header Jobs shortcut on phone; assistant bubble contrast; taller lyrics editor. **Speed:** panel snapshot cache 1.5s with fresh `in_flight`/`deploy_restart`; live_ops sync throttle 2.5s; 1s chat poll. **Dashboard:** MiniMax **% used** + **headroom** on Jobs/Models ops. **Music ($0):** **Plagal cadence (IV→I)** on progression scan. **Self-improve:** install nudge in Setup status when launchd unloaded.
+
+## Scorecard (0–10)
+
+| Area | R27 (measured) | R18 (measured) |
+|------|----------------|----------------|
+| Reliability | 9.97 | **9.97** · 109 + 23 + 53 tests OK |
+| Speed | 9.82 | **9.91** · p50 **1.013s** via ts.net (`webchat/evidence/ready-drill.json`) |
+| Mobile UX | 9.92 | **9.93** · collapsible chips + modal backdrop |
+| **iPhone design** | 9.93 | **9.95** · `evidence/iphone-r18/` 390×844 **0.759** / 430×932 **0.782** |
+| Failover | 9.99 | **9.99** · handback **×2** (`r18-1`, `r18-2`); `isolated: true`; `prod_unchanged: true` |
+| Safety | 9.96 | **9.96** · merge refusal on live ts.net path |
+| Bob parity | 9.99 | **9.99** · **36/36** `bob_parity_eval.py` (Web Bob **beats** Bob) |
+| Handoff both ways | 9.99 | **9.99** · ledger + reverse handback; live overlay drills |
+| Architecture | 9.96 | **9.96** · panel cache without stale restart permission |
+| Self-improve loop | 9.86 | **9.90** · install nudge + inherited gap-to-9 focus |
+| Music (core use case) | 9.91 | **9.94** · plagal IV→I on $0 scan ($0) |
+| Conductor parity | 9.94 | **9.94** · MiniMax %/headroom on ops detail |
+| Enhancement 1 — mobile formatting | 9.94 | **9.95** · contrast + lyrics editor |
+| Enhancement 2 — run jobs from chat | 9.91 | **9.91** · unchanged |
+| Enhancement 3 — status panel | 9.99 | **9.99** · MiniMax spend rows |
+| Enhancement 4 — voice | 9.93 | **9.93** · unchanged |
+| Enhancement 5 — Bob parity | 9.99 | **9.99** · 36-task eval |
+
+**Web Bob vs Bob:** **beat** on 36-task eval; bidirectional handback drills with zero prod fingerprint change.
+
+## Detailed live dashboard (ADDED 02:03, R18 delta)
+
+**Pipeline:** unchanged R27 (`build_live_ops` → `enrich_live_ops_bundle` → `/api/panel` / Pages).
+
+| Field | Meaning | R18 delta |
+|--------|---------|-----------|
+| `minimax_spend.percent_used` | **New:** committed / $59 cap as % | Jobs/Models ops **MiniMax** row |
+| `minimax_spend.remaining_usd` | Headroom dollars | Ops **MiniMax headroom** row |
+| *(inherited)* | `now_line`, `running_jobs[]`, `deploy_head_sha`, `deploy_restart`, scores, roles | Jobs/Models cards + ops detail |
+
+## Architecture review (R18 delta)
+
+- **Panel:** 1.5s snapshot cache; `deploy_restart` and `in_flight_replies` recomputed every request.
+- **STATE sync:** throttled to 2.5s on hot `/api/panel` polls.
+- **Handback:** isolated drills; `WEBCHAT_HANDBACK_TAG=r18`; retry after webchat restart if live login races.
+
+**Top 5 structural fixes (ranked)**
+
+1. **Streaming STT/TTS for live call** (L)  
+2. **Web push on blockers** (M)  
+3. **P0 full tool layer / queue.jsonl writer** (L)  
+4. **Provider failover under real outage** (M)  
+5. **Admission drain before kill** (M) — extend `safe_restart.sh`
+
+## Research-first (sources)
+
+`WEBCHAT-READY-R18-DESIGN.md` — Apple HIG tab/sheet patterns; Grok Bot chatbar ref; R27 weakest rows; council `20260927-070812-510509.md`.
+
+## PASS/FAIL
+
+| Check | Result | Evidence |
+|--------|--------|----------|
+| Unit tests | **PASS** | `python3 conductor/webchat/test_webchat.py` — 109 OK |
+| Failover tests | **PASS** | `python3 conductor/webchat/test_failover.py` — 23 OK |
+| Services tests | **PASS** | `python3 conductor/services/test_services.py` — 53 OK |
+| 36-task Bob parity eval | **PASS** | 36/36 · `webchat/evidence/bob-parity-eval.json` |
+| 10-message drill | **PASS** | p50 1.013s |
+| **Live ts.net curl drill** | **PASS** | `via_tsnet: true`; `merge_refusal` in `ready-drill.json` |
+| Handback drill ×2 | **PASS** | `WEBCHAT_HANDBACK_TAG=r18`; `handback-drill.json` `rounds: 2` |
+| Quiet hours JS | **PASS** | `node conductor/webchat/test_quiet_hours_js.mjs` |
+| Council (Gemini+MiniMax+Claude+Codex+Cursor) | **PASS** | hold → this RESULT → **ship draft** |
+| iPhone screenshots | **PASS** | `webchat/evidence/iphone-r18/layout-metrics.json` |
+| Server restart | **PASS** | `127.0.0.1:8787` |
+
+## Commands run
+
+```bash
+python3 conductor/webchat/test_webchat.py
+python3 conductor/webchat/test_failover.py
+python3 conductor/services/test_services.py
+python3 conductor/webchat/bob_parity_eval.py
+python3 conductor/webchat/live_ready_drill.py
+WEBCHAT_HANDBACK_TAG=r18 python3 conductor/webchat/live_handback_drill.py
+node conductor/webchat/test_quiet_hours_js.mjs
+set -a; source conductor/keys.env; set +a; python3 conductor/services/council.py --context conductor/reviews/WEBCHAT-READY-R18-DESIGN.md --context conductor/reviews/webchat-ready-r18-council-context.md --context conductor/reviews/WEBCHAT-READY-R27-RESULT.md --out conductor/reviews/webchat-ready-r18-council "Round 18…"
+WEBCHAT_IPHONE_EVIDENCE=iphone-r18 node conductor/webchat/capture_iphone.cjs
+lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
+```
+
+## Model help ledger (R18)
+
+| Model | Role |
+|-------|------|
+| Cursor | Lead builder + council synthesizer (hold → ship after gates) |
+| Codex | Council propose (hold until RESULT) |
+| Gemini | Council propose (ship after gates) |
+| MiniMax | Council propose (iPhone + dashboard emphasis) |
+| Claude | Short council critique |
+
+## SHAs
+
+| Label | SHA |
+|--------|-----|
+| R27 final (baseline) | `4b6fb34` |
+| Pre-R18 HEAD | `7f7bee5` |
+| **R18 (code)** | `84522e1` |
+| **Final SHA (this round)** | `d2428a2` (`draft/webchat-failover-20260927`; code `84522e1`) |
+
+## Remaining risks
+
+- Self-improve still needs one-time `bootstrap_self_improve_launchd.sh` on the mini (nudge copy helps).  
+- Handback live overlay can fail if drill runs while webchat is restarting — rerun after `start.sh`.  
+- Panel cache TTL may hide sub-1.5s ops churn (acceptable for phone polling).  
+- Live call still browser STT/TTS until mini streaming path lands.  
+- Grok not used per instruction.

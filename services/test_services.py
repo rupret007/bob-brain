@@ -531,6 +531,31 @@ class ServicesTest(unittest.TestCase):
         labels = [r.get('label') for r in bundle.get('dashboard_plain') or []]
         self.assertIn('Ops snapshot', labels)
 
+    def test_dashboard_plain_weakest_headroom(self):
+        import live_dashboard
+
+        raw = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())
+        raw['scores_weakest'] = {'area': 'Voice', 'value': 9.97}
+        raw['scores_weakest_focus'] = {
+            'area': 'Voice', 'value': 9.97, 'gap_to_nine': 0.0, 'headroom_to_10': 0.03,
+        }
+        bundle = live_dashboard.enrich_live_ops_bundle(raw, self.root)
+        row = next(r for r in bundle['dashboard_plain'] if r.get('label') == 'Weakest score')
+        self.assertIn('0.03 to 10', row.get('value', ''))
+
+    def test_dashboard_plain_weakest_gap_to_nine(self):
+        import live_dashboard
+
+        raw = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())
+        raw['scores_weakest'] = {'area': 'Self-improve loop', 'value': 8.5}
+        raw['scores_weakest_focus'] = {
+            'area': 'Self-improve loop', 'value': 8.5, 'gap_to_nine': 0.5, 'headroom_to_10': 1.5,
+        }
+        bundle = live_dashboard.enrich_live_ops_bundle(raw, self.root)
+        row = next(r for r in bundle['dashboard_plain'] if r.get('label') == 'Weakest score')
+        self.assertIn('0.5 to 9', row.get('value', ''))
+        self.assertIn('1.5 to 10', row.get('value', ''))
+
     def test_dashboard_plain_ops_snapshot_unknown_without_generated_at(self):
         import live_dashboard
 

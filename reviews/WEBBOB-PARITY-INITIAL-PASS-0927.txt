@@ -1,0 +1,10 @@
+INVALIDATED by asynchronous push2 failure. Deployment rolled back.
+
+PASS
+SHA: 096693f3c2e3642465b97bdf4aea0c5b354666e4
+Draft PR: https://github.com/rupret007/bob-brain/pull/11
+Jobs screenshot: /Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/WEBBOB-PARITY-JOBS-0927.png
+Rollback: /Users/jeffstory/Documents/bob-overnight-inject/rollbacks/webbob-parity-20260927-165211
+PR #161 actual reviewer: gemini
+Tests: full webchat/services discovery + JavaScript; see reviews/WEBBOB-PARITY-TESTS-0927.txt
+Live checks: status, PR review completion, two executing project jobs, hold off/go, own build SHA, public assets and Jobs.

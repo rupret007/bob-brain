@@ -1,0 +1,26 @@
+{
+  "regression_tests": [
+    {
+      "name": "empty answer missing test drafts raises ResultRejected",
+      "target": "services/result_acceptance.py::check_deliverables",
+      "setup": "prompt='Draft regression tests for the queue module.'; answer=''",
+      "action": "check_deliverables(prompt, answer)",
+      "expected": "raises ResultRejected('Missing concrete regression test drafts (setup, action and expected assertion required)')"
+    },
+    {
+      "name": "complete answer with two test cases and findings passes guard",
+      "target": "services/result_acceptance.py::check_deliverables",
+      "setup": "prompt='Your independent subtask:\\nReview and regression test-case drafts for the following ongoing task.\\nOngoing task:\\nWeb Bob unblock 1035.'; answer='Regression test: case one\\nTarget: services/result_acceptance.py::check_deliverables\\nSetup: prompt=\"Draft tests.\"; answer=\"One case.\"\\nAction: check_deliverables(prompt, answer)\\nExpected: raises ResultRejected(\\'Missing concrete regression test drafts\\')\"\\n\\nRegression test: case two\\nTarget: services/result_acceptance.py::check_deliverables\\nSetup: prompt=\"Your independent subtask:\\nDraft tests.\"; answer=\"Regression test: first\\nTarget: example\\nSetup: x=1\\nAction: fn(x)\\nExpected: pass\\n\\nRegression test: second\\nTarget: example\\nSetup: x=2\\nAction: fn(x)\\nExpected: pass\\n\\nFindings/limits: Two cases validated.\"\\nAction: check_deliverables(prompt, answer)\\nExpected: {\"guard_outcome\": \"pass\"}"
+    }
+  ],
+  "plan": {
+    "change": "Validate that existing test suite covers concrete draft format and conditional unblock plan requirements; identify coverage gaps if any.",
+    "validation": "python3 -m unittest discover -s services -p 'test_*.py' (test_result_acceptance.py::AcceptanceTests contains tests for draft format and unblock plan)",
+    "exit_condition": "Report delivered with two grounded regression test drafts covering check_deliverables guard behavior; completion.accepted=true"
+  },
+  "completion": {
+    "accepted": true,
+    "reason": "Delivered two unexecuted regression test drafts for services/result_acceptance.py::check_deliverables: (1) empty answer raises ResultRejected, (2) complete answer with two test cases and Findings/limits passes guard. Original task prompt for Web Bob unblock 1035 was not recorded; cannot infer exact assignment from lane name alone."
+  },
+  "findings_limits": "Original task prompt for Web Bob unblock 1035 not recorded in evidence. The fixture services/fixtures/texting_jobcompletion_1035.json is referenced but omitted from snapshot; its contents cannot be used as task definition. Test drafts exercise check_deliverables guard directly using literal inputs. Existing unit tests in test_result_acceptance.py (test_1035_exploratory_answer_cannot_win_a_positive_vote, test_drafts_without_resolution_plan_and_empty_case_labels_fail_closed) cover concrete draft format but rely on the missing fixture. Drafts are unexecuted; server must run validation."
+}

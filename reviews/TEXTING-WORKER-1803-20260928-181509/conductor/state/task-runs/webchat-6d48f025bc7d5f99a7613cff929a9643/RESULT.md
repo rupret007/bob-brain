@@ -1,0 +1,21 @@
+Regression test: missing completion JSON fails closed
+Target: services/result_acceptance.py::check_completion_json
+Setup: prompt='Return JSON with accepted/reason fields.'; answer='Findings only.'
+Action: check_completion_json(prompt, answer)
+Expected: raises ResultRejected('Missing or ambiguous required completion JSON output block')
+
+Regression test: complete accepted/reason JSON passes the completion guard
+Target: services/result_acceptance.py::check_completion_json
+Setup: prompt='Return JSON with accepted/reason fields.'; answer='{"accepted": true, "reason": "Delivered bounded unexecuted drafts."}'
+Action: check_completion_json(prompt, answer)
+Expected: returns None
+
+Unblock plan:
+Change: Validate existing CompletionContractTests in services/test_replay_completion.py for Web Bob unblock 1035; the completion and outer draft guards already exist in services/result_acceptance.py, and the original unblock 1035 task prompt was not recorded and cannot be reconstructed.
+Validation: python3 -m unittest discover -s services -p 'test_*.py' - requires zero failures for live validation; proposed validation only, no tests executed.
+Exit condition: Web Bob unblock 1035 remains blocked until its actual original task prompt, worker results, and fresh completion reviews pass the live acceptance gates; these unexecuted drafts cannot close the lane.
+
+```json
+{"accepted": true, "reason": "Delivered completion-JSON failure/control drafts derived from services/api_worker.py::completion_guard_examples(); validated existing CompletionContractTests coverage; original task prompt unavailable and stated as limit."}
+```
+Findings/limits: Original task prompt for Web Bob unblock 1035 was not recorded (per job completion error in services/fixtures/texting_jobcompletion_1035.json: 'lacks actual regression test-case drafts or a concrete plan'). Existing CompletionContractTests in services/test_replay_completion.py already covers check_completion_json with test_missing_malformed_or_ambiguous_json_cannot_win_a_positive_vote and test_inline_escaped_json_fixture_does_not_hide_real_completion_block. Drafts are unexecuted per repository constraints; validation requires python3 -m unittest discover -s services -p 'test_*.py' with live worker results to exit blocked state.

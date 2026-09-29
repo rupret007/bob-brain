@@ -441,8 +441,20 @@ class Providers:
             return parse_cursor(out), None
 
     def route_order(self, conversation):
-        if conversation.get("preferred_provider") == "claude":
+        pref = conversation.get("preferred_provider")
+        if pref == "claude":
             return ("claude",)
+        if os.environ.get("BOB_WEBCHAT_DRILLS") == "1" and pref in ORDER:
+            settings = self.drill(conversation.get("id"))
+            forced = settings.get("force_fail") or {}
+            cid = conversation.get("id")
+            in_drill = cid and cid in settings.get("conversation_ids", [])
+            if in_drill and forced:
+                return (pref,) + tuple(n for n in ORDER if n != pref)
+            if not forced:
+                return (pref,)
+            if pref in forced:
+                return (pref,) + tuple(n for n in ORDER if n != pref)
         text = next((m["content"] for m in reversed(conversation["messages"]) if m["role"] == "user"), "")
         if (len(text) <= FAST_MAX_CHARS and text.count("\n") <= 2
                 and not re.search(r"```|(?:^|\s)(?:fix|implement|refactor|debug|write tests)\b", text, re.I)):

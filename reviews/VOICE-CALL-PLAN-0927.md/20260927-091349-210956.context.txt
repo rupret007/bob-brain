@@ -1,0 +1,36 @@
+### FILE conductor/reviews/VOICE-CALL-RESEARCH.md/20260927-041814-759282.md
+# Council transcript 2026-09-27 04:19:06
+
+**Question:** Research only: best design for a live hands-free voice call (like the Grok Bot app waveform button) from iPhone Safari to a Mac mini web app over Tailscale HTTPS. Streaming speech-to-text and text-to-speech, voice activity detection, barge-in, under 1.5s to first audio, local-first, no Grok. Give a concrete step plan and costs.
+**Status:** NO-QUORUM
+**Answered:** Codex
+**Did not answer:** Cursor (BlockingIOError), MiniMax-M2.7 (MINIMAX_API_KEY missing), gemini-2.5-flash (GEMINI_API_KEY missing)
+**Context:** none
+**Evidence SHA256:** e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 (20260927-041814-759282.context.txt)
+**Participation:** degraded
+**Claude role:** short critique only; subscription budget preserved.
+
+## Proposals
+### Codex
+**Recommendation:** self-host Pipecat SmallWebRTC on the Mac mini: iPhone Safari ↔ WebRTC/Opus ↔ Silero VAD → sherpa-onnx streaming Zipformer STT → small local MLX language model → Kokoro TTS. Assume Apple Silicon with ≥16GB RAM; hardware is unverified. No Grok or paid inference.
+
+Evidence: Pipecat recommends [SmallWebRTC for self-hosting](https://docs.pipecat.ai/client/concepts/choosing-a-transport); sherpa documents [streaming recognition on macOS](https://k2-fsa.github.io/sherpa/onnx/index.html); MLX Audio’s [`README.md`](https://github.com/Blaizzy/mlx-audio/blob/main/README.md) documents Kokoro.
+
+**Top three fixes, ranked and sequenced** — filenames below are proposed:
+
+1. **Establish reliable Safari audio and networking — `voice-client.ts`, `voice_server.py`.** One waveform-button tap requests microphone access, unlocks playback, and starts continuous duplex audio with echo cancellation. Serve page/signaling through private Tailscale HTTPS. WebRTC media needs a separately reachable ICE/UDP path over Tailscale; HTTPS proxying alone is insufficient. Validate that path on cellular before adding models. Sources: [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve), [WebKit WebRTC](https://webkit.org/blog/7763/a-closer-look-into-webrtc/). Target foreground Safari; background/locked-screen continuity needs device testing.
+
+2. **Stream every stage — `voice_pipeline.py`.** Keep models loaded; decode microphone frames continuously and expose partial transcripts. Start with 300ms endpoint silence, a quantized 3B local instruction model, short context, and short spoken responses. Feed the first short clause into Kokoro immediately, then subsequent clauses; this is incremental phrase synthesis. Proposed end-of-user-speech → audible-response budget: endpoint 300ms + STT finalization 100ms + first LLM clause 350ms + TTS 300ms + transport/playback 150ms = **1.2s**. This is a target, not a measured guarantee.
+
+3. **Make interruption cancellation complete — `voice_session.py`, `voice_latency.md`.** Keep listening during playback. Confirmed speech cancels LLM/TTS, clears outbound audio, and invalidates stale chunks using turn IDs. Retain only delivered assistant speech in history. Test 100 turns across Wi-Fi/cellular, speakerphone/AirPods, and interruptions; require p95 first audio <1.5s and interruption stop <200ms.
+
+**Costs:** existing hardware: $0 acquisition; inference/API: $0; eligible [Tailscale Personal](https://tailscale.com/pricing): $0. Illustrative electricity: 20W × 24h × 30 days × $0.15/kWh ≈ $2.16/month. Engineering estimate: 3–5 coder-days.
+
+Research only; nothing changed. Sandbox blocked local inspection, so no existing repository findings are claimed.
+
+## Critiques
+## Call ledger
+- propose cursor ok=False 0.0s BlockingIOError
+- propose minimax ok=False 0.0s MINIMAX_API_KEY missing
+- propose gemini ok=False 0.0s GEMINI_API_KEY missing
+- propose codex ok=True 51.9s 

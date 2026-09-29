@@ -39,14 +39,12 @@ def main():
             print("Bob web chat is healthy at " + URL)
             return 0
         result = subprocess.run(["/usr/bin/screen", "-ls"], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=5)
-        for session in re.findall(r"\t(\d+\.svc-webchat)\s+\(", result.stdout):
-            subprocess.run(["/usr/bin/screen", "-S", session, "-X", "quit"], stdin=subprocess.DEVNULL, timeout=5)
-        result = subprocess.run(["/usr/bin/screen", "-ls"], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=5)
         if re.search(r"\b\d+\.svc-webchat\s+\(", result.stdout):
-            print("svc-webchat still present after quit; inspect logs/webchat-server.log.")
+            # A slow health probe is not authorization to interrupt Jeff's chat.
+            print("svc-webchat is present but not responding; inspect it before a deliberate restart.")
             return 1
         env = os.environ.copy()
-        env.setdefault("BOB_WEBCHAT_DRILLS", "1")
+        env.setdefault("BOB_WEBCHAT_DRILLS", "0")
         subprocess.run(["/usr/bin/screen", "-dmS", "svc-webchat", "/bin/bash", str(HERE / "run.sh")],
                        stdin=subprocess.DEVNULL, check=True, timeout=10, env=env)
         for _ in range(40):

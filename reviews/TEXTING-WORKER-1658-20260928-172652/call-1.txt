@@ -1,0 +1,28 @@
+{
+  "regression_tests": [
+    {
+      "name": "check_completion_json raises on missing JSON block",
+      "target": "services/result_acceptance.py; result_acceptance.check_completion_json",
+      "setup": "prompt='Return JSON with accepted/reason fields.'; answer='Findings only.'",
+      "action": "call check_completion_json(prompt, answer).",
+      "expected": "ResultRejected containing 'Missing or ambiguous required completion JSON output block'."
+    },
+    {
+      "name": "check_completion_json passes with valid accepted/reason fields",
+      "target": "services/result_acceptance.py; result_acceptance.check_completion_json",
+      "setup": "prompt='Return JSON with accepted/reason fields.'; answer='{\"accepted\": true, \"reason\": \"Delivered bounded unexecuted drafts.\"}'",
+      "action": "call check_completion_json(prompt, answer).",
+      "expected": "returns None; this guard alone does not establish semantic acceptance or task completion."
+    }
+  ],
+  "plan": {
+    "change": "Validate existing CompletionContractTests in services/test_replay_completion.py for Web Bob unblock 1035; the completion and outer draft guards already exist, and the original assignment is unavailable.",
+    "validation": "Run python3 -m unittest discover -s services -p 'test_*.py' and require zero failures; proposed validation only.",
+    "exit_condition": "Web Bob unblock 1035 stays blocked until its actual worker results, fresh reviews and live replay gates pass; these unexecuted drafts cannot close the lane."
+  },
+  "completion": {
+    "accepted": true,
+    "reason": "Delivered completion-JSON failure/control drafts and a conditional plan; no tests or live gates executed."
+  },
+  "findings_limits": "Existing check_completion_json in services/result_acceptance.py (line 35-70) rejects missing output and validates accepted/reason fields; the original unblock 1035 prompt and live result were not supplied; drafts are unexecuted; CompletionContractTests.test_missing_malformed_or_ambiguous_json_cannot_win_a_positive_vote provides existing coverage in services/test_replay_completion.py."
+}

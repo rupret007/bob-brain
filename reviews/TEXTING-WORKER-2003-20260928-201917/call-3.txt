@@ -1,0 +1,32 @@
+{
+  "regression_tests": [
+    {
+      "name": "missing completion JSON fails closed",
+      "target": "services/result_acceptance.py::check_completion_json",
+      "setup": "prompt='Return JSON with accepted/reason fields.'; answer='Findings only.'",
+      "action": "check_completion_json(prompt, answer)",
+      "expected": {
+        "guard_outcome": "reject"
+      }
+    },
+    {
+      "name": "complete accepted/reason JSON passes the completion guard",
+      "target": "services/result_acceptance.py::check_completion_json",
+      "setup": "prompt='Return JSON with accepted/reason fields.'; answer='{\"accepted\": true, \"reason\": \"Delivered bounded unexecuted drafts.\"}'",
+      "action": "check_completion_json(prompt, answer)",
+      "expected": {
+        "guard_outcome": "pass"
+      }
+    }
+  ],
+  "plan": {
+    "change": "Validate existing CompletionContractTests in services/test_replay_completion.py for lane-webbob-texting-replay-json-fix-1508; check_completion_json and check_deliverables guards already implement the required acceptance logic.",
+    "validation": "Run python3 -m unittest discover -s services -p 'test_*.py' and require zero failures; existing tests already cover the completion JSON guard.",
+    "exit_condition": "The named lane needs its actual worker result, durable service identity checks, live replay and rollback validation to pass; these unexecuted drafts cannot close it."
+  },
+  "completion": {
+    "accepted": true,
+    "reason": "Delivered two regression test drafts validating the check_completion_json guard for lane-webbob-texting-replay-json-fix-1508 and a grounded conditional plan; no live tests executed."
+  },
+  "findings_limits": "Existing CompletionContractTests.test_missing_malformed_or_ambiguous_json_cannot_win_a_positive_vote already covers missing/invalid JSON rejection; the guard is implemented and tests exist in services/test_replay_completion.py. Drafts are unexecuted and the original task/evidence for lane 1508 was not supplied in full."
+}

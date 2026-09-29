@@ -1,0 +1,11 @@
+PASS
+SHA: dcc2c8e77d43ce6334206878cd8d45dd20124c22
+Draft PR: https://github.com/rupret007/bob-brain/pull/11
+Jobs screenshot: /Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/WEBBOB-PARITY-JOBS-0927.png
+Rollback: /Users/jeffstory/Documents/bob-overnight-inject/rollbacks/webbob-parity-20260927-170313
+PR #161 actual reviewer: gemini
+Tests: full webchat/services discovery + JavaScript; see reviews/WEBBOB-PARITY-TESTS-0927.txt
+Live checks: status, PR review completion, two verified project draft pushes, hold off/go, own build SHA, public assets and Jobs.
+Test count: 367 Python tests (249 webchat, 118 services).
+Claude session cap: review completed on Gemini; actual worker recorded honestly.
+Final report: /Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/WEBBOB-PARITY-PASS-0927.md

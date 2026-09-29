@@ -163,7 +163,14 @@ def ledger_round(fixture_root: Path, tag: str) -> dict:
 def reverse_handback_ok(fixture_root: Path, tag: str) -> bool:
     log_path = fixture_root / "conductor/handback/HANDBACK-LOG.md"
     log_text = log_path.read_text(errors="replace").lower() if log_path.exists() else ""
-    return f"handback drill {tag}" in log_text and DRILL_COMMIT_SHA in log_text
+    catchup_path = fixture_root / "conductor/state/BOB-CATCHUP.md"
+    catchup = catchup_path.read_text(errors="replace").lower() if catchup_path.exists() else ""
+    open_item = f"drill open item ({tag})"
+    return (
+        f"handback drill {tag}" in log_text
+        and DRILL_COMMIT_SHA in log_text
+        and open_item in catchup
+    )
 
 
 def events_ok(fixture_root: Path, tag: str) -> bool:

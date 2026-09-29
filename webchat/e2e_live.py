@@ -13,6 +13,8 @@ from app import Chat, Server
 from failover import ORDER, atomic_json
 from live_failover import Curl
 
+HERE = Path(__file__).resolve().parent
+
 
 def check(client, evidence, name, prompt, primary="auto", expected=None, cid=None):
     cid = cid or client.new()
@@ -47,6 +49,10 @@ def main():
             temp = tempfile.TemporaryDirectory(prefix="webbob-live-drill-")
             root = Path(temp.name)
             folder = root / "conductor/webchat"
+            folder.mkdir(parents=True, exist_ok=True)
+            prod_pw = HERE / ".password"
+            if prod_pw.is_file():
+                (folder / ".password").write_text(prod_pw.read_text(errors="replace"))
             os.environ["BOB_WEBCHAT_DRILLS"] = "1"
             # API transport still uses its installed shared budget/credentials.
             # Only chat state, injected faults, CLI cwd and audit logs are isolated.
@@ -70,7 +76,8 @@ def main():
             for name in ORDER:
                 cid = client.new()
                 configure(cid, {name: "network"})
-                successor = next(n for n in ORDER if n != name)
+                drill_order = (name,) + tuple(n for n in ORDER if n != name)
+                successor = drill_order[1]
                 _, message = check(client, evidence["checks"], "failed_primary_" + name,
                       "Give two practical steps for checking a saved chat after a server restart, and explain why they help.",
                       primary=name, expected=successor, cid=cid)
@@ -88,7 +95,7 @@ def main():
             configure(cid, {name: "network" for name in ORDER})
             client.submit(cid, "Explain one benefit of retrying after a temporary network outage.", provider="gemini")
             queued = client.wait(cid)["messages"][-1]
-            assert queued["status"] == "waiting" and len(queued["attempts"]) == 5
+            assert queued["status"] == "waiting" and len(queued["attempts"]) == len(ORDER)
             evidence["checks"].append({"check": "all_down_waiting", "status": "waiting", "attempts": queued["attempts"]})
             atomic_json(drill_file, {"conversation_ids": [cid], "force_fail": {}})
             time.sleep(1.1)

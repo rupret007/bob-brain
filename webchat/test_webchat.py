@@ -583,6 +583,9 @@ class HandbackJobTests(Fixture):
         request_id = str(uuid.uuid4())
         self.chat.submit(self.identifier, "start a job: fix the webchat panel", request_id)
         self.assertEqual(self.chat.conversations[self.identifier].get("pending_job"), "fix the webchat panel")
+        card = self.chat.conversations[self.identifier]["messages"][-1].get("action_card") or {}
+        self.assertEqual(card.get("goal"), "fix the webchat panel")
+        self.assertEqual(card.get("state"), "confirm")
         self.chat.submit(self.identifier, "yes, start job", str(uuid.uuid4()))
         self.wait()
         index = (self.root / "next-prompts/INDEX.md").read_text()
@@ -604,6 +607,20 @@ class HandbackJobTests(Fixture):
 
     def test_do_more_does_not_match_negation(self):
         self.assertIsNone(parse_do_more("please do not run it yourself"))
+
+    def test_ready_round_chip_queues_default_goal(self):
+        from job_queue import DEFAULT_READY_ROUND_GOAL, parse_ready_round
+
+        phrase = "Start a Web Bob ready round on the mini (draft only, no merge)"
+        self.assertEqual(parse_ready_round(phrase), DEFAULT_READY_ROUND_GOAL)
+        self.chat.submit(self.identifier, phrase, str(uuid.uuid4()))
+        self.assertEqual(
+            self.chat.conversations[self.identifier].get("pending_job"),
+            DEFAULT_READY_ROUND_GOAL,
+        )
+        card = self.chat.conversations[self.identifier]["messages"][-1].get("action_card") or {}
+        self.assertEqual(card.get("state"), "confirm")
+        self.assertIn("failover", (card.get("goal") or "").lower())
 
     def test_provider_rules_not_readonly_chat(self):
         lower = RULES.lower()
@@ -938,6 +955,26 @@ class HandbackJobTests(Fixture):
         self.assertIn("tag", tag_bridge)
         hyphen = (try_music_coach_reply("double-chorus lift") or "").lower()
         self.assertIn("double", hyphen)
+        deceptive = (try_music_coach_reply("use a deceptive cadence V to vi") or "").lower()
+        self.assertIn("deceptive", deceptive)
+        self.assertIn("vi", deceptive)
+        half = (try_music_coach_reply("use a phrygian half cadence on V") or "").lower()
+        self.assertIn("half", half)
+        plagal = (try_music_coach_reply("plagal cadence on my folk song") or "").lower()
+        self.assertIn("plagal", plagal)
+        self.assertIn("iv", plagal)
+        self.assertIn("v", half)
+
+    def test_self_improve_next_action_install_launchd(self):
+        (self.root / "conductor/webchat/self_improve_tick.sh").write_text("#!/bin/bash\n")
+        plist_dir = self.root / "conductor/launchd"
+        plist_dir.mkdir(parents=True, exist_ok=True)
+        (plist_dir / "com.jeff.bob-webchat-self-improve.plist").write_text("<plist></plist>")
+        (self.root / "conductor/webchat/bootstrap_self_improve_launchd.sh").write_text("#!/bin/bash\n")
+        with patch.object(self.chat, "_cached_launchd_loaded", return_value=False):
+            status = self.chat.self_improve_status()
+        self.assertEqual(status.get("next_action"), "install_launchd")
+        self.assertIn("Copy install", status.get("next_action_plain") or "")
 
     def test_self_improve_schedule_hint_from_plist(self):
         plist = self.root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist"
@@ -949,6 +986,61 @@ class HandbackJobTests(Fixture):
         self.assertIn("04:30", hint or "")
         status = self.chat.self_improve_status()
         self.assertEqual(status.get("schedule_hint"), hint)
+
+    def test_self_improve_wait_for_tick_plain_includes_schedule(self):
+        plist = self.root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist"
+        plist.parent.mkdir(parents=True, exist_ok=True)
+        plist.write_text(
+            "<plist><dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>24</integer></dict></plist>"
+        )
+        (self.root / "conductor/webchat/self_improve_tick.sh").write_text("#!/bin/bash\n")
+        with patch.object(self.chat, "_cached_launchd_loaded", return_value=True):
+            status = self.chat.self_improve_status()
+        self.assertEqual(status.get("next_action"), "wait_for_tick")
+        plain = status.get("next_action_plain") or ""
+        self.assertIn("Next tick", plain)
+        self.assertIn("04:24", plain)
+
+    def test_chat_index_includes_toggle_chips(self):
+        html = (Path(__file__).resolve().parent / "static/index.html").read_text()
+        self.assertIn("toggle-chips", html)
+        self.assertIn("quick-chips-row", html)
+        self.assertIn("Ask Bob the Bot", html)
+        self.assertIn("call-in-pill", html)
+
+    def test_jobs_ui_queue_position_and_measured_scores(self):
+        js = (Path(__file__).resolve().parent / "static/app.js").read_text()
+        self.assertIn("scores_measured_at", js)
+        self.assertIn("Next up", js)
+        self.assertIn("queued-job", js)
+        self.assertIn("buildQueuedJobCard", js)
+
+    def test_self_improve_exposes_scores_weakest_focus(self):
+        reviews = self.root / "conductor/reviews"
+        reviews.mkdir(parents=True, exist_ok=True)
+        (reviews / "WEBCHAT-READY-R26-RESULT.md").write_text(
+            "# R26\n\n| Area | R25 | R26 |\n|------|-----|-----|\n"
+            "| Self-improve loop | 9.93 | **9.93** |\n| Voice | 9.93 | **9.94** |\n"
+        )
+        status = self.chat.self_improve_status()
+        focus = status.get("scores_weakest_focus") or {}
+        self.assertEqual(focus.get("area"), "Self-improve loop")
+        self.assertAlmostEqual(float(focus.get("value")), 9.93)
+        self.assertAlmostEqual(float(focus.get("gap_to_nine")), 0.0)
+        self.assertAlmostEqual(float(focus.get("headroom_to_10")), 0.07)
+
+    def test_self_improve_plain_status_names_focus_without_loop_ready(self):
+        reviews = self.root / "conductor/reviews"
+        reviews.mkdir(parents=True, exist_ok=True)
+        (reviews / "WEBCHAT-READY-R17-RESULT.md").write_text(
+            "# R17\n\n| Area | R16 | R17 |\n|------|-----|-----|\n"
+            "| Self-improve loop | 9.92 | **9.78** |\n| Music (core use case) | 9.89 | **9.86** |\n"
+        )
+        status = self.chat.self_improve_status()
+        self.assertFalse(status.get("loop_ready"))
+        plain = status.get("plain_status") or ""
+        self.assertIn("Next self-improve focus", plain)
+        self.assertIn("Self-improve loop", plain)
 
     def test_job_card_view_from_events(self):
         from job_card_view import job_card_headline, job_card_log_lines, job_card_stall_state
@@ -1053,6 +1145,51 @@ class HandbackJobTests(Fixture):
         self.assertEqual(assistant.get("request_id"), request_id)
         self.assertEqual(assistant.get("provider"), "codex")
 
+    def test_self_improve_exposes_last_ready_ship(self):
+        reviews = self.root / "conductor/reviews"
+        reviews.mkdir(parents=True, exist_ok=True)
+        pass_block = """
+## PASS/FAIL
+| Check | Result |
+| Unit tests | **PASS** |
+| Failover tests | **PASS** |
+| Handback drill ×2 | **PASS** |
+| Server restart | **PASS** |
+"""
+        (reviews / "WEBCHAT-READY-R88-RESULT.md").write_text(
+            "# R88\n\n## Changelog\nShip note.\n\n"
+            + pass_block
+            + "\n| **Final SHA (this round)** | `feedface9999` |\n"
+        )
+        status = self.chat.self_improve_status()
+        self.assertEqual(status.get("last_ready_round"), 88)
+        self.assertEqual(status.get("last_ready_sha"), "feedface9999")
+        self.assertTrue(status.get("last_ready_ship_verified"))
+
+    def test_self_improve_skips_unverified_result_for_ship(self):
+        reviews = self.root / "conductor/reviews"
+        reviews.mkdir(parents=True, exist_ok=True)
+        pass_block = """
+## PASS/FAIL
+| Check | Result |
+| Unit tests | **PASS** |
+| Failover tests | **PASS** |
+| Handback drill ×2 | **PASS** |
+| Server restart | **PASS** |
+"""
+        (reviews / "WEBCHAT-READY-R10-RESULT.md").write_text(
+            "# R10\n\n## Changelog\nOld verified.\n"
+            + pass_block
+            + "\n| **Final SHA (this round)** | `aaaabbbbcccc` |\n"
+        )
+        (reviews / "WEBCHAT-READY-R99-RESULT.md").write_text(
+            "# R99\n\n## Changelog\nDraft only.\n\n| **Final SHA (this round)** | `deadbeef9999` |\n"
+        )
+        status = self.chat.self_improve_status()
+        self.assertEqual(status.get("last_ready_round"), 10)
+        self.assertEqual(status.get("last_ready_sha"), "aaaabbbbcccc")
+        self.assertTrue(status.get("last_ready_ship_verified"))
+
     def test_self_improve_failed_line_not_recent_ok(self):
         (self.root / "conductor/launchd").mkdir(parents=True, exist_ok=True)
         (self.root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist").write_text("plist")
@@ -1086,7 +1223,7 @@ class HandbackJobTests(Fixture):
 
         result = run_eval(Path(__file__).resolve().parents[2])
         self.assertEqual(result["passed"], result["total"])
-        self.assertEqual(result["total"], 25)
+        self.assertGreaterEqual(result["total"], 25)
 
     def test_catchup_event_ack_cursor(self):
         ledger_dir = Path(__file__).resolve().parent.parent / "state"

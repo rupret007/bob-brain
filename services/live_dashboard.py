@@ -236,6 +236,21 @@ def _scores_weakest(rows: list[dict]) -> dict:
     return {"area": weakest_area, "value": weakest_value}
 
 
+def _scores_weakest_focus(weak: dict) -> dict:
+    """Gap-to-9 and headroom-to-10 from the weakest scorecard row."""
+    if not weak.get("area") or weak.get("value") is None:
+        return {}
+    try:
+        value = float(weak["value"])
+    except (TypeError, ValueError):
+        return {}
+    return {
+        **weak,
+        "gap_to_nine": round(max(0.0, 9.0 - value), 2),
+        "headroom_to_10": round(max(0.0, 10.0 - value), 2),
+    }
+
+
 def _lane_roles(lanes: dict, sessions: set[str]) -> dict:
     building = reviewing = None
     for name, lane in (lanes or {}).items():
@@ -501,8 +516,24 @@ def _build_dashboard_plain(live_ops: dict) -> list[dict]:
         if r:
             rows.append(r)
     weak = live_ops.get("scores_weakest") or {}
+    focus = live_ops.get("scores_weakest_focus") or {}
     if weak.get("area"):
-        r = _row("Weakest score", f"{weak['area']} ({weak.get('value', '—')})")
+        weak_val = f"{weak['area']} ({weak.get('value', '—')})"
+        gap9 = focus.get("gap_to_nine")
+        if gap9 is not None:
+            try:
+                if float(gap9) > 0:
+                    weak_val += f" · {gap9} to 9"
+            except (TypeError, ValueError):
+                pass
+        headroom = focus.get("headroom_to_10")
+        if headroom is not None:
+            try:
+                if float(headroom) > 0:
+                    weak_val += f" · {headroom} to 10"
+            except (TypeError, ValueError):
+                pass
+        r = _row("Weakest score", weak_val)
         if r:
             rows.append(r)
     si_plain = live_ops.get("self_improve_plain")
@@ -689,6 +720,10 @@ def enrich_live_ops_bundle(live_ops: dict, root: Path | None = None) -> dict:
         si_age = _self_improve_log_age_seconds(root)
         if si_age is not None:
             live_ops["self_improve_log_stale_24h"] = si_age > SELF_IMPROVE_LOG_STALE_SECONDS
+    if not live_ops.get("scores_weakest_focus"):
+        focus = _scores_weakest_focus(live_ops.get("scores_weakest") or {})
+        if focus:
+            live_ops = {**live_ops, "scores_weakest_focus": focus}
     plain_rows, plain_omitted = _build_dashboard_plain(live_ops)
     live_ops = {
         **live_ops,
@@ -809,6 +844,7 @@ def public_live_ops(live_ops: dict) -> dict:
         "ops_snapshot_freshness_unknown": bool(live_ops.get("ops_snapshot_freshness_unknown")),
         "scores": live_ops.get("scores"),
         "scores_weakest": live_ops.get("scores_weakest"),
+        "scores_weakest_focus": live_ops.get("scores_weakest_focus"),
         "minimax_spend": live_ops.get("minimax_spend"),
         "roles": live_ops.get("roles"),
         "service_screen_count": _public_screen_count(live_ops),

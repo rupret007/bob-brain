@@ -1,0 +1,18 @@
+Regression test: exploratory answer rejected for missing drafts
+Target: services/test_result_acceptance.py; result_acceptance.check_deliverables
+Setup: prompt="Project: Web Bob\nYour independent subtask:\nReview and regression test-case drafts\nOngoing task:\nObserved active lane: Web Bob unblock 1035"; answer="Architecture findings and investigation commands. No regression test drafts included. Plan to add tests later."; kind="test-writing"
+Action: call check_deliverables(prompt, answer, kind=kind)
+Expected: Raise ResultRejected containing 'Missing concrete regression test drafts'
+
+Regression test: complete answer with drafts and plan passes
+Target: services/test_result_acceptance.py; result_acceptance.check_deliverables
+Setup: prompt="Project: Web Bob\nYour independent subtask:\nReview and regression test-case drafts\nOngoing task:\nObserved active lane: Web Bob unblock 1035"; answer="Regression test: exploratory answer rejected\nTarget: services/test_result_acceptance.py; result_acceptance.check_deliverables\nSetup: prompt without concrete drafts; answer with no headings\nAction: call check_deliverables(prompt, answer, kind=\"test-writing\")\nExpected: Raise ResultRejected\n\nRegression test: valid draft passes check\nTarget: services/test_result_acceptance.py; result_acceptance.check_deliverables\nSetup: prompt with test-writing kind; answer with two Regression test: headings each having Target/Setup/Action/Expected lines\nAction: call check_deliverables(prompt, answer, kind=\"test-writing\")\nExpected: No exception\n\nUnblock plan:
+Change: Validate existing test_1035_exploratory_answer_cannot_win_a_positive_vote in services/test_result_acceptance.py; add a control test_1035_complete_answer_passes similar to the above second draft.
+Validation: Run python3 -m unittest discover -s services -p 'test_*.py' and confirm zero failures; propose a bounded replay job for lane 1035.
+Exit condition: Keep Web Bob unblock 1035 blocked until actual worker results contain the regression drafts and plan, and replay acceptance passes; structural checks alone cannot close it.
+
+```json
+{"accepted": true, "reason": "Delivered two regression test drafts (failure and control) grounded in result_acceptance.py implementation; unexecuted due to no execution tools."}
+```
+
+Findings/limits: Existing test_1035_exploratory_answer_cannot_win_a_positive_vote covers the failure case; added a control draft for completeness. The original unblock 1035 task prompt is unavailable, so assignment details are not inferred. No test execution performed; drafts are behavioral and labeled unexecuted. No shell or file-writing tools available.

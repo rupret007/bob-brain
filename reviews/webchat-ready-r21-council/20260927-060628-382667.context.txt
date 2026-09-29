@@ -1,0 +1,509 @@
+### FILE /tmp/webchat-ready-r21-diff.txt
+diff --git a/conductor/services/test_services.py b/conductor/services/test_services.py
+index 8e97d4c..ff01d59 100644
+--- a/conductor/services/test_services.py
++++ b/conductor/services/test_services.py
+@@ -340,6 +340,19 @@ class ServicesTest(unittest.TestCase):
+         self.assertEqual(weak.get("area"), "Self-improve loop")
+         self.assertEqual(weak.get("value"), 9.8)
+ 
++    def test_public_live_ops_carries_scores_weakest(self):
++        import live_dashboard
++
++        raw = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())
++        raw["scores"] = [
++            {"area": "Speed", "score": "9.79"},
++            {"area": "Self-improve loop", "score": "9.88"},
++        ]
++        raw["scores_weakest"] = live_dashboard._scores_weakest(raw["scores"])
++        public = live_dashboard.public_live_ops(raw)
++        self.assertEqual(public.get("scores_weakest", {}).get("area"), "Speed")
++        self.assertAlmostEqual(public.get("scores_weakest", {}).get("value"), 9.79)
++
+     def test_alignment_events_paginated_read(self):
+         ledger_dir = str(HERE.parent / "state")
+         if ledger_dir not in sys.path:
+diff --git a/conductor/webchat/app.py b/conductor/webchat/app.py
+index 1dd92fa..1c70840 100644
+--- a/conductor/webchat/app.py
++++ b/conductor/webchat/app.py
+@@ -876,10 +876,13 @@ class Chat:
+         if last_tick_outcome:
+             plain_status = f"{plain_status} Latest: {last_tick_outcome[:120]}."
+         changelog = self.round_changelog()
+-        last_ready_round = changelog.get("round")
+-        last_ready_sha = changelog.get("sha")
++        verified = self.latest_verified_ready_ship()
++        last_ready_round = verified.get("round") or changelog.get("round")
++        last_ready_sha = verified.get("sha") or changelog.get("sha")
++        last_ready_ship_verified = bool(verified.get("round") and verified.get("sha"))
+         if last_ready_round and last_ready_sha:
+-            plain_status = f"{plain_status} Last READY round R{last_ready_round} at {last_ready_sha}."
++            tag = "verified READY ship" if last_ready_ship_verified else "latest RESULT (unverified)"
++            plain_status = f"{plain_status} Last {tag} R{last_ready_round} at {last_ready_sha}."
+         bootstrap = root / "conductor/webchat/bootstrap_self_improve_launchd.sh"
+         install_ready = bool(files_ok and bootstrap.is_file())
+         if bootstrap.is_file():
+@@ -908,9 +911,67 @@ class Chat:
+             "summary": summary,
+             "last_ready_round": last_ready_round,
+             "last_ready_sha": last_ready_sha,
++            "last_ready_ship_verified": last_ready_ship_verified,
+             "last_round_changelog": changelog.get("line"),
+         }
+ 
++    @staticmethod
++    def _result_pass_gate(text: str) -> bool:
++        import re
++
++        section = re.search(r"^## PASS/FAIL\s*\n+(.*?)(?:\n## |\Z)", text, re.M | re.S)
++        if not section:
++            return False
++        body = section.group(1)
++        required = (
++            r"Unit tests",
++            r"Failover tests",
++            r"Handback drill",
++            r"Server restart",
++        )
++        for label in required:
++            if not re.search(rf"\|\s*{label}[^|]*\|\s*\*\*PASS\*\*", body, re.I):
++                return False
++        return True
++
++    @staticmethod
++    def _parse_result_sha(text: str) -> str | None:
++        import re
++
++        for pattern in (
++            r"\|\s*\*\*Final SHA[^|]*\*\*\s*\|\s*`([0-9a-f]{7,40})`",
++            r"\|\s*\*\*R\d+[^|]*\(code\)\*\*\s*\|\s*`([0-9a-f]{7,40})`",
++        ):
++            match = re.search(pattern, text, re.I)
++            if match:
++                return match.group(1)[:12]
++        return None
++
++    def latest_verified_ready_ship(self) -> dict:
++        import re
++
++        def round_num(path: Path) -> int:
++            match = re.search(r"R(\d+)", path.name)
++            return int(match.group(1)) if match else 0
++
++        paths = sorted(
++            self.root.glob("conductor/reviews/WEBCHAT-READY-R*-RESULT.md"),
++            key=round_num,
++            reverse=True,
++        )
++        for path in paths:
++            try:
++                text = path.read_text(errors="replace")
++            except OSError:
++                continue
++            if not self._result_pass_gate(text):
++                continue
++            sha = self._parse_result_sha(text)
++            if not sha:
++                continue
++            return {"round": round_num(path) or None, "sha": sha, "file": path.name}
++        return {}
++
+     def round_changelog(self) -> dict:
+         import re
+ 
+@@ -929,6 +990,7 @@ class Chat:
+         name = path.name
+         round_no = round_num(path) or None
+         line = ""
++        text = ""
+         try:
+             text = path.read_text(errors="replace")
+             section = re.search(r"^## Changelog\s*\n+(.+?)(?:\n## |\Z)", text, re.M | re.S)
+@@ -953,21 +1015,15 @@ class Chat:
+                         line = row.strip().lstrip("|").rstrip("|").strip()[:220]
+                         break
+         except OSError:
+-            pass
+-        sha = None
+-        for pattern in (
+-            r"\|\s*\*\*Final SHA[^|]*\*\*\s*\|\s*`([0-9a-f]{7,40})`",
+-            r"\|\s*\*\*R\d+[^|]*\(code\)\*\*\s*\|\s*`([0-9a-f]{7,40})`",
+-        ):
+-            match = re.search(pattern, text, re.I)
+-            if match:
+-                sha = match.group(1)[:12]
+-                break
++            text = ""
++        sha = self._parse_result_sha(text) if text else None
++        verified = bool(sha and text and self._result_pass_gate(text))
+         return {
+             "round": round_no,
+             "file": name,
+             "line": line or "See latest round result on the mini.",
+             "sha": sha,
++            "ship_verified": verified,
+         }
+ 
+     def panel(self):
+diff --git a/conductor/webchat/evidence/handback-drill.json b/conductor/webchat/evidence/handback-drill.json
+index 4e21e8d..a41344f 100644
+--- a/conductor/webchat/evidence/handback-drill.json
++++ b/conductor/webchat/evidence/handback-drill.json
+@@ -1,46 +1,46 @@
+ {
+-  "started_at": 1790506882.0326772,
++  "started_at": 1790507178.326369,
+   "rounds": [
+     {
+       "ledger": {
+-        "tag": "r12-1",
+-        "fixture_id": "bec2a5eb-bcdf-4917-a261-2b51bd6b6ab9",
++        "tag": "r21-1",
++        "fixture_id": "5712ae2e-00ea-47b2-9e1f-55a66f9b34f9",
+         "ledger_ok": true,
+         "bob_pickup_ok": true,
+         "summary_chars": 967
+       },
+       "live": {
+-        "tag": "r12-1",
++        "tag": "r21-1",
+         "status": "done",
+         "provider": "state",
+-        "elapsed_seconds": 0.041,
++        "elapsed_seconds": 0.048,
+         "mentions_running": true,
+-        "snippet": "Running: handback drill screen `drill-r12-1`",
++        "snippet": "Running: handback drill screen `drill-r21-1`",
+         "live_ok": true
+       },
+-      "fixture_id": "bec2a5eb-bcdf-4917-a261-2b51bd6b6ab9",
++      "fixture_id": "5712ae2e-00ea-47b2-9e1f-55a66f9b34f9",
+       "reverse_handback_ok": true,
+       "events_ok": true,
+       "pass": true
+     },
+     {
+       "ledger": {
+-        "tag": "r12-2",
+-        "fixture_id": "4ade43da-b6e7-4eb9-977c-8907bf8ce705",
++        "tag": "r21-2",
++        "fixture_id": "b2038de4-abc0-4ddb-abd6-5694333ac5ec",
+         "ledger_ok": true,
+         "bob_pickup_ok": true,
+         "summary_chars": 967
+       },
+       "live": {
+-        "tag": "r12-2",
++        "tag": "r21-2",
+         "status": "done",
+         "provider": "state",
+-        "elapsed_seconds": 0.042,
++        "elapsed_seconds": 0.043,
+         "mentions_running": true,
+-        "snippet": "Running: handback drill screen `drill-r12-2`",
++        "snippet": "Running: handback drill screen `drill-r21-2`",
+         "live_ok": true
+       },
+-      "fixture_id": "4ade43da-b6e7-4eb9-977c-8907bf8ce705",
++      "fixture_id": "b2038de4-abc0-4ddb-abd6-5694333ac5ec",
+       "reverse_handback_ok": true,
+       "events_ok": true,
+       "pass": true
+@@ -48,7 +48,7 @@
+   ],
+   "isolated": true,
+   "prod_unchanged": true,
+-  "finished_at": 1790506882.350476,
++  "finished_at": 1790507178.6541052,
+   "result": "PASS",
+   "drill_commit_marker": "drill0001"
+ }
+diff --git a/conductor/webchat/evidence/ready-drill.json b/conductor/webchat/evidence/ready-drill.json
+index ff3a838..d99c496 100644
+--- a/conductor/webchat/evidence/ready-drill.json
++++ b/conductor/webchat/evidence/ready-drill.json
+@@ -7,7 +7,7 @@
+       "text": "Reply with exactly: drill A1",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.968,
++      "elapsed_seconds": 1.104,
+       "busy_in_attempts": false
+     },
+     {
+@@ -15,7 +15,7 @@
+       "text": "Reply with exactly: drill B1",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.122,
++      "elapsed_seconds": 1.099,
+       "busy_in_attempts": false
+     },
+     {
+@@ -23,7 +23,7 @@
+       "text": "Reply with exactly: drill A2",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.109,
++      "elapsed_seconds": 1.11,
+       "busy_in_attempts": false
+     },
+     {
+@@ -31,7 +31,7 @@
+       "text": "Reply with exactly: drill B2",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.135,
++      "elapsed_seconds": 1.122,
+       "busy_in_attempts": false
+     },
+     {
+@@ -39,7 +39,7 @@
+       "text": "Reply with exactly: drill A3",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.115,
++      "elapsed_seconds": 1.438,
+       "busy_in_attempts": false
+     },
+     {
+@@ -47,7 +47,7 @@
+       "text": "Reply with exactly: drill B3",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.137,
++      "elapsed_seconds": 1.116,
+       "busy_in_attempts": false
+     },
+     {
+@@ -55,7 +55,7 @@
+       "text": "Reply with exactly: drill A4",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.138,
++      "elapsed_seconds": 1.137,
+       "busy_in_attempts": false
+     },
+     {
+@@ -63,7 +63,7 @@
+       "text": "Reply with exactly: drill B4",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.101,
++      "elapsed_seconds": 1.128,
+       "busy_in_attempts": false
+     },
+     {
+@@ -71,7 +71,7 @@
+       "text": "Reply with exactly: drill A5",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.104,
++      "elapsed_seconds": 1.087,
+       "busy_in_attempts": false
+     },
+     {
+@@ -79,18 +79,18 @@
+       "text": "Reply with exactly: drill B5",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 2.632,
++      "elapsed_seconds": 1.12,
+       "busy_in_attempts": false
+     }
+   ],
+-  "started_at": 1790506866.7038121,
++  "started_at": 1790507165.071842,
+   "locks": [
+     "codex: drill holds background lock",
+     "cursor: drill holds background lock",
+     "gemini: drill holds background lock",
+     "minimax: drill holds background lock"
+   ],
+-  "p50_seconds": 1.128,
++  "p50_seconds": 1.118,
+   "via_tsnet": true,
+   "merge_refusal": {
+     "ok": true,
+@@ -100,6 +100,6 @@
+     "duplicate_messages": 2,
+     "idempotent_refusal": true
+   },
+-  "finished_at": 1790506880.33795,
++  "finished_at": 1790507176.626272,
+   "result": "PASS"
+ }
+diff --git a/conductor/webchat/static/app.js b/conductor/webchat/static/app.js
+index d80f851..a250b74 100644
+--- a/conductor/webchat/static/app.js
++++ b/conductor/webchat/static/app.js
+@@ -1107,6 +1107,8 @@ if ($("login-form")) {
+       ["Service screens", screenCount == null ? "—" : String(screenCount)],
+       ["Scheduler queue", typeof ops.queue_ready_count === "number" ? `${ops.queue_ready_count} ready` : "—"],
+       ["Live jobs", jobs.length ? `${jobs.length} on screen` : "none on screen"],
++      ["Scores updated", ops.generated_at ? ops.generated_at.replace("T", " ").slice(0, 19) + " UTC" : "—"],
++      ["Focus area", ops.scores_weakest?.area ? `${ops.scores_weakest.area} (${ops.scores_weakest.value})` : "—"],
+     ];
+     const dl = document.createElement("dl");
+     rows.forEach(([label, value]) => {
+@@ -1317,7 +1319,7 @@ if ($("login-form")) {
+       const weakNote = ops.scores_weakest?.area
+         ? ` · focus ${ops.scores_weakest.area} (${ops.scores_weakest.value})`
+         : "";
+-      $("status-summary").textContent = `${jobLead} · ${roundNote}${queueNote}${weakNote} · MiniMax ${spendText}${meta.stale ? " · snapshot may be stale" : ""}`;
++      $("status-summary").textContent = `${jobLead} · ${roundNote}${queueNote}${weakNote}${scoreStamp} · MiniMax ${spendText}${meta.stale ? " · snapshot may be stale" : ""}`;
+       renderLiveJobs(liveCards, ops.queued_jobs);
+       lastPanelScores = ops.scores;
+       lastPanelOps = ops;
+@@ -1382,7 +1384,9 @@ if ($("login-form")) {
+       const details = $("self-improve-details");
+       const extraHost = $("self-improve-extra");
+       const roundShip = si.last_ready_round && si.last_ready_sha
+-        ? `Last READY ship: R${si.last_ready_round} · ${si.last_ready_sha}`
++        ? (si.last_ready_ship_verified
++          ? `Verified READY ship: R${si.last_ready_round} · ${si.last_ready_sha}`
++          : `Latest RESULT (unverified): R${si.last_ready_round} · ${si.last_ready_sha}`)
+         : "";
+       const detailParts = [
+         loaded,
+@@ -1473,7 +1477,7 @@ if ($("login-form")) {
+     try {
+       const ops = lastPanelOps || {};
+       renderOpsDetail(ops);
+-      renderScoresTable(lastPanelScores);
++      renderScoresTable(lastPanelScores, "scores-table", ops.scores_weakest);
+       const spend = ops.minimax_spend || {};
+       const roles = ops.roles || {};
+       const dashAge = ops.dashboard_freshness_seconds;
+diff --git a/conductor/webchat/static/style.css b/conductor/webchat/static/style.css
+index e8f658b..db484fd 100644
+--- a/conductor/webchat/static/style.css
++++ b/conductor/webchat/static/style.css
+@@ -308,8 +308,8 @@ select option { background: var(--surface-2); color: var(--text); }
+ }
+ .provider-hint {
+   font-size: 11px;
+-  color: color-mix(in srgb, var(--muted) 70%, var(--text));
+-  opacity: 0.95;
++  color: color-mix(in srgb, var(--text) 82%, var(--muted));
++  opacity: 1;
+   margin: 4px 4px 0 2px;
+   letter-spacing: 0.02em;
+ }
+@@ -634,7 +634,12 @@ button.stop-reply {
+ .live-job .stall { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+ .live-job .stall.running { color: #8fd4a8; }
+ .live-job .stall.stalled { color: var(--danger); }
+-.live-job .log-tail { color: var(--muted); margin: 4px 0 0; white-space: pre-wrap; font-size: 11px; }
++.live-job .log-tail {
++  color: color-mix(in srgb, var(--text) 78%, var(--muted));
++  margin: 4px 0 0;
++  white-space: pre-wrap;
++  font-size: 11px;
++}
+ .live-job-actions { display: flex; gap: 8px; margin-top: 10px; }
+ .live-job-actions button { flex: 1; min-height: 44px; font-size: 13px; border-radius: 10px; }
+ .message.voice-note .body {
+@@ -645,7 +650,7 @@ button.stop-reply {
+ }
+ .message.voice-note .voice-transcript {
+   font-size: 14px;
+-  color: color-mix(in srgb, var(--text) 88%, var(--muted));
++  color: var(--text);
+   margin-top: 6px;
+   line-height: 1.45;
+ }
+diff --git a/conductor/webchat/test_webchat.py b/conductor/webchat/test_webchat.py
+index 8a5510f..6e902a4 100644
+--- a/conductor/webchat/test_webchat.py
++++ b/conductor/webchat/test_webchat.py
+@@ -923,12 +923,47 @@ class HandbackJobTests(Fixture):
+     def test_self_improve_exposes_last_ready_ship(self):
+         reviews = self.root / "conductor/reviews"
+         reviews.mkdir(parents=True, exist_ok=True)
++        pass_block = """
++## PASS/FAIL
++| Check | Result |
++| Unit tests | **PASS** |
++| Failover tests | **PASS** |
++| Handback drill ×2 | **PASS** |
++| Server restart | **PASS** |
++"""
+         (reviews / "WEBCHAT-READY-R88-RESULT.md").write_text(
+-            "# R88\n\n## Changelog\nShip note.\n\n| **Final SHA (this round)** | `feedface9999` |\n"
++            "# R88\n\n## Changelog\nShip note.\n\n"
++            + pass_block
++            + "\n| **Final SHA (this round)** | `feedface9999` |\n"
+         )
+         status = self.chat.self_improve_status()
+         self.assertEqual(status.get("last_ready_round"), 88)
+         self.assertEqual(status.get("last_ready_sha"), "feedface9999")
++        self.assertTrue(status.get("last_ready_ship_verified"))
++
++    def test_self_improve_skips_unverified_result_for_ship(self):
++        reviews = self.root / "conductor/reviews"
++        reviews.mkdir(parents=True, exist_ok=True)
++        pass_block = """
++## PASS/FAIL
++| Check | Result |
++| Unit tests | **PASS** |
++| Failover tests | **PASS** |
++| Handback drill ×2 | **PASS** |
++| Server restart | **PASS** |
++"""
++        (reviews / "WEBCHAT-READY-R10-RESULT.md").write_text(
++            "# R10\n\n## Changelog\nOld verified.\n"
++            + pass_block
++            + "\n| **Final SHA (this round)** | `aaaabbbbcccc` |\n"
++        )
++        (reviews / "WEBCHAT-READY-R99-RESULT.md").write_text(
++            "# R99\n\n## Changelog\nDraft only.\n\n| **Final SHA (this round)** | `deadbeef9999` |\n"
++        )
++        status = self.chat.self_improve_status()
++        self.assertEqual(status.get("last_ready_round"), 10)
++        self.assertEqual(status.get("last_ready_sha"), "aaaabbbbcccc")
++        self.assertTrue(status.get("last_ready_ship_verified"))
+ 
+     def test_submit_attaches_voice_audio_id(self):
+         from music_demo import store_upload
+
+
+### FILE conductor/reviews/webchat-ready-r21-council-context.md
+# Round 21 council context
+
+**Branch:** draft/webchat-failover-20260927  
+**Pre-R21 HEAD:** 6a76cbc (R12 docs)  
+**Tests:** 97 webchat + 23 failover + 46 services PASS; bob parity 24/24; ready drill p50 1.118s via_tsnet true; handback r21×2 isolated prod_unchanged.  
+**Focus:** verified READY ship gate (PASS/FAIL), live dashboard scores timestamp + focus rows, voice/log contrast, Models weakest on lane refresh.  
+**No Grok.** Music unchanged (LLM + notebook, no MiniMax music API).
+
+Diff: /tmp/webchat-ready-r21-diff.txt (also git diff conductor/webchat conductor/services)
+
+
+### FILE conductor/reviews/WEBCHAT-READY-R21-DESIGN.md
+# Web Bob Round 21 — research-first design note
+
+**Date:** 2026-09-27 CT · **Branch:** `draft/webchat-failover-20260927` · **Base:** R12 `8ac6e2c` · **No Grok.**
+
+## Research pass
+
+| Source | Borrow | Reject | Why |
+|--------|--------|--------|-----|
+| [Apple HIG — Tab bars](https://developer.apple.com/design/human-interface-guidelines/tab-bars) | Jobs/Models off chat; 44pt targets | Raw log dumps in chat | Jeff 02:30 |
+| [web.dev readable contrast](https://web.dev/articles/color-and-contrast-accessibility) | Voice transcript + provider hint at full text color | Faded assistant meta | R12 voice 9.88 gap |
+| LangGraph checkpoint handoff | Isolated `drill-fixtures/` + handback ×2 | Prod STATE during drills | P0 03:17 |
+| MiniMax music API | — | New endpoints (410) | Jeff 02:00 — LLM + Logic MCP only |
+| Council fail-closed (R12) | PASS/FAIL gate before “READY ship” label | Any latest RESULT SHA | R12 council hold note |
+
+## R21 build focus (lowest R12 scores first)
+
+1. **Self-improve loop (9.88):** `latest_verified_ready_ship()` — only rounds with PASS/FAIL core checks count as verified READY ship in Settings.
+2. **Speed / live dashboard (9.79 / 02:03):** Show `generated_at` + `scores_weakest` on Jobs summary and ops detail; Models tab reuses weakest when refreshing lanes.
+3. **Voice / mobile formatting (9.88):** Higher-contrast voice transcripts and provider hints; readable job log tail on live cards.
+4. **Failover both ways:** `WEBCHAT_HANDBACK_TAG=r21` isolated drill ×2; live ts.net ready drill.
+5. **Music:** Lyrics/chords via LLMs + notebook only ($0).
+
+## Council
+
+Gemini + MiniMax + Claude (short) on R21 diff; synthesizer vote; no Grok.

@@ -1,0 +1,6 @@
+RESULT: FAIL_OR_ROLLBACK
+tip: c87cb73cbb0fd1a2162bbf939c86170fd26715a5
+Failure: Replay job failed: webchat-16057f2d2c3b5e27ba041d9ace204ee5 Answer did not complete the task: The answer delivers two structurally valid regression drafts for check_completion_json and includes an Action plan with Change/Validation/Exit condition lines plus a completion JSON block. However, the task specifically asks for drafts tied to #lane-webbob-texting-disk-evidence-fix-2003 (disk-evidence persistence) and instructs to inspect dispatch_worker.py, task_queue.py, and worker_assignment.py before proposing dispatch/completion regressions. The drafts test check_completion_json rather than the actual lane fix behavior, contradicting the instruction to ground drafts in the assigned task. Additionally, the required 'Findings/limits:' closing sentence is absent from the prose (present only in the JSON reason), which is mandatory for independent subtasks per check_deliverables. The outer report is also missing the literal 'Findings/limits:' heading.
+Rollback: /Users/jeffstory/Documents/bob-overnight-inject/rollbacks/webbob-texting-20260928-202350
+rollback_verified: True
+evidence: /Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/WEBBOB-TEXTING-DEPLOYMENT-0927-attempt13.json

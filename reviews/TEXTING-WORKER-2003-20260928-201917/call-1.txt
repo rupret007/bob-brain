@@ -1,0 +1,32 @@
+{
+  "regression_tests": [
+    {
+      "name": "missing completion JSON fails closed",
+      "target": "services/result_acceptance.py::check_completion_json",
+      "setup": "prompt='Return JSON with accepted/reason fields.'; answer='Findings only.'",
+      "action": "check_completion_json(prompt, answer)",
+      "expected": {
+        "guard_outcome": "reject"
+      }
+    },
+    {
+      "name": "complete accepted/reason JSON passes the completion guard",
+      "target": "services/result_acceptance.py::check_completion_json",
+      "setup": "prompt='Return JSON with accepted/reason fields.'; answer='{\"accepted\": true, \"reason\": \"Delivered bounded unexecuted drafts.\"}'",
+      "action": "check_completion_json(prompt, answer)",
+      "expected": {
+        "guard_outcome": "pass"
+      }
+    }
+  ],
+  "plan": {
+    "change": "Validate existing CompletionContractTests.test_missing_malformed_or_ambiguous_json_cannot_win_a_positive_vote in services/test_replay_completion.py covers the check_completion_json guard behavior; no new implementation needed for Web Bob unblock 1035 since the guard and test contracts are already present.",
+    "validation": "python3 -m unittest discover -s services -p 'test_*.py' has not been executed; validation is conditional on actual worker execution results which are unavailable for this draft.",
+    "exit_condition": "Web Bob unblock 1035 remains blocked until actual worker results, live test execution, and independent semantic review pass; drafts are unexecuted and cannot close the lane."
+  },
+  "completion": {
+    "accepted": true,
+    "reason": "Delivered regression test-case drafts for check_completion_json guard using literal inputs and expected outcomes; validated existing CompletionContractTests coverage; disclosed missing original task prompt and unexecuted drafts."
+  },
+  "findings_limits": "The original task prompt for Web Bob unblock 1035 (job_id: webchat-f4b8e359666155c6a06900f02b313c8c) was not recorded per services/fixtures/texting_jobcompletion_1035.json error. Existing check_completion_json guard is already implemented in services/result_acceptance.py and covered by CompletionContractTests. Regression drafts are unexecuted. No shell/file-writing tools available to run validation. Cannot claim test execution or resolve lane closure."
+}

@@ -1,0 +1,1 @@
+{"accepted": true, "reason": "Delivered two source-selection regression drafts grounded in report_repository implementation; tests are unexecuted and the full task/lane evidence was not supplied."}

@@ -1,0 +1,489 @@
+### FILE conductor/reviews/WEBCHAT-READY-R22-DESIGN.md
+# Web Bob Round 22 — research-first design note (on R16 baseline)
+
+**Date:** 2026-09-27 CT · **Branch:** `draft/webchat-failover-20260927` · **Baseline:** R16 final `73d13e9` / code `b276701` · **No Grok.**
+
+## Research pass
+
+| Source | Borrow | Reject | Why |
+|--------|--------|--------|-----|
+| Council R16 hold notes | Lyric **meter scan** on pasted lines, not keyword-only tips | MiniMax music API (410) | Jeff 02:00; Gemini critique |
+| Apple HIG tab bars | Jobs cards show builder/reviewer lane in plain English | Raw queue filenames in chat | Jeff 02:30 |
+| ALIGNMENT `events.jsonl` + isolated drills | Handback ×2 `r22`; `prod_unchanged` | Touch prod STATE in drills | P0 03:17 |
+| `live_dashboard.enrich_live_ops_bundle` | Document + verify dashboard fields (02:03) | Builder self-grade | R21 verified ship gate |
+| web.dev contrast | Call transcript uses full `--text` | Faded call UI on dark | Voice 9.91 target |
+
+## R22 build focus (lowest R16 scores first)
+
+1. **Music (9.89 → target ≥9.91):** `analyze_lyric_meter()` — per-line approximate syllable counts ($0).
+2. **Enhancement 2 — run jobs from chat (9.91):** Queued action cards show short queue ref + Jobs link (unchanged flow, clearer tracking).
+3. **Conductor parity (9.91):** Autopilot status prefers `roles.building` / `roles.reviewing` over “next pass” when lanes are busy.
+4. **Live dashboard (9.99 maintain):** Job cards show **Building via** / **Reviewing via** when roles match engine.
+5. **Voice (9.91):** Stronger call transcript contrast.
+6. **Bob parity:** +1 eval case for lyric meter scan; target **26/26**.
+7. **Failover both ways:** `WEBCHAT_HANDBACK_TAG=r22` drill ×2 + ts.net ready drill.
+
+## Council
+
+Gemini + MiniMax + Claude (short) on R22 diff; synthesizer vote; disagreements resolved by council vote. No Grok.
+
+
+### FILE conductor/reviews/webchat-ready-r22-council-context.md
+# Council context — Web Bob R22 (Cursor lane)
+
+**Branch:** `draft/webchat-failover-20260927` · **Baseline:** R16 `73d13e9` · **No Grok.**
+
+**Focus:** Lyric meter scan ($0); queued job action cards show queue ref; conductor autopilot respects builder/reviewer lanes; Jobs cards show building/reviewing; call transcript contrast; handback drill r22×2; ready drill ts.net.
+
+**Tests:** 98 webchat + 23 failover + 46 services OK; bob parity **26/26**.
+
+**Evidence:** `handback-drill.json` (r22-1, r22-2, isolated, prod_unchanged); `ready-drill.json` p50 ~1.126s via ts.net; iPhone-r22 layout ratios 0.771 / 0.793.
+
+**Vote:** ship vs hold for failover both ways, live dashboard, iPhone ≥9, music improvement.
+
+
+### FILE /tmp/r22-diff.txt
+diff --git a/conductor/webchat/bob_parity_eval.py b/conductor/webchat/bob_parity_eval.py
+index 7d93d33..bd99381 100644
+--- a/conductor/webchat/bob_parity_eval.py
++++ b/conductor/webchat/bob_parity_eval.py
+@@ -15,7 +15,7 @@ if str(HERE.parent / "state") not in sys.path:
+ import ledger as state_ledger  # noqa: E402
+ from handback import append_turn, refresh_summary, _pickup_from_ledger  # noqa: E402
+ from job_queue import parse_confirm, parse_council, parse_council_confirm, parse_do_more, parse_start  # noqa: E402
+-from music_notebook import try_music_coach_reply  # noqa: E402
++from music_notebook import analyze_lyric_meter, try_music_coach_reply  # noqa: E402
+ 
+ 
+ def _case(name: str, ok: bool, detail: str = "") -> dict:
+@@ -41,6 +41,13 @@ def run_eval(root: Path | None = None) -> dict:
+     rows.append(_case("music lyrics tip", "verse" in (try_music_coach_reply("write lyrics for a verse") or "").lower()))
+     rows.append(_case("music refrain tip", "refrain" in (try_music_coach_reply("polish the refrain") or "").lower()))
+     rows.append(_case("music meter tip", "4/4" in (try_music_coach_reply("fix meter on my verse lyrics") or "").lower()))
++    sample = (
++        "count syllables in my verse lyrics:\n"
++        "I wait by the door in the rain\n"
++        "You never call out my name again"
++    )
++    scan = analyze_lyric_meter(sample) or ""
++    rows.append(_case("music lyric meter scan", "syllable" in scan.lower() and "line 1" in scan.lower()))
+ 
+     with tempfile.TemporaryDirectory() as tmp:
+         troot = Path(tmp)
+diff --git a/conductor/webchat/evidence/handback-drill.json b/conductor/webchat/evidence/handback-drill.json
+index a41344f..dcf68dc 100644
+--- a/conductor/webchat/evidence/handback-drill.json
++++ b/conductor/webchat/evidence/handback-drill.json
+@@ -1,46 +1,46 @@
+ {
+-  "started_at": 1790507178.326369,
++  "started_at": 1790507740.227329,
+   "rounds": [
+     {
+       "ledger": {
+-        "tag": "r21-1",
+-        "fixture_id": "5712ae2e-00ea-47b2-9e1f-55a66f9b34f9",
++        "tag": "r22-1",
++        "fixture_id": "8467afdb-88eb-432e-862f-3c08e78b010a",
+         "ledger_ok": true,
+         "bob_pickup_ok": true,
+         "summary_chars": 967
+       },
+       "live": {
+-        "tag": "r21-1",
++        "tag": "r22-1",
+         "status": "done",
+         "provider": "state",
+-        "elapsed_seconds": 0.048,
++        "elapsed_seconds": 0.044,
+         "mentions_running": true,
+-        "snippet": "Running: handback drill screen `drill-r21-1`",
++        "snippet": "Running: handback drill screen `drill-r22-1`",
+         "live_ok": true
+       },
+-      "fixture_id": "5712ae2e-00ea-47b2-9e1f-55a66f9b34f9",
++      "fixture_id": "8467afdb-88eb-432e-862f-3c08e78b010a",
+       "reverse_handback_ok": true,
+       "events_ok": true,
+       "pass": true
+     },
+     {
+       "ledger": {
+-        "tag": "r21-2",
+-        "fixture_id": "b2038de4-abc0-4ddb-abd6-5694333ac5ec",
++        "tag": "r22-2",
++        "fixture_id": "9c684454-b209-4cdc-ace3-819108603bad",
+         "ledger_ok": true,
+         "bob_pickup_ok": true,
+         "summary_chars": 967
+       },
+       "live": {
+-        "tag": "r21-2",
++        "tag": "r22-2",
+         "status": "done",
+         "provider": "state",
+-        "elapsed_seconds": 0.043,
++        "elapsed_seconds": 0.042,
+         "mentions_running": true,
+-        "snippet": "Running: handback drill screen `drill-r21-2`",
++        "snippet": "Running: handback drill screen `drill-r22-2`",
+         "live_ok": true
+       },
+-      "fixture_id": "b2038de4-abc0-4ddb-abd6-5694333ac5ec",
++      "fixture_id": "9c684454-b209-4cdc-ace3-819108603bad",
+       "reverse_handback_ok": true,
+       "events_ok": true,
+       "pass": true
+@@ -48,7 +48,7 @@
+   ],
+   "isolated": true,
+   "prod_unchanged": true,
+-  "finished_at": 1790507178.6541052,
++  "finished_at": 1790507740.5496802,
+   "result": "PASS",
+   "drill_commit_marker": "drill0001"
+ }
+diff --git a/conductor/webchat/evidence/ready-drill.json b/conductor/webchat/evidence/ready-drill.json
+index d99c496..8572ed2 100644
+--- a/conductor/webchat/evidence/ready-drill.json
++++ b/conductor/webchat/evidence/ready-drill.json
+@@ -7,7 +7,7 @@
+       "text": "Reply with exactly: drill A1",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.104,
++      "elapsed_seconds": 1.056,
+       "busy_in_attempts": false
+     },
+     {
+@@ -15,7 +15,7 @@
+       "text": "Reply with exactly: drill B1",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.099,
++      "elapsed_seconds": 1.113,
+       "busy_in_attempts": false
+     },
+     {
+@@ -23,7 +23,7 @@
+       "text": "Reply with exactly: drill A2",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.11,
++      "elapsed_seconds": 1.423,
+       "busy_in_attempts": false
+     },
+     {
+@@ -31,7 +31,7 @@
+       "text": "Reply with exactly: drill B2",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.122,
++      "elapsed_seconds": 1.134,
+       "busy_in_attempts": false
+     },
+     {
+@@ -39,7 +39,7 @@
+       "text": "Reply with exactly: drill A3",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.438,
++      "elapsed_seconds": 1.139,
+       "busy_in_attempts": false
+     },
+     {
+@@ -47,7 +47,7 @@
+       "text": "Reply with exactly: drill B3",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.116,
++      "elapsed_seconds": 1.109,
+       "busy_in_attempts": false
+     },
+     {
+@@ -55,7 +55,7 @@
+       "text": "Reply with exactly: drill A4",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.137,
++      "elapsed_seconds": 1.117,
+       "busy_in_attempts": false
+     },
+     {
+@@ -63,7 +63,7 @@
+       "text": "Reply with exactly: drill B4",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.128,
++      "elapsed_seconds": 1.118,
+       "busy_in_attempts": false
+     },
+     {
+@@ -71,7 +71,7 @@
+       "text": "Reply with exactly: drill A5",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.087,
++      "elapsed_seconds": 1.136,
+       "busy_in_attempts": false
+     },
+     {
+@@ -79,18 +79,18 @@
+       "text": "Reply with exactly: drill B5",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.12,
++      "elapsed_seconds": 1.145,
+       "busy_in_attempts": false
+     }
+   ],
+-  "started_at": 1790507165.071842,
++  "started_at": 1790507722.188416,
+   "locks": [
+     "codex: drill holds background lock",
+     "cursor: drill holds background lock",
+     "gemini: drill holds background lock",
+     "minimax: drill holds background lock"
+   ],
+-  "p50_seconds": 1.118,
++  "p50_seconds": 1.126,
+   "via_tsnet": true,
+   "merge_refusal": {
+     "ok": true,
+@@ -100,6 +100,6 @@
+     "duplicate_messages": 2,
+     "idempotent_refusal": true
+   },
+-  "finished_at": 1790507176.626272,
++  "finished_at": 1790507733.776345,
+   "result": "PASS"
+ }
+diff --git a/conductor/webchat/music_notebook.py b/conductor/webchat/music_notebook.py
+index cb2c0d3..87dd2a1 100644
+--- a/conductor/webchat/music_notebook.py
++++ b/conductor/webchat/music_notebook.py
+@@ -119,11 +119,88 @@ _MUSIC_COACH_RE = re.compile(
+     re.I,
+ )
+ 
++_VOWEL_RUN = re.compile(r"[aeiouy]+", re.I)
++
++
++def _syllables_in_word(word: str) -> int:
++    cleaned = re.sub(r"[^a-zA-Z']", "", word).lower()
++    if not cleaned:
++        return 0
++    if len(cleaned) <= 3:
++        return 1
++    groups = _VOWEL_RUN.findall(cleaned)
++    count = len(groups)
++    if cleaned.endswith("e") and count > 1 and not cleaned.endswith("le"):
++        count -= 1
++    if cleaned.endswith("ed") and count > 1 and not cleaned.endswith("ted") and not cleaned.endswith("ded"):
++        count -= 1
++    return max(1, count)
++
++
++def _syllables_in_line(line: str) -> int:
++    return sum(_syllables_in_word(part) for part in line.split())
++
++
++def _extract_lyric_lines(text: str) -> list[str]:
++    stripped = (text or "").strip()
++    if not stripped:
++        return []
++    if "\n" in stripped:
++        return [ln.strip() for ln in stripped.splitlines() if ln.strip() and not ln.strip().startswith("#")]
++    if ":" in stripped:
++        tail = stripped.split(":", 1)[1].strip()
++        if "\n" in tail:
++            return [ln.strip() for ln in tail.splitlines() if ln.strip()]
++        if len(tail) > 12 and re.search(r"\b(verse|lyrics|chorus|line)\b", stripped, re.I):
++            parts = re.split(r"\s*/\s*|\s*\|\s*", tail)
++            if len(parts) >= 2:
++                return [p.strip() for p in parts if p.strip()]
++    quoted = re.findall(r"[\"']([^\"']{8,})[\"']", stripped)
++    if quoted:
++        block = max(quoted, key=len)
++        if "\n" in block:
++            return [ln.strip() for ln in block.splitlines() if ln.strip()]
++        return [block.strip()]
++    return []
++
++
++def analyze_lyric_meter(text: str) -> str | None:
++    """Approximate syllable counts per lyric line ($0, no API)."""
++    lower = (text or "").lower()
++    if not re.search(r"\b(meter|metre|syllable|scansion|scan)\b", lower) and not re.search(
++        r"\bcount syllables\b", lower
++    ):
++        return None
++    lines = _extract_lyric_lines(text)
++    if len(lines) < 2:
++        return None
++    counts = [_syllables_in_line(ln) for ln in lines[:8]]
++    if not counts or max(counts) < 1:
++        return None
++    spread = max(counts) - min(counts)
++    even = spread <= 2
++    rows = [f"Line {i + 1}: ~{n} syllables — {lines[i][:72]}" for i, n in enumerate(counts)]
++    tip = (
++        "Lines look even for 4/4 — keep stresses on beats 1 and 3."
++        if even
++        else f"Spread is {spread} syllables across lines — trim or pad the long lines so bars feel even in 4/4."
++    )
++    return (
++        "Lyric meter scan ($0):\n"
++        + "\n".join(rows)
++        + f"\n{tip} Save tweaks in Songs → versions so Bob sees the pass."
++    )
++
+ 
+ def try_music_coach_reply(text: str) -> str | None:
+     """Cheap songwriting partner tips (no API spend)."""
+     stripped = (text or "").strip()
+-    if not stripped or len(stripped) > 280 or not _MUSIC_COACH_RE.search(stripped):
++    if not stripped:
++        return None
++    scanned = analyze_lyric_meter(stripped)
++    if scanned:
++        return scanned
++    if len(stripped) > 420 or not _MUSIC_COACH_RE.search(stripped):
+         return None
+     lower = stripped.lower()
+     if re.search(r"\brewrite\b", lower) and (":" in stripped or len(stripped) > 55):
+diff --git a/conductor/webchat/static/app.js b/conductor/webchat/static/app.js
+index 401e740..bda4bba 100644
+--- a/conductor/webchat/static/app.js
++++ b/conductor/webchat/static/app.js
+@@ -330,11 +330,12 @@ if ($("login-form")) {
+         let suffix = "No action executed";
+         if (ac.state === "queued") {
+           const pos = ac.queue_position;
++          const ref = ac.queue_id ? ` Ref ${String(ac.queue_id).replace(/\.md$/i, "").slice(0, 24)}.` : "";
+           if (typeof pos === "number" && pos > 0) {
+-            suffix = pos === 1 ? "Next up for the scheduler." : `Position #${pos} in the scheduler queue.`;
++            suffix = (pos === 1 ? "Next up for the scheduler." : `Position #${pos} in the scheduler queue.`) + ref;
+           } else {
+             const n = ac.queue_ready_count;
+-            suffix = typeof n === "number" && n > 0 ? `${n} waiting in scheduler queue.` : "Waiting for the scheduler.";
++            suffix = (typeof n === "number" && n > 0 ? `${n} waiting in scheduler queue.` : "Waiting for the scheduler.") + ref;
+           }
+         } else if (ac.state === "confirm") {
+           suffix = "Tap approve to continue (draft only)";
+@@ -1196,7 +1197,7 @@ if ($("login-form")) {
+       return card;
+     });
+   }
+-  function renderLiveJobs(jobs, queued) {
++  function renderLiveJobs(jobs, queued, roles = {}) {
+     const host = $("live-jobs");
+     const empty = $("jobs-empty");
+     if (!host) return;
+@@ -1238,6 +1239,16 @@ if ($("login-form")) {
+         const msg = job.last_commit.message ? job.last_commit.message.replace(/\.md\b/gi, "").slice(0, 80) : "";
+         commit.textContent = `Latest commit ${job.last_commit.sha}${msg ? " — " + msg : ""}`;
+       }
++      const laneNote = document.createElement("p");
++      laneNote.className = "job-lane muted";
++      const engine = (job.engine || "").toLowerCase();
++      const building = roles.building && roles.building !== "idle" ? String(roles.building).toLowerCase() : "";
++      const reviewing = roles.reviewing && roles.reviewing !== "idle" ? String(roles.reviewing).toLowerCase() : "";
++      if (building && (engine.includes(building) || building.includes(engine))) {
++        laneNote.textContent = `Building via ${roles.building}`;
++      } else if (reviewing && (engine.includes(reviewing) || reviewing.includes(engine))) {
++        laneNote.textContent = `Reviewing via ${roles.reviewing}`;
++      }
+       const actions = document.createElement("div");
+       actions.className = "live-job-actions";
+       const stopBtn = document.createElement("button");
+@@ -1262,7 +1273,9 @@ if ($("login-form")) {
+         $("report")?.showModal();
+       });
+       actions.append(stopBtn, detailBtn);
+-      card.append(header, now, tail, commit, actions);
++      card.append(header, now, tail, commit);
++      if (laneNote.textContent) card.append(laneNote);
++      card.append(actions);
+       return card;
+     })];
+     if (empty) empty.hidden = allCards.length > 0;
+@@ -1326,7 +1339,7 @@ if ($("login-form")) {
+         ? ` · focus ${ops.scores_weakest.area} (${ops.scores_weakest.value})`
+         : "";
+       $("status-summary").textContent = `${jobLead} · ${roundNote}${queueNote}${weakNote}${scoreStamp} · MiniMax ${spendText}${meta.stale ? " · snapshot may be stale" : ""}`;
+-      renderLiveJobs(liveCards, ops.queued_jobs);
++      renderLiveJobs(liveCards, ops.queued_jobs, roles);
+       lastPanelScores = ops.scores;
+       lastPanelOps = ops;
+       renderScoresTable(ops.scores, "jobs-scores-table", ops.scores_weakest);
+@@ -1342,15 +1355,21 @@ if ($("login-form")) {
+       const backlog = !meta.stale && typeof ops.queue_ready_count === "number" && ops.queue_ready_count > 0
+         ? ops.queue_ready_count
+         : 0;
++      const builderLane = roles.building && roles.building !== "idle" ? String(roles.building) : "";
++      const reviewerLane = roles.reviewing && roles.reviewing !== "idle" ? String(roles.reviewing) : "";
+       const autopilot = liveCards.length
+         ? `Working — ${liveCards.length} job${liveCards.length === 1 ? "" : "s"} on screen`
+         : (trackedRunning > 0
+           ? `Working — ${trackedRunning} job${trackedRunning === 1 ? "" : "s"} tracked on the mini`
+-          : (backlog > 0
+-            ? `Scheduler backlog — ${backlog} ready to launch`
+-            : (c.pass_schedule?.state === "finished"
+-              ? `Ready for the next pass${c.pass_schedule.next_due ? " · about " + new Date(c.pass_schedule.next_due * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""}`
+-              : (c.pass_schedule?.state ? `Scheduler ${c.pass_schedule.state.replace(/_/g, " ")}` : "Scheduler idle"))));
++          : (builderLane
++            ? `Working — ${builderLane} is building on the mini`
++            : (reviewerLane
++              ? `Working — ${reviewerLane} is reviewing`
++              : (backlog > 0
++                ? `Scheduler backlog — ${backlog} ready to launch`
++                : (c.pass_schedule?.state === "finished"
++                  ? `Ready for the next pass${c.pass_schedule.next_due ? " · about " + new Date(c.pass_schedule.next_due * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""}`
++                  : (c.pass_schedule?.state ? `Scheduler ${c.pass_schedule.state.replace(/_/g, " ")}` : "Scheduler idle"))))));
+       $("conductor-status").textContent = [
+         autopilot,
+         c.maintenance ? "Scheduling paused" : "Scheduler on",
+diff --git a/conductor/webchat/static/style.css b/conductor/webchat/static/style.css
+index daedf96..7aa0c4b 100644
+--- a/conductor/webchat/static/style.css
++++ b/conductor/webchat/static/style.css
+@@ -608,6 +608,8 @@ button.stop-reply {
+   line-height: 1.45;
+   padding: 8px 4px;
+   margin-top: 8px;
++  color: var(--text);
++  font-weight: 450;
+ }
+ 
+ .conductor-block, .handback-block { margin-top: 8px; }
+diff --git a/conductor/webchat/test_webchat.py b/conductor/webchat/test_webchat.py
+index 2a8cae6..2d5b763 100644
+--- a/conductor/webchat/test_webchat.py
++++ b/conductor/webchat/test_webchat.py
+@@ -1086,6 +1086,16 @@ class HandbackJobTests(Fixture):
+         self.assertIn("tag", tag_bridge)
+         hyphen = (try_music_coach_reply("double-chorus lift") or "").lower()
+         self.assertIn("double", hyphen)
++        from music_notebook import analyze_lyric_meter
++
++        scan = analyze_lyric_meter(
++            "count syllables in my verse lyrics:\n"
++            "Stars above the quiet town\n"
++            "I still hear your voice around"
++        )
++        self.assertIsNotNone(scan)
++        self.assertIn("Line 1", scan)
++        self.assertIn("syllable", scan.lower())
+ 
+     def test_self_improve_schedule_hint_from_plist(self):
+         plist = self.root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist"
+@@ -1234,7 +1244,7 @@ class HandbackJobTests(Fixture):
+ 
+         result = run_eval(Path(__file__).resolve().parents[2])
+         self.assertEqual(result["passed"], result["total"])
+-        self.assertEqual(result["total"], 25)
++        self.assertEqual(result["total"], 26)
+ 
+     def test_catchup_event_ack_cursor(self):
+         ledger_dir = Path(__file__).resolve().parent.parent / "state"

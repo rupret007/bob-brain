@@ -1,0 +1,11 @@
+LOOP-REPLIES-PASS-0927
+written_at_ct: 2026-09-27 18:41 CDT
+live_sha: dff84e37169b30014ff0f48502b8cc66542cf737 (dff84e3)
+draft_pr: https://github.com/rupret007/bob-brain/pull/12
+evidence:
+  - reviews/WEBBOB-REPLIES-DEPLOYMENT-0927.json all_pass=True
+  - reviews/WEBBOB-REPLIES-TESTS-0927.txt: 256 + 121 passed
+  - reviews/WEBBOB-REPLIES-DEPLOY-0927.log: Deployed dff84e3; session turns 1-6 PASS; parity going/claude161/push2/go PASS
+  - rollback: /Users/jeffstory/Documents/bob-overnight-inject/rollbacks/webbob-replies-20260927-174638
+verdict: PASS
+note: WEBBOB-EVALS-0927.md not written — no eval suite evidence artifact present; do not invent.

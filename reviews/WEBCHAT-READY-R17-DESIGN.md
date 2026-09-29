@@ -1,19 +1,27 @@
-# Web Bob Round 17 — design note (research-first)
+# Web Bob Round 17 — design note (research-first, on R38 baseline)
 
-**Borrow**
-- Jeff TOP: bidirectional handback drills ×2 with isolated fixture (`live_handback_drill.py`, `drill_fixture.py`).
-- ADDED 02:03 detailed live dashboard: show tracked + live jobs in Jobs dl grid; `stall_plain` + `display_state` on every card.
-- ADDED 02:51 quiet hours 11 PM–7 AM CT for read-aloud (live call unchanged).
-- Self-improve bootstrap one-liner in panel API (`bootstrap_command`) so Jeff can load launchd without reading paths.
-- ALIGNMENT-DESIGN.md event log + BOB-CATCHUP (unchanged contract).
+**Date:** 2026-09-27 CT · **Branch:** `draft/webchat-failover-20260927` · **Baseline:** R38 `faec74b` · **No Grok.**
 
-**Reject**
-- MiniMax music API / signups (Jeff 02:00).
-- Grok as worker.
-- Restart webchat mid-reply (03:40 gentle restarts — single restart end of round only).
+## Research pass
 
-**Why**
-- Lowest R16 scores: self-improve (9.44), voice (9.64), mobile formatting / Jobs plain English (9.66).
-- R17 targets dashboard completeness (non-screen jobs in ops detail), self-improve bootstrap clarity, call latency hint, quiet-hours read-aloud guard, refrain-only music coach.
+| Source | Borrow | Reject | Why |
+|--------|--------|--------|-----|
+| [LangGraph handoff patterns](https://langchain-ai.github.io/langgraph/concepts/multi_agent/) | Isolated drill fixtures + append-only handback ledger | Shared mutable chat state across agents | Zero lost context; `prod_unchanged` gate |
+| [web.dev readable typography](https://web.dev/articles/accessible-tap-targets) | Italic/emphasis in assistant markdown; 44pt chips unchanged | Raw `**` in Jobs tab | Enhancement 1 — mobile formatting |
+| R38 scorecard (lowest **9.98**) | Wire `parse_ready_round` in server submit path; chip uses READY phrase | Generic `start a job: ready round` string | Conductor parity + Enhancement 2 |
+| Jeff 02:00 music | Plagal (amen) IV→I coach ($0) | MiniMax music API (410) | Music row without spend |
+| ADDED 02:03 dashboard | Full pipeline table in RESULT; inherit `gap_to_nine` + headroom | Second score writer | Single `enrich_live_ops_bundle` path |
+| ALIGNMENT-DESIGN.md | `events.jsonl` + BOB-CATCHUP on wake | Bob polling | Bob usage cap to ~10/2 |
 
-**Sources:** `WEBCHAT-READY.md` ADDED 02:03/02:51/04:18, `WEBCHAT-READY-R16-RESULT.md`, Apple HIG tab bar, MDN Intl timeZone.
+## R17 build focus (lowest R38 scores first)
+
+1. **Failover (TOP):** handback drill ×2 (`r17-1`, `r17-2`), `prod_unchanged: true`, reverse + `events_ok`.
+2. **Conductor parity (9.98):** `parse_ready_round` → default READY goal confirm card (same as Start round chip).
+3. **Enhancement 1 (9.98):** `_italic_` / `*em*` in `renderMarkdown` for assistant bubbles.
+4. **Enhancement 2 (9.98):** ready-round + do-more paths tested end-to-end in `test_webchat.py`.
+5. **Music (9.99):** plagal cadence coach ($0).
+6. **Dashboard (02:03):** document full live ops pipeline in RESULT; `e2e_live.py --isolated`.
+
+## Council
+
+Gemini + MiniMax + Claude via `conductor/services/council.py`; disagreements resolved by council vote; no Grok.

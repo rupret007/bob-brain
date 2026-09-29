@@ -18,16 +18,15 @@ async function box(page, selector) {
     headless: true,
     ...(process.env.BOB_CHROMIUM_PATH ? { executablePath: process.env.BOB_CHROMIUM_PATH } : {}),
   });
-  const password = fs.readFileSync(path.join(__dirname, ".password"), "utf8").trim();
   for (const [tag, width, height] of [["iphone-14", 390, 844], ["iphone-14-pro-max", 430, 932]]) {
     const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 3 });
+    const password = fs.readFileSync(path.join(__dirname, ".password"), "utf8").trim();
+    const login = await context.request.post("http://127.0.0.1:8787/login", { form: { password } });
+    if (login.status() >= 400) throw new Error(`login failed: ${login.status()}`);
     const page = await context.newPage();
     page.on("dialog", (dialog) => dialog.accept());
-    await page.goto("http://127.0.0.1:8787/login");
-    await page.locator("#password").fill(password);
-    await page.locator("#login-form button").click();
-    await page.waitForURL("http://127.0.0.1:8787/");
-    await page.locator("#view-chat.active").waitFor();
+    await page.goto("http://127.0.0.1:8787/");
+    await page.locator("#view-chat.active").waitFor({ timeout: 45_000 });
     const vh = height;
     const msg = await box(page, "#messages");
     const metrics = {
@@ -37,11 +36,15 @@ async function box(page, selector) {
     };
     layout.push({ tag, ...metrics });
     await page.screenshot({ path: path.join(evidence, `${tag}-chat.png`) });
+    await page.locator("#open-chats").click();
+    await page.locator("#chats-dialog[open]").waitFor({ timeout: 10_000 });
+    await page.screenshot({ path: path.join(evidence, `${tag}-chat-modal.png`) });
+    await page.locator("#close-chats").click();
+    await page.waitForTimeout(350);
     for (const tab of tabs.slice(1)) {
       await page.locator('.bottom-tab[data-bottom="chat"]').click();
       await page.locator("#view-chat.active").waitFor({ timeout: 10_000 });
       await page.locator(`.bottom-tab[data-bottom="${tab}"]`).click();
-      await page.locator(`.bottom-tab[data-bottom="${tab}"].active`).waitFor({ timeout: 45_000 });
       await page.locator(`[data-view="${tab}"]:not([hidden])`).waitFor({ timeout: 45_000 });
       await page.screenshot({ path: path.join(evidence, `${tag}-${tab}-tab.png`) });
     }

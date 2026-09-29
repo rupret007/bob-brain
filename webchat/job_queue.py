@@ -9,7 +9,7 @@ import shlex
 import subprocess
 import time
 from pathlib import Path
-from failover import atomic_text
+from failover import atomic_text, atomic_json
 
 START = re.compile(r"^(?:start|queue|run) (?:a )?job[:\s]+(.+)$", re.I | re.S)
 CONFIRM = re.compile(r"^yes[,.]?\s*(?:start|queue|run)\s+(?:the\s+)?job\s*$", re.I)
@@ -19,16 +19,7 @@ CONFIRM_WITH_PROPOSAL = re.compile(
     re.I,
 )
 COUNCIL = re.compile(r"^(?:run|start)\s+council(?:\s+on)?[:\s]+(.+)$", re.I | re.S)
-NATURAL_COUNCIL = re.compile(r"^ask the council to (.+)$", re.I | re.S)
-DO_MORE = re.compile(
-    r"^(?:i )?need you to do more\.?$|^(?:please )?(?:you )?(?:do it|handle it)\.?$|"
-    r"^(?:don't|do not) tell me to (?:do it|run it|queue it) myself\.?$|"
-    r"^(?:queue|launch|run) (?:that|this|it)(?: repair| brief| task)?\.?$",
-    re.I,
-)
-DEFAULT_DO_MORE_GOAL = (
-    "Web Bob conductor follow-up: review READY queue, assign next draft lane, report SHA (draft only)"
-)
+COUNCIL_ASK = re.compile(r"^ask (?:the )?council to (.+)$", re.I | re.S)
 COUNCIL_CONFIRM = re.compile(r"^yes[,.]?\s*run\s+council\s*$", re.I)
 COUNCIL_CONFIRM_WITH_PROPOSAL = re.compile(
     r"^yes[,.]?\s*run\s+council(?:\s+proposal\s+"
@@ -36,23 +27,48 @@ COUNCIL_CONFIRM_WITH_PROPOSAL = re.compile(
     re.I,
 )
 COUNCIL_CANCEL = re.compile(r"^(?:never mind|cancel|dismiss)(?:\s+council)?\s*$", re.I)
+DO_MORE = re.compile(
+    r"^(?:i )?need you to do more\.?$|^(?:please )?(?:you )?(?:do it|handle it)\.?$|"
+    r"^(?:don't|do not) tell me to (?:do it|run it|queue it) myself\.?$|"
+    r"^(?:queue|launch|run) (?:that|this|it)(?: repair| brief| task)?\.?$|"
+    r"^start (?:a )?(?:conductor )?job for me\.?$",
+    re.I,
+)
+READY_ROUND = re.compile(r"start\s+(?:a\s+)?web\s+bob\s+ready\s+round", re.I)
+DEFAULT_DO_MORE_GOAL = (
+    "Web Bob conductor follow-up: review READY queue, assign next draft lane, report SHA (draft only)"
+)
+DEFAULT_READY_ROUND_GOAL = (
+    "Web Bob READY phone round: fix lowest scores, failover both ways, council critique, "
+    "tests + RESULT on draft branch (no merge, no Grok)"
+)
 
 
 def parse_start(text: str) -> str | None:
+    lane = re.fullmatch(r"(?:start|run)\s+(?:a\s+)?lane\s+(codex|cursor|claude|gemini|minimax)\s*:\s*(.+)", text.strip(), re.I | re.S)
+    if lane:
+        return "Lane: " + lane[1].lower() + "\n" + lane[2].strip()[:3900]
     match = START.match(text.strip())
     return match.group(1).strip()[:4000] if match else None
+
+
+def parse_ready_round(text: str) -> str | None:
+    stripped = (text or "").strip()
+    if not stripped or len(stripped) > 400:
+        return None
+    if READY_ROUND.search(stripped):
+        return DEFAULT_READY_ROUND_GOAL
+    return None
 
 
 def parse_do_more(text: str) -> str | None:
     stripped = (text or "").strip()
     if not stripped or len(stripped) > 400:
         return None
-    if parse_start(stripped) or parse_council(stripped):
-        return None
-    if re.search(r"\b(?:do not|don't|never)\b", stripped, re.I):
-        return None
     if DO_MORE.match(stripped):
         return DEFAULT_DO_MORE_GOAL
+    if parse_start(stripped) or parse_council(stripped) or parse_ready_round(stripped):
+        return None
     return None
 
 
@@ -72,13 +88,8 @@ def parse_job_confirm(text: str) -> tuple[bool, str | None]:
 
 def parse_council(text: str) -> str | None:
     stripped = text.strip()
-    match = COUNCIL.match(stripped)
-    if match:
-        return match.group(1).strip()[:2000]
-    natural = NATURAL_COUNCIL.match(stripped)
-    if natural:
-        return natural.group(1).strip()[:2000]
-    return None
+    match = COUNCIL.match(stripped) or COUNCIL_ASK.match(stripped)
+    return match.group(1).strip()[:2000] if match else None
 
 
 def parse_council_confirm(text: str) -> bool:
@@ -105,6 +116,38 @@ def sanitize_council_question(question: str) -> str:
     return " ".join(cleaned.split())[:1800]
 
 
+def council_job_description(question: str) -> str:
+    safe = sanitize_council_question(question)
+    quoted = shlex.quote(safe)
+    return (
+        "Run Web Bob council on the mini (Gemini + MiniMax + Claude; no Grok). "
+        "Draft branch only; never merge.\n\n"
+        f"Question: {safe}\n\n"
+        "Command (no Grok; question passed as a single quoted argument):\n"
+        "set -a; . conductor/keys.env; set +a; "
+        f"python3 conductor/services/council.py --context conductor/WEBCHAT-READY.md "
+        f"--out conductor/reviews/webchat-phone-council-$(date +%Y%m%d-%H%M%S) {quoted}"
+    )
+
+
+def count_ready_queue(root: Path) -> int:
+    """Count READY rows in next-prompts/INDEX.md (scheduler backlog)."""
+    return len(list_ready_queue_jobs(root, limit=999))
+
+
+def _safe_prompt_path(prompts_dir: Path, filename: str) -> Path | None:
+    name = (filename or "").strip()
+    if not name or "/" in name or "\\" in name or name.startswith("."):
+        return None
+    try:
+        resolved = (prompts_dir / name).resolve()
+        if prompts_dir.resolve() not in resolved.parents and resolved != prompts_dir.resolve():
+            return None
+    except OSError:
+        return None
+    return resolved if resolved.is_file() else None
+
+
 def _goal_from_prompt(path: Path) -> str:
     if not path.is_file():
         return ""
@@ -127,39 +170,32 @@ def list_ready_queue_jobs(root: Path, limit: int = 8) -> list[dict]:
         return []
     prompts = root / "next-prompts"
     rows: list[dict] = []
-    position = 0
     for line in index.read_text(errors="replace").splitlines():
         if not re.search(r"\|\s*READY\s*\|", line, re.I):
             continue
         file_match = re.search(r"`([^`]+\.md)`", line)
         if not file_match:
             continue
-        position += 1
         filename = file_match.group(1)
-        goal = _goal_from_prompt(prompts / filename) or "Draft job waiting for the scheduler"
-        rows.append({"file": filename, "goal": goal, "status": "READY", "position": position})
+        safe = _safe_prompt_path(prompts, filename)
+        goal = _goal_from_prompt(safe) if safe else ""
+        if not goal:
+            goal = "Draft job waiting for the scheduler"
+        rows.append({"id": filename, "goal": goal, "status": "READY", "position": len(rows) + 1})
         if len(rows) >= limit:
             break
     return rows
 
 
-def count_ready_queue(root: Path) -> int:
-    """Count READY rows in next-prompts/INDEX.md (scheduler backlog)."""
-    return len(list_ready_queue_jobs(root, limit=999))
-
-
-def council_job_description(question: str) -> str:
-    safe = sanitize_council_question(question)
-    quoted = shlex.quote(safe)
-    return (
-        "Run Web Bob council on the mini (Gemini + MiniMax + Claude; no Grok). "
-        "Draft branch only; never merge.\n\n"
-        f"Question: {safe}\n\n"
-        "Command (no Grok; question passed as a single quoted argument):\n"
-        "set -a; . conductor/keys.env; set +a; "
-        f"python3 conductor/services/council.py --context conductor/WEBCHAT-READY.md "
-        f"--out conductor/reviews/webchat-phone-council-$(date +%Y%m%d-%H%M%S) {quoted}"
-    )
+def queue_position_for_file(root: Path, filename: str) -> int | None:
+    """1-based position among READY rows in INDEX.md (scheduler order)."""
+    name = (filename or "").strip()
+    if not name:
+        return None
+    for row in list_ready_queue_jobs(root, limit=999):
+        if row.get("id") == name:
+            return int(row.get("position") or 0) or None
+    return None
 
 
 def running_screens(root: Path) -> str:
@@ -209,14 +245,33 @@ def _write_queue(root, description, screens):
         f"## Rules\n\nDrafts only. No merge, undraft, or force-push. One WebJam coder at a time.\n"
     )
     path = prompts / filename
+    project = next((name for name in ("WebJam", "StoryBoard", "AdoptIQ", "shelf")
+                    if re.search(r"\b" + name + r"\b", description, re.I)), "WebBob")
+    kind = "coding" if re.search(r"\b(?:fix|implement|refactor|coding|ready phone round)\b", description, re.I) else "non-coding"
+    lane = re.match(r"Lane: (codex|cursor|claude|gemini|minimax)\n", description)
+    if lane and kind == "coding" and lane[1] not in ("codex", "cursor"):
+        return {"ok": False, "error": "Coding jobs need a Codex or Cursor lane. Ask again with one of those lanes."}
     atomic_text(path, body)
     atomic_text(inbox / filename, body)
+    # The scheduler consumes the exact project, kind and lane. Old unrecognized
+    # WebBob rows lack this marker and are never silently replayed on deployment.
+    atomic_json(path.with_suffix(".json"), {"webchat_authorized": True, "kind": kind,
+                **({"preferred_lane": lane[1], "small_review": lane[1] == "claude"} if lane else {})})
     index = prompts / "INDEX.md"
-    row = f"| 99 | `{filename}` | WebBob | non-coding | READY | Web Bob queued {stamp} |\n"
+    row = f"| 99 | `{filename}` | {project} | {kind} | READY | Web Bob queued {stamp} |\n"
     if index.exists():
         text = index.read_text()
         if filename not in text:
             atomic_text(index, text.rstrip() + "\n" + row)
     else:
         atomic_text(index, "# next-prompts queue\n\n| Pri | File | Project | Kind | Status | Notes |\n| --- | --- | --- | --- | --- | --- |\n" + row)
-    return {"ok": True, "file": filename, "path": str(path.relative_to(root)), "screen_hint": screens.strip()[:500] or "none"}
+    ready = count_ready_queue(root)
+    position = queue_position_for_file(root, filename) or ready
+    return {
+        "ok": True,
+        "file": filename,
+        "path": str(path.relative_to(root)),
+        "screen_hint": screens.strip()[:500] or "none",
+        "queue_ready_count": ready,
+        "queue_position": position,
+    }

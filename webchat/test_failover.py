@@ -148,6 +148,16 @@ class FailoverTests(Fixture):
                 self.reply()
             self.assertEqual(call.call_count, 4)
 
+    def test_drill_mode_pins_explicit_provider(self):
+        self.turn["preferred_provider"] = "cursor"
+        with patch.dict(os.environ, {"BOB_WEBCHAT_DRILLS": "1"}):
+            other = Providers(self.root, lambda s: s)
+            with patch.object(other, "drill", return_value={"force_fail": {}}), \
+                    patch.object(other, "call", return_value=("Pinned", None)) as call:
+                other.reply(self.turn, self.cancel, lambda *_: None)
+                self.assertEqual(call.call_args.args[0], "cursor")
+                self.assertEqual(call.call_count, 1)
+
     def test_claude_only_when_selected_and_stop_never_falls_through(self):
         self.turn["preferred_provider"] = "claude"
         with patch.object(self.provider, "call", return_value=("A short critique", None)) as call:

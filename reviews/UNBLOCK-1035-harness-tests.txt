@@ -1,0 +1,11 @@
+test_bad_fresh_review_gate_never_activates (reviews.test_deploy_texting_0916.TextingReleaseGuards) ... ok
+test_failed_smoke_restores_and_verifies_a777736 (reviews.test_deploy_texting_0916.TextingReleaseGuards) ... ok
+test_gemini_thought_only_and_incomplete_rejected (reviews.test_review_transport_1035.VerdictContractTests) ... ok
+test_reasoning_cannot_supply_verdict (reviews.test_review_transport_1035.VerdictContractTests) ... ok
+test_short_pass_and_fail_are_valid (reviews.test_review_transport_1035.VerdictContractTests) ... ok
+test_truncation_provider_error_and_conflicting_verdicts_rejected (reviews.test_review_transport_1035.VerdictContractTests) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.023s
+
+OK

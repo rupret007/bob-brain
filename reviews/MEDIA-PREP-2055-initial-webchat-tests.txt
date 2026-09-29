@@ -1,0 +1,31 @@
+2026-09-29T02:40:35.511+00:00 Task queued codex task-1
+2026-09-29T02:40:35.511+00:00 codex ('running', 1)
+2026-09-29T02:40:35.511+00:00 Task answered in chat codex task-1
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+quiet_hours_js: OK
+======================================================================
+FAIL: test_browser_proof_when_playwright_available (test_texting_e2e.TextingE2ETest)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-media-after-texting-2055/webchat/test_texting_e2e.py", line 103, in test_browser_proof_when_playwright_available
+    self.assertEqual(result.returncode, 0, (result.stderr or "") + (result.stdout or ""))
+AssertionError: 1 != 0 : Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-media-after-texting-2055/webchat/texting_proof.py", line 92, in <module>
+    main()
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-media-after-texting-2055/webchat/texting_proof.py", line 52, in main
+    raise RuntimeError(result.stderr)
+RuntimeError: locator.waitFor: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator('#send:enabled') to be visible
+
+    at /Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-media-after-texting-2055/webchat/browser_texting.cjs:26:41
+
+
+
+----------------------------------------------------------------------
+Ran 467 tests in 96.892s
+
+FAILED (failures=1)

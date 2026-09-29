@@ -19,10 +19,10 @@ does not request a new model review or change the queue.
 
 ## Conversation and provider behavior
 
-Short messages use a fast path (**Gemini → MiniMax → Cursor → Codex**, a 60s initial budget,
+Short messages use a fast path (**Gemini → MiniMax → Cursor → Codex → Claude**, a 60s initial budget,
 then any untried providers), per the later `WEBCHAT-READY.md` phone brief.
-Longer/coding/debug work tries **Codex → Cursor → Gemini → MiniMax**. Claude is never in the
-automatic route. Codex uses the existing ChatGPT login with API-key environment variables
+Longer/coding/debug work tries **Codex → Cursor → Gemini → MiniMax → Claude**. Settings can select any of the five
+as the first provider; a failed primary falls through to the remaining providers. Codex uses the existing ChatGPT login with API-key environment variables
 removed and `forced_login_method="chatgpt"`. No credentials are changed. Native
 `codex exec resume <exact-thread-id>` preserves continuity; it never uses `--last`
 and therefore never picks up an unrelated coding job. Unsupported/unavailable
@@ -58,8 +58,10 @@ replayed. A waiting all-down request survives restart with its frozen context.
 Only one reply runs **per conversation** — not globally across all chats (other conversations can reply in parallel). CLI
 calls use `chat-<provider>` locks separate from background `lane-*` locks; a busy
 CLI slot falls through to the next provider. Handback: `conductor/handback/`
-(BOB-STATE in, HANDBACK-LOG out). Say `start a job: …` then `yes, start job` to
-queue a draft READY row (scheduler launches; nothing merges automatically). Retransmitting the same request ID does not run
+(BOB-STATE in, HANDBACK-LOG out). Say `start a job: …` or `start lane gemini: …` to
+queue a durable task. The scheduler claims it, runs a worker, and posts the actual
+result back to the originating conversation. Explicit job requests do not need a second
+confirmation. Code changes use Codex/Cursor in an isolated draft worktree; nothing merges. Retransmitting the same request ID does not run
 the model twice. Confirmed jobs have durable once-only receipts before queue
 writes. Ambiguous submissions require checking Jobs; they are never replayed.
 Queue writes use the scheduler's queue lock and atomic files.
@@ -114,7 +116,9 @@ launchctl print gui/$(id -u)/com.jeff.bob-webchat
 curl --noproxy '*' -i http://127.0.0.1:8787/login
 ```
 
-For a deliberate chat restart, stop only the `svc-webchat` **server** screen you
+For a deliberate chat restart after tests pass, prefer `bash webchat/safe_restart.sh "tested deploy"`.
+It authenticates the idle check and defers during replies or the 30-minute batching window.
+For recovery when the service is unresponsive, stop only the `svc-webchat` **server** screen you
 started (`screen -S svc-webchat -X quit`), then run `webchat/start.sh`. This signs
 out browsers and interrupts an active reply. Other workers are unrelated.
 
@@ -151,6 +155,10 @@ router ports or use Tailscale Funnel. See the official
    and SameSite=Strict. Disable just this mapping with `tailscale serve --https=443 off`.
 
 The password, optional origin, session files, and browser evidence are gitignored.
+Use `run command: uptime`, `run command: pwd`, or `repo status: conductor` for
+live mini checks. Repo status also accepts WebJam, StoryBoard, AdoptIQ and shelf.
+The command chip supports bounded read-only commands; larger tasks use Start job.
+Commands execute without a shell and return a redacted exit-status receipt.
 No directory browsing or arbitrary shell/file HTTP endpoint exists. All API
 routes require login; mutations also require an unpredictable CSRF token.
 Login attempts and request sizes are bounded. Model output is displayed as text,
@@ -198,3 +206,20 @@ Restart normally afterward so drills are disabled. The broader
 but affects the entire process; prefer the scoped script on a live phone server.
 
 Final failover evidence and architecture review: `reviews/WEBCHAT-FAILOVER-RESULT.md`.
+
+## September 27 end-to-end regression checks
+
+```bash
+python3 -m unittest discover -s webchat -p 'test_*.py'
+python3 -m unittest discover -s services -p 'test_*.py'
+python3 webchat/e2e_live.py --isolated --output webchat/evidence/e2e-0927-isolated.json
+WEBBOB_FULL=1 WEBBOB_BROWSER=webkit node webchat/browser_e2e.cjs
+WEBBOB_FULL=1 WEBBOB_BROWSER=chromium node webchat/browser_e2e.cjs
+```
+
+The isolated HTTP test injects failures into private temporary conversations while
+using real providers for successful replies, including Claude. It never restarts
+production or changes production provider health. Browser tests default to the
+Tailscale URL and enter the login password from the private local file; credentials
+are never printed. Screenshots and raw evidence remain gitignored. Production
+launches with drills disabled unless explicitly enabled for a scoped maintenance drill.

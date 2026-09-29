@@ -27,7 +27,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from providers import Cancelled, ProviderError, Providers, Redactor, UUID, clean_env, run
-from failover import AllDown
+from failover import AllDown, ORDER
 from handback import append_turn, public_digest
 from job_queue import (
     council_job_description,
@@ -36,6 +36,7 @@ from job_queue import (
     parse_council_confirm_proposal,
     parse_job_confirm,
     parse_do_more,
+    parse_ready_round,
     parse_start,
 )
 from actions import queue_once
@@ -281,7 +282,10 @@ class Chat:
             return token
 
     def submit(self, identifier, text, request_id, provider="auto"):
-        if provider not in ("auto", "claude"):
+        allowed = ("auto", "claude")
+        if os.environ.get("BOB_WEBCHAT_DRILLS") == "1":
+            allowed = (*allowed, *ORDER)
+        if provider not in allowed:
             raise RequestError(400, "Choose automatic routing or explicitly select Claude for a short critique.")
         if not isinstance(text, str) or not text.strip() or len(text) > 6000:
             raise RequestError(400, "Write a message between 1 and 6,000 characters.")
@@ -437,13 +441,14 @@ class Chat:
                 conversation["messages"][-1].update(status="done",
                     content="I can queue a **draft** council critique on the mini (Gemini + MiniMax + Claude; no Grok). Reply `yes, run council` to confirm.",
                     action_card={"id": request_id, "proposal_id": request_id, "state": "confirm", "executable": True,
-                                 "reason": "Council: " + council_text[:120]})
+                                 "reason": "Council critique (draft)", "goal": council_text[:500]})
                 self.save(conversation)
                 self.conversations[identifier] = conversation
                 return self.public(conversation)
             started = parse_start(text)
-            do_more_goal = parse_do_more(text) if not started else None
-            job_text = started or do_more_goal
+            ready_goal = parse_ready_round(text) if not started else None
+            do_more_goal = parse_do_more(text) if not started and not ready_goal else None
+            job_text = started or ready_goal or do_more_goal
             do_more = bool(do_more_goal)
             if job_text:
                 if hard_rule_refusal(job_text):
@@ -466,7 +471,7 @@ class Chat:
                 conversation["messages"][-1].update(status="done",
                     content=confirm_body,
                     action_card={"id": request_id, "proposal_id": request_id, "state": "confirm", "executable": True,
-                                 "reason": "Queue job: " + job_text[:120]})
+                                 "reason": "Start a draft screen job", "goal": job_text[:500]})
                 self.save(conversation)
                 self.conversations[identifier] = conversation
                 return self.public(conversation)
@@ -840,8 +845,55 @@ class Chat:
             plain_status = "Waiting for a successful tick (webchat + failover + services tests)."
         if last_tick_outcome:
             plain_status = f"{plain_status} Latest: {last_tick_outcome[:120]}."
+        changelog = self.round_changelog()
+        verified = self.latest_verified_ready_ship()
+        last_ready_round = verified.get("round") or changelog.get("round")
+        last_ready_sha = verified.get("sha") or changelog.get("sha")
+        last_ready_ship_verified = bool(verified.get("round") and verified.get("sha"))
+        if last_ready_round and last_ready_sha:
+            tag = "verified READY ship" if last_ready_ship_verified else "latest RESULT (unverified)"
+            plain_status = f"{plain_status} Last {tag} R{last_ready_round} at {last_ready_sha}."
+        scores_weakest_focus = None
+        try:
+            services = HERE.parent / "services"
+            if services.is_dir() and str(services) not in sys.path:
+                sys.path.insert(0, str(services))
+            import live_dashboard as _live_dash
+
+            weak = _live_dash._scores_weakest(_live_dash._scores_table(root))
+            if weak.get("area") is not None:
+                scores_weakest_focus = _live_dash._scores_weakest_focus(weak)
+                if scores_weakest_focus:
+                    plain_status = (
+                        f"{plain_status} Next self-improve focus: "
+                        f"{scores_weakest_focus['area']} ({scores_weakest_focus['value']})."
+                    )
+        except Exception:
+            scores_weakest_focus = None
         bootstrap = root / "conductor/webchat/bootstrap_self_improve_launchd.sh"
         install_ready = bool(files_ok and bootstrap.is_file())
+        if loop_ready:
+            next_action = "loop_ready"
+            next_action_plain = "Nothing required — nightly loop is healthy on the mini."
+        elif not files_ok:
+            next_action = "pull_draft"
+            next_action_plain = "Pull the latest draft branch so tick + plist scripts exist."
+        elif launchd_loaded is False and install_ready:
+            next_action = "install_launchd"
+            next_action_plain = "Tap Copy install command and run it once in Terminal on the mini."
+        elif launchd_loaded is True and not recent_ok:
+            next_action = "wait_for_tick"
+            tick_when = f" Next tick: {schedule_hint.rstrip('.')}." if schedule_hint else ""
+            next_action_plain = (
+                "Launchd is loaded — wait for the nightly tick or run the tick script on the mini."
+                + tick_when
+            )
+        elif recent_ok and launchd_loaded is not True:
+            next_action = "load_launchd"
+            next_action_plain = "Last tick passed — load launchd so the loop stays on schedule."
+        else:
+            next_action = "check_logs"
+            next_action_plain = "Open logs/webchat-self-improve.log on the mini if ticks keep failing."
         if bootstrap.is_file():
             rel = bootstrap.relative_to(root)
             bootstrap_command = f"cd {shlex.quote(str(root))} && bash {shlex.quote(str(rel))}"
@@ -866,7 +918,65 @@ class Chat:
             "bootstrap_command": bootstrap_command,
             "plain_status": plain_status,
             "summary": summary,
+            "last_ready_round": last_ready_round,
+            "last_ready_sha": last_ready_sha,
+            "last_ready_ship_verified": last_ready_ship_verified,
+            "last_round_changelog": changelog.get("line"),
+            "next_action": next_action,
+            "next_action_plain": next_action_plain,
+            "scores_weakest_focus": scores_weakest_focus,
         }
+
+    @staticmethod
+    def _result_pass_gate(text: str) -> bool:
+        section = re.search(r"^## PASS/FAIL\s*\n+(.*?)(?:\n## |\Z)", text, re.M | re.S)
+        if not section:
+            return False
+        body = section.group(1)
+        required = (
+            r"Unit tests",
+            r"Failover tests",
+            r"Handback drill",
+            r"Server restart",
+        )
+        for label in required:
+            if not re.search(rf"\|\s*{label}[^|]*\|\s*\*\*PASS\*\*", body, re.I):
+                return False
+        return True
+
+    @staticmethod
+    def _parse_result_sha(text: str) -> str | None:
+        for pattern in (
+            r"\|\s*\*\*Final SHA[^|]*\*\*\s*\|\s*`([0-9a-f]{7,40})`",
+            r"\|\s*\*\*R\d+[^|]*\(code\)\*\*\s*\|\s*`([0-9a-f]{7,40})`",
+        ):
+            match = re.search(pattern, text, re.I)
+            if match:
+                return match.group(1)[:12]
+        return None
+
+    def latest_verified_ready_ship(self) -> dict:
+        def round_num(path: Path) -> int:
+            match = re.search(r"R(\d+)", path.name)
+            return int(match.group(1)) if match else 0
+
+        paths = sorted(
+            self.root.glob("conductor/reviews/WEBCHAT-READY-R*-RESULT.md"),
+            key=round_num,
+            reverse=True,
+        )
+        for path in paths:
+            try:
+                text = path.read_text(errors="replace")
+            except OSError:
+                continue
+            if not self._result_pass_gate(text):
+                continue
+            sha = self._parse_result_sha(text)
+            if not sha:
+                continue
+            return {"round": round_num(path) or None, "sha": sha, "file": path.name}
+        return {}
 
     def round_changelog(self) -> dict:
         import re
@@ -886,6 +996,7 @@ class Chat:
         name = path.name
         round_no = round_num(path) or None
         line = ""
+        text = ""
         try:
             text = path.read_text(errors="replace")
             section = re.search(r"^## Changelog\s*\n+(.+?)(?:\n## |\Z)", text, re.M | re.S)
@@ -910,8 +1021,16 @@ class Chat:
                         line = row.strip().lstrip("|").rstrip("|").strip()[:220]
                         break
         except OSError:
-            pass
-        return {"round": round_no, "file": name, "line": line or "See latest round result on the mini."}
+            text = ""
+        sha = self._parse_result_sha(text) if text else None
+        verified = bool(sha and text and self._result_pass_gate(text))
+        return {
+            "round": round_no,
+            "file": name,
+            "line": line or "See latest round result on the mini.",
+            "sha": sha,
+            "ship_verified": verified,
+        }
 
     def panel(self):
         lanes = self.providers.health()
@@ -952,13 +1071,17 @@ class Chat:
             alignment_events = {}
         if live_ops.get("dashboard_freshness_seconds") is None and dashboard_age is not None:
             live_ops = {**live_ops, "dashboard_freshness_seconds": round(max(0, time.time() - dashboard_age))}
+        si_status = self.self_improve_status()
+        si_focus = si_status.get("scores_weakest_focus")
+        if isinstance(si_focus, dict) and si_focus.get("area"):
+            live_ops = {**live_ops, "scores_weakest_focus": si_focus}
         live_ops = enrich_live_ops(live_ops, self.root)
         changelog = self.round_changelog()
         qh = in_quiet_hours()
         return {"lanes": lanes, "jobs": jobs, "recent_results": results, "round_changelog": changelog,
                 "dashboard_modified_at": dashboard_age,
                 "live_ops": live_ops, "live_ops_meta": meta, "conductor": conductor_snapshot(self.root),
-                "handback": self.handback(), "self_improve": self.self_improve_status(),
+                "handback": self.handback(), "self_improve": si_status,
                 "alignment": alignment, "alignment_events": alignment_events,
                 "quiet_hours": {
                     "active": qh,

@@ -1,0 +1,82 @@
+Full services suite; 169 source files copied byte-for-byte within the permitted worktree.
+Source snapshot: reviews/.texting-proof-2014-source-lbdyofu4
+Fixtures: reviews/.texting-proof-2014-tmp
+Command: python3 -m unittest discover -s services -p test_*.py
+
+...2026-09-28T01:40:38+00:00 council propose codex ok
+2026-09-28T01:40:38+00:00 council propose cursor ok
+2026-09-28T01:40:38+00:00 council propose minimax ok
+2026-09-28T01:40:38+00:00 council propose gemini ok
+2026-09-28T01:40:38+00:00 council critique codex ok
+2026-09-28T01:40:38+00:00 council critique cursor ok
+2026-09-28T01:40:38+00:00 council critique minimax ok
+2026-09-28T01:40:38+00:00 council critique gemini ok
+2026-09-28T01:40:38+00:00 council critique claude ok
+2026-09-28T01:40:38+00:00 council synthesize cursor ok
+..2026-09-28T01:40:38+00:00 council propose codex ok
+2026-09-28T01:40:38+00:00 council propose cursor ok
+2026-09-28T01:40:38+00:00 council propose minimax ok
+2026-09-28T01:40:38+00:00 council propose gemini ok
+..2026-09-28T01:40:38+00:00 council propose codex ok
+2026-09-28T01:40:38+00:00 council propose cursor ok
+2026-09-28T01:40:38+00:00 council propose minimax ok
+2026-09-28T01:40:38+00:00 council propose gemini ok
+2026-09-28T01:40:38+00:00 council critique codex FAILED: critique transport failed
+2026-09-28T01:40:38+00:00 council critique cursor FAILED: critique transport failed
+2026-09-28T01:40:38+00:00 council critique minimax FAILED: critique transport failed
+2026-09-28T01:40:38+00:00 council critique gemini FAILED: critique transport failed
+2026-09-28T01:40:38+00:00 council critique claude FAILED: critique transport failed
+.2026-09-28T01:40:38+00:00 council propose codex ok
+2026-09-28T01:40:38+00:00 council propose cursor FAILED: provider unavailable
+2026-09-28T01:40:38+00:00 council propose minimax FAILED: provider unavailable
+2026-09-28T01:40:38+00:00 council propose gemini FAILED: provider unavailable
+.2026-09-28T01:40:38+00:00 council propose codex ok
+2026-09-28T01:40:38+00:00 council propose cursor ok
+2026-09-28T01:40:38+00:00 council propose minimax ok
+2026-09-28T01:40:38+00:00 council propose gemini FAILED: failure [REDACTED]
+2026-09-28T01:40:38+00:00 council critique codex ok
+2026-09-28T01:40:38+00:00 council critique cursor ok
+2026-09-28T01:40:38+00:00 council critique minimax ok
+2026-09-28T01:40:38+00:00 council critique claude ok
+2026-09-28T01:40:38+00:00 council synthesize cursor ok
+.2026-09-28T01:40:38+00:00 council propose codex ok
+2026-09-28T01:40:38+00:00 council propose cursor ok
+2026-09-28T01:40:38+00:00 council propose minimax ok
+2026-09-28T01:40:38+00:00 council propose gemini ok
+2026-09-28T01:40:38+00:00 council critique codex ok
+2026-09-28T01:40:38+00:00 council critique cursor ok
+2026-09-28T01:40:38+00:00 council critique minimax ok
+2026-09-28T01:40:38+00:00 council critique gemini ok
+2026-09-28T01:40:38+00:00 council critique claude ok
+2026-09-28T01:40:38+00:00 council synthesize cursor FAILED: synthesizer unavailable
+2026-09-28T01:40:38+00:00 council synthesize codex ok
+......2026-09-28T01:40:38+00:00 assessment complete: synthesized
+....2026-09-28T01:40:38+00:00 Web Bob claimed webchat-27479a1d8b215a1f96834e51b2483318 worker=claude group=None
+.....2026-09-28T01:40:38+00:00 Web Bob claimed webchat-27479a1d8b215a1f96834e51b2483318 worker=gemini group=None
+2026-09-28T01:40:38+00:00 Web Bob claimed webchat-343e2493afed594f841b1b9c1ed84bd6 worker=minimax group=None
+....2026-09-28T01:40:39+00:00 Web Bob claimed webchat-27479a1d8b215a1f96834e51b2483318 worker=cursor group=None
+......2026-09-28T01:40:39+00:00 Web Bob claimed webchat-61ef860e60ef5f1b8b09fc70640d38f1 worker=claude group=None
+2026-09-28T01:40:39+00:00 Web Bob claimed webchat-cc0aef2fd8545c26802ad4c9fc9d07a4 worker=gemini group=None
+2026-09-28T01:40:39+00:00 Web Bob claimed webchat-236627485e9a506b80774361ef4ed87f worker=claude group=None
+2026-09-28T01:40:39+00:00 Web Bob claimed webchat-7684f1d4070c55b68dee3549bc9a2c61 worker=claude group=None
+2026-09-28T01:40:39+00:00 Web Bob claimed webchat-68c7588196f55ccab1c0f0258b9be7bc worker=claude group=None
+..2026-09-28T01:40:39+00:00 Reaped expired Web Bob worker webchat-task
+...2026-09-28T01:40:39+00:00 Web Bob claimed webchat-61ef860e60ef5f1b8b09fc70640d38f1 worker=codex group=group
+2026-09-28T01:40:39+00:00 Web Bob claimed webchat-cc0aef2fd8545c26802ad4c9fc9d07a4 worker=claude group=group
+2026-09-28T01:40:39+00:00 Web Bob claimed webchat-236627485e9a506b80774361ef4ed87f worker=cursor group=group
+2026-09-28T01:40:39+00:00 Web Bob claimed webchat-7684f1d4070c55b68dee3549bc9a2c61 worker=gemini group=group
+2026-09-28T01:40:39+00:00 Web Bob claimed webchat-68c7588196f55ccab1c0f0258b9be7bc worker=minimax group=group
+2026-09-28T01:40:39+00:00 Web Bob claimed webchat-201f21f8e4575c3680ed6632b3fdd7f3 worker=codex group=None
+...2026-09-28T01:40:39+00:00 Web Bob claimed webchat-27479a1d8b215a1f96834e51b2483318 worker=gemini group=None
+2026-09-28T01:40:39+00:00 Web Bob claimed webchat-f1fe7bd78b865cb2bd4e9faf2df99190 worker=minimax group=None
+..............2026-09-28T01:40:39+00:00 Web Bob claimed webchat-27479a1d8b215a1f96834e51b2483318 worker=minimax group=None
+.....................................2026-09-28T01:40:41+00:00 HTTP attempt 1/3 failed: HTTP 503 curl_rc=0
+.........................2026-09-28T01:40:41+00:00 restarted svc-reviewer verified=True
+2026-09-28T01:40:41+00:00 restarted svc-reviewer verified=True
+2026-09-28T01:40:41+00:00 restarted svc-reviewer verified=True
+2026-09-28T01:40:41+00:00 reviewer restart capped at 3/hour
+..
+----------------------------------------------------------------------
+Ran 121 tests in 3.509s
+
+OK

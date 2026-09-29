@@ -1,0 +1,3 @@
+```json
+{"accepted": true, "reason": "Delivered two completion-guard regression test drafts with literal prompt/answer inputs, exact expected outcomes matching literal_guard_outcome, valid unblock plan with Change/Validation/Exit condition, correct completion JSON, and Findings/limits. The drafts are correctly labeled unexecuted; Validation accurately states the limitation. Original unblock 1035 task prompt is unavailable per the fixture, which is disclosed. CompletionContractTests in test_replay_completion.py already covers these guards, making this validation of existing coverage appropriate."}
+```

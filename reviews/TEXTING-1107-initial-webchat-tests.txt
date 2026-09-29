@@ -1,0 +1,21 @@
+................................................................................................................................................................2026-09-28T16:17:35.668+00:00 Task queued codex task-1
+2026-09-28T16:17:35.668+00:00 codex ('running', 1)
+2026-09-28T16:17:35.668+00:00 Task answered in chat codex task-1
+...........................................................................................................................................F.fatal: not a git repository (or any of the parent directories): .git
+............................fatal: not a git repository (or any of the parent directories): .git
+.fatal: not a git repository (or any of the parent directories): .git
+.fatal: not a git repository (or any of the parent directories): .git
+......quiet_hours_js: OK
+....................................................
+======================================================================
+FAIL: test_bob_parity_eval_runs (test_webchat.HandbackJobTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-texting-jobcomplete-1107/webchat/test_webchat.py", line 1251, in test_bob_parity_eval_runs
+    self.assertEqual(result["total"], 100)
+AssertionError: 103 != 100
+
+----------------------------------------------------------------------
+Ran 389 tests in 46.627s
+
+FAILED (failures=1)

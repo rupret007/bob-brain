@@ -52,6 +52,8 @@ if ($("login-form")) {
     html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
     html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" rel="noopener noreferrer" target="_blank">$1</a>');
     html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    html = html.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "<em>$1</em>");
+    html = html.replace(/_([^_\n]+)_/g, "<em>$1</em>");
     html = html.replace(/^### (.+)$/gm, "<h4 class=\"md-h\">$1</h4>");
     html = html.replace(/^## (.+)$/gm, "<h3 class=\"md-h\">$1</h3>");
     html = html.replace(/(?:^|\n)(\d+\. .+(?:\n\d+\. .+)*)/g, (block) => {
@@ -83,7 +85,7 @@ if ($("login-form")) {
     if (dot) dot.classList.toggle("busy", busy || sending);
   }
   const conductorPrompts = {
-    round: "start a job: Web Bob ready round (draft only, no merge)",
+    round: "Start a Web Bob ready round on the mini (draft only, no merge)",
     council: "Ask the council to score Web Bob iPhone tab UI and handback failover",
     status: "status",
     stop: "stop current job (draft only)",
@@ -159,6 +161,29 @@ if ($("login-form")) {
   for (const btn of document.querySelectorAll(".bottom-tab")) {
     btn.addEventListener("click", () => setBottomTab(btn.dataset.bottom));
   }
+  const chipsRow = document.querySelector(".quick-chips-row");
+  const toggleChips = $("toggle-chips");
+  if (chipsRow && toggleChips) {
+    const storedChips = stored("bob.chipsCollapsed");
+    const collapsed = storedChips === "1" || (storedChips === null && window.matchMedia("(max-width: 430px)").matches);
+    if (collapsed) {
+      chipsRow.classList.add("collapsed");
+      toggleChips.textContent = "More";
+      toggleChips.setAttribute("aria-expanded", "false");
+    }
+    toggleChips.addEventListener("click", () => {
+      const isCollapsed = chipsRow.classList.toggle("collapsed");
+      toggleChips.textContent = isCollapsed ? "More" : "Less";
+      toggleChips.setAttribute("aria-expanded", isCollapsed ? "false" : "true");
+      remember("bob.chipsCollapsed", isCollapsed ? "1" : "0");
+    });
+  }
+  for (const dlg of document.querySelectorAll("dialog")) {
+    dlg.addEventListener("toggle", () => {
+      const anyOpen = [...document.querySelectorAll("dialog")].some((d) => d.open);
+      document.body.classList.toggle("modal-open", anyOpen);
+    });
+  }
   $("open-chats")?.addEventListener("click", () => {
     syncConversationDialog();
     $("chats-dialog")?.showModal();
@@ -184,7 +209,7 @@ if ($("login-form")) {
   $("new-chat-dialog")?.addEventListener("click", () => { $("new-chat")?.click(); $("chats-dialog")?.close(); });
   const chipActions = {
     status: "status",
-    round: "start a job: Web Bob ready round (draft only, no merge)",
+    round: "Start a Web Bob ready round on the mini (draft only, no merge)",
     council: "Ask the council to score Web Bob mobile UX after bottom tab bar",
     song: "",
   };
@@ -237,10 +262,28 @@ if ($("login-form")) {
       if (message.role === "user") article.setAttribute("aria-label", "You");
       else article.setAttribute("aria-label", message.provider ? `Assistant, ${providers[message.provider]}` : "Assistant");
       const body = document.createElement("div"); body.className = "body";
-      if (pending) body.textContent = message.provider ? `Thinking via ${providers[message.provider]}…` : "One moment…";
-      else if (message.role === "assistant") body.innerHTML = renderMarkdown(message.content || "");
-      else body.textContent = message.content;
-      article.append(body);
+      if (pending && message.role === "assistant") {
+        const row = document.createElement("div");
+        row.className = "typing-row";
+        const av = document.createElement("span");
+        av.className = "avatar typing-avatar";
+        av.setAttribute("aria-hidden", "true");
+        av.textContent = "b";
+        const dots = document.createElement("div");
+        dots.className = "typing-dots";
+        dots.setAttribute("aria-label", message.provider ? `Thinking via ${providers[message.provider]}` : "Bob is thinking");
+        dots.innerHTML = "<span></span><span></span><span></span>";
+        const via = document.createElement("span");
+        via.className = "sr-only";
+        via.textContent = message.provider ? `Thinking via ${providers[message.provider]}` : "One moment";
+        row.append(av, dots, via);
+        article.append(row);
+      } else {
+        if (pending) body.textContent = "Sending…";
+        else if (message.role === "assistant") body.innerHTML = renderMarkdown(message.content || "");
+        else body.textContent = message.content;
+        article.append(body);
+      }
       {
         const raw = (message.content || "").trim();
         const copyBtn = document.createElement("button");
@@ -278,6 +321,13 @@ if ($("login-form")) {
         const title = document.createElement("div"); title.className = "action-card-title";
         title.textContent = message.action_card.reason || "Action";
         card.append(title);
+        const goalText = (message.action_card.goal || "").trim();
+        if (goalText) {
+          const goal = document.createElement("div");
+          goal.className = "action-card-goal";
+          goal.textContent = goalText;
+          card.append(goal);
+        }
         const suffix = message.action_card.state === "queued" ? "Queued for scheduler"
           : message.action_card.state === "confirm" ? "Tap approve to continue (draft only)"
           : message.action_card.state === "refused" ? "Blocked by safety rules"
@@ -908,6 +958,28 @@ if ($("login-form")) {
       ["MiniMax", spend.committed_usd == null ? "unknown" : `$${Number(spend.committed_usd).toFixed(2)} / $${minimaxCapUsd(spend)}`],
       ["Service screens", screenCount == null ? "—" : String(screenCount)],
       ["Live jobs", jobs.length ? `${jobs.length} on screen` : "none on screen"],
+      [
+        "Scores measured",
+        ops.scores_measured_at
+          ? ops.scores_measured_at.replace("T", " ").slice(0, 19) + " UTC"
+          : "Unknown — no READY RESULT on mini yet",
+      ],
+      [
+        "Focus area",
+        ops.scores_weakest_focus?.area
+          ? `${ops.scores_weakest_focus.area} (${ops.scores_weakest_focus.value}${
+            ops.scores_weakest_focus.gap_to_nine != null && ops.scores_weakest_focus.gap_to_nine > 0
+              ? ` · ${ops.scores_weakest_focus.gap_to_nine} to 9`
+              : ""
+          }${
+            ops.scores_weakest_focus.headroom_to_10 != null
+              ? ` · ${ops.scores_weakest_focus.headroom_to_10} to 10`
+              : ""
+          })`
+          : ops.scores_weakest?.area
+            ? `${ops.scores_weakest.area} (${ops.scores_weakest.value})`
+            : "—",
+      ],
     ];
     const dl = document.createElement("dl");
     rows.forEach(([label, value]) => {
@@ -938,7 +1010,7 @@ if ($("login-form")) {
       renderOpsDetail(ops, "jobs-ops-detail");
     }
   }
-  function renderScoresTable(scores, hostId = "scores-table") {
+  function renderScoresTable(scores, hostId = "scores-table", weakest = null) {
     const host = $(hostId);
     if (!host) return;
     if (!scores?.length) {
@@ -947,9 +1019,16 @@ if ($("login-form")) {
       return;
     }
     host.hidden = false;
-    host.replaceChildren(...scores.slice(0, 8).map((row) => {
+    const weakArea = weakest?.area;
+    const top = scores.slice(0, 8);
+    const rows = [...top];
+    if (weakArea && !top.some((r) => r.area === weakArea)) {
+      const hit = scores.find((r) => r.area === weakArea);
+      if (hit) rows.push(hit);
+    }
+    host.replaceChildren(...rows.map((row) => {
       const card = document.createElement("article");
-      card.className = "score-card";
+      card.className = "score-card" + (weakArea && row.area === weakArea ? " weakest" : "");
       const label = document.createElement("span");
       label.textContent = row.area || "Score";
       const val = document.createElement("strong");
@@ -958,12 +1037,39 @@ if ($("login-form")) {
       return card;
     }));
   }
+  function formatScoresMeasured(ops) {
+    const raw = ops?.scores_measured_at;
+    if (!raw) return "";
+    const label = raw.replace("T", " ").slice(0, 16);
+    return ` · scores measured ${label} UTC`;
+  }
   function plainJobTitle(job) {
     const round = job.round ? `Round ${job.round}` : "Job";
     const engine = (job.engine || "worker").replace(/_/g, " ");
     const state = job.display_state ? ` · ${job.display_state}` : "";
     if (job.live_screen) return `${round} · live on screen${state}`;
     return `${round} · ${engine}${state}`;
+  }
+  function queuedJobTitle(job) {
+    const pos = job.position;
+    const queueLabel = pos === 1 ? "Next up" : (pos ? `#${pos} in queue` : "Queued");
+    const goal = (job.goal || "Draft task").replace(/\s+/g, " ").trim().slice(0, 96);
+    return `${queueLabel} · ${goal}`;
+  }
+  function buildQueuedJobCard(job) {
+    const card = document.createElement("article");
+    card.className = "live-job queued-job";
+    const header = document.createElement("header");
+    const title = document.createElement("strong");
+    title.textContent = queuedJobTitle(job);
+    const badge = document.createElement("span");
+    badge.className = "stall running";
+    badge.textContent = (job.status || "READY").replace(/_/g, " ");
+    header.append(title, badge);
+    const body = document.createElement("p");
+    body.textContent = "Waiting for a free lane on the mini — not running yet.";
+    card.append(header, body);
+    return card;
   }
   function focusLiveJobIndex(index) {
     const cards = [...document.querySelectorAll("#live-jobs .live-job[data-live-job-index]")];
@@ -1010,14 +1116,16 @@ if ($("login-form")) {
       return article;
     }));
   }
-  function renderLiveJobs(jobs, liveOnly) {
+  function renderLiveJobs(jobs, liveOnly, queued) {
     const host = $("live-jobs");
     const empty = $("jobs-empty");
     if (!host) return;
     const liveList = liveOnly || (jobs || []).filter((j) => j.live_screen);
     const rows = (jobs || []).slice(0, 6);
-    if (empty) empty.hidden = rows.length > 0;
-    host.replaceChildren(...rows.map((job) => {
+    const backlog = (queued || []).slice(0, 4);
+    if (empty) empty.hidden = rows.length + backlog.length > 0;
+    const queuedCards = backlog.map((job) => buildQueuedJobCard(job));
+    const runningCards = rows.map((job) => {
       const card = document.createElement("article");
       card.className = "live-job";
       if (job.live_screen) {
@@ -1080,7 +1188,8 @@ if ($("login-form")) {
       actions.append(stopBtn, detailBtn);
       card.append(header, now, tail, commit, actions);
       return card;
-    }));
+    });
+    host.replaceChildren(...queuedCards, ...runningCards);
   }
   async function refreshPanel() {
     try {
@@ -1099,7 +1208,7 @@ if ($("login-form")) {
       const dashAge = ops.dashboard_freshness_seconds;
       const dashNote = dashAge === null || dashAge === undefined ? "" : ` · dashboard ${dashAge}s ago`;
       const freshness = meta.stale ? `Stale snapshot${dashNote}` : `Live${dashNote}`;
-      const scoreStamp = ops.generated_at ? ` · scores ${ops.generated_at.replace("T", " ").slice(0, 16)} UTC` : "";
+      const scoreStamp = formatScoresMeasured(ops);
       const liveCards = jobs.filter((j) => j.live_screen && j.stall_state === "running");
       const jobLead = liveCards.length
         ? `${liveCards.length} job${liveCards.length === 1 ? "" : "s"} running on screen`
@@ -1115,15 +1224,18 @@ if ($("login-form")) {
           nowHost.textContent = "";
         }
       }
-      $("status-summary").textContent = `${freshness}${scoreStamp} · ${jobLead} · MiniMax ${spendText} · round ${ops.webchat_round || "?"}`;
+      const weakNote = ops.scores_weakest?.area
+        ? ` · focus ${ops.scores_weakest.area} (${ops.scores_weakest.value})`
+        : "";
+      $("status-summary").textContent = `${freshness}${scoreStamp}${weakNote} · ${jobLead} · MiniMax ${spendText} · round ${ops.webchat_round || "?"}`;
       renderDashboardPlain(ops.dashboard_plain);
-      renderLiveJobs(jobs, jobs.filter((j) => j.live_screen));
+      renderLiveJobs(jobs, jobs.filter((j) => j.live_screen), ops.queued_jobs);
       lastPanelScores = ops.scores;
       lastPanelOps = ops;
-      renderScoresTable(ops.scores, "jobs-scores-table");
+      renderScoresTable(ops.scores, "jobs-scores-table", ops.scores_weakest);
       if (activeBottomTab === "lanes") {
         renderOpsDetail(ops);
-        renderScoresTable(ops.scores);
+        renderScoresTable(ops.scores, "scores-table", ops.scores_weakest);
       }
       const c = data.conductor || {};
       $("conductor-summary").textContent = `Draft work on ${c.draft_branch || "unknown branch"}`;
@@ -1163,8 +1275,36 @@ if ($("login-form")) {
         ? `One-time on mini: ${si.bootstrap_command}`
         : (si.bootstrap_script ? `One-time on mini: bash ${si.bootstrap_script}` : "");
       const siShort = si.plain_status || health;
-      const siLine = [siShort, streak, loaded, logFresh].filter(Boolean).join(" · ");
+      const roundShip = si.last_ready_round && si.last_ready_sha
+        ? (si.last_ready_ship_verified
+          ? `Verified READY ship: R${si.last_ready_round} · ${si.last_ready_sha}`
+          : `Latest RESULT (unverified): R${si.last_ready_round} · ${si.last_ready_sha}`)
+        : "";
+      const focusLine =
+        si.scores_weakest_focus?.area
+          ? `Score focus: ${si.scores_weakest_focus.area} (${si.scores_weakest_focus.value}${
+            si.scores_weakest_focus.gap_to_nine != null && si.scores_weakest_focus.gap_to_nine > 0
+              ? ` · ${si.scores_weakest_focus.gap_to_nine} to 9`
+              : ""
+          }${
+            si.scores_weakest_focus.headroom_to_10 != null
+              ? ` · ${si.scores_weakest_focus.headroom_to_10} to 10`
+              : ""
+          })`
+          : "";
+      const siLine = [siShort, focusLine, roundShip, streak, loaded, logFresh].filter(Boolean).join(" · ");
       $("self-improve-status").textContent = siLine;
+      const siNext = $("self-improve-next");
+      if (siNext) {
+        const nextPlain = si.next_action_plain || "";
+        if (nextPlain.trim()) {
+          siNext.hidden = false;
+          siNext.textContent = `Next: ${nextPlain}`;
+        } else {
+          siNext.hidden = true;
+          siNext.textContent = "";
+        }
+      }
       const jobsSi = $("jobs-self-improve-status");
       if (jobsSi) {
         if (siLine.trim()) {
@@ -1207,7 +1347,7 @@ if ($("login-form")) {
       renderOpsDetail({}, "jobs-ops-detail");
       renderOpsDetail({}, "ops-detail");
       renderScoresTable(null, "jobs-scores-table");
-      renderLiveJobs([]);
+      renderLiveJobs([], [], []);
       const jobsSi = $("jobs-self-improve-status");
       if (jobsSi) {
         jobsSi.hidden = false;
@@ -1254,7 +1394,7 @@ if ($("login-form")) {
     try {
       const ops = lastPanelOps || {};
       renderOpsDetail(ops);
-      renderScoresTable(lastPanelScores);
+      renderScoresTable(lastPanelScores, "scores-table", ops.scores_weakest);
       const spend = ops.minimax_spend || {};
       const roles = ops.roles || {};
       const dashAge = ops.dashboard_freshness_seconds;

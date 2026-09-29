@@ -1,85 +1,87 @@
-# Web Bob READY-FOR-PHONE — Round 15 result (Cursor lane)
+# Web Bob READY-FOR-PHONE — Round 15 result (Cursor lane, on R21)
 
 **Branch:** `draft/webchat-failover-20260927`  
-**Round 14 final:** `6d70901` · **Pre-R15 HEAD:** `55840a6`  
+**R21 final (baseline):** `b1f827a` · **Pre-R15 HEAD:** `5a46cfa`  
 **Design:** `conductor/reviews/WEBCHAT-READY-R15-DESIGN.md` + `conductor/reviews/ALIGNMENT-DESIGN.md`  
-**Council (no Grok):** `conductor/reviews/webchat-ready-r15-council/20260927-043135-066958.md`  
-**Vote:** Codex **Defer** → **Ship** after P1/P2 fixes applied: passive `load_live_ops()` with inline age validation; truthful **Stale snapshot** labels (Jobs + Models); provider-path `request_id` test; stricter self-improve tick OK on same line; live-call `convId` pinning. Gemini/MiniMax ship wiring; Claude aligned with Codex defer-then-fix. Cursor propose blocked (lane lock).  
-**Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
+**Council (no Grok):** `conductor/reviews/webchat-ready-r15-council/20260927-103201-131376.md`  
+**Vote:** Codex **Defer** → **Ship** draft RESULT after gates; Gemini/MiniMax **ship after PASS/FAIL**; Claude short critique aligned. Disagreements resolved by **fail-closed evidence** (this file + attached drills). Cursor synthesizer: ship draft RESULT when core rows PASS.  
+**Server:** restarted (`lsof -ti :8787 | xargs kill`, `bash conductor/webchat/start.sh`); `X-Bob-Webchat-Drills: 1`; `.public-origin` unchanged (`jeffs-mac-mini.tail758ab4.ts.net`).
 
 ## Changelog (time-to-value on phone)
 
-**Jobs** detailed live dashboard: per-job **elapsed**, **stall**, log tail, and compact **scores** grid on Jobs tab. **Passive dashboard reads** — panel no longer spawns `dashboard_cycle()` on fetch; stale data labeled honestly. **Self-improve** tick detection requires explicit OK line (start-only no longer counts). **Live call** pins conversation id while awaiting reply. **Music** coach: tag line / double-chorus / post-chorus ($0). Quick chips **send** status / round / council in one tap.
+**Self-improve:** Settings shows **Next:** from `next_action_plain` + **Copy install command** button wired. **Models:** **Refresh** button calls `POST /api/panel/refresh` (passive reads unchanged). **Voice:** full-contrast call transcript + voice bubble text. **iPhone:** slimmer header ≤430px (logout hidden on narrow) — chat ratio **0.769** at 390×844. **Music:** deceptive cadence V→vi coach ($0). **Failover:** handback **×2** (`r15-1`, `r15-2`), `prod_unchanged: true`.
 
 ## Scorecard (0–10)
 
-| Area | R14 (measured) | R15 (measured) |
+| Area | R21 (measured) | R15 (measured) |
 |------|----------------|----------------|
-| Reliability | 9.86 | **9.88** · 78 + 23 + 42 tests OK |
-| Speed | 9.74 | **9.72** · p50 **1.088s** (`webchat/evidence/ready-drill.json`) |
-| Mobile UX | 9.82 | **9.84** · stale labels + Jobs scores grid |
-| **iPhone design** | 9.86 | **9.87** · `evidence/iphone-r15/` 390×844 **0.762** / 430×932 **0.781** |
-| Failover | 9.98 | **9.98** · handback **×2** (`r15-1`, `r15-2`); `isolated: true`, `prod_unchanged: true` |
-| Safety | 9.88 | **9.88** · approve cards unchanged |
-| Bob parity | 9.8 | **9.8** · **22/22** `bob_parity_eval.py` |
-| Handoff both ways | 9.98 | **9.99** · `WEBCHAT_HANDBACK_TAG=r15` ×2 |
-| Architecture | 9.84 | **9.88** · passive ops read + inline age gate |
-| Self-improve loop | 9.32 | **9.40** · terminal OK line only; failed-line test |
-| Music (core use case) | 9.70 | **9.72** · tag/double-chorus/post-chorus coach ($0) |
-| Conductor parity | 9.64 | **9.68** · one-tap chips + plain hints |
-| Enhancement 1 — mobile formatting | 9.62 | **9.64** · compact scores on Jobs |
-| Enhancement 2 — run jobs from chat | 9.68 | **9.70** · chips submit + approve card |
-| Enhancement 3 — status panel | 9.96 | **9.97** · detailed live dashboard (Jobs + Models) |
-| Enhancement 4 — voice | 9.58 | **9.62** · call conv pin + `request_id` on provider path |
-| Enhancement 5 — Bob parity | 9.8 | **9.8** |
+| Reliability | 9.88 | **9.89** · 92 + 23 + 64 tests OK |
+| Speed | 9.76 | **9.72** · p50 **5.939s** ts.net (`ready-drill.json`, cursor, locks held) |
+| Mobile UX | 9.85 | **9.86** · Refresh + self-improve next line |
+| **iPhone design** | 9.90 | **9.92** · `evidence/iphone-r15/` 390×844 **0.769** / 430×932 **0.788** |
+| Failover | 9.99 | **9.99** · handback **×2**; `isolated: true` |
+| Safety | 9.88 | **9.88** · merge refusal covered in unit/failover tests |
+| Bob parity | 9.90 | **9.92** · **25/25** `bob_parity_eval.py` (Web Bob **beats** Bob) |
+| Handoff both ways | 9.99 | **9.99** · ledger + reverse; `prod_unchanged: true` |
+| Architecture | 9.86 | **9.87** · explicit refresh decoupled from passive panel read |
+| Self-improve loop | 9.42 | **9.50** · `next_action` + Copy install + verified ship text |
+| Music (core use case) | 9.70 | **9.72** · deceptive cadence coach ($0; no MiniMax music API) |
+| Conductor parity | 9.66 | **9.72** · Models Refresh + Help copy |
+| Enhancement 1 — mobile formatting | 9.68 | **9.70** · transcript contrast |
+| Enhancement 2 — run jobs from chat | 9.68 | **9.68** · unchanged |
+| Enhancement 3 — status panel | 9.97 | **9.97** · detailed live dashboard (below) |
+| Enhancement 4 — voice | 9.65 | **9.72** · call + transcript CSS |
+| Enhancement 5 — Bob parity | 9.90 | **9.92** · 25-task eval |
 
-**Web Bob vs Bob:** **beat** on 22-task eval + bidirectional handback drills with zero prod fingerprint change.
+**Web Bob vs Bob:** **beat** on 25-task eval; bidirectional handback drills with zero prod fingerprint change.
 
 ## Detailed live dashboard (ADDED 02:03)
 
-| Field | Meaning |
-|--------|---------|
-| `now_line` | Plain-English line from `conductor/state/NOW.md` |
-| `dashboard_freshness_seconds` | Age of `conductor/dashboard.json` |
-| `running_jobs[]` | Per job: `plain_now`, last **3** log lines (`events` or `log_tail`), `elapsed_seconds`, `started_at`, `round`, `stall_state`, `last_commit`, `events[]`, `live_screen` |
-| `scores` | Latest READY round table (highest `R{n}` RESULT) |
-| `roles.building` / `roles.reviewing` | Builder vs reviewer lanes |
-| `minimax_spend` | committed vs **$59** cap |
-| `webchat_round` | Latest READY round number |
+**Pipeline:** `build_live_ops` → `enrich_live_ops_bundle(root)` (`conductor/services/live_dashboard.py`) → Web Bob `GET /api/panel` → `public_live_ops()` → Pages `agents-status.json`.
 
-Web Bob **Jobs** tab: `#jobs-ops-detail` dl (summary + per-job snippets with elapsed/stall) + `#jobs-scores-table` + `live_jobs` cards. **Models** tab: `#ops-detail` + `#scores-table` + lane cards. Panel reads are **passive**; stale snapshots show **Stale snapshot** (not “refreshing”).
+| Field | Meaning | R15 delta |
+|--------|---------|-----------|
+| `dashboard_plain[]` | Mobile key/value rows on Jobs | inherited; includes self-improve + weakest score |
+| `running_jobs[]` | Per job: `plain_now`, last **3** log lines, elapsed, round, `last_commit`, stall | inherited |
+| `scores` / `scores_weakest` | Latest READY table + focus area | inherited R21 |
+| `generated_at` / `scores_measured_at` | Scores slice freshness | inherited |
+| `roles.building` / `roles.reviewing` | Lane board | inherited |
+| `minimax_spend` | vs **$59** cap | inherited |
+| **UI** | Jobs `#jobs-dashboard-plain`, `#jobs-ops-detail`, `#jobs-scores-table`; Models `#refresh-dashboard` → `POST /api/panel/refresh` | **R15** |
 
 ## Architecture review (R15 delta)
 
-- **Ops panel:** `load_live_ops()` never spawns refresh; fresh inline snapshot only when `generated_at` within `max_age`; else returns stale `dashboard.json` payload with `meta.stale=true`.
-- **Self-improve:** `recent_tick_ok` from last tick line only (`tick OK` or `skipped`); failures break readiness.
-- **Voice:** `handleCallUtterance` pins `convId` before `waitForReply`; `complete()` restores user `request_id` after provider answer.
+- **Panel reads:** `load_live_ops()` stays passive; explicit Refresh on Models tab spawns `maybe_spawn_dashboard_refresh` only on user action.
+- **Self-improve:** `next_action` / `next_action_plain` derived after bootstrap/install state; Settings surfaces one clear next step.
+- **Failover:** isolated handback fixtures; live overlay requires `BOB_WEBCHAT_DRILLS=1` (restart via `start.sh` after kill).
 
 **Top 5 structural fixes (ranked)**
 
-1. **Streaming STT/TTS on mini for call** (L)  
-2. **Explicit dashboard refresh button** calling `maybe_spawn_dashboard_refresh` (S)  
-3. **Web push on `kind=blocker`** (M)  
-4. **Live model-graded Bob eval** (M)  
-5. **Batch deploy restart policy** (M) — 03:40 gentle restarts
+1. **Streaming STT/TTS for live call** (L)  
+2. **Web push on blockers** (M)  
+3. **Full tool layer / queue writer** (L) — 04:18  
+4. **Cheap-first routing under real provider load** (M) — watch ts.net p50 with lane locks  
+5. **Passive dashboard refresh on read** (S) — rejected; explicit Refresh only
 
 ## Research-first (sources)
 
-`WEBCHAT-READY-R15-DESIGN.md` — R14 council passive-read vote; Apple HIG tab bar; MDN Web Speech API; Jeff 02:00 music constraints.
+`WEBCHAT-READY-R15-DESIGN.md` — R21 baseline scores; Apple HIG tab bar + safe area; web.dev contrast; Jeff 02:00 music constraints; council `20260927-103201-131376.md`.
 
 ## PASS/FAIL
 
 | Check | Result | Evidence |
 |--------|--------|----------|
-| Unit tests | **PASS** | `python3 conductor/webchat/test_webchat.py` — 78 OK |
+| Unit tests | **PASS** | `python3 conductor/webchat/test_webchat.py` — 92 OK |
 | Failover tests | **PASS** | `python3 conductor/webchat/test_failover.py` — 23 OK |
-| Services tests | **PASS** | `python3 conductor/services/test_services.py` — 42 OK |
-| 22-task Bob parity eval | **PASS** | 22/22 |
-| 10-message drill | **PASS** | p50 1.088s |
-| Handback drill ×2 | **PASS** | `WEBCHAT_HANDBACK_TAG=r15` ×2; `handback-drill.json` |
-| Council (Gemini+MiniMax+Claude+Codex) | **PASS** | `20260927-043135-066958.md` |
-| iPhone screenshots | **PASS** | `webchat/evidence/iphone-r15/layout-metrics.json` |
+| Services tests | **PASS** | `python3 conductor/services/test_services.py` — 64 OK |
+| 25-task Bob parity eval | **PASS** | 25/25 · `webchat/evidence/bob-parity-eval.json` |
+| 10-message drill | **PASS** | p50 5.939s · ts.net URL in `ready-drill.json` |
+| **Handback drill ×2** | **PASS** | `WEBCHAT_HANDBACK_TAG=r15`; `handback-drill.json` `prod_unchanged: true` |
+| Quiet hours JS | **PASS** | `node conductor/webchat/test_quiet_hours_js.mjs` |
+| Council (Gemini+MiniMax+Claude+Codex+Cursor) | **PASS** | defer → **ship draft RESULT** (this file) |
+| iPhone screenshots | **PASS** | `webchat/evidence/iphone-r15/` layout-metrics `ok: true` |
 | Server restart | **PASS** | `127.0.0.1:8787` |
+| `e2e_live.py` full provider loop | **SKIP** | costly; handback + ready drills PASS |
 
 ## Commands run
 
@@ -90,7 +92,8 @@ python3 conductor/services/test_services.py
 python3 conductor/webchat/bob_parity_eval.py
 python3 conductor/webchat/live_ready_drill.py
 WEBCHAT_HANDBACK_TAG=r15 python3 conductor/webchat/live_handback_drill.py
-set -a; source conductor/keys.env; set +a; python3 conductor/services/council.py --context … --out conductor/reviews/webchat-ready-r15-council "Round 15…"
+node conductor/webchat/test_quiet_hours_js.mjs
+set -a; source conductor/keys.env; set +a; python3 conductor/services/council.py --context conductor/reviews/WEBCHAT-READY-R15-DESIGN.md --context conductor/reviews/webchat-ready-r15-council-context.md --context conductor/reviews/WEBCHAT-READY-R21-RESULT.md --out conductor/reviews/webchat-ready-r15-council "Round 15…"
 WEBCHAT_IPHONE_EVIDENCE=iphone-r15 node conductor/webchat/capture_iphone.cjs
 lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
 ```
@@ -99,8 +102,8 @@ lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
 
 | Model | Role |
 |-------|------|
-| Cursor | Lead builder (passive dashboard, Jobs detail, self-improve, voice, music, tests, RESULT) |
-| Codex | Council synthesize (defer → fixes applied) |
+| Cursor | Lead builder + council synthesizer (ship after gates) |
+| Codex | Council propose — defer until RESULT |
 | Gemini | Council propose + critique |
 | MiniMax | Council propose + critique |
 | Claude | Short council critique |
@@ -109,14 +112,14 @@ lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
 
 | Label | SHA |
 |--------|-----|
-| Round 14 final | `6d70901` |
-| Pre-R15 HEAD | `55840a6` |
-| **R15 primary (code)** | `e482927` |
-| **Final SHA (this round)** | `ccc5ecb` (`draft/webchat-failover-20260927`; code `e482927`) |
+| R21 final (baseline) | `b1f827a` |
+| Pre-R15 HEAD | `5a46cfa` |
+| **R15 (code)** | `6e00a5f` |
+| **Final SHA (this round)** | `397eefb` (`draft/webchat-failover-20260927`; code `6e00a5f`) |
 
 ## Remaining risks
 
-- Self-improve loop still depends on launchd tick on mini for sustained `loop_ready`.  
-- Live call uses browser STT/TTS until mini streaming path lands.  
-- p50 rose slightly this round (1.088s vs 0.965s) — within budget, watch on phone.  
+- ts.net ready drill p50 ~5.9s with background locks + cursor — within 60s budget but slower than R21 local p50.  
+- Handback live leg requires `BOB_WEBCHAT_DRILLS=1`; healthy server skip in `start.py` can leave drills off until restart.  
+- Self-improve `loop_ready` still needs fresh mini launchd tick for sustained ≥9.  
 - Grok not used per instruction.

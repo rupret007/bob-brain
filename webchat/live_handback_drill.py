@@ -89,8 +89,18 @@ def main():
             and round_evidence.get("events_ok")
         )
         evidence["rounds"].append(round_evidence)
-    assert_prod_unchanged(before, ROOT)
-    evidence["prod_unchanged"] = True
+    for attempt in range(6):
+        try:
+            assert_prod_unchanged(before, ROOT)
+            evidence["prod_unchanged"] = True
+            evidence["prod_quiet_attempts"] = attempt + 1
+            break
+        except (AssertionError, RuntimeError):
+            if attempt >= 5:
+                raise
+            time.sleep(2.0)
+    else:
+        evidence["prod_unchanged"] = False
     evidence["finished_at"] = time.time()
     evidence["result"] = "PASS" if all(row["pass"] for row in evidence["rounds"]) else "FAIL"
     evidence["drill_commit_marker"] = DRILL_COMMIT_SHA
