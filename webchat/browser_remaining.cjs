@@ -31,6 +31,17 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
         return value;
       }
       const body = engine + ' check reminder';
+      for (const [question, expected] of [
+        ['Can you send texts?', 'confirm that draft separately'],
+        ['Is my memory private?', 'future model context'],
+        ['Can you text Instinct?', 'cannot be sent from Web Bob'],
+      ]) {
+        const value = await say(question);
+        assert.equal(value.messages.at(-1).provider, 'capabilities');
+        assert(value.messages.at(-1).content.includes(expected));
+        await page.locator('.message.assistant').filter({hasText: expected}).last().waitFor();
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      }
       const saved = await say('remind me to ' + body + ' in 1 second');
       assert.equal(saved.messages.at(-1).provider, 'reminders');
       await page.locator('.message.assistant').filter({hasText: 'Reminder: ' + body}).waitFor({timeout: 8000});
@@ -52,7 +63,7 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       await page.screenshot({path: path.join(config.output, screenshot), animations: 'disabled'});
       assert.deepEqual(errors, []);
-      results.push({engine, passed: true, screenshot, checks: ['real due notification without worker scheduler', 'recurring reminder visible in Jobs', 'open reminder chat', 'cancel', 'saved Karen status', 'private band digest', 'phone overflow']});
+      results.push({engine, passed: true, screenshot, checks: ['capability answers visible without model calls', 'real due notification without worker scheduler', 'recurring reminder visible in Jobs', 'open reminder chat', 'cancel', 'saved Karen status', 'private band digest', 'phone overflow']});
       await context.close();
     } finally { await browser.close(); }
   }

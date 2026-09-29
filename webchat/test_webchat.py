@@ -1326,7 +1326,7 @@ class HandbackJobTests(Fixture):
         state_ledger.write_now(self.root, "offline parity fixture", sha="fedcba1")
         result = run_eval(self.root)
         self.assertEqual(result["passed"], result["total"], result["cases"])
-        self.assertEqual(result["total"], 165)
+        self.assertEqual(result["total"], 169)
         self.assertEqual(sum(case["name"].startswith("Instinct: ") for case in result["cases"]), 22)
 
     def test_catchup_event_ack_cursor(self):

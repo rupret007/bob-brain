@@ -8,6 +8,14 @@ council, vendor probes, or worker replay scripts during this solo effort.
 Order: texting, gaps, media, voice, UI, read-only Instinct, remaining parity.
 Only `draft/webbob-clean-0927` is the merge target. Never touch main or force-push.
 
+Beyond-parity loops use `--feature improve`, preserving all cumulative bridge,
+media, voice, memory and read-only Instinct checks. Each full check creates an
+immutable numbered attempt directory. The latest two attempts at the exact SHA
+must both pass full tests/evals/browsers/staging before activation; a failed or
+interrupted run breaks the streak. Review the latest attempt's checks.json.
+Every deploy also preserves its predecessor receipt so a failed attempt can be
+followed by a fresh release without rewriting historical failure evidence.
+
 `check --root ROOT --feature FEATURE` runs full webchat, services, historical
 release-guard and new solo-guard suites, parity evals, JS checks, the texting
 browser proof and authenticated staging replay. Evidence is bound to a clean
