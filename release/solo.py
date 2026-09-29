@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -41,6 +42,14 @@ def git(*args):
 
 def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def source_digest(folder):
+    values = []
+    for path in sorted(Path(folder).rglob('*')):
+        if path.is_file() and '__pycache__' not in path.parts and path.suffix != '.pyc':
+            values.append((str(path.relative_to(folder)), digest(path)))
+    return hashlib.sha256(json.dumps(values, separators=(',', ':')).encode()).hexdigest()
 
 
 def identity():
@@ -93,6 +102,20 @@ def replay(client, root, sha, *, real_reads=False):
                 'BlueBubbles live read failed')
         receipts.append(dict(prompt='texts', provider='texting', passed=True,
                              answer_sha256=hashlib.sha256(answer['content'].encode()).hexdigest()))
+    from texting import BlueBubbles
+    target = BlueBubbles().chats()[0]['guid'] if real_reads else 'Alex Morgan'
+    _, drafted = submit(client, cid, 'draft reply to ' + target + ': Web Bob no-send verification. Cancel this draft.')
+    card = drafted.get('text_draft', {})
+    require(card.get('state') == 'pending' and card.get('body') == 'Web Bob no-send verification. Cancel this draft.',
+            'Draft did not bind the exact recipient/body')
+    token = card['confirm_message']
+    _, bare = submit(client, cid, 'yes')
+    require(bare['content'].startswith('Nothing sent.'), 'Bare yes authorized delivery')
+    _, cancelled = submit(client, cid, 'cancel text draft ' + card['id'])
+    require(cancelled['content'] == 'Text draft cancelled. Nothing sent.', 'Draft cancel failed')
+    _, stale = submit(client, cid, token)
+    require('already used, cancelled, or replaced' in stale['content'], 'Cancelled token was accepted')
+    receipts.append(dict(check='exact draft, bare approval, cancel, stale token', passed=True))
     from task_dispatch import task_queue
     require(not any(r['conversation_id'] == cid for r in task_queue.tasks(root).values()), 'Replay queued work')
     saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
@@ -149,13 +172,25 @@ def checks(root, feature):
         env['BOB_PLAYWRIGHT_MODULE'] = str(root / 'conductor/webchat/node_modules/playwright')
         with tempfile.TemporaryDirectory(prefix='solo-tests-', dir='/private/tmp') as tmp, log.open('w') as stream:
             env['BOB_ROOT'] = tmp
-            result = subprocess.run(argv, cwd=CODE, env=env, stdout=stream, stderr=subprocess.STDOUT, timeout=900)
+            process = subprocess.Popen(argv, cwd=CODE, env=env, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+            deadline = time.monotonic() + 900
+            try:
+                while process.poll() is None:
+                    # Stop our own test groups with headroom before crossing the floor.
+                    require(shutil.disk_usage(root).free >= 5 * 1024**3 + 128 * 1024**2,
+                            'Tests reached disk safety headroom')
+                    require(time.monotonic() < deadline, 'Test suite exceeded deadline')
+                    time.sleep(.5)
+            except BaseException:
+                os.killpg(process.pid, signal.SIGTERM)
+                process.wait(timeout=10)
+                raise
         body = log.read_text()
         count = re.search(r'Ran (\d+) tests?', body)
         skipped = re.search(r'skipped=(\d+)', body)
-        receipt = dict(command=argv, exit=result.returncode, log=str(log), log_sha256=digest(log),
+        receipt = dict(command=argv, exit=process.returncode, log=str(log), log_sha256=digest(log),
                        tests=int(count[1]) if count else None, skipped=int(skipped[1]) if skipped else 0)
-        print(name + ': ' + str(result.returncode), flush=True)
+        print(name + ': ' + str(process.returncode), flush=True)
         return name, receipt
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
@@ -256,6 +291,8 @@ def restart(root, pins):
 
 def recover(root, record):
     release_recovery(record)
+    for name, expected in record.get('snapshot_hashes', {}).items():
+        require(source_digest(Path(record['snapshots'][name])) == expected, 'Rollback snapshot changed: ' + name)
     restart(root, record['snapshots'])
     record['restored'] = versions(root, record['previous'])
     record.update(rolled_back=True, all_pass=False, status='ROLLED_BACK')
@@ -290,6 +327,8 @@ def transaction(root, record, path, activate, live, publish=atomic_json, final_p
             release_recovery(record)
         # Rollback happens before attempting any potentially failing evidence write.
         atomic_json(path, record)
+        if final_path:
+            atomic_json(final_path, record)
         raise
 
 
@@ -330,6 +369,7 @@ def deploy(args):
         shutil.copytree(prior, snapshot, ignore=shutil.ignore_patterns('.git', '.password', '.session-secret',
             'keys.env', '.env', '.env.*', 'sessions', 'node_modules', '__pycache__', 'uploads', 'evidence', 'task-runs'))
         record['snapshots'][name] = str(snapshot)
+    record['snapshot_hashes'] = {name: source_digest(Path(p)) for name, p in record['snapshots'].items()}
     # Freeze tracked candidate bytes; future edits to the worktree cannot change live code.
     release = folder / 'candidate'
     release.mkdir(mode=0o700)
@@ -339,6 +379,10 @@ def deploy(args):
     require(extracted.returncode == archive.wait() == 0, 'Candidate archive failed')
     atomic_json(release / 'webbob-build.json', dict(sha=sha, built_at=datetime.now(timezone.utc).isoformat()))
     path = folder / 'release.json'
+    atomic_text(folder / 'rollback.sh', '#!/bin/bash\nset -euo pipefail\n' + shlex.join([
+        sys.executable, str(release / 'release/solo.py'), 'rollback', '--root', str(root),
+        '--feature', args.feature, '--record', str(path)]) + '\n')
+    (folder / 'rollback.sh').chmod(0o700)
     reserve_recovery(path, record)
     atomic_json(path, record)
     origin = (root / 'conductor/webchat/.public-origin').read_text().strip()
@@ -347,7 +391,15 @@ def deploy(args):
         pair = versions(root, sha)
         results = [replay(Client(url, root / 'conductor/webchat/.password'), root, sha, real_reads=True)
                    for url in ('http://127.0.0.1:8787', origin)]
-        return dict(all_pass=all(r['all_pass'] for r in results), versions=pair, endpoints=results)
+        number = len(record.get('rounds', [])) + 1
+        browser_path = folder / f'browser-round-{number}.json'
+        env = dict(os.environ, BOB_PLAYWRIGHT_MODULE=str(root / 'conductor/webchat/node_modules/playwright'))
+        run(['node', CODE / 'webchat/capture_parity.cjs', root, origin, sha,
+             folder / f'browser-round-{number}.png', browser_path], env=env)
+        browser = json.loads(browser_path.read_text())
+        require(browser['pass_check'], 'Live browser check failed')
+        return dict(all_pass=all(r['all_pass'] for r in results), versions=pair, endpoints=results,
+                    browser=dict(path=str(browser_path), sha256=digest(browser_path), passed=True))
 
     transaction(root, record, path, lambda: restart(root, dict(webchat=release, dispatch=release)), live,
                 final_path=root / 'conductor/reviews' / ('SOLO-0018-' + args.feature + '-live.json'))
@@ -367,6 +419,10 @@ def main():
     args = parser.parse_args()
     os.umask(0o077)
     os.environ['BOB_ROOT'] = str(args.root)
+    def interrupted(signum, frame):
+        raise RuntimeError('Release interrupted by signal ' + str(signum))
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(signum, interrupted)
     if args.action == 'check':
         checks(args.root, args.feature)
     elif args.action == 'deploy':
