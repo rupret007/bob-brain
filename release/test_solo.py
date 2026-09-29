@@ -32,7 +32,20 @@ class TransactionTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.path = self.root / 'record.json'
-        self.record = dict(previous='b' * 40, sha='c' * 40, snapshots={'webchat': 'frozen-predecessor'})
+        state = self.root / 'conductor/state'
+        state.mkdir(parents=True)
+        candidate = self.root / 'candidate'
+        candidate.mkdir()
+        (candidate / 'webbob-build.json').write_text(json.dumps(dict(sha='c' * 40)))
+        snapshots = {}
+        for name in ('webchat', 'dispatch'):
+            prior = self.root / ('previous-' + name)
+            prior.mkdir()
+            (prior / 'webbob-build.json').write_text(json.dumps(dict(sha='b' * 40)))
+            snapshots[name] = str(prior)
+            (state / (name + '-code-root')).write_text(str(candidate.resolve()) + '\n')
+        self.record = dict(previous='b' * 40, sha='c' * 40, snapshots=snapshots, rollback=str(self.root))
+        self.record['snapshot_hashes'] = {name: solo.source_digest(path) for name, path in snapshots.items()}
         for name in ('require_disk_space', 'release_recovery', 'restart', 'versions'):
             p = patch.object(solo, name)
             setattr(self, name, p.start())
@@ -189,6 +202,31 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
             solo.verify_gates('a' * 40, 'voice', checks, review)
 
+    def test_improve_requires_voice_availability_browser_without_replacing_real_audio(self):
+        self.check['feature'] = 'improve'
+        for name in ('media-browser', 'voice-js', 'voice-browser', 'instinct-browser',
+                     'remaining-browser', 'cold-browser', 'startup-recovery-browser', 'bridge-contract', 'jobs-results-browser', 'reply-lifecycle-browser', 'memory-removal-browser'):
+            self.check['results'][name] = self.check['results']['browser']
+        sha = solo.andrea_pin()['sha']
+        self.check['andrea'] = dict(sha=sha, results=[])
+        solo.atomic_json(self.folder / 'bridge-contract.json', dict(all_pass=True, andrea_sha=sha, real_texts_sent=0))
+        checks = self.folder / 'checks.json'
+        solo.atomic_json(checks, self.check)
+        with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
+            solo.verify_checks('a' * 40, 'improve', checks)
+        self.check['results']['voice-availability-browser'] = self.check['results']['browser']
+        solo.atomic_json(checks, self.check)
+        solo.verify_checks('a' * 40, 'improve', checks)
+        memory = self.check['results'].pop('memory-removal-browser')
+        solo.atomic_json(checks, self.check)
+        with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
+            solo.verify_checks('a' * 40, 'improve', checks)
+        self.check['results']['memory-removal-browser'] = memory
+        del self.check['results']['voice-browser']
+        solo.atomic_json(checks, self.check)
+        with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
+            solo.verify_checks('a' * 40, 'improve', checks)
+
     def test_instinct_requires_read_only_browser_proof(self):
         self.check['feature'] = self.review['feature'] = 'instinct'
         for name in ('media-browser', 'voice-js', 'voice-browser'):
@@ -226,6 +264,26 @@ class EvidenceTests(unittest.TestCase):
         self.check['results']['webchat']['skipped'] = 1
         with self.assertRaisesRegex(Exception, 'skipped'):
             self.verify()
+
+    def test_improve_requires_jobs_result_browser_and_still_requires_real_voice(self):
+        self.check['feature'] = 'improve'
+        for name in ('media-browser', 'voice-js', 'voice-browser', 'instinct-browser',
+                     'remaining-browser', 'bridge-contract', 'cold-browser', 'jobs-results-browser',
+                     'voice-availability-browser', 'reply-lifecycle-browser', 'memory-removal-browser', 'startup-recovery-browser'):
+            self.check['results'][name] = dict(self.check['results']['browser'])
+        self.check['andrea'] = {'sha': solo.andrea_pin()['sha'], 'results': []}
+        solo.atomic_json(self.folder / 'bridge-contract.json', dict(
+            all_pass=True, andrea_sha=solo.andrea_pin()['sha'], real_texts_sent=0))
+        checks = self.folder / 'checks.json'
+        solo.atomic_json(checks, self.check)
+        solo.verify_checks('a' * 40, 'improve', checks)
+        for missing in ('jobs-results-browser', 'reply-lifecycle-browser', 'voice-browser', 'startup-recovery-browser'):
+            with self.subTest(missing=missing):
+                value = copy.deepcopy(self.check)
+                del value['results'][missing]
+                solo.atomic_json(checks, value)
+                with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
+                    solo.verify_checks('a' * 40, 'improve', checks)
 
     def test_changed_log_rejected(self):
         self.log.write_text('Different bytes')

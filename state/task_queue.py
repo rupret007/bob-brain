@@ -1,4 +1,4 @@
-"""Durable Web Bob tasks. Every transition is locked, fsynced and claim fenced."""
+"""Durable Web Bob tasks. Reads observe; locked writers repair and commit."""
 from __future__ import annotations
 
 import contextlib
@@ -86,18 +86,32 @@ def worker_name(value):
 
 
 @contextlib.contextmanager
-def locked(root):
+def locked(root, *, read_only=False):
     folder = Path(root) / "conductor/state"
+    if read_only:
+        try:
+            handle = (folder / ".queue.lock").open("rb")
+        except FileNotFoundError:
+            # An empty or imported journal need not have a writer lock yet.
+            # Observe its bytes without creating state. A concurrent first
+            # append can at most expose an incomplete final record to _read.
+            yield folder / "queue.jsonl"
+            return
+        with handle:
+            fcntl.flock(handle, fcntl.LOCK_SH)
+            yield folder / "queue.jsonl"
+        return
     folder.mkdir(parents=True, exist_ok=True)
     with (folder / ".queue.lock").open("a") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         yield folder / "queue.jsonl"
 
 
-def _read(path):
-    if not path.exists():
+def _read(path, *, repair=True):
+    try:
+        data = path.read_bytes()
+    except FileNotFoundError:
         return {}
-    data = path.read_bytes()
     rows, offset = {}, 0
     for line in data.splitlines(keepends=True):
         try:
@@ -106,14 +120,16 @@ def _read(path):
         except (ValueError, KeyError, TypeError):
             if offset + len(line) != len(data) or line.endswith(b"\n"):
                 raise ValueError("Task queue corruption; refusing to discard committed records") from None
-            # Only a torn final append can be discarded, under the writer lock.
-            with path.open("r+b") as handle:
-                handle.truncate(offset)
-                handle.flush()
-                os.fsync(handle.fileno())
+            # Readers return the intact prefix. Only a locked writer may
+            # discard a torn append before committing its next transition.
+            if repair:
+                with path.open("r+b") as handle:
+                    handle.truncate(offset)
+                    handle.flush()
+                    os.fsync(handle.fileno())
             break
         offset += len(line)
-    if data and not data.endswith(b"\n") and offset == len(data):
+    if repair and data and not data.endswith(b"\n") and offset == len(data):
         with path.open("ab") as handle:
             handle.write(b"\n")
             handle.flush()
@@ -136,8 +152,9 @@ def _append(path, row, event, now=None):
 
 
 def tasks(root):
-    with locked(root) as path:
-        return _read(path)
+    """Observe queue state without creating files or repairing journal bytes."""
+    with locked(root, read_only=True) as path:
+        return _read(path, repair=False)
 
 
 def worker_order(kind):

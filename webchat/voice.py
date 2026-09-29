@@ -131,6 +131,22 @@ class VoiceCalls:
         return any(c["conversation_id"] == conversation_id and not c["ended"]
                    and min(c["expires"], c["lease_expires"]) > time.time() for c in self.calls.values())
 
+    def busy(self, conversation_id):
+        # A cancelled/expired reservation still owns its in-flight token request.
+        # Do not admit overlapping work until that request actually returns.
+        return self.active(conversation_id) or any(c["conversation_id"] == conversation_id
+            and c.get("starting") for c in self.calls.values())
+
+    def check_start_owner(self, owner, session):
+        # Direct internal fixtures have no HTTP session. The HTTP entrypoint
+        # passes the authenticated object, which must still be current here.
+        if session is not None:
+            with self.chat.auth_lock:
+                if self.chat.sessions.get(owner) is not session or session["expires"] <= time.time():
+                    raise VoiceError(401, "Your session ended. Log in again before calling.")
+        if self.chat.closing.is_set():
+            raise VoiceError(503, "Web Bob is restarting. Return to chat and try again shortly.")
+
     def get(self, call_id, owner, *, allow_ended=False):
         if not isinstance(call_id, str):
             raise VoiceError(404, "Call not found.")
@@ -142,22 +158,24 @@ class VoiceCalls:
             raise VoiceError(410, "This call has ended. Tap the waveform to start another.")
         return call
 
-    def start(self, conversation_id, owner):
+    def start(self, conversation_id, owner, *, session=None):
         chat = self.chat
         with chat.lock:
+            self.check_start_owner(owner, session)
             conversation = copy.deepcopy(chat.get(conversation_id))
-            if self.active(conversation_id) or conversation_id in chat.workers:
+            if self.busy(conversation_id) or conversation_id in chat.workers:
                 raise VoiceError(409, "Finish the current reply or call before starting a call here.")
             if any(m.get("status") in ("queued", "running", "waiting") for m in conversation["messages"]):
                 raise VoiceError(409, "Finish or stop the queued reply before starting a call.")
             now = time.time()
-            self.calls = {k: c for k, c in self.calls.items() if c["expires"] + 3600 > now}
-            if sum(not c["ended"] and min(c["expires"], c["lease_expires"]) > now for c in self.calls.values()) >= 2:
-                raise VoiceError(429, "Two voice calls are already open. End one first.")
+            self.calls = {k: c for k, c in self.calls.items() if c.get("starting") or c["expires"] + 3600 > now}
+            if sum(bool(c.get("starting")) or (not c["ended"] and min(c["expires"], c["lease_expires"]) > now)
+                   for c in self.calls.values()) >= 2:
+                raise VoiceError(429, "Two voice calls are already open or starting. Wait or end one first.")
             self.reserve_token_attempt(owner)
             call_id = str(uuid.uuid4())
             call = {"conversation_id": conversation_id, "owner": owner, "expires": now + CALL_SECONDS,
-                    "ended": False, "tools": {}, "created_at": now, "lease_expires": now + LEASE_SECONDS}
+                    "ended": False, "starting": True, "tools": {}, "created_at": now, "lease_expires": now + LEASE_SECONDS}
             self.calls[call_id] = call
         try:
             # Same bounded, redacted snapshots used by typed chat, including profile.md.
@@ -180,13 +198,26 @@ class VoiceCalls:
                     "description": "REQUIRED for creative writing, stories, explicit word-count/multi-paragraph requests, Web Bob version/build/commit questions, current status, memory updates and work requests. Uses Jeff's saved spoken words through Bob's authenticated chat handlers. No arguments; read returned writing in full and do not answer these requests without this tool's result.",
                     "parameters": {"type": "OBJECT", "properties": {}}}]}],
             }
+            with chat.lock:
+                self.check_start_owner(owner, session)
+                self.get(call_id, owner)
             token = self.token_factory(chat.root, setup, call["expires"])
-            return {"call_id": call_id, "token": token, "url": SOCKET_URL,
-                    "model": "models/" + MODEL, "expires_at": call["expires"]}
+            with chat.lock:
+                # Context loading and token I/O deliberately release chat.lock.
+                # Logout, expiry and shutdown during either must not revive a call
+                # or expose its late credential. No automatic token retry.
+                self.check_start_owner(owner, session)
+                self.get(call_id, owner)
+                call["lease_expires"] = min(call["expires"], time.time() + LEASE_SECONDS)
+                return {"call_id": call_id, "token": token, "url": SOCKET_URL,
+                        "model": "models/" + MODEL, "expires_at": call["expires"]}
         except Exception:
             with chat.lock:
                 call["ended"] = True
             raise
+        finally:
+            with chat.lock:
+                call["starting"] = False
 
     def transcript(self, call_id, owner, entries):
         chat = self.chat

@@ -108,7 +108,7 @@ def snapshot_for_prompt(root: Path, limit: int = 6000) -> str:
                 block += f"\nNotes: {notes}"
             lines.append(block)
         except (OSError, json.JSONDecodeError, KeyError):
-            lines.append(f"### (corrupt project {row.get('id', '?')[:8]}) — fix in Song panel")
+            lines.append(f"### (corrupt project {row.get('id', '?')[:8]}) — unavailable")
             continue
     text = "\n\n".join(lines)
     return text[:limit]
@@ -130,7 +130,7 @@ def try_music_coach_reply(text: str) -> str | None:
         return (
             "Modulation: move up a half-step or whole-step for the final chorus lift (common in pop). "
             "Set up with a dominant chord (V) of the new key one bar before the change — e.g. G7 before C major. "
-            "Note old and new keys in Songs → notes so versions and Bob stay aligned."
+            "Tell me the current key and the target key to work through the transition."
         )
     music_ctx = re.search(
         r"\b(song|lyrics|chorus|verse|guitar|track|riff|hook|arrange)\b",
@@ -140,17 +140,17 @@ def try_music_coach_reply(text: str) -> str | None:
         return (
             "Intro: one riff or motif that foreshadows the chorus hook — keep it 4–8 bars, no lyrics required. "
             "Drop the energy after bar 4 so verse 1 feels like a breath. "
-            "Note the intro idea in Songs → notes; Logic markers are confirm-first."
+            "Describe the intro idea here; Logic markers are confirm-first."
         )
     if "pre-chorus" in lower or "prechorus" in lower or "pre chorus" in lower:
         return (
             "Pre-chorus: build tension with rising chords (e.g. vi–IV–V) and a shorter melodic line than the verse. "
             "Land on the dominant (V) right before the chorus downbeat. "
-            "Save lyric tweaks as a new Songs version so Bob sees the lift."
+            "Paste the verse and chorus here to work on the lift between them."
         )
     if "capo" in lower:
         return (
-            "Capo: match the singer’s comfortable range — write shapes in friendly keys (G, C, D) and note capo fret in Songs → chords. "
+            "Capo: match the singer’s comfortable range — write shapes in friendly keys (G, C, D) and include the capo fret when sharing the chords here. "
             "Same chord names on paper; the sounding key shifts up. "
             "Record which fret you used in notes for the handback."
         )
@@ -160,95 +160,95 @@ def try_music_coach_reply(text: str) -> str | None:
         return (
             "Dynamics: verse stays lean (guitar + vocal), pre-chorus adds bass or pad, chorus full band. "
             "Breakdown = strip to one instrument for 4–8 bars before the final lift. "
-            "Note the map in Songs → notes; Logic level automation is confirm-first."
+            "Describe the arrangement here; Logic level automation is confirm-first."
         )
     norm = re.sub(r"[-_]", " ", lower)
     if "double chorus" in norm or "post chorus" in norm:
         return (
             "Double chorus: play the full chorus twice back-to-back; lift drums or harmony on the second pass. "
             "A post-chorus sits right after the chorus — hook riff or repeated lyric before the next verse. "
-            "Note the map in Songs → notes; Logic arrangement is confirm-first."
+            "Describe the arrangement here; Logic arrangement is confirm-first."
         )
     if "tag line" in lower or "tagline" in norm or ("chorus" in lower and "tag" in lower):
         return (
             "Tag line: repeat one hook phrase after the chorus (often the title), same melody as the chorus hook. "
             "Use it on the outro vamp or double-chorus ending. "
-            "Save the tag lyric as a new Songs version so Bob sees the final hook."
+            "Paste the hook here to work on a tag that fits it."
         )
     if "riff" in lower or "vamp" in lower:
         return (
             "Riff/vamp: repeat a 1–2 bar figure; change one note on the 4th repeat for motion. "
             "Use it under the chorus tag or as an outro fade. "
-            "Hum it into Songs audio upload if you want a reference take ($0 local sketch later)."
+            "Tell me the chords and rhythm to sketch variations here."
         )
     if "outro" in lower or "ending" in lower or "fade" in lower:
         return (
             "Outro: repeat the chorus hook once, strip instruments for the last line, or tag a new lyric over the vamp. "
             "A fade works on sketch demos; in Logic, mark the outro region confirm-first before bounce. "
-            "Save the lyric tweak as a new Songs version."
+            "Paste the final chorus here to work on its ending."
         )
     if "chord" in lower or "progression" in lower:
         return (
             "For chords, try a simple loop (verse: I–V–vi–IV, chorus lift to IV or vi). "
-            "Match the mood in the Songs tab — save a version after each pass. "
-            "Local sketch demo ($0) can render a rough MP3 from lyrics + style when you are ready."
+            "Tell me the mood and key you have in mind. "
+            "Paste your current chords for a more specific suggestion."
         )
     if "verse" in lower and "chorus" not in lower and "bridge" not in lower:
         return (
             "Verse polish: one image per line, end lines on unstressed syllables so the chorus hits harder. "
-            "Keep rhyme loose until the hook — save each draft in Songs → versions ($0). "
+            "Keep rhyme loose until the hook. "
             "If a line feels crowded, cut a word and let the refrain carry the title."
         )
     if "refrain" in lower and "chorus" not in lower and "hook" not in lower:
         return (
             "Refrain polish: keep it to one repeatable line (often the title) with the same rhythm each time. "
             "Trim extra syllables on beat 1; if the verse is wordy, make the refrain the emotional release. "
-            "Save each pass in Songs → versions so Bob sees what changed ($0)."
+            "Paste your refrain here to work through a revision."
         )
     if "hook" in lower and "chorus" not in lower and "refrain" not in lower:
         return (
             "Hook polish: one singable phrase (3–7 syllables) that names the feeling, not the plot. "
             "Repeat it in the chorus and tag the last line of the verse with the same rhythm ($0). "
-            "Save hook drafts in Songs → versions so Bob picks up the winner."
+            "Paste your hook ideas here to compare them."
         )
     if "chorus" in lower or "hook" in lower or "refrain" in lower:
         return (
             "Chorus/refrain tip: one clear emotional line, repeat the title, keep lines short for singing. "
             "Contrast with the verse (higher energy or wider melody). "
-            "Drop a draft in Songs → lyrics, then ask me to tighten a specific line."
+            "Paste a draft here and tell me which line to tighten."
         )
     if "rhyme" in lower or "meter" in lower:
         return (
             "Rhyme without forcing: pick one rhyme sound per section (e.g. -ay) and leave one line unrhymed for breath. "
             "For meter, read lines aloud and trim syllables until stresses land on beats 1 and 3 in 4/4. "
-            "Save a version in Songs after each rewrite so Bob sees the history."
+            "Paste the lines here to work through rhyme and meter."
         )
     if "melody" in lower or "arrange" in lower:
         return (
             "Melody: start with the chorus on fewer notes than the verse; leave space at phrase ends. "
             "Arrangement: add one layer at a time (guitar → bass → pad). "
-            "Use Songs for structure notes; Logic on the mini is confirm-first for tempo/markers/bounce."
+            "Share structure notes here; Logic on the mini is confirm-first for tempo/markers/bounce."
         )
     if "bridge" in lower or "structure" in lower or "verse" in lower:
         return (
             "Structure: verse sets the story, chorus is the emotional headline, bridge is one new angle before the final chorus. "
-            "Try 8-bar sections in 4/4; label them in Songs → notes so versions stay clear. "
+            "Try 8-bar sections in 4/4 and label each section in the draft. "
             "When a section feels long, cut a line instead of adding chords."
         )
     if "time signature" in lower or "4/4" in lower or "3/4" in lower or "6/8" in lower:
         return (
             "Time signature: 4/4 is the default pop/rock feel; 6/8 gives a lilting triplet groove; 3/4 is waltz. "
             "Keep the lyric syllables per bar consistent once you pick one. "
-            "Note the choice in Songs → notes so Bob and versions stay aligned."
+            "Tell me the time signature when sharing your draft."
         )
     if "tempo" in lower or "bpm" in lower or ("key" in lower and "change" not in lower):
         return (
-            "Tempo/key: pick BPM in Songs notes (e.g. 92 BPM, key of G). "
+            "Tempo/key: choose a BPM and key (e.g. 92 BPM, key of G). "
             "Match chord voicings to the singer’s comfortable range; capo is fine. "
-            "Upload a rough take in Songs for reference — local sketch demo can follow lyrics + style ($0)."
+            "Share the chords and intended feel here for suggestions."
         )
     return (
         "Song structure: verse → chorus → verse → chorus → bridge → chorus is a solid default. "
-        "Use the Songs tab for lyrics/chords/versions; I can rewrite lines, rhyme, or arrangement notes here. "
-        "No MiniMax music API — local sketch + Logic (confirm-first) when you want audio on the mini."
+        "Paste lyrics or chords here; I can help rewrite lines, rhyme, or arrangement notes. "
+        "Tell me the style and which part you want to improve."
     )

@@ -24,7 +24,9 @@ from datetime import datetime, timezone
 CODE = Path(__file__).resolve().parents[1]
 if __name__ == '__main__' and '--root' in sys.argv:
     os.environ['BOB_ROOT'] = sys.argv[sys.argv.index('--root') + 1]
-sys.path[:0] = [str(CODE / d) for d in ('webchat', 'services', 'state', 'reviews')]
+sys.path[:0] = [str(CODE / d) for d in ('webchat', 'services', 'state', 'reviews', 'release')]
+from release_ownership import serialized
+import activation_journal as journal
 from texting_deploy_record import atomic_json, atomic_text, require_disk_space, reserve_recovery, release_recovery
 from live_redeploy_check import Client, require
 
@@ -205,6 +207,7 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
         receipts.extend(remaining_replay(client, cid))
     if feature == 'improve':
         receipts.extend(capability_replay(client, cid, root))
+        receipts.extend(memory_removal_replay(client, cid, root, real=real_reads))
         if real_reads:
             receipts.extend(delivered_notice_replay(client, root))
     from task_dispatch import task_queue
@@ -212,6 +215,30 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
     saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
     require(not saved.get('_texting', {}).get('audit'), 'Replay attempted delivery')
     return dict(all_pass=True, conversation_id=cid, checks=receipts, real_texts_sent=0, queued_workers=0)
+
+
+def memory_removal_replay(client, cid, root, *, real):
+    import uuid
+    from bob_gaps import profile_path
+    path = profile_path(root)
+    before = path.read_bytes()
+    _, answer = submit(client, cid, 'manage saved memories')
+    require(answer.get('provider') == 'memory' and answer.get('private_memory') and not answer.get('attempts'),
+            'Memory management must stay private and deterministic')
+    if real:
+        # Production replay may inspect/cancel but never remove an owner note.
+        _, refusal = submit(client, cid, 'yes, remove saved note proposal ' + str(uuid.uuid4()))
+        require('stale' in refusal['content'], 'Unbound removal approval was accepted')
+        require(path.read_bytes() == before, 'Memory inspection/refusal modified owner notes')
+        return [dict(check='private memory management and unbound removal refusal; owner notes unchanged', passed=True)]
+    choices = answer.get('memory_notes', [])
+    require(bool(choices), 'Synthetic staging notes are missing removal choices')
+    _, proposed = submit(client, cid, 'remove saved note ' + choices[0]['id'])
+    require(path.read_bytes() == before, 'Review changed memory before confirmation')
+    _, removed = submit(client, cid, 'yes, remove saved note proposal ' + proposed['action_card']['proposal_id'])
+    require('Removed one saved Web Bob note' in removed['content'], 'Synthetic removal failed')
+    require(path.read_bytes() == b''.join(before.splitlines(keepends=True)[1:]), 'Removal changed another note')
+    return [dict(check='synthetic staging exact-note review and separate removal confirmation', passed=True)]
 
 
 def capability_replay(client, cid, root):
@@ -349,6 +376,12 @@ def gaps_replay(client, cid, root, *, real):
     require(stat.S_IMODE(profile_path(root).stat().st_mode) == 0o600 and
             stat.S_IMODE(profile_path(root).parent.stat().st_mode) == 0o700,
             'Memory file/directory permissions are not private')
+    saved_hash = digest(profile_path(root))
+    _, repeated = submit(client, cid, 'remember that ' + fact)
+    require(repeated.get('action_card', {}).get('state') == 'confirm', 'Repeated memory lacks confirmation')
+    _, confirmed = submit(client, cid, 'yes, save memory proposal ' + repeated['action_card']['proposal_id'])
+    require(confirmed.get('action_card', {}).get('state') == 'done' and
+            digest(profile_path(root)) == saved_hash, 'Repeated confirmed memory changed saved bytes')
     _, inspected = submit(client, cid, 'show my saved memories')
     require(inspected.get('provider') == 'memory' and inspected.get('private_memory') is True and
             fact.rstrip('.') in inspected['content'] and 'not all profile or chat context' in inspected['content'] and
@@ -363,6 +396,7 @@ def gaps_replay(client, cid, root, *, real):
     raw = client.open(urllib.request.Request(client.url + match[0], headers={'Origin': client.url}), parse=False)
     require(raw.startswith(b'\x89PNG\r\n\x1a\n'), 'Authenticated screenshot is not PNG')
     return [dict(check='confirmed private memory overlay; bounded direct private inspection; owner-only permissions; main unchanged', passed=True),
+            dict(check='separate confirmation of the same dated fact preserves saved memory bytes', passed=True),
             dict(check='web research with source', real_network=real, passed=True),
             dict(check='authenticated screenshot PNG', real_capture=real, sha256=hashlib.sha256(raw).hexdigest(), passed=True)]
 
@@ -513,6 +547,11 @@ def checks(root, feature):
         commands['remaining-browser'] = [sys.executable, 'webchat/remaining_proof.py', '--output-dir', str(out / 'remaining-browser')]
     if feature == 'improve':
         commands['cold-browser'] = [sys.executable, 'webchat/cold_start_proof.py', '--output-dir', str(out / 'cold-browser')]
+        commands['startup-recovery-browser'] = [sys.executable, 'webchat/startup_recovery_proof.py', '--output-dir', str(out / 'startup-recovery-browser')]
+        commands['voice-availability-browser'] = [sys.executable, 'webchat/voice_availability_proof.py', '--output-dir', str(out / 'voice-availability-browser')]
+        commands['jobs-results-browser'] = [sys.executable, 'webchat/jobs_results_proof.py', '--output-dir', str(out / 'jobs-results-browser')]
+        commands['memory-removal-browser'] = [sys.executable, 'webchat/memory_removal_proof.py', '--output-dir', str(out / 'memory-removal-browser')]
+        commands['reply-lifecycle-browser'] = [sys.executable, 'webchat/reply_lifecycle_proof.py', '--output-dir', str(out / 'reply-lifecycle-browser')]
     for path in sorted((CODE / 'webchat').glob('test_*.mjs')):
         commands[path.stem] = ['node', str(path)]
 
@@ -584,7 +623,7 @@ def verify_checks(sha, feature, check_path):
     if ORDER.index(feature) >= ORDER.index('remaining'):
         required.add('remaining-browser')
     if feature == 'improve':
-        required.add('cold-browser')
+        required.update(('cold-browser', 'startup-recovery-browser', 'voice-availability-browser', 'jobs-results-browser', 'reply-lifecycle-browser', 'memory-removal-browser'))
     if ORDER.index(feature) >= ORDER.index('bridge'):
         required.add('bridge-contract')
         require(check.get('andrea', {}).get('sha') == andrea_pin()['sha'], 'Andrea exact-tip evidence missing')
@@ -635,8 +674,10 @@ def versions(root, expected):
     return result
 
 
+@serialized
 def restart(root, pins):
     """Only the web server restarts; no job-runner or council resurrection."""
+    journal.permit_restart(root, pins)
     from state import lock
     from runtime import screen_sessions
     with lock('supervisor'):
@@ -686,10 +727,29 @@ def restart(root, pins):
         return dict(before=before, after=after, restarted=['svc-webchat'])
 
 
+def verify_recovery_pins(root, record):
+    """An old rollback must never replace a newer release, even at the same SHA."""
+    candidate = Path(record['rollback']) / 'candidate'
+    for name in ('webchat', 'dispatch'):
+        current = Path((root / 'conductor/state' / (name + '-code-root')).read_text().strip())
+        allowed = {candidate.resolve(): record['sha'],
+                   Path(record['snapshots'][name]).resolve(): record['previous']}
+        original = record.get('original_pins', {}).get(name)
+        if original:
+            allowed[Path(original).resolve()] = record['previous']
+        require(current.is_absolute() and current.resolve() in allowed,
+                'Rollback refused: code pin belongs to an unrelated release')
+        require(json.loads((current / 'webbob-build.json').read_text())['sha'] == allowed[current.resolve()],
+                'Rollback refused: pinned build identity changed')
+
+
+@serialized
 def recover(root, record):
-    release_recovery(record)
+    journal.match(root, record)
+    verify_recovery_pins(root, record)
     for name, expected in record.get('snapshot_hashes', {}).items():
         require(source_digest(Path(record['snapshots'][name])) == expected, 'Rollback snapshot changed: ' + name)
+    release_recovery(record)
     unchanged = False
     try:
         versions(root, record['previous'])
@@ -704,13 +764,17 @@ def recover(root, record):
     record.update(rolled_back=True, all_pass=False, status='ROLLED_BACK')
 
 
+@serialized
 def transaction(root, record, path, activate, live, publish=atomic_json, final_path=None):
     """Any post-activation failure, including final publication, restores predecessor."""
+    journal.require_clear(root)
     activated = False
+    intent = None
     try:
         require_disk_space(root, CODE, 'before-activation')
         record.update(activated=True, status='ACTIVATING')
         publish(path, record)
+        intent = journal.begin(root, record, path, final_path)
         activated = True
         activate()
         record['rounds'] = []
@@ -725,6 +789,7 @@ def transaction(root, record, path, activate, live, publish=atomic_json, final_p
         if final_path:
             publish(final_path, record)
         release_recovery(record)
+        journal.finish(root, intent)
     except BaseException as exc:
         record.update(all_pass=False, failure=type(exc).__name__ + ': ' + str(exc))
         if activated:
@@ -736,13 +801,17 @@ def transaction(root, record, path, activate, live, publish=atomic_json, final_p
             release_recovery(record)
         # Rollback happens before attempting any potentially failing evidence write.
         atomic_json(path, record)
-        if final_path:
+        if final_path and activated:
             atomic_json(final_path, record)
+        if intent and record.get('rolled_back') and not record.get('rollback_error'):
+            journal.finish(root, intent)
         raise
 
 
+@serialized
 def deploy(args):
     root = args.root
+    journal.require_clear(root)
     sha = identity()
     gates = verify_gates(sha, args.feature, args.checks, args.review)
     from runtime import screen_sessions, service_enabled
@@ -782,13 +851,14 @@ def deploy(args):
     folder = root / 'rollbacks' / ('webbob-solo-' + args.feature + '-' + stamp)
     folder.mkdir(mode=0o700)
     record = dict(sha=sha, feature=args.feature, previous=args.previous, gates=gates, draft_pr=args.pr,
-                  rollback=str(folder), all_pass=False, activated=False, snapshots={}, at=time.time())
+                  rollback=str(folder), all_pass=False, activated=False, snapshots={}, original_pins={}, at=time.time())
     if index:
         shutil.copyfile(predecessor, folder / 'predecessor-receipt.json')
         record['predecessor_receipt'] = str(folder / 'predecessor-receipt.json')
     for name in ('webchat', 'dispatch'):
         prior = Path((root / 'conductor/state' / (name + '-code-root')).read_text().strip())
         require(json.loads((prior / 'webbob-build.json').read_text())['sha'] == args.previous, 'Pin baseline mismatch')
+        record['original_pins'][name] = str(prior)
         snapshot = folder / ('previous-' + name)
         shutil.copytree(prior, snapshot, ignore=shutil.ignore_patterns('.git', '.password', '.session-secret',
             'keys.env', '.env', '.env.*', 'sessions', 'node_modules', '__pycache__', 'uploads', 'evidence', 'task-runs'))
@@ -835,9 +905,35 @@ def deploy(args):
     print('LIVE_PASS ' + sha + ' rollback=' + str(folder), flush=True)
 
 
+@serialized
+def rollback(root, path):
+    intent = journal.pending(root)
+    if intent:
+        require(Path(path).resolve() == Path(intent['path']).resolve(),
+                'Rollback does not belong to the unfinished Web Bob activation')
+        record = journal.saved_record(root, intent)
+    else:
+        record = journal.private_json(path)
+        # Validate before creating a recovery obligation for a stale receipt.
+        verify_recovery_pins(root, record)
+        intent = journal.begin(root, record, path)
+    recover(root, record)
+    atomic_json(path, record)
+    if intent['final_path']:
+        atomic_json(intent['final_path'], record)
+    journal.finish(root, intent)
+
+
+@serialized
+def recover_pending(root):
+    intent = journal.pending(root)
+    require(intent is not None, 'No unfinished Web Bob activation to recover')
+    rollback(root, Path(intent['path']))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('check', 'deploy', 'rollback'))
+    parser.add_argument('action', choices=('check', 'deploy', 'rollback', 'recover-pending'))
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--feature', choices=ORDER, required=True)
     parser.add_argument('--previous')
@@ -856,10 +952,10 @@ def main():
         checks(args.root, args.feature)
     elif args.action == 'deploy':
         deploy(args)
+    elif args.action == 'recover-pending':
+        recover_pending(args.root)
     else:
-        record = json.loads(args.record.read_text())
-        recover(args.root, record)
-        atomic_json(args.record, record)
+        rollback(args.root, args.record)
 
 
 if __name__ == '__main__':

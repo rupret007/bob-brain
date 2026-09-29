@@ -1195,7 +1195,7 @@ class HandbackJobTests(Fixture):
         self.assertIn("chorus", (try_music_coach_reply("help with chorus hook") or "").lower())
         refrain_only = (try_music_coach_reply("polish the refrain") or "").lower()
         self.assertIn("refrain", refrain_only)
-        self.assertIn("versions", refrain_only)
+        self.assertIn("paste your refrain here", refrain_only)
         verse_only = (try_music_coach_reply("tighten the verse lyrics") or "").lower()
         self.assertIn("verse", verse_only)
         self.assertNotIn("chorus/refrain tip", verse_only)
@@ -1225,6 +1225,14 @@ class HandbackJobTests(Fixture):
         self.assertIn("tag", tag_bridge)
         hyphen = (try_music_coach_reply("double-chorus lift") or "").lower()
         self.assertIn("double", hyphen)
+        for request in ("song structure", "modulation", "song intro", "pre-chorus", "capo",
+                        "song dynamics", "double chorus", "tag line", "riff", "outro",
+                        "chord progression", "verse", "refrain", "hook", "chorus", "rhyme",
+                        "melody", "bridge", "time signature", "tempo"):
+            with self.subTest(request=request):
+                reply = try_music_coach_reply(request)
+                self.assertIsNotNone(reply)
+                self.assertNotRegex(reply, r"Songs|Song panel|audio upload|rough MP3")
 
     def test_self_improve_schedule_hint_from_plist(self):
         plist = self.root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist"

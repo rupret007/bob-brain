@@ -328,6 +328,8 @@ class TaskDispatch:
 
     def reconcile_tasks(self):
         with self.lock:
+            if self.closing.is_set():
+                return
             for identifier, current in list(self.conversations.items()):
                 value = copy.deepcopy(current)
                 changed = False
@@ -471,6 +473,8 @@ class TaskDispatch:
     def migrate_legacy_tasks(self):
         """Recover accepted pre-dispatch jobs using their saved chat queue receipts."""
         with self.lock:
+            if self.closing.is_set():
+                return
             self._migrate_legacy_tasks()
 
     def _migrate_legacy_tasks(self):

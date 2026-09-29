@@ -62,12 +62,18 @@ real audio, interruption and dispatch with recorded microphone fixtures. See
 [`reviews/WEBBOB-VOICE-0927.md`](../reviews/WEBBOB-VOICE-0927.md) for the exact
 proof setup, screenshots and physical-device verification boundary.
 
-The five tabs are Chat, Jobs, Songs, Models and Settings. Jobs shows current
+The four tabs are Chat, Jobs, Models and Settings. Jobs shows current
 workers and saved results; View jobs in Chat opens it without sending a message.
 Models shows current activity and reply availability, with measured usage in
-collapsed details. Songs puts lyrics and Save first, with chords, audio and saved
-versions below. Settings saves your preferred first-choice model on this device.
+collapsed details. Writing help stays in chat. The removed Songs interface does
+not delete previously saved projects. Settings saves your preferred first-choice model on this device.
 Opening these tabs does not request a model answer or change the queue.
+Conversation history reads also leave saved job intents and result receipts
+unchanged. Startup and the existing one-second background loop recover accepted
+jobs and deliver results; both recovery paths defer new effects once shutdown
+begins. Queue inspection preserves interrupted journal bytes; the next locked
+writer repairs a torn final append before committing. This separates reading
+from recovery but does not provide an atomic deployment drain.
 
 ## Conversation and provider behavior
 
@@ -434,16 +440,18 @@ connection check; it expects `evidence/live-chat.json` from the initial two-turn
 check. Set `BOB_PLAYWRIGHT_MODULE` / `BOB_CHROMIUM_PATH` if using a cached runtime.
 The initial verification record is `conductor/reviews/WEBCHAT-RESULT.md`.
 
-For the five phone tabs, use the isolated proof from the repository checkout:
+For the four phone tabs, use the isolated proof from the repository checkout:
 
 ```sh
 python3 webchat/isolated_tabs_proof.py --output-dir reviews
 ```
 
-It starts an ephemeral loopback listener with private chats, songs, credentials
+It starts an ephemeral loopback listener with private chats, credentials
 and storage. Headless Chromium captures `webbob-tab-<name>-0927.png` for Chat,
-Jobs, Songs, Models and Settings, plus the song editor, and tests phone layouts,
-stale/unavailable status, duplicate rows, song persistence and logout. Screenshots
+Jobs, Models and Settings, and tests phone layouts,
+stale/unavailable status, duplicate rows and logout. The mandatory Chromium/WebKit
+UI test additionally checks that existing private song data remains unchanged and
+that shell navigation makes no song/music/audio requests. Screenshots
 use actual responses from that isolated instance, including read-only host
 activity; regression fixtures run afterward. It launches no model or worker and
 does not restart the live service. Set `BOB_PLAYWRIGHT_MODULE` and
@@ -608,3 +616,14 @@ without importing or executing that watch. Band messages are private, bounded,
 dated quotes and never reach model context. No new polling or outbound action
 is started. Existing Texts provides separate reviewable drafts. The Jobs view
 also displays reminder and teammate status.
+
+Saved note removal: Settings → Saved memory → Manage saved notes lists recent
+single-line Web Bob notes. Review an exact note, then use **Remove this note** or
+**Keep note**. Each confirmation belongs to one conversation and one complete
+file snapshot; a changed file requires a new review. Removal affects one entry,
+including only one copy of a duplicate. Other notes, chat history, other profile
+context and information already sent to models remain. Ambiguous legacy multiline
+or oversized files are inspectable but not removable through this control.
+Management and review stay out of model chat history; removal requires typed Chat
+with Auto selected. Tests use private synthetic notes; live release replay only
+inspects and refuses unbound approvals without deleting owner notes.

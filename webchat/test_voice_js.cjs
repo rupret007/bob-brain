@@ -51,6 +51,25 @@ test('permission denial releases audio and allows retry',async()=>{
   await f.controller.start('chat');await pause();
   assert.equal(f.controller.active,false);assert.equal(f.contexts[0].state,'closed');assert.match(f.states.at(-1).text,/Microphone blocked/);
 });
+test('known prepaid-credit close explains recovery without exposing provider details or retrying',async()=>{
+  const f=fixture();await f.controller.start('chat');
+  f.sockets[0].onclose({code:1011,reason:'Your prepayment credits are depleted. private-account-marker https://private.example/secret'});
+  await pause();
+  assert.match(f.states.at(-1).text,/prepaid credits.*Google AI Studio/);
+  assert.doesNotMatch(f.states.at(-1).text,/private|secret|https:/);
+  assert.equal(f.states.at(-1).phase,'error');assert.equal(f.controller.active,false);
+  assert.equal(f.sockets[0].closed,true);assert.equal(f.tracks[0].stopped,true);assert.equal(f.contexts[0].state,'closed');
+  assert.equal(f.requests.filter(r=>r.route.endsWith('/start')).length,1);
+  assert.equal(f.requests.filter(r=>r.route.endsWith('/end')).length,1);
+});
+test('unknown close reasons and other codes retain a generic safe message',async()=>{
+  for(const event of [{code:1011,reason:'private-account-marker'},
+                     {code:1008,reason:'Your prepayment credits are depleted.'},undefined]) {
+    const f=fixture();await f.controller.start('chat');f.sockets[0].onclose(event);await pause();
+    assert.equal(f.states.at(-1).text,'Call disconnected. Return to chat to start another call.');
+    assert.equal(f.controller.active,false);assert.equal(f.sockets.length,1);
+  }
+});
 test('hanging up during microphone permission stops a late stream',async()=>{
   const mic=deferred(),f=fixture({getUserMedia:()=>mic.promise});
   const starting=f.controller.start('chat');await f.controller.stop();mic.resolve(f.stream);await starting;

@@ -2,12 +2,30 @@
 from contextlib import contextmanager
 import fcntl
 import os
+import re
 import secrets
 import stat
 import time
 
 MAX_BYTES = 512 * 1024
 LOCK_SECONDS = 3
+DATED_ROW = re.compile(r'^\[\d{4}-\d{2}-\d{2}\] [^\r\n]+\n$')
+
+
+def contains_single_line_fact(existing, line):
+    """Only skip an exact dated row, never a prefix of a multiline note.
+
+    Legacy multiline notes have no unambiguous record delimiter. Leave those
+    regions alone instead of trying to normalize or deduplicate their content.
+    """
+    if not DATED_ROW.fullmatch(line):
+        return False
+    rows = existing.splitlines(keepends=True)
+    for index, row in enumerate(rows):
+        if row == line and (index == 0 or DATED_ROW.fullmatch(rows[index - 1])) and (
+                index + 1 == len(rows) or DATED_ROW.fullmatch(rows[index + 1])):
+            return True
+    return False
 
 
 @contextmanager
@@ -66,10 +84,8 @@ def read_memory(root, budget=MAX_BYTES):
         return read_at(folder, min(MAX_BYTES, budget))
 
 
-def append_memory(root, line):
-    data = line.encode('utf-8')
-    if len(data) > MAX_BYTES:
-        raise OSError('That memory is too large to save.')
+@contextmanager
+def locked_memory(root):
     with directory(root, create=True) as folder:
         # Exclusive creation avoids macOS O_CREAT/O_NOFOLLOW races between
         # first writers. Existing locks are opened without creating/replacing them.
@@ -88,29 +104,52 @@ def append_memory(root, line):
                     if time.monotonic() >= deadline:
                         raise OSError('Memory is busy; the save was not started.') from None
                     time.sleep(.01)
-            try:
-                existing = read_at(folder, MAX_BYTES)['text']
-            except FileNotFoundError:
-                existing = ''
-            rows = (existing + line).splitlines(keepends=True)
-            total = sum(len(row.encode('utf-8')) for row in rows)
-            start = 0
-            while start < len(rows) and total > MAX_BYTES:
-                total -= len(rows[start].encode('utf-8'))
-                start += 1
-            temporary = '.profile-' + secrets.token_hex(16)
-            fd = regular_file(folder, temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
-            try:
-                with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-                    stream.write(''.join(rows[start:]))
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                os.replace(temporary, 'profile.md', src_dir_fd=folder, dst_dir_fd=folder)
-                os.fsync(folder)
-            finally:
-                try:
-                    os.unlink(temporary, dir_fd=folder)
-                except FileNotFoundError:
-                    pass
+            yield folder
         finally:
             os.close(lock)
+
+
+def replace_at(folder, text):
+    temporary = '.profile-' + secrets.token_hex(16)
+    fd = regular_file(folder, temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, 'profile.md', src_dir_fd=folder, dst_dir_fd=folder)
+        os.fsync(folder)
+    finally:
+        try:
+            os.unlink(temporary, dir_fd=folder)
+        except FileNotFoundError:
+            pass
+
+
+def append_memory(root, line):
+    data = line.encode('utf-8')
+    if len(data) > MAX_BYTES:
+        raise OSError('That memory is too large to save.')
+    with locked_memory(root) as folder:
+        try:
+            existing = read_at(folder, MAX_BYTES)['text']
+        except FileNotFoundError:
+            existing = ''
+        # Compare under the same cross-process lock as the append. A no-op
+        # preserves the file, including old duplicates and oversized history.
+        if contains_single_line_fact(existing, line):
+            fd = regular_file(folder, 'profile.md', os.O_RDONLY)
+            try:
+                os.fchmod(fd, 0o600)
+            finally:
+                os.close(fd)
+            return
+        if existing and not existing.endswith('\n'):
+            existing += '\n'
+        rows = (existing + line).splitlines(keepends=True)
+        total = sum(len(row.encode('utf-8')) for row in rows)
+        start = 0
+        while start < len(rows) and total > MAX_BYTES:
+            total -= len(rows[start].encode('utf-8'))
+            start += 1
+        replace_at(folder, ''.join(rows[start:]))

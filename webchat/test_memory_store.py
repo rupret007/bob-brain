@@ -6,10 +6,12 @@ import stat
 import tempfile
 import time
 import unittest
+from concurrent.futures import ProcessPoolExecutor
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 from bob_gaps import append_profile_memory
-from memory_store import MAX_BYTES, read_memory
+from memory_store import MAX_BYTES, append_memory, read_memory
 from providers import Providers
 
 
@@ -24,6 +26,57 @@ class MemoryStoreTests(unittest.TestCase):
         self.outside.mkdir()
         self.target = self.outside / 'profile.md'
         self.target.write_text('private outside fact\n')
+
+    def test_repeated_same_date_fact_preserves_bytes_inode_and_modified_time(self):
+        when = datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
+        saved = append_profile_memory(self.root, 'café preference', when)
+        original = self.path.read_bytes()
+        info = self.path.stat()
+        with patch('memory_store.os.replace', side_effect=AssertionError('duplicate rewrite')):
+            self.assertEqual(append_profile_memory(self.root, 'café preference', when), saved)
+        self.assertEqual(self.path.read_bytes(), original)
+        self.assertEqual((self.path.stat().st_ino, self.path.stat().st_mtime_ns),
+                         (info.st_ino, info.st_mtime_ns))
+
+    def test_only_exact_complete_dated_rows_are_duplicates(self):
+        original = '[2026-09-28] coffee\n[2026-09-29] coffee beans\n[2026-09-29] Coffee\n'
+        self.path.write_text(original)
+        append_memory(self.root, '[2026-09-29] coffee\n')
+        self.assertEqual(self.path.read_text(), original + '[2026-09-29] coffee\n')
+
+    def test_multiline_facts_and_prefixes_are_not_silently_dropped(self):
+        original = '[2026-09-29] coffee\nonly after lunch\n'
+        self.path.write_text(original)
+        append_memory(self.root, '[2026-09-29] coffee\n')
+        append_memory(self.root, '[2026-09-29] coffee\nonly with breakfast\n')
+        self.assertEqual(self.path.read_text(), original + '[2026-09-29] coffee\n' +
+                         '[2026-09-29] coffee\nonly with breakfast\n')
+
+    def test_duplicate_noop_preserves_existing_duplicates_and_oversized_history(self):
+        line = '[2026-09-29] retained fact\n'
+        original = ('[2026-09-28] old fact\n' * 30000 + line * 2).encode()
+        self.path.write_bytes(original)
+        append_memory(self.root, line)
+        self.assertEqual(self.path.read_bytes(), original)
+
+    def test_duplicate_save_still_restricts_legacy_file_permissions(self):
+        line = '[2026-09-29] retained fact\n'
+        self.path.write_text(line)
+        self.path.chmod(0o644)
+        append_memory(self.root, line)
+        self.assertEqual(self.path.read_text(), line)
+        self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
+
+    def test_concurrent_duplicate_saves_across_processes_keep_one_copy(self):
+        line = '[2026-09-29] simultaneous fact\n'
+        with ProcessPoolExecutor(max_workers=4) as pool:
+            list(pool.map(append_memory, [self.root] * 12, [line] * 12))
+        self.assertEqual(self.path.read_text(), line)
+
+    def test_unterminated_existing_note_keeps_its_own_line(self):
+        self.path.write_text('[2026-09-28] previous fact')
+        append_memory(self.root, '[2026-09-29] new fact\n')
+        self.assertEqual(self.path.read_text(), '[2026-09-28] previous fact\n[2026-09-29] new fact\n')
 
     def test_profile_and_lock_symlinks_never_import_or_change_the_target(self):
         for name in ('profile.md', 'profile.lock'):

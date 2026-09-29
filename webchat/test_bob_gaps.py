@@ -65,6 +65,22 @@ class GapFixture(unittest.TestCase):
 
 
 class MemoryGapTests(GapFixture):
+    def test_separate_confirmed_saves_do_not_repeat_the_fact_in_model_context(self):
+        from providers import Providers
+        provider = Providers(self.root, lambda text: text)
+        self.chat.providers = provider
+        fact = 'duplicate confirmation fixture café'
+        for _ in range(2):
+            proposal = self.submit('remember that ' + fact)['messages'][-1]
+            self.assertEqual(proposal['action_card']['state'], 'confirm')
+            saved = self.submit('yes, save memory proposal ' + proposal['action_card']['proposal_id'])
+            self.assertEqual(saved['messages'][-1]['action_card']['state'], 'done')
+            for lite in (False, True):
+                memory = next(r for r in provider.snapshot(lite=lite)
+                              if r['path'] == 'conductor/webchat/memory/profile.md')
+                self.assertEqual(memory['text'].count(fact), 1)
+        self.assertIn('No memory is waiting', self.submit('yes, save memory')['messages'][-1]['content'])
+
     def test_memory_overlay_preserves_main_checkout_and_invalidates_context(self):
         from providers import Providers
         base = self.root / 'bob-brain/memory/profile.md'

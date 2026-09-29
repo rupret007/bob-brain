@@ -16,6 +16,15 @@ interrupted run breaks the streak. Review the latest attempt's checks.json.
 Every deploy also preserves its predecessor receipt so a failed attempt can be
 followed by a fresh release without rewriting historical failure evidence.
 
+Improvement checks also require the private Jobs result browser proof in Chromium
+and WebKit: stale-response exclusion, close/Escape cancellation, the actual
+15-second read bound and manual GET-only retry. This adds a gate; it does not
+replace real voice or count independent offline supplements as release greens.
+
+Startup recovery is also mandatory in Chromium and WebKit: initial session,
+conversation-list and history failures, bounded read timeout, unauthenticated
+redirect, automatic read-only recovery and continued polling with no mutations.
+
 `check --root ROOT --feature FEATURE` runs full webchat, services, historical
 release-guard and new solo-guard suites, parity evals, JS checks, the texting
 browser proof and authenticated staging replay. Evidence is bound to a clean
@@ -45,6 +54,48 @@ services. Every production round checks both authenticated local and public
 endpoints. Two consecutive rounds must pass. Any post-activation failure restores
 and authenticates the immediate predecessor before publishing failure evidence.
 `rollback --root ROOT --feature FEATURE --record RELEASE_JSON` provides recovery.
+
+The current controller holds `conductor/locks/webbob-release.lock` through
+preflight, snapshots, activation, both live rounds, recovery and publication.
+A competing deployment or rollback fails before changing pins or evidence.
+Nested recovery keeps the same ownership; exec children do not inherit it.
+The private regular lock inode is permanent: never delete it to clear a busy
+release. Kernel cleanup releases ownership when the controller exits.
+
+Recovery accepts only that transaction's candidate, saved original pins or
+predecessor snapshots, with matching build identities. Mixed pins from partial
+activation are recoverable. An old rollback refuses to replace another release,
+including a different deployment of the same SHA. Legacy receipts without
+original pins can still recover their own candidate or predecessor snapshots;
+an unfamiliar source requires investigation instead of guessing ownership.
+
+Before changing pins, the controller now durably records its recovery identity,
+snapshot hashes and publication paths in the private bounded
+`conductor/locks/webbob-activation.json`. A killed controller leaves that journal
+in place. Cooperating deploys refuse before preflight or snapshots until recovery
+finishes; they never treat an interrupted round as a green. Run
+`recover-pending --root ROOT --feature FEATURE` using the verified candidate's
+`release/solo.py` to restore the recorded immediate predecessor. This command
+does not activate the candidate or rerun its live rounds. The matching manual
+`rollback` command also completes the journal and updates its saved live receipt.
+
+Recovery verifies receipt identity, both current pins and both snapshot hashes
+before any restart. It accepts mixed pins after a partial activation/rollback.
+A missing progress receipt can be rebuilt from the journal, while changed or
+unsafe receipts and unrelated pins are refused. Both authenticated predecessor
+versions and recovery publications must succeed before the journal is removed.
+Failure or process death during recovery retains the obligation for another
+explicit attempt. Even a killed controller that published two live greens is
+rolled back if it did not durably finish the transaction. Never delete a pending
+journal to bypass recovery. Legacy rollback records must contain their original
+snapshot hashes; missing provenance requires investigation.
+
+This covers cooperating release controllers. Historical frozen scripts,
+supervisor restarts and runtime work do not participate. Recovery is explicit,
+not a supervisor/startup hook, and does not drain calls or replies. Shared work
+admission, supervisor recovery and a compatible first-release procedure remain
+necessary for atomic deployment drain. Neither current production nor this
+candidate declares that compatibility.
 
 Always maintain at least 5 GiB free; recovery reserves and bounded atomic
 evidence writes are retained from the existing release tooling. Authentication

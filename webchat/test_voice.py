@@ -555,6 +555,68 @@ class VoiceTests(fixtures.Fixture):
 
 
 class VoiceHTTPTests(fixtures.HTTPTests):
+    def test_logout_during_token_request_returns_no_credential_and_leaves_reads_responsive(self):
+        self.login()
+        self.chat.providers.snapshot = lambda **_: []
+        entered, release = threading.Event(), threading.Event()
+
+        def mint(*_):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError("Fixture request was not released")
+            return "auth_tokens/private-late-fixture"
+
+        with patch.object(self.chat.voice, "token_factory", side_effect=mint) as factory:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(self.request, "POST", "/api/voice/start", {"conversation_id": self.identifier})
+                try:
+                    self.assertTrue(entered.wait(2))
+                    self.assertEqual(self.request("GET", "/api/version")[0], 200)
+                    self.assertEqual(self.request("POST", "/api/logout", {})[0], 200)
+                    self.assertFalse(future.done())
+                finally:
+                    release.set()
+                code, _, body = future.result(3)
+            self.assertEqual(factory.call_count, 1)
+        self.assertEqual(code, 401)
+        self.assertNotIn("token", json.loads(body))
+        self.assertNotIn("private-late-fixture", body)
+        self.assertFalse(self.chat.voice.busy(self.identifier))
+
+    def test_session_revoked_after_dispatch_is_rechecked_before_token_request(self):
+        self.login()
+        original = self.chat.voice.start
+
+        def after_dispatch(*args, **kwargs):
+            with self.chat.auth_lock:
+                self.chat.sessions.clear()
+            return original(*args, **kwargs)
+
+        with patch.object(self.chat.voice, "start", side_effect=after_dispatch), \
+                patch.object(self.chat.voice, "token_factory") as mint:
+            code, _, body = self.request("POST", "/api/voice/start", {"conversation_id": self.identifier})
+        self.assertEqual(code, 401)
+        mint.assert_not_called()
+        self.assertEqual(self.chat.voice.calls, {})
+        self.assertNotIn("token", json.loads(body))
+
+    def test_session_expiring_during_token_request_is_rechecked_before_response(self):
+        self.login()
+        self.chat.providers.snapshot = lambda **_: []
+
+        def mint(*_):
+            with self.chat.auth_lock:
+                for session in self.chat.sessions.values():
+                    session["expires"] = time.time() - 1
+            return "auth_tokens/private-expired-fixture"
+
+        with patch.object(self.chat.voice, "token_factory", side_effect=mint):
+            code, _, body = self.request("POST", "/api/voice/start", {"conversation_id": self.identifier})
+        self.assertEqual(code, 401)
+        self.assertNotIn("token", json.loads(body))
+        self.assertNotIn("private-expired-fixture", body)
+        self.assertFalse(self.chat.voice.busy(self.identifier))
+
     def test_voice_auth_csrf_origin_and_tailnet(self):
         for route in ("start", "transcript", "tool", "end", "pulse"):
             self.assertEqual(self.request("POST", "/api/voice/" + route, {})[0], 401)

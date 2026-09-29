@@ -15,10 +15,11 @@ if ($("login-form")) {
     finally { button.disabled = false; }
   });
 } else {
-  let csrf = "", current = "", busy = false, sending = false, revision = "", polling = false, draftRequest = null, pollFailures = 0;
+  let csrf = "", current = "", busy = false, replyStopping = false, sending = false, revision = "", polling = false, draftRequest = null, pollFailures = 0;
   let pendingAttachments = [];
   let uploading = false, quickRequest = null;
   const composerDrafts = new Map();
+  let chatReady = false, connecting = false, authRedirecting = false, connectFailures = 0, connectAfter = 0;
   const MEDIA_LIMITS = { image: 12 * 1024 * 1024, video: 35 * 1024 * 1024, file: 8 * 1024 * 1024 };
   const MAX_PENDING_ATTACHMENTS = 6;
   let lastQuietHoursActive = null, lastQuietHoursFetchedAt = 0, lastBootstrapCommand = "";
@@ -74,7 +75,7 @@ if ($("login-form")) {
       const response = await fetch(path, { credentials: "same-origin", cache: "no-store", signal: requestSignal,
         keepalive: path === "/api/voice/end" || path === "/api/voice/transcript",
         ...(data === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: JSON.stringify(data) }) });
-      if (response.status === 401) { location.assign("/login"); throw new Error("Please log in."); }
+      if (response.status === 401) { authRedirecting = true; location.assign("/login"); throw new Error("Please log in."); }
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Request failed.");
       return result;
@@ -87,18 +88,66 @@ if ($("login-form")) {
       throw error;
     }
   }
-  async function showJobResult(url, project = "Job result", task = "") {
+  let jobResultRequest = null, jobResultRetry = null, jobResultOrigin = null;
+  function cancelJobResult() {
+    if (jobResultRequest) clearTimeout(jobResultRequest.timeout);
+    jobResultRequest?.controller.abort();
+    jobResultRequest = jobResultRetry = null;
+    $("report-body").setAttribute("aria-busy", "false");
+    $("retry-report").hidden = true;
+  }
+  async function showJobResult(url, project = "Job result", task = "", opener = document.activeElement) {
+    cancelJobResult();
+    if (!$("report").open) jobResultOrigin = { opener, url };
+    const request = { url, project, task, controller: new AbortController() };
+    jobResultRequest = request;
     $("report-title").textContent = project;
     $("report-date").textContent = task;
-    $("report-body").textContent = "Loading…";
-    $("report").showModal();
+    $("report-body").textContent = "";
+    $("report-body").setAttribute("aria-busy", "true");
+    $("report-status").textContent = "Loading result…";
+    if (!$("report").open) $("report").showModal();
+    // Supplying a cancellable signal must preserve api()'s normal read bound.
+    request.timeout = setTimeout(() => request.controller.abort(), 15000);
     try {
-      const result = await api(url);
+      const result = await api(url, undefined, request.controller.signal);
+      if (jobResultRequest !== request || !$("report").open) return;
+      if (request.controller.signal.aborted) throw new Error("Result read timed out");
       $("report-title").textContent = result.project || project;
       $("report-date").textContent = result.task || task;
       $("report-body").textContent = result.text;
-    } catch (_) { $("report-body").textContent = "This result could not be loaded. Please try again."; }
+      $("report-status").textContent = "";
+    } catch (_) {
+      if (jobResultRequest !== request || !$("report").open) return;
+      $("report-status").textContent = "This result could not be loaded. Try again.";
+      jobResultRetry = request;
+      $("retry-report").hidden = false;
+    } finally {
+      clearTimeout(request.timeout);
+      if (jobResultRequest === request) {
+        jobResultRequest = null;
+        $("report-body").setAttribute("aria-busy", "false");
+      }
+    }
   }
+  $("retry-report").addEventListener("click", () => {
+    if (jobResultRetry) return showJobResult(jobResultRetry.url, jobResultRetry.project, jobResultRetry.task);
+  });
+  $("close-report").addEventListener("click", () => { cancelJobResult(); $("report").close(); });
+  $("report").addEventListener("cancel", cancelJobResult);
+  // A queued close event from an earlier dismissal can arrive after reopening.
+  $("report").addEventListener("close", () => {
+    if ($("report").open) return;
+    cancelJobResult();
+    const origin = jobResultOrigin;
+    jobResultOrigin = null;
+    // Polling can replace the Jobs button while its report is open.
+    const opener = origin?.opener?.isConnected && origin.opener.getClientRects().length ? origin.opener
+      : [...document.querySelectorAll('[data-result-url], [data-job-id]')].find(node =>
+        node.getClientRects().length &&
+        (node.dataset.resultUrl || '/api/jobs/result?id=' + node.dataset.jobId) === origin?.url);
+    opener?.focus();
+  });
   function mediaKindFromFile(file) {
     const extension = file.name.split(".").pop().toLowerCase();
     if (["jpg", "jpeg", "png", "gif", "webp", "heic", "heif"].includes(extension)) return "image";
@@ -113,7 +162,7 @@ if ($("login-form")) {
     pendingAttachments = draft?.attachments || [];
     $("message").value = draft?.message || "";
     draftRequest = draft?.request || null;
-    revision = ""; busy = false;
+    revision = ""; busy = false; replyStopping = false;
     renderAttachmentStrip(); composerState();
     remember("bob.conversation", id);
   }
@@ -229,15 +278,15 @@ if ($("login-form")) {
   function composerState() {
     const hasText = Boolean($("message").value.trim());
     const hasAttach = pendingAttachments.length > 0;
-    $("send").disabled = busy || sending || uploading || !current || (!hasText && !hasAttach);
-    $("stop").hidden = !busy;
-    $("message").disabled = !current;
+    $("send").disabled = !chatReady || busy || sending || uploading || !current || (!hasText && !hasAttach);
+    $("stop").hidden = !busy || replyStopping;
+    $("message").disabled = !chatReady || !current;
     const attachBtn = $("attach-plus");
-    if (attachBtn) attachBtn.disabled = !current || busy || sending || uploading;
-    $("conversations").disabled = sending || uploading;
-    $("new-chat").disabled = sending || uploading;
-    $("conversations-dialog").disabled = sending || uploading;
-    $("new-chat-dialog").disabled = sending || uploading;
+    if (attachBtn) attachBtn.disabled = !chatReady || !current || busy || sending || uploading;
+    $("conversations").disabled = !chatReady || sending || uploading;
+    $("new-chat").disabled = !chatReady || sending || uploading;
+    $("conversations-dialog").disabled = !chatReady || sending || uploading;
+    $("new-chat-dialog").disabled = !chatReady || sending || uploading;
     document.querySelectorAll(".attach-remove").forEach((button) => { button.disabled = sending; });
     const dot = $("status-dot");
     if (dot) dot.classList.toggle("busy", busy || sending);
@@ -249,7 +298,7 @@ if ($("login-form")) {
     stop: "stop current job (draft only)",
   };
   async function submitChatText(text, { confirmStop = false, confirmMessage } = {}) {
-    if (!text || !current) return;
+    if (!chatReady || !text || !current) return;
     if (confirmStop && !window.confirm(confirmMessage || "Stop this job?")) return;
     if (uploading || ((busy || sending) && !confirmStop)) {
       $("notice").textContent = "Wait for the current reply to finish, then try again.";
@@ -288,23 +337,8 @@ if ($("login-form")) {
     }
     submitChatText(text, { confirmStop: key === "stop" });
   });
-  let activeBottomTab = "chat";
-  let songSnapshot = songFieldsText();
-  function songFieldsText() {
-    return ["song-title", "song-lyrics", "song-chords", "song-notes"]
-      .map((id) => $(id)?.value || "").join("\x1e");
-  }
-  function markSongClean() { songSnapshot = songFieldsText(); }
-  async function confirmLeaveSongEdits() {
-    if (!$("song-title")) return true;
-    if (songFieldsText() === songSnapshot) return true;
-    return window.confirm("You have unsaved song edits. Continue without saving?");
-  }
   function setBottomTab(name) {
-    if ($("song-title") && activeBottomTab === "song" && name !== "song" && songFieldsText() !== songSnapshot) {
-      if (!window.confirm("You have unsaved song edits. Leave this tab anyway?")) return false;
-    }
-    activeBottomTab = name;
+    if (!["chat", "ops", "lanes", "settings"].includes(name)) name = "chat";
     for (const btn of document.querySelectorAll(".bottom-tab")) {
       const on = btn.dataset.bottom === name;
       btn.classList.toggle("active", on);
@@ -315,7 +349,7 @@ if ($("login-form")) {
       view.hidden = !on;
       view.classList.toggle("active", on);
     }
-    document.title = `Bob · ${{chat: "Chat", ops: "Jobs", song: "Songs", lanes: "Models", settings: "Settings"}[name]}`;
+    document.title = `Bob · ${{chat: "Chat", ops: "Jobs", lanes: "Models", settings: "Settings"}[name]}`;
     if (name === "ops") refreshJobs();
     if (["lanes", "settings"].includes(name) && Date.now() - overviewFetchedAt > 8000) refreshOverview();
     return true;
@@ -348,7 +382,6 @@ if ($("login-form")) {
   $("new-chat-dialog")?.addEventListener("click", () => { $("new-chat").click(); $("chats-dialog").close(); });
   $("quick-chips").addEventListener("click", (event) => {
     const key = event.target.closest("[data-chip]")?.dataset.chip;
-    if (key === "song") { setBottomTab("song"); $("song-new").click(); }
     if (key === "status") setBottomTab("ops");
     if (key === "texts") {
       setBottomTab("chat");
@@ -356,6 +389,10 @@ if ($("login-form")) {
     }
   });
   $("provider-choice").addEventListener("change", () => remember("bob.provider", $("provider-choice").value));
+  $("manage-memory")?.addEventListener("click", () => {
+    setBottomTab("chat");
+    submitChatText("manage saved memories");
+  });
   $("show-memory")?.addEventListener("click", () => {
     setBottomTab("chat");
     submitChatText("show my saved memories");
@@ -363,13 +400,19 @@ if ($("login-form")) {
   function render(conversation) {
     if (conversation.id !== current) return;
     const nextRevision = JSON.stringify(conversation);
-    busy = conversation.messages.some((message) => ["running", "queued", "waiting"].includes(message.status));
+    const wasStopping = replyStopping;
+    replyStopping = Boolean(conversation.reply_stopping);
+    busy = replyStopping || conversation.messages.some((message) => ["running", "queued", "waiting"].includes(message.status));
     composerState();
     if (nextRevision === revision) return;
     revision = nextRevision;
     const last = conversation.messages.at(-1);
-    if (last?.status === "cancelled" && last.role === "assistant" && !sending) {
+    if (replyStopping && !sending) {
+      $("notice").textContent = "Stopping the reply. You can keep writing; Send will return when it finishes.";
+    } else if (last?.status === "cancelled" && last.role === "assistant" && !sending) {
       $("notice").textContent = "Reply stopped. Send again when ready.";
+    } else if (wasStopping && !sending) {
+      $("notice").textContent = "The previous reply has finished stopping. You can send again.";
     }
     const panel = $("messages"), nearBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 100;
     const openDetails = new Set([...panel.querySelectorAll("details[open]")].map((detail) => detail.dataset.detailKey));
@@ -391,14 +434,24 @@ if ($("login-form")) {
       const body = document.createElement("div"); body.className = "body";
       if (pending) body.textContent = providers[message.provider] ? `${providers[message.provider]} is replying…` : "One moment…";
       else if (message.role === "assistant" && !message.texting && !message.private_memory) body.innerHTML = renderMarkdown(message.content || "");
-      else body.textContent = message.content;
+      else body.textContent = message.private_memory && message.memory_action_label || message.content;
       article.append(body);
+      if (message.private_memory && Array.isArray(message.memory_notes)) {
+        for (const note of message.memory_notes) {
+          const card = document.createElement("div"); card.className = "action-card memory-note";
+          const content = document.createElement("div"); content.textContent = note.text;
+          const review = document.createElement("button"); review.type = "button";
+          review.textContent = "Review removal";
+          review.addEventListener("click", () => submitChatText(`remove saved note ${note.id}`));
+          card.append(content, review); article.append(card);
+        }
+      }
       appendMessageAttachments(article, message.attachments);
       const messageTools = document.createElement("div");
       messageTools.className = "message-tools";
       if (message.text_draft) article.append(textDraftCard(message.text_draft));
       {
-        const raw = (message.content || "").trim();
+        const raw = (message.private_memory && message.memory_action_label || message.content || "").trim();
         const copyBtn = document.createElement("button");
         copyBtn.type = "button";
         copyBtn.className = "msg-copy quiet";
@@ -444,20 +497,21 @@ if ($("login-form")) {
         if (message.action_card.state === "confirm" && message.action_card.executable) {
           const actions = document.createElement("div"); actions.className = "action-card-actions";
           const council = /council/i.test(message.action_card.reason || "");
+          const removal = message.action_card.kind === "memory-remove";
           const memory = message.action_card.kind === "memory" || /^memory:/i.test(message.action_card.reason || "");
           const proposalId = message.action_card.proposal_id || message.action_card.id || "";
           const approve = document.createElement("button");
           approve.type = "button"; approve.className = "action-approve";
-          approve.textContent = memory ? "Save memory" : council ? "Start review" : "Start job";
+          approve.textContent = removal ? "Remove this note" : memory ? "Save memory" : council ? "Start review" : "Start job";
           approve.addEventListener("click", () => {
             const suffix = proposalId ? ` proposal ${proposalId}` : "";
-            submitChatText(memory ? `yes, save memory${suffix}` : council ? `yes, run council${suffix}` : `yes, start job${suffix}`);
+            submitChatText(removal ? `yes, remove saved note${suffix}` : memory ? `yes, save memory${suffix}` : council ? `yes, run council${suffix}` : `yes, start job${suffix}`);
           });
           const deny = document.createElement("button");
           deny.type = "button"; deny.className = "action-deny";
-          deny.textContent = memory ? "Dismiss" : council ? "Dismiss" : "Not now";
+          deny.textContent = removal ? "Keep note" : memory ? "Dismiss" : council ? "Dismiss" : "Not now";
           deny.addEventListener("click", () => {
-            submitChatText(memory ? "never mind memory" : council ? "never mind council" : "never mind");
+            submitChatText(removal || memory ? "never mind memory" : council ? "never mind council" : "never mind");
           });
           actions.append(approve, deny);
           card.append(actions);
@@ -577,19 +631,11 @@ if ($("login-form")) {
     throw new Error("Reply timed out — check chat.");
   }
   async function poll() {
-    if (!current || polling) return;
+    if (!chatReady || authRedirecting || !current || polling) return;
     polling = true;
     try {
       render(await api(`/api/conversations/${current}`));
-      pollFailures = 0;
-      $("connection").textContent = "Connected to Bob";
-      const dot = $("status-dot");
-      if (dot) {
-        dot.classList.remove("warn");
-        dot.classList.add("connected");
-        dot.setAttribute("aria-label", "Connected");
-      }
-      $("offline-banner")?.setAttribute("hidden", "");
+      connectionRestored();
       if (!busy && $("notice").textContent === "Stopping this reply…") $("notice").textContent = "";
     } catch (error) {
       pollFailures += 1;
@@ -637,7 +683,7 @@ if ($("login-form")) {
   $("messages")?.addEventListener("click", async (event) => {
     const result = event.target.closest(".job-result-link[data-job-id]");
     if (result) {
-      await showJobResult("/api/jobs/result?id=" + result.dataset.jobId);
+      await showJobResult("/api/jobs/result?id=" + result.dataset.jobId, "Job result", "", result);
       return;
     }
     const btn = event.target.closest(".copy-code");
@@ -652,7 +698,7 @@ if ($("login-form")) {
   $("composer").addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = $("message").value.trim();
-    if ((!message && !pendingAttachments.length) || busy || sending || uploading) return;
+    if (!chatReady || (!message && !pendingAttachments.length) || busy || sending || uploading) return;
     const provider = $("provider-choice").value;
     const attachIds = pendingAttachments.map((row) => row.media_id);
     if (!draftRequest || draftRequest.message !== message || draftRequest.conversation_id !== current || draftRequest.provider !== provider
@@ -678,7 +724,7 @@ if ($("login-form")) {
   $("attach-input")?.addEventListener("change", async (event) => {
     const files = [...(event.target.files || [])];
     event.target.value = "";
-    if (!files.length || uploading || sending || busy || !current) return;
+    if (!chatReady || !files.length || uploading || sending || busy || !current) return;
     if (pendingAttachments.length + files.length > MAX_PENDING_ATTACHMENTS) {
       $("notice").textContent = `At most ${MAX_PENDING_ATTACHMENTS} attachments per message.`;
       return;
@@ -720,14 +766,14 @@ if ($("login-form")) {
     }
   });
   $("conversations").addEventListener("change", async () => {
-    if (uploading || sending) return;
+    if (!chatReady || uploading || sending) return;
     if (!setBottomTab("chat")) { $("conversations").value = current; return; }
     $("chats-dialog").close();
     switchConversation($("conversations").value);
     await poll(); $("messages").scrollTop = $("messages").scrollHeight;
   });
   $("new-chat").addEventListener("click", async () => {
-    if (uploading || sending) return;
+    if (!chatReady || uploading || sending) return;
     if (!setBottomTab("chat")) return;
     $("chats-dialog").close();
     try { const conversation = await api("/api/conversations", {}); switchConversation(conversation.id); await refreshList(); render(conversation); $("message").focus(); }
@@ -858,6 +904,7 @@ if ($("login-form")) {
     } catch (error) { $("notice").textContent = error.message; }
   });
   $("stop").addEventListener("click", async () => {
+    if (!chatReady) return;
     try { await api("/api/cancel", { conversation_id: current }); $("notice").textContent = "Stopping this reply…"; }
     catch (error) { $("notice").textContent = error.message; }
   });
@@ -872,7 +919,7 @@ if ($("login-form")) {
       $("end-call").textContent = voice.active ? "Hang up" : "Back to chat";
       $("resume-call").hidden = phase !== "paused";
       $("retry-voice-save").hidden = phase !== "unsaved";
-      $("call-hint").textContent = voice.active ? "Your transcript saves to this chat." : "You can start another call from the waveform button.";
+      $("call-hint").textContent = voice.active ? "Your transcript saves to this chat." : "Choose Back to chat, then use the waveform button to call again.";
     },
     onTranscript(entries) {
       const rows = entries.filter(e => e.content.trim()).map(entry => {
@@ -888,7 +935,7 @@ if ($("login-form")) {
   });
   $("live-call").addEventListener("click", () => {
     if (voice.active) { voice.stop(); return; }
-    if (busy || sending || !current) { $("notice").textContent = "Wait for Bob’s reply before starting a call."; return; }
+    if (!chatReady || busy || sending || !current) { $("notice").textContent = "Wait for chat to load and Bob’s reply to finish before starting a call."; return; }
     if (micRecognition) { micRecognition.abort(); micRecognition = null; $("mic").classList.remove("mic-active"); $("mic").setAttribute("aria-pressed", "false"); }
     if ("speechSynthesis" in window) speechSynthesis.cancel();
     $("call-transcript").replaceChildren();
@@ -912,195 +959,9 @@ if ($("login-form")) {
     if (voice.pending.length) { event.preventDefault(); event.returnValue = ""; }
   });
   $("logout").addEventListener("click", async () => {
-    if (!(await confirmLeaveSongEdits())) return;
     $("settings-notice").textContent = "";
-    try { await voice.stop(); await api("/api/logout", {}); markSongClean(); location.assign("/login"); }
+    try { await voice.stop(); await api("/api/logout", {}); location.assign("/login"); }
     catch (_) { $("settings-notice").textContent = "Could not log out. Please try again."; }
-  });
-  $("close-report").addEventListener("click", () => $("report").close());
-  let songProjectId = stored("bob.songProject") || "", songBusy = false;
-  function setSongBusy(value) {
-    songBusy = value;
-    for (const id of ["song-new", "song-picker", "song-save", "song-title", "song-lyrics", "song-chords", "song-notes", "song-demo", "song-upload", "song-coach"]) {
-      const node = $(id);
-      if (node) node.disabled = value;
-    }
-  }
-  function clearSongMedia() {
-    const player = $("song-player");
-    if (!player) return;
-    $("song-player").pause();
-    $("song-player").removeAttribute("src");
-    $("song-player").load();
-    $("song-player").hidden = true;
-    $("song-versions").replaceChildren();
-    $("song-history").hidden = true;
-    $("song-notice").textContent = "";
-    for (const id of ["song-arrangement", "song-audio", "song-history"]) $(id).open = false;
-  }
-  function showSong(project, keepAudio = false) {
-    if (!keepAudio) clearSongMedia();
-    for (const key of ["title", "lyrics", "chords", "notes"]) $("song-" + key).value = project[key] || "";
-    $("song-editor").hidden = false;
-    $("songs-empty").hidden = true;
-    $("song-summary").textContent = project.updated_at ? `Saved ${timestamp(project.updated_at)}` : "New song · not saved yet";
-    const seen = new Set();
-    const versions = (project.versions || []).slice().reverse().filter((row) => {
-      const key = JSON.stringify([row.at, row.lyrics]);
-      if (!row.at || seen.has(key)) return false;
-      seen.add(key); return true;
-    });
-    $("song-history").hidden = !versions.length;
-    $("song-versions").replaceChildren(...versions.map((row) => {
-      const item = element("li");
-      item.append(element("p", timestamp(row.at)));
-      if (row.lyrics) item.append(element("p", row.lyrics, "version-lyrics"));
-      return item;
-    }));
-    markSongClean();
-  }
-  async function loadSongList() {
-    const list = await api("/api/song-projects");
-    const seen = new Set();
-    list.projects = (list.projects || []).filter((project) => {
-      if (!project.id || seen.has(project.id)) return false;
-      seen.add(project.id); return true;
-    });
-    $("song-picker").replaceChildren(...list.projects.map((project) => {
-      const option = element("option", project.title || "Untitled song");
-      option.value = project.id;
-      return option;
-    }));
-    $("song-library").hidden = !list.projects.length;
-    return list;
-  }
-  async function loadSong(id) {
-    if (songBusy) return;
-    setSongBusy(true);
-    try {
-      const list = await loadSongList();
-      const row = list.projects.find((project) => project.id === (id || songProjectId)) || list.projects[0];
-      if (!row) {
-        songProjectId = ""; remember("bob.songProject", "");
-        clearSongMedia();
-        $("song-editor").hidden = true;
-        $("songs-empty").hidden = false;
-        $("song-summary").textContent = "No saved songs yet.";
-        markSongClean();
-        return;
-      }
-      const project = await api(`/api/song-projects/${row.id}`);
-      songProjectId = row.id;
-      remember("bob.songProject", songProjectId);
-      $("song-picker").value = songProjectId;
-      showSong(project);
-    } catch (_) {
-      $("song-picker").value = songProjectId;
-      $("song-summary").textContent = "Could not load songs. Choose a song again or reload to retry.";
-    } finally { setSongBusy(false); }
-  }
-  $("song-picker")?.addEventListener("change", async () => {
-    if (!(await confirmLeaveSongEdits())) { $("song-picker").value = songProjectId; return; }
-    await loadSong($("song-picker").value);
-  });
-  $("song-new")?.addEventListener("click", async () => {
-    if (songBusy || !(await confirmLeaveSongEdits())) return;
-    songProjectId = ""; remember("bob.songProject", "");
-    $("song-picker").value = "";
-    showSong({});
-    $("song-title").focus();
-  });
-  for (const id of ["song-title", "song-lyrics", "song-chords", "song-notes"]) {
-    $(id)?.addEventListener("input", () => { $("song-summary").textContent = "Unsaved changes"; $("song-notice").textContent = ""; });
-  }
-  window.addEventListener("beforeunload", (event) => {
-    if ($("song-title") && songFieldsText() !== songSnapshot) { event.preventDefault(); event.returnValue = ""; }
-  });
-  $("song-coach")?.addEventListener("click", () => {
-    if (!setBottomTab("chat")) return;
-    const title = ($("song-title")?.value || "Untitled").trim().slice(0, 80);
-    const lyricLine = ($("song-lyrics")?.value || "").trim().split("\n").find((l) => l.trim())?.slice(0, 120) || "";
-    const chords = ($("song-chords")?.value || "").trim().slice(0, 80);
-    const field = $("message");
-    const draft = lyricLine
-      ? `help with rhyme and meter for "${title}" — opening line: ${lyricLine}${chords ? ` · chords: ${chords}` : ""}`
-      : `help with rhyme and song structure for "${title}" (add lyrics in Songs if you want line-level edits)`;
-    field.value = draft;
-    field.focus();
-    field.dispatchEvent(new Event("input"));
-    $("song-notice").textContent = "Prepared in chat — send when ready.";
-  });
-  $("song-save")?.addEventListener("click", async () => {
-    if (songBusy) return;
-    setSongBusy(true);
-    $("song-notice").textContent = "Saving…";
-    try {
-      const project = await api("/api/song-projects", {
-        id: songProjectId || undefined,
-        title: $("song-title").value,
-        lyrics: $("song-lyrics").value,
-        chords: $("song-chords").value,
-        notes: $("song-notes").value,
-        version_note: "Saved",
-      });
-      songProjectId = project.id; remember("bob.songProject", songProjectId);
-      // Apply the saved response before refreshing the list, which can fail independently.
-      showSong(project, true);
-      $("song-notice").textContent = "Song saved.";
-      try { await loadSongList(); $("song-picker").value = project.id; }
-      catch (_) { $("song-notice").textContent = "Song saved. Reload to refresh the song list."; }
-    } catch (error) { $("song-notice").textContent = `Not saved. ${error.message} Keep this page open to retain your edits.`; }
-    finally { setSongBusy(false); }
-  });
-  $("song-demo")?.addEventListener("click", async () => {
-    if (songBusy) return;
-    setSongBusy(true);
-    try {
-      const lyrics = $("song-lyrics").value.trim();
-      if (!lyrics) { $("song-notice").textContent = "Add lyrics first."; return; }
-      let receipt = "";
-      try {
-        const quote = await api("/api/music/demo", { lyrics, style: $("song-notes").value || "acoustic songwriter" });
-        if (quote.needs_confirm) {
-          receipt = quote.receipt || "";
-          if (!quote.can_afford_demo) { $("song-notice").textContent = quote.message || "The spending limit does not allow this audio request."; return; }
-          if (!window.confirm(quote.message || "Create rough audio from these lyrics?")) return;
-        }
-      } catch (error) { $("song-notice").textContent = error.message; return; }
-      $("song-notice").textContent = "Creating audio…";
-      try {
-        const demo = await api("/api/music/demo", {
-          lyrics, style: $("song-notes").value || "acoustic songwriter", confirm: true, receipt,
-        });
-        if (demo.audio_id) {
-          const player = $("song-player");
-          player.hidden = false;
-          player.src = `/api/audio/${demo.audio_id}`;
-          $("song-notice").textContent = "Audio ready to play.";
-        } else $("song-notice").textContent = demo.message || "No audio was returned. Try again.";
-      } catch (error) { $("song-notice").textContent = error.message; }
-    } finally { setSongBusy(false); }
-  });
-  $("song-upload")?.addEventListener("change", async (event) => {
-    if (songBusy) return;
-    setSongBusy(true);
-    try {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      $("song-notice").textContent = "Uploading…";
-      try {
-        const buffer = await file.arrayBuffer();
-        const bytes = new Uint8Array(buffer);
-        let binary = "";
-        for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-        const stored = await api("/api/audio/upload", { filename: file.name, data_base64: btoa(binary) });
-        const player = $("song-player");
-        player.hidden = false;
-        player.src = `/api/audio/${stored.audio_id}`;
-        $("song-notice").textContent = `Uploaded ${file.name}`;
-      } catch (error) { $("song-notice").textContent = error.message; }
-      event.target.value = "";
-    } finally { setSongBusy(false); }
   });
   function element(tag, text, className = "") {
     const node = document.createElement(tag);
@@ -1265,8 +1126,9 @@ if ($("login-form")) {
       if (job.result_url?.startsWith("/api/jobs/result?")) {
         const result = jobElement("button", "job-result-link", "View result");
         result.type = "button";
+        result.dataset.resultUrl = job.result_url;
         result.setAttribute("aria-label", `View result for ${job.project}: ${job.task}`);
-        result.addEventListener("click", () => showJobResult(job.result_url, job.project, job.task));
+        result.addEventListener("click", () => showJobResult(job.result_url, job.project, job.task, result));
         footer.append(result);
       }
       const external = jobLink(job.external_result_url, "View result");
@@ -1377,7 +1239,57 @@ if ($("login-form")) {
     }
   }
   document.querySelectorAll("[data-refresh]").forEach((button) => button.addEventListener("click", refreshOverview));
-  async function init() {
+  function connectionRestored() {
+    pollFailures = 0;
+    $("connection").textContent = "Connected to Bob";
+    const dot = $("status-dot");
+    if (dot) {
+      dot.classList.remove("warn");
+      dot.classList.add("connected");
+      dot.setAttribute("aria-label", "Connected");
+    }
+    $("offline-banner")?.setAttribute("hidden", "");
+  }
+  const STARTUP_RETRY_MESSAGE = "Cannot connect to Bob yet. Retrying shortly…";
+  async function connectChat(force = false) {
+    if (chatReady || connecting || authRedirecting || (!force && Date.now() < connectAfter)) return;
+    connecting = true;
+    try {
+      // Retry only bounded reads. Do not enable mutations with a remembered
+      // conversation ID until its current server history has actually loaded.
+      csrf = (await api("/api/session")).csrf;
+      await refreshList();
+      const conversation = await api(`/api/conversations/${current}`);
+      if (conversation.id !== current) throw new Error("Conversation changed while connecting");
+      chatReady = true;
+      connectFailures = 0;
+      connectAfter = 0;
+      if ($("notice").textContent === STARTUP_RETRY_MESSAGE) $("notice").textContent = "";
+      render(conversation);
+      connectionRestored();
+      $("messages").scrollTop = $("messages").scrollHeight;
+      void Promise.allSettled([refreshJobs(), refreshOverview()]);
+    } catch (_) {
+      chatReady = false;
+      if (!authRedirecting) {
+        connectFailures += 1;
+        connectAfter = Date.now() + Math.min(30000, 5000 * 2 ** Math.min(connectFailures - 1, 3));
+        $("notice").textContent = STARTUP_RETRY_MESSAGE;
+        $("connection").textContent = "Reconnecting to Bob";
+        $("offline-banner")?.removeAttribute("hidden");
+        const dot = $("status-dot");
+        if (dot) { dot.classList.add("warn"); dot.setAttribute("aria-label", "Reconnecting"); }
+      }
+    } finally { connecting = false; composerState(); }
+  }
+  function refreshAfterReconnect() {
+    if (document.hidden || authRedirecting) return;
+    if (!chatReady) { void connectChat(true); return; }
+    if (Date.now() - overviewFetchedAt > 30000) clearOverview();
+    if (Date.now() - jobsFetchedAt > 30000) clearJobs();
+    refreshJobs(); refreshOverview(); poll();
+  }
+  function init() {
     try {
       primeSpeechVoices();
       const recognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -1390,19 +1302,15 @@ if ($("login-form")) {
         + "Tap the waveform to talk with Bob in an AI voice. Interrupt anytime, then tap Hang up. Your transcript saves to this chat. Keep this page open during the call.";
       const preference = stored("bob.provider");
       if ([...$("provider-choice").options].some((option) => option.value === preference)) $("provider-choice").value = preference;
-      csrf = (await api("/api/session")).csrf; current = stored("bob.conversation");
-      await refreshList(); await poll(); $("messages").scrollTop = $("messages").scrollHeight;
-      const boot = [refreshJobs(), refreshOverview()];
-      if ($("song-editor")) boot.push(loadSong());
-      // Secondary tabs must not hold up chat polling or reconnect listeners.
-      // Each refresh owns its errors and loading guard; observe all rejections.
-      void Promise.allSettled(boot);
-      setInterval(() => { if (!document.hidden) { refreshJobs(); refreshOverview(); } }, 8000);
-      setInterval(() => { if (!document.hidden) poll(); }, 1200);
+      current = stored("bob.conversation");
+      // Install once, before the first network read. A failed bootstrap must
+      // leave its own recovery path alive, without adding timers on retries.
+      setInterval(() => { if (chatReady && !authRedirecting && !document.hidden) { refreshJobs(); refreshOverview(); } }, 8000);
+      setInterval(() => { if (!document.hidden) { if (chatReady) poll(); else void connectChat(); } }, 1200);
       setInterval(() => { if (overviewFetchedAt && Date.now() - overviewFetchedAt > 30000) clearOverview(); if (jobsFetchedAt && Date.now() - jobsFetchedAt > 30000) clearJobs(); }, 1000);
-      document.addEventListener("visibilitychange", () => {
-        if (!document.hidden) { if (Date.now() - overviewFetchedAt > 30000) clearOverview(); if (Date.now() - jobsFetchedAt > 30000) clearJobs(); refreshJobs(); refreshOverview(); poll(); }
-      });
+      document.addEventListener("visibilitychange", refreshAfterReconnect);
+      window.addEventListener("online", refreshAfterReconnect);
+      void connectChat();
     } catch (error) { $("notice").textContent = error.message; }
   }
   composerState(); init();
