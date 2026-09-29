@@ -149,12 +149,12 @@ async function instrument(page) {
       await feed('story-complete');
       await page.waitForFunction(n=>voiceProof.turns>n,before.turns,{timeout:90000});
       assert.ok(await page.locator('.call-bob').count()>before.replies, 'A new completed story reply is required');
-      const story=await page.locator('.call-bob').last().textContent();
+      const story=(await page.locator('.call-bob').last().textContent()).replace(/^Bob:\s*/, '');
       const words=story.trim().split(/\s+/).length;
       results.requested_story={words,sha256:require('node:crypto').createHash('sha256').update(story).digest('hex'),
         // These are our synthetic spoken requests, never owner chat history.
         spoken_request:await page.locator('.call-you').last().textContent(),
-        reply_word_counts:await page.locator('.call-bob').evaluateAll(nodes=>nodes.map(n=>n.textContent.trim().split(/\s+/).length))};
+        reply_word_counts:await page.locator('.call-bob').evaluateAll(nodes=>nodes.map(n=>n.textContent.replace(/^Bob:\s*/, '').trim().split(/\s+/).length))};
       assert.ok(words>=100 && words<=250, 'Requested roughly 150-word story; received '+words+' words');
       assert.match(story,/compass/i);
       assert.doesNotMatch(story,/(?:better at|prefer|can only|must|need to|have to)\s+(?:keep(?:ing)?\s+(?:things|it|replies)\s+)?(?:brief|short|casual)|can(?:not|'t)\s+(?:tell|write|give)\s+(?:you\s+)?(?:a\s+)?(?:long|story)/i);

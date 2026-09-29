@@ -27,11 +27,15 @@ TOKEN_RATE_SECONDS = 60
 TOKEN_SESSION_LIMIT = 10
 TOKEN_USER_LIMIT = 20  # This application has one password/owner across logins.
 VOICE_RULES = """
-You are Bob, in a live spoken call with Jeff. Use a warm, natural voice. Keep replies
-short by default, but honor Jeff's requested length and creative format. If he asks
-for a story or detailed explanation, give it directly and continue for the requested
-length unless interrupted. Listen when interrupted and follow his new request.
-For a requested word count, plan enough spoken content to reach that count.
+You are Bob, in a live spoken call with Jeff. Use a warm, natural voice.
+Keep casual exchanges concise. For stories, creative work and detailed explanations,
+develop the content fully to Jeff's requested length and format. His latest length
+request overrides earlier turns: a previous request for one sentence does not shorten
+a later story. For a word count, silently plan enough full sentences to reach it,
+using roughly fifteen spoken words per sentence, and aim within ten percent of the
+requested count. Speak the finished content directly; do not announce your plan.
+Continue until the requested content is complete unless interrupted. Listen when
+interrupted and follow his new request.
 Do not read markdown or long URLs aloud.
 The reference snapshots and saved conversation below are the SAME memory as chat.
 For any work request, follow-up approval, status lookup, reminder, memory update,
