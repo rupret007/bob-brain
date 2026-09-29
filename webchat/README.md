@@ -545,7 +545,7 @@ single recipient. Duplicate transports may use the newest `lastMessage` only
 when their participant addresses are identical. Ambiguous recipients, tied or
 unknown duplicate timestamps, groups, and missing threads fail closed. If the
 thread has no display name or needs disambiguation, an operator can pin its
-already-verified BlueBubbles GUID using `BOB_INSTINCT_CHAT_GUID`; there is no
+already-verified BlueBubbles GUID using `BOB_INSTINCT_CHAT_GUID` (or the private `conductor/webchat/instinct.json` file with `{"chat_guid":"verified exact thread ID"}`); there is no
 fallback from a missing pin to another contact. No production mapping, phone
 number, thread content, or credential is checked into this branch.
 
@@ -553,12 +553,12 @@ number, thread content, or credential is checked into this branch.
 incoming text's categories. `draft reply to Instinct: exact body` uses the supplied
 body. Both show the exact recipient and body (including `[Bob via Andrea]`) in the
 existing texting card. Even `send a message to Instinct: ...` only creates a
-draft. A separate exact `yes wbtxt-…` in the same chat and authenticated session
-uses the existing one-shot Andrea bridge, with the same expiry, edit/cancel,
-durable consent, replay protection, and uncertain-delivery handling as texting.
-Missing Andrea support remains an honest blocked receipt. No direct BlueBubbles
-send, automatic reply, routine, watcher, or job is created. The older Bob skill's
-standing permission for tagged briefs does not apply to Web Bob.
+draft. Instinct drafts never receive a send token. Even a valid legacy token is
+refused on the server for Instinct, pinned identities and matching alternate
+transports/groups. Editing a draft cannot remove this restriction for an Instinct
+recipient. No direct BlueBubbles send, automatic reply, routine, watcher or job
+is created. Jeff's current read-only instruction overrides older tagged-brief
+permissions in Bob's historical skill.
 
 Incoming text is quoted as untrusted data and never evaluated or sent to a model.
 Suggestions use local templates. Instinct turns carry the existing `texting`
@@ -566,8 +566,7 @@ privacy flag, so thread contents, draft bodies, and consent tokens stay out of
 provider context and operational handback logs. Read excerpts hide phone numbers
 and email handles; consent cards show recipients so Jeff can verify them.
 
-Offline validation (all messaging, including approved delivery, uses a synthetic
-loopback fixture):
+Offline validation uses synthetic read-only messaging fixtures:
 
 ```bash
 cd webchat
@@ -576,6 +575,8 @@ python3 instinct_eval.py
 python3 bob_parity_eval.py
 ```
 
-The Instinct rubric also runs inside the broader Bob parity eval. This lane must
-remain a draft PR with offline READY and live Gemini + MiniMax reviews. Neither a
-READY marker nor `GATE: BOTH_PASS` authorizes a merge or production deploy.
+The Instinct rubric also runs inside the broader Bob parity eval. Releases use
+`release/solo.py`: exact-tip self-review, full tests/evals, staging and two
+consecutive live greens. No model council or worker preflight is required.
+
+Instinct identities learned from the verified mapping are retained in that private file across restarts. Direct thread IDs, renamed threads, alternate transports and groups containing a protected address remain read-only. Never put this private mapping in Git.

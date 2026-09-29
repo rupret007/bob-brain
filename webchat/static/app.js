@@ -476,7 +476,7 @@ if ($("login-form")) {
     const title = document.createElement("h3");
     title.textContent = "Text draft · " + ({ pending: "not sent", editing: "editing", expired: "confirmation expired",
       superseded: "replaced", cancelled: "cancelled", confirmed_not_sent: "confirmed here, not sent",
-      sent: "sent via Andrea", delivery_unconfirmed: "delivery unconfirmed" }[draft.state] || "not sent");
+      read_only: "read-only · never sent", sent: "sent via Andrea", delivery_unconfirmed: "delivery unconfirmed" }[draft.state] || "not sent");
     const recipient = document.createElement("p");
     recipient.className = "text-recipient";
     recipient.textContent = `To: ${draft.recipient.name}\n${draft.recipient.addresses.join(", ")}\nThread: ${draft.recipient.guid}`;
@@ -513,7 +513,7 @@ if ($("login-form")) {
       });
       card.append(hint, code, prepare);
     }
-    if (["pending", "expired", "confirmed_not_sent"].includes(draft.state)) {
+    if (["pending", "expired", "confirmed_not_sent", "read_only"].includes(draft.state)) {
       const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "Edit draft";
       // Clear consent on the server before exposing editable fields, including in other tabs.
       edit.addEventListener("click", () => submitChatText(`edit text draft ${draft.id}`));
@@ -522,7 +522,9 @@ if ($("login-form")) {
       card.append(edit, cancel);
     }
     const status = document.createElement("p"); status.className = "text-delivery-status";
-    status.textContent = draft.state === "sent"
+    status.textContent = draft.read_only || draft.state === "read_only"
+      ? "Instinct is read-only. This draft cannot be sent from Web Bob."
+      : draft.state === "sent"
       ? "Sent through Andrea’s BlueBubbles bridge."
       : draft.state === "delivery_unconfirmed"
         ? "Delivery is unconfirmed. Check the recipient’s thread before preparing another draft."

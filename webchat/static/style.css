@@ -799,7 +799,7 @@ code { overflow-wrap: anywhere; font-size: 11px; }
 .job-unconfirmed { font-size: 12px; margin-top: 8px; }
 .jobs-note, .jobs-empty { font-size: 14px; padding: 14px 0 4px; }
 .finished-jobs { margin-top: 8px; }
-.finished-job { padding: 0; border-bottom: 0; }
+.finished-job { padding: 14px 16px; }
 .job-outcome { font-size: 12px; color: var(--muted); }
 .job-outcome.is-failed { color: var(--danger); }
 .finished-task { font-size: 14px; line-height: 1.45; margin: 5px 0 4px; overflow-wrap: anywhere; }

@@ -223,9 +223,13 @@ class Texting:
                 continue
             card = {key: copy.deepcopy(draft[key]) for key in
                     ("id", "recipient", "body", "revision", "state", "expires_at")}
+            if draft.get('read_only') or self.instinct.is_target(draft['recipient']):
+                card['read_only'] = True
+                if card['state'] == 'pending':
+                    card['state'] = 'read_only'
             if card["state"] == "pending" and (draft["epoch"] != self.epoch or self.clock() >= draft["expires_at"]):
                 card["state"] = "expired"
-            card["confirm_message"] = "yes " + draft["token"] if card["state"] == "pending" else None
+            card["confirm_message"] = "yes " + draft["token"] if card["state"] == "pending" and not card.get('read_only') else None
             message["text_draft"] = card
         return value
 
@@ -243,6 +247,7 @@ class Texting:
         if query.casefold() == "instinct":
             return self.instinct.resolve()
         chats = self.bluebubbles.chats()
+        self.instinct.observe(chats)
         exact = [c for c in chats if query == c.get("guid")]
         matches = exact or [c for c in chats if label(c).casefold() == query.casefold() or
                            query in [p.get("address") for p in (c.get("participants") or []) if isinstance(p, dict)]]
@@ -269,15 +274,22 @@ class Texting:
                      revision=len(state["drafts"]) + 1, state="pending", token="wbtxt-" + secrets.token_hex(16),
                      created_at=self.clock(), expires_at=self.clock() + CONFIRM_SECONDS, epoch=self.epoch,
                      actor=actor, request_id=request_id)
+        if self.instinct.is_target(target):
+            draft.update(state='read_only', token=None, read_only=True)
         draft["fingerprint"] = fingerprint(draft)
         state["drafts"][identifier] = draft
         state["active"] = identifier
         conversation["messages"][-1]["text_draft_id"] = identifier
-        return "Draft ready for review. Nothing sent."
+        from instinct import READ_ONLY
+        return READ_ONLY if draft.get('read_only') else "Draft ready for review. Nothing sent."
 
     def confirm(self, conversation, text, actor, request_id, persist):
         state = conversation.get("_texting", {})
         draft = state.get("drafts", {}).get(state.get("active"))
+        if draft and (draft.get('read_only') or self.instinct.is_target(draft['recipient'])):
+            from instinct import READ_ONLY
+            draft.update(state='read_only', token=None, read_only=True)
+            return READ_ONLY
         match = re.fullmatch(r"yes (wbtxt-[0-9a-f]{32})", text, re.I)
         if not draft or not match:
             if text.lower().startswith("yes wbtxt-"):
@@ -285,6 +297,10 @@ class Texting:
             return "Nothing sent. Review a fresh text draft and send its exact ‘yes wbtxt-…’ message separately in this chat."
         if draft["state"] != "pending":
             return "Nothing sent. That text confirmation was already used, cancelled, or replaced. Review a fresh draft."
+        if self.instinct.is_target(draft['recipient'], refresh=True):
+            from instinct import READ_ONLY
+            draft.update(state='read_only', token=None, read_only=True)
+            return READ_ONLY
         if draft["epoch"] != self.epoch or self.clock() >= draft["expires_at"]:
             draft.update(state="expired", token=None)
             return "Nothing sent. That text confirmation expired. Review a fresh draft."
@@ -328,7 +344,7 @@ class Texting:
         if self.instinct.handle(conversation, clean, actor, request_id, persist, redact):
             return True
         command = clean.casefold().rstrip(".?!")
-        text_context = active and (active["state"] in ("pending", "editing") or
+        text_context = active and (active["state"] in ("pending", "editing", "read_only") or
             len(conversation["messages"]) >= 3 and conversation["messages"][-3].get("texting"))
         # Bare approvals are routed here for token guidance only; confirm() still
         # requires the entire message to match the exact yes + token format.
@@ -362,7 +378,7 @@ class Texting:
                 content = "Text draft cancelled. Nothing sent."
             elif edit:
                 draft = state.get("drafts", {}).get(edit[2])
-                if not draft or state.get("active") != draft["id"] or draft["state"] not in ("pending", "expired", "editing", "confirmed_not_sent"):
+                if not draft or state.get("active") != draft["id"] or draft["state"] not in ("pending", "expired", "editing", "confirmed_not_sent", "read_only"):
                     raise TextingError("That draft is no longer current. Prepare a fresh text draft.")
                 draft.update(state="editing" if edit[1].lower() == "edit" else "cancelled", token=None)
                 content = "Confirmation cleared. Edit the draft card, then review it again." if draft["state"] == "editing" else "Text draft cancelled. Nothing sent."

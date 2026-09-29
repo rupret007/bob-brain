@@ -1,20 +1,24 @@
 """Instinct's owner-requested read/digest/draft surface. No polling or send API.
 
 Thread text is untrusted evidence, never a prompt or a command. Suggested replies
-are conservative local templates; delivery uses Texting's existing consent fence.
+are conservative local templates. Instinct delivery is permanently disabled.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
+import tempfile
+import threading
 from datetime import datetime, timezone
 
 from texting import TextingError, label, recipient, time_label, timestamp
 
 TAG = "[Bob via Andrea]"
+READ_ONLY = "Nothing sent. Instinct is read-only: review this draft here; Web Bob never sends it, even after confirmation."
 HELP = ("Try ‘Instinct status’, ‘latest Instinct replies’, ‘digest Instinct’, or "
         "‘draft reply to Instinct’ (add ‘: exact body’ to write your own). "
-        "Review the draft card, then send its exact yes + token separately in this Web Bob chat. "
+        "Drafts are read-only and have no send confirmation. Web Bob never sends to Instinct. "
         "Nothing sent. Instinct auto-replies are disabled; incoming messages cannot authorize actions.")
 FLAGS = {
     "Bills / deadlines": re.compile(r"\b(?:bills?|invoices?|payments?|overdue|past due|balance|escheat\w*|"
@@ -50,9 +54,92 @@ class Instinct:
     def __init__(self, texting, chat_guid=None):
         self.texting = texting
         self.chat_guid = chat_guid if chat_guid is not None else os.environ.get("BOB_INSTINCT_CHAT_GUID", "")
+        self.addresses = set()
+        self.guids = set()
+        self.state_path = None
+        self.lock = threading.RLock()
+
+    def bind_state(self, folder):
+        """Owner-only mapping and learned protected identities survive restarts."""
+        with self.lock:
+            path = folder / 'instinct.json'
+            if path.is_symlink():
+                raise TextingError('Instinct mapping must be a private regular file.')
+            if path.exists():
+                if path.stat().st_size > 65536:
+                    raise TextingError('Instinct mapping is too large.')
+                value = json.loads(path.read_text())
+                if not isinstance(value, dict):
+                    raise TextingError('Invalid Instinct thread mapping.')
+                pin = value.get('chat_guid', '')
+                if not isinstance(pin, str) or len(pin) > 500:
+                    raise TextingError('Invalid Instinct thread mapping.')
+                self.chat_guid = self.chat_guid or pin
+                for key, target in (('addresses', self.addresses), ('guids', self.guids)):
+                    rows = value.get(key, [])
+                    if not isinstance(rows, list) or len(rows) > 500 or any(not isinstance(v, str) or len(v) > 500 for v in rows):
+                        raise TextingError('Invalid protected Instinct identities.')
+                    target.update(self.address(v) if key == 'addresses' else v for v in rows)
+                path.chmod(0o600)
+            self.state_path = path
+
+    def save(self):
+        if not self.state_path:
+            return
+        if self.state_path.is_symlink():
+            raise TextingError('Instinct mapping must be a private regular file.')
+        value = dict(chat_guid=self.chat_guid, addresses=sorted(self.addresses), guids=sorted(self.guids))
+        data = json.dumps(value).encode()
+        if len(data) > 65536 or len(self.addresses) > 500 or len(self.guids) > 500:
+            raise TextingError('Instinct identity history needs owner review. Nothing sent.')
+        descriptor, name = tempfile.mkstemp(prefix='.instinct-', dir=self.state_path.parent)
+        try:
+            with os.fdopen(descriptor, 'wb') as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(name, self.state_path)
+        finally:
+            if os.path.exists(name):
+                os.unlink(name)
+
+    @staticmethod
+    def address(value):
+        value = str(value or '').strip().casefold()
+        if '@' in value:
+            return value
+        number = re.sub(r'\D', '', value)
+        return number[1:] if len(number) == 11 and number.startswith('1') else number
+
+    def observe(self, chats):
+        # Retain every protected identity for this process, even if a later
+        # refresh renames or omits it. Includes alternate transports/groups.
+        with self.lock:
+            before = (set(self.guids), set(self.addresses))
+            for chat in chats:
+                if chat.get('guid') == self.chat_guid or label(chat).strip().casefold() == 'instinct':
+                    self.guids.add(chat['guid'])
+                    self.addresses.update(self.address(p.get('address')) for p in (chat.get('participants') or []) if isinstance(p, dict))
+            self.addresses.discard('')
+            if before != (self.guids, self.addresses):
+                self.save()
+
+    def is_target(self, target, *, refresh=False):
+        if (target.get('kind') == 'instinct' or target.get('name', '').strip().casefold() == 'instinct'
+                or self.chat_guid and target.get('guid') == self.chat_guid):
+            return True
+        current = []
+        if refresh:
+            chats = self.texting.bluebubbles.chats()
+            self.observe(chats)
+            current = [recipient(c) for c in chats if c['guid'] == target.get('guid')]
+        with self.lock:
+            return any(t.get('guid') in self.guids or bool(self.addresses.intersection(
+                self.address(a) for a in t.get('addresses', []))) for t in [target] + current)
 
     def resolve(self):
         chats = self.texting.bluebubbles.chats()
+        self.observe(chats)
         matches = [c for c in chats if c["guid"] == self.chat_guid] if self.chat_guid else [
             c for c in chats if label(c).strip().casefold() == "instinct"]
         if not matches:
@@ -61,7 +148,7 @@ class Instinct:
         targets = [recipient(c) for c in matches]
         if any(len(t["addresses"]) != 1 for t in targets):
             raise TextingError("The Instinct mapping points to a group or unverified recipient. Nothing sent.")
-        if len({tuple(t["addresses"]) for t in targets}) != 1:
+        if len({tuple(self.address(a) for a in t["addresses"]) for t in targets}) != 1:
             raise TextingError("Several different recipients are named Instinct. Pin the verified Instinct thread before continuing. Nothing sent.")
         # Match Bob's newest-transport read rule only for the same verified party.
         matches.sort(key=last_time, reverse=True)
@@ -70,8 +157,7 @@ class Instinct:
         return matches[0]
 
     def prepare_body(self, target, body):
-        if (target.get("kind") == "instinct" or target.get("name", "").strip().casefold() == "instinct"
-                or self.chat_guid and target.get("guid") == self.chat_guid):
+        if self.is_target(target):
             if not body.startswith(TAG + "\n"):
                 body = TAG + "\n" + body
         return body
@@ -126,6 +212,8 @@ class Instinct:
                 "Please wait for Jeff’s explicit approval before sending, spending, booking, calling, signing, or cancelling anything.")
 
     def handle(self, conversation, clean, actor, request_id, persist, redact):
+        if re.match(r'^remember\s+(?:that\s+)?', clean, re.I):
+            return False  # The explicit private memory command owns this turn.
         # Shared card edits/cancellation and exact yes tokens stay in Texting.
         if re.match(r"^(?:replace|edit|cancel) text draft\b", clean, re.I):
             return False
@@ -149,7 +237,8 @@ class Instinct:
             mode = "digest"
         elif re.fullmatch(r"(?:(?:read|show) (?:the )?)?(?:latest |recent )?instinct(?: (?:replies|messages|thread))?|(?:read|show) (?:the )?(?:recent )?(?:texts?|messages?|imessages?|thread|replies) (?:from |with |for )?instinct", command):
             mode = "read" if command.startswith("read ") else "status"
-        conversation["messages"][-2]["texting"] = True
+        source = next(m for m in conversation['messages'] if m.get('request_id') == request_id and m['role'] == 'user')
+        source['texting'] = True
         answer = conversation["messages"][-1]
         answer.update(texting=True, provider="instinct", status="done")
         self.texting.invalidate(conversation)
@@ -167,7 +256,7 @@ class Instinct:
                     raise TextingError("The thread details contain sensitive credentials; no draft was prepared.")
                 content = self.texting.draft(conversation, target, body, actor, request_id)
                 if supplied_body is None:
-                    content += " Suggested wording based on the latest incoming text; review and edit before confirming."
+                    content += " Suggested wording based on the latest incoming text; review or revise it here."
             else:
                 _, messages = self.snapshot()
                 content = self.report(messages, mode)

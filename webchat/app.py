@@ -170,6 +170,7 @@ class Chat(TaskDispatch):
             root, self.redact, overlay_roots=self.overlay_roots, overlay_pins=self.overlay_pins,
         )
         self.texting = texting or Texting()
+        self.texting.instinct.bind_state(folder)
         self.voice = VoiceCalls(self)
         for path in self.state.glob("*.json"):
             if not UUID.fullmatch(path.stem):
