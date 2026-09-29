@@ -9,6 +9,7 @@ This is private integration evidence, never a claim of 19 production turns.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import copy
 import hashlib
 import json
@@ -86,6 +87,73 @@ def explicit_cursor_model(argv):
         require("--model" not in argv, "Unexpected preexisting Cursor model override")
         argv[1:1] = ["--model", CURSOR_MODEL]
     return argv
+
+
+def lane_availability(worker_name, *, now=None, probe_lease=True, check_reservations=True):
+    """Read the shared eligibility gates before consuming a private claim attempt."""
+    import budget
+    import lanes
+    from state import jobs, read_json
+    from task_dispatch import task_queue
+    now = time.time() if now is None else now
+    cooldown = read_json(lanes.CONDUCTOR / "lane-cooldowns.json", {}).get(worker_name, {})
+    retry_at = cooldown.get("retry_at", 0)
+    if retry_at > now:
+        return dict(ready=False, reason="shared cooldown", retry_at=retry_at)
+    try:
+        usage = budget.check(worker_name)
+    except budget.BudgetExceeded:
+        return dict(ready=False, reason="shared budget exhausted")
+    if check_reservations:
+        live = task_queue.tasks(lanes.CONDUCTOR.parent)
+        if sum(row["worker"] == worker_name and row["status"] in task_queue.ACTIVE
+               for row in live.values()) >= task_queue.capacity(worker_name):
+            return dict(ready=False, reason="shared live claim reserved")
+        if any(row.get("engine") == worker_name and row["state"] in ("launched", "running")
+               and row.get("managed") for row in jobs().values()):
+            return dict(ready=False, reason="shared scheduled job reserved")
+    if probe_lease:
+        try:
+            with lanes.slot(worker_name):
+                pass
+        except BlockingIOError:
+            return dict(ready=False, reason="shared lane lease busy")
+        except budget.BudgetExceeded:
+            return dict(ready=False, reason="shared budget exhausted")
+    return dict(ready=True, reason="shared lane available", budget_tier=usage.get("tier"))
+
+
+def claim_when_ready(private, worker_name, *, now=None):
+    from task_dispatch import task_queue
+    readiness = lane_availability(worker_name, now=now)
+    return (task_queue.claim(private, worker_name) if readiness["ready"] else None), readiness
+
+
+@contextlib.contextmanager
+def ready_worker_slot(worker_name, original_slot):
+    """A cooldown/budget race after claiming uses the existing busy/refund event."""
+    with original_slot(worker_name):
+        readiness = lane_availability(worker_name, probe_lease=False, check_reservations=False)
+        if not readiness["ready"]:
+            raise BlockingIOError(readiness["reason"])
+        yield
+
+
+def capture_cli_output(folder, *, result=None, error=None, redact=str):
+    """Persist bounded, redacted transport evidence without changing CLI parsing."""
+    receipt = dict(transport="actual-cli-output", exit=result.returncode if result is not None else None)
+    for field in ("stdout", "stderr"):
+        value = getattr(result if result is not None else error, field, "") or ""
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", "replace")
+        raw = redact(value).encode()
+        receipt[field] = dict(bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest(),
+                              tail=raw[-32768:].decode("utf-8", "replace"), truncated=len(raw) > 32768)
+    if error is not None:
+        receipt["error"] = redact(type(error).__name__ + ": " + str(error))[-2000:]
+    path = Path(folder) / ("CLI-OUTPUT-" + uuid.uuid4().hex + ".json")
+    atomic_json(path, receipt, exclusive=True)
+    return artifact(path)
 
 
 def verify_imports(receipt, names, candidate):
@@ -267,7 +335,7 @@ def worker(manifest_path, identifier, token):
     require_disk_space(root, CODE, "ISOLATED_WORKER")
     worker_runtime = dict(imports=imported_modules(WORKER_IMPORTS), shared_root=str(state.ROOT),
                           shared_meter=str(budget.CONDUCTOR / "ledger"), shared_locks=str(lanes.CONDUCTOR / "locks"),
-                          model_invocations=[])
+                          model_invocations=[], cli_outputs=[])
     folder = private / "conductor/state/task-runs" / identifier
     folder.mkdir(parents=True, exist_ok=True)
     atomic_json(folder / "RUNTIME.json", worker_runtime)
@@ -275,6 +343,22 @@ def worker(manifest_path, identifier, token):
     original_sandbox = lanes.sandbox_command
     original_checks = mini_worker.run
     original_publish = draft_publish.publish
+    original_slot = dispatch_worker.slot
+    original_cli_run = lanes.run
+    from providers import Redactor
+    redact_cli = Redactor(root, "")
+    def cli_run(argv, **kwargs):
+        try:
+            result = original_cli_run(argv, **kwargs)
+        except BaseException as error:
+            worker_runtime["cli_outputs"].append(capture_cli_output(folder, error=error,
+                redact=lambda text: redact_cli(dispatch_worker.redact(text))))
+            atomic_json(folder / "RUNTIME.json", worker_runtime)
+            raise
+        worker_runtime["cli_outputs"].append(capture_cli_output(folder, result=result,
+            redact=lambda text: redact_cli(dispatch_worker.redact(text))))
+        atomic_json(folder / "RUNTIME.json", worker_runtime)
+        return result
     def publish(row, cwd, folder, projects):
         publication = original_publish(row, cwd, folder, projects)
         if publication:
@@ -301,6 +385,8 @@ def worker(manifest_path, identifier, token):
          patch.object(draft_publish, "run", side_effect=transport.run), \
          patch.object(draft_publish, "publish", side_effect=publish), \
          patch.object(lanes, "sandbox_command", side_effect=sandbox), \
+         patch.object(dispatch_worker, "slot", side_effect=lambda lane: ready_worker_slot(lane, original_slot)), \
+         patch.object(lanes, "run", side_effect=cli_run), \
          patch.object(mini_worker, "run", side_effect=checks):
         code = dispatch_worker.execute(identifier, token)
     atomic_json(folder / "RUNTIME.json", worker_runtime)
@@ -330,6 +416,12 @@ def verify_job(row, manifest, artifacts):
     require(runtime["shared_root"] == manifest["real_root"] and runtime["shared_meter"] == manifest["shared_meter"] and
             runtime["shared_locks"] == manifest["shared_locks"], "Worker used an isolated budget or lease")
     require(bool(runtime["model_invocations"]), "Private job has no actual CLI invocation receipt")
+    require(len(runtime.get("cli_outputs", [])) == len(runtime["model_invocations"]),
+            "Private CLI transport evidence is incomplete")
+    for output in runtime["cli_outputs"]:
+        receipt = json.loads(checked_artifact(output, private).read_text())
+        require(receipt.get("transport") == "actual-cli-output" and receipt.get("exit") == 0 and
+                not receipt.get("error"), "Private CLI transport did not succeed")
     for invocation in runtime["model_invocations"]:
         expected_model = CURSOR_MODEL if row["worker"] == "cursor" else "OpenAI Codex CLI"
         require(invocation["model"] == expected_model and
@@ -550,7 +642,8 @@ def run_replay(root, candidate, output, timeout=1800):
             for worker_name in ("codex", "cursor"):
                 if worker_name in busy_workers:
                     continue
-                claim = task_queue.claim(private, worker_name)
+                claim, readiness = claim_when_ready(private, worker_name)
+                evidence.setdefault("lane_readiness", {})[worker_name] = readiness
                 if claim:
                     argv = [sys.executable, str(Path(__file__).resolve()), "--worker-manifest", str(manifest_path),
                             "--job", claim["id"], "--token", claim["claim_token"]]

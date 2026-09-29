@@ -1,5 +1,6 @@
 """Local Git/HTTP/sandbox regression checks; no model calls or live services."""
 import copy
+import contextlib
 import hashlib
 import json
 from pathlib import Path
@@ -134,6 +135,8 @@ class LocalTransportTests(unittest.TestCase):
                        shared_root=str(self.root), shared_meter=self.manifest["shared_meter"],
                        shared_locks=self.manifest["shared_locks"],
                        model_invocations=[dict(executable="codex", model="OpenAI Codex CLI")])
+        runtime["cli_outputs"] = [replay.capture_cli_output(self.folder,
+            result=subprocess.CompletedProcess([], 0, "synthetic unit fixture", ""))]
         local = dict(job_id=self.identifier, scope=replay.SCOPE, publication=publication,
                      local_remote=str(self.bare), actual_ref="refs/heads/" + self.branch, actual_sha=self.sha,
                      github_receipt=False, draft_pr=replay.artifact(self.transport.receipt_path("isolated2055/project0", self.branch)))
@@ -158,6 +161,90 @@ class LocalTransportTests(unittest.TestCase):
         replay.git(self.bare, "update-ref", "refs/heads/" + self.branch, self.base)
         with self.assertRaisesRegex(RuntimeError, "ref proof mismatch"):
             replay.verify_job(row, self.manifest, artifacts)
+
+
+class LaneReadinessTests(unittest.TestCase):
+    def test_cooldown_never_claims_or_consumes_attempts_and_does_not_change_cooldown(self):
+        import lanes
+        import budget
+        from task_dispatch import task_queue
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as folder:
+            root = Path(folder)
+            shared, private = root / "shared/conductor", root / "private"
+            shared.mkdir(parents=True)
+            path = shared / "lane-cooldowns.json"
+            path.write_text(json.dumps(dict(cursor=dict(retry_at=1000, detail="actual provider rate limit"))))
+            before = path.read_bytes()
+            row = task_queue.enqueue(private, "test", "request", "Improve WebJam", worker="cursor", kind="coding")
+            with patch.object(lanes, "CONDUCTOR", shared), patch.object(budget, "check") as meter, \
+                 patch.object(task_queue, "claim", wraps=task_queue.claim) as claim:
+                for now in (100, 200, 999):
+                    job, readiness = replay.claim_when_ready(private, "cursor", now=now)
+                    self.assertIsNone(job)
+                    self.assertEqual(readiness, dict(ready=False, reason="shared cooldown", retry_at=1000))
+                claim.assert_not_called()
+                meter.assert_not_called()
+            saved = task_queue.tasks(private)[row["id"]]
+            self.assertEqual(saved["attempts"], 0)
+            self.assertEqual(saved["status"], "queued")
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_budget_or_shared_lease_prevents_claim(self):
+        import lanes
+        import budget
+        import state
+        from task_dispatch import task_queue
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as folder:
+            for reason in ("budget", "lease"):
+                with self.subTest(reason=reason), patch.object(lanes, "CONDUCTOR", Path(folder) / "conductor"), \
+                     patch.object(budget, "check", side_effect=budget.BudgetExceeded("synthetic") if reason == "budget" else None,
+                                  return_value=dict(tier="normal")), \
+                     patch.object(state, "jobs", return_value={}), \
+                     patch.object(task_queue, "tasks", return_value={}), \
+                     patch.object(task_queue, "claim") as claim, \
+                     patch.object(lanes, "slot", side_effect=BlockingIOError("synthetic held lease")):
+                    row, readiness = replay.claim_when_ready(Path(folder) / "private", "cursor")
+                    self.assertIsNone(row)
+                    self.assertFalse(readiness["ready"])
+                    self.assertIn(reason, readiness["reason"])
+                    claim.assert_not_called()
+
+    def test_worker_cooldown_race_uses_real_busy_transition_and_refunds_attempt(self):
+        import dispatch_worker
+        from task_dispatch import task_queue
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as folder:
+            private = Path(folder)
+            row = task_queue.enqueue(private, "test", "request", "Improve WebJam", worker="cursor", kind="coding")
+            claim = task_queue.claim(private, "cursor", identifier=row["id"])
+            self.assertEqual(claim["attempts"], 1)
+            with patch.object(dispatch_worker, "ROOT", private), \
+                 patch.object(dispatch_worker, "lock", side_effect=lambda *a, **k: contextlib.nullcontext()), \
+                 patch.object(dispatch_worker, "slot", side_effect=lambda lane: replay.ready_worker_slot(lane, lambda lane: contextlib.nullcontext())), \
+                 patch.object(replay, "lane_availability", return_value=dict(ready=False, reason="shared cooldown")), \
+                 patch.object(dispatch_worker, "ask") as provider:
+                self.assertEqual(dispatch_worker.execute(row["id"], claim["claim_token"]), 0)
+                provider.assert_not_called()
+            saved = task_queue.tasks(private)[row["id"]]
+            self.assertEqual(saved["status"], "queued")
+            self.assertEqual(saved["attempts"], 0)
+            self.assertFalse(saved.get("execution_started_at"))
+
+    def test_cli_diagnostics_are_bounded_redacted_and_immutable(self):
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as folder:
+            result = subprocess.CompletedProcess([], 1, "credential-value" + "x" * 50000,
+                                                 "provider error credential-value")
+            receipt = replay.capture_cli_output(Path(folder), result=result,
+                                               redact=lambda text: text.replace("credential-value", "[removed]"))
+            path = replay.checked_artifact(receipt, Path(folder))
+            self.assertNotIn("credential-value", path.read_text())
+            saved = json.loads(path.read_text())
+            self.assertEqual(saved["exit"], 1)
+            self.assertTrue(saved["stdout"]["truncated"])
+            self.assertEqual(len(saved["stdout"]["tail"].encode()), 32768)
+            self.assertEqual(saved["stdout"]["sha256"], hashlib.sha256(("[removed]" + "x" * 50000).encode()).hexdigest())
+            second = replay.capture_cli_output(Path(folder), result=result, redact=lambda text: "redacted")
+            self.assertNotEqual(receipt["path"], second["path"])
+            self.assertEqual(path.read_bytes(), Path(receipt["path"]).read_bytes())
 
 
 class SessionAndProofTests(unittest.TestCase):
