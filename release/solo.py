@@ -233,7 +233,8 @@ def capability_replay(client, cid, root):
     checks.append(dict(check='archived lanes cannot claim verified completion', passed=True))
     for prompt in ('Can you send texts?', 'What can you do?', 'Can you remember things?',
                    'Can you start workers?', 'Can you text Instinct?', 'Can you set reminders?',
-                   'Can you watch videos?', 'Can we talk?'):
+                   'Can you watch videos?', 'Can we talk?', 'What does force-push mean?',
+                   'Explain gh pr ready.', 'What does merging a PR mean?'):
         started = time.monotonic()
         value, answer = submit(client, cid, prompt)
         elapsed = time.monotonic() - started

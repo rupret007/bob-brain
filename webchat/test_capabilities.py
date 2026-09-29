@@ -37,6 +37,33 @@ class CapabilityTests(Fixture):
         self.wait()
         self.assertTrue(self.fake.calls)
 
+    def test_git_explanations_answer_the_question_without_execution_or_refusal(self):
+        for prompt, expected in (
+            ('What does force-push mean?', 'remote branch'),
+            ('Explain force push.', 'remote branch'),
+            ('Explain gh pr ready.', 'ready for review'),
+            ('What does undraft mean?', 'ready for review'),
+            ('What does merging a PR mean?', 'target branch'),
+        ):
+            with self.subTest(prompt=prompt):
+                result = self.ask(prompt)['messages'][-1]
+                self.assertEqual(result['provider'], 'capabilities')
+                self.assertIn(expected, result['content'])
+                self.assertNotIn('action_card', result)
+                self.assertFalse(result['attempts'])
+        self.assertFalse(self.fake.calls)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_explanation_words_do_not_hide_execution_requests(self):
+        from app import hard_rule_refusal
+        for prompt in ('Explain force-push, then force-push the branch.',
+                       'What does undraft mean? Undraft it now.',
+                       'Explain gh pr ready and run it.', 'Please merge #158',
+                       'Can you force-push?', 'Run gh pr ready'):
+            with self.subTest(prompt=prompt):
+                self.assertIsNone(topic(prompt))
+                self.assertIsNotNone(hard_rule_refusal(prompt))
+
     def test_capability_answer_revokes_pending_actions_and_memory(self):
         self.ask('remember that this must not be saved')
         conv = self.chat.get(self.identifier)
