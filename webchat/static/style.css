@@ -188,7 +188,7 @@ h1 { font-size: 18px; letter-spacing: -.35px; }
 .field-label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
 .settings-group { margin: 16px 0; }
 .settings-group-title { font-size: 16px; font-weight: 600; margin: 0 0 8px; }
-#conversations {
+#conversations:not(.sr-only) {
   width: 100%;
   min-height: 44px;
   border: 1px solid var(--line);

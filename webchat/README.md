@@ -62,11 +62,11 @@ real audio, interruption and dispatch with recorded microphone fixtures. See
 [`reviews/WEBBOB-VOICE-0927.md`](../reviews/WEBBOB-VOICE-0927.md) for the exact
 proof setup, screenshots and physical-device verification boundary.
 
-The five tabs are Chat, Jobs, Songs, Models and Settings. Jobs shows current
+The four tabs are Chat, Jobs, Models and Settings. Jobs shows current
 workers and saved results; View jobs in Chat opens it without sending a message.
 Models shows current activity and reply availability, with measured usage in
-collapsed details. Songs puts lyrics and Save first, with chords, audio and saved
-versions below. Settings saves your preferred first-choice model on this device.
+collapsed details. Writing help stays in chat. The removed Songs interface does
+not delete previously saved projects. Settings saves your preferred first-choice model on this device.
 Opening these tabs does not request a model answer or change the queue.
 
 ## Conversation and provider behavior
@@ -434,16 +434,18 @@ connection check; it expects `evidence/live-chat.json` from the initial two-turn
 check. Set `BOB_PLAYWRIGHT_MODULE` / `BOB_CHROMIUM_PATH` if using a cached runtime.
 The initial verification record is `conductor/reviews/WEBCHAT-RESULT.md`.
 
-For the five phone tabs, use the isolated proof from the repository checkout:
+For the four phone tabs, use the isolated proof from the repository checkout:
 
 ```sh
 python3 webchat/isolated_tabs_proof.py --output-dir reviews
 ```
 
-It starts an ephemeral loopback listener with private chats, songs, credentials
+It starts an ephemeral loopback listener with private chats, credentials
 and storage. Headless Chromium captures `webbob-tab-<name>-0927.png` for Chat,
-Jobs, Songs, Models and Settings, plus the song editor, and tests phone layouts,
-stale/unavailable status, duplicate rows, song persistence and logout. Screenshots
+Jobs, Models and Settings, and tests phone layouts,
+stale/unavailable status, duplicate rows and logout. The mandatory Chromium/WebKit
+UI test additionally checks that existing private song data remains unchanged and
+that shell navigation makes no song/music/audio requests. Screenshots
 use actual responses from that isolated instance, including read-only host
 activity; regression fixtures run afterward. It launches no model or worker and
 does not restart the live service. Set `BOB_PLAYWRIGHT_MODULE` and

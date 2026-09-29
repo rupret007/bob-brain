@@ -13,8 +13,16 @@ const evidence = { screenshots: [], layouts: [], checks: [], screenshot_data: "A
 const errors = [];
 let browser;
 
+async function until(page, predicate) {
+  // Evaluate the supplied function directly; keep the production CSP enabled.
+  const deadline = Date.now() + 10000;
+  while (!(await page.evaluate(predicate))) {
+    assert(Date.now() < deadline, "Tab proof did not reach the required state");
+    await page.waitForTimeout(50);
+  }
+}
 async function ready(page) {
-  await page.waitForFunction(() => document.querySelector("#send")?.disabled === false
+  await until(page, () => document.querySelector("#message")?.disabled === false
     && !/Checking|Refreshing/.test(document.querySelector("#jobs-notice").textContent));
 }
 async function tab(page, name) {
@@ -27,7 +35,7 @@ async function refresh(page) {
   const response = page.waitForResponse((res) => res.url().includes(jobs ? "/api/jobs/activity" : "/api/overview"));
   await page.locator(jobs ? "#refresh-jobs" : ".main-view:not([hidden]) [data-refresh]").click();
   await response;
-  await page.waitForFunction(() => [...document.querySelectorAll("[data-refresh], #refresh-jobs")].every((button) => !button.disabled));
+  await until(page, () => [...document.querySelectorAll("[data-refresh], #refresh-jobs")].every((button) => !button.disabled));
 }
 async function layout(page, width, name) {
   const metric = await page.evaluate(() => {
@@ -39,9 +47,10 @@ async function layout(page, width, name) {
     const header = document.querySelector(".top-bar").getBoundingClientRect();
     return { header: { y: header.y, height: header.height }, viewport: innerWidth, document: document.documentElement.scrollWidth,
       view: view.scrollWidth, viewWidth: view.clientWidth, buttons,
+      overflowing: [...document.querySelectorAll("body *")].filter(node => node.getBoundingClientRect().right > document.documentElement.clientWidth + 1).map(node => ({tag:node.tagName,id:node.id,right:node.getBoundingClientRect().right})).slice(0,10),
       openDetails: view.querySelectorAll("details[open]").length };
   });
-  assert(metric.document <= width && metric.view <= metric.viewWidth + 1, `${name} overflows at ${width}`);
+  assert(metric.document <= width && metric.view <= metric.viewWidth + 1, `${name} overflows at ${width}: ${JSON.stringify(metric)}`);
   assert(metric.header.y >= 0 && metric.header.height >= 44, `${name} header stays on screen`);
   assert(metric.buttons.every((button) => button.width >= 44 && button.height >= 44 && button.bottom <= 845));
   assert.equal(metric.openDetails, 0, `${name} details start collapsed`);
@@ -102,7 +111,7 @@ async function layout(page, width, name) {
       { job_id: "job-a", title: "Duplicate row", worker: "codex", state: "running", elapsed_seconds: 125, pid: 101 },
       { screen: "lane-unconfirmed", title: "Open session", state: "unverified" },
     ],
-    queued: [{ job_id: "job-a", title: "Duplicate queue row" }, { job_id: "job-b", title: "Check song editor", worker: "cursor" }],
+    queued: [{ job_id: "job-a", title: "Duplicate queue row" }, { job_id: "job-b", title: "Check phone layout", worker: "cursor" }],
     models: { codex: { state: "ready", usage: {} }, minimax: { state: "cooldown", reason: "rate_limit", retry_at: Date.now() / 1000 + 600, usage: { spent_usd: 0, reserved_usd: .25 } },
       gemini: { state: "unchecked" } },
     automation: { launchd_loaded: false, launchd_files_ok: true },
@@ -121,7 +130,7 @@ async function layout(page, width, name) {
   await page.route("**/api/overview*", (route) => route.fulfill({ json: { ...fixture, captured_at: new Date().toISOString() } }));
   await page.route("**/api/jobs/activity", (route) => route.fulfill({ json: { ...jobsFixture, checked_at: Date.now() / 1000 } }));
   await tab(page, "ops"); await refresh(page);
-  assert.equal(await page.locator(".job-card").count(), 2);
+  assert.equal(await page.locator("#live-jobs .job-card").count(), 2);
   assert.equal(await page.locator(".finished-job").count(), 1);
   assert(!(await page.locator("#view-ops").innerText()).includes("Duplicate"));
   assert(!(await page.locator("#view-ops").innerText()).includes("OLD DASHBOARD"));
@@ -162,14 +171,14 @@ async function layout(page, width, name) {
   await refresh(page);
   assert.equal(await page.locator(".lane-card").count(), 0);
   await tab(page, "ops"); await refresh(page);
-  assert.equal(await page.locator(".job-card").count(), 0);
+  assert.equal(await page.locator("#live-jobs .job-card").count(), 0);
   assert.equal(await page.locator(".finished-job").count(), 0);
   assert(await page.locator("#jobs-empty").isHidden());
   for (const route of ["**/api/overview*", "**/api/jobs/activity"]) await page.unroute(route);
   await page.route("**/api/overview*", (route) => route.fulfill({ json: { ...fixture, captured_at: "2020-01-01T00:00:00Z" } }));
   await page.route("**/api/jobs/activity", (route) => route.fulfill({ json: { ...jobsFixture, checked_at: 1 } }));
   await refresh(page);
-  assert.equal(await page.locator(".job-card").count(), 0);
+  assert.equal(await page.locator("#live-jobs .job-card").count(), 0);
   assert((await page.locator("#jobs-notice").textContent()).includes("unavailable"));
   await tab(page, "lanes"); await refresh(page);
   assert.equal(await page.locator(".lane-card").count(), 0);
@@ -203,21 +212,21 @@ async function layout(page, width, name) {
   await tab(page, "chat");
   await page.locator("#message").fill("status");
   await page.locator("#send").click();
-  await page.waitForFunction(() => document.querySelector("#message").value === ""
-    && !document.querySelector("#send").disabled && document.querySelectorAll(".message").length === 2);
+  await until(page, () => document.querySelector("#message").value === ""
+    && !document.querySelector("#message").disabled && document.querySelectorAll(".message").length === 2);
   assert((await page.locator(".message.user").innerText()).includes("status"));
   const conversationId = await page.locator("#conversations").inputValue();
   const realConversation = await (await page.request.get(url + "/api/conversations/" + conversationId)).json();
   assert.equal(realConversation.messages.at(-1).provider, "state");
   assert.equal(realConversation.messages.at(-1).status, "done");
   await page.locator("#open-chats").click();
-  await page.locator("#new-chat").click();
+  await page.locator("#new-chat-dialog").click();
   await page.locator(".welcome").waitFor();
   evidence.checks.push("Real private chat sends a server-owned status reply and starts a new conversation without a model call.");
   await tab(page, "settings");
   await page.route("**/api/logout", (route) => route.fulfill({ status: 503, json: { error: "Unavailable" } }));
   await page.locator("#logout").click();
-  await page.waitForFunction(() => document.querySelector("#settings-notice").textContent.includes("Could not log out"));
+  await until(page, () => document.querySelector("#settings-notice").textContent.includes("Could not log out"));
   assert(await page.locator("#settings-notice").isVisible());
   await page.unroute("**/api/logout");
   await page.locator("#logout").click();
@@ -230,4 +239,4 @@ async function layout(page, width, name) {
   evidence.result = "PASS";
   fs.writeFileSync(path.join(output, "WEBBOB-CLEAN-0927.tabs-evidence.json"), JSON.stringify(evidence, null, 2) + "\n");
   console.log(JSON.stringify({ result: evidence.result, screenshots: evidence.screenshots, layouts: evidence.layouts.length, checks: evidence.checks.length }));
-})().catch((error) => { console.error(error.stack); process.exitCode = 1; }).finally(async () => { if (browser) await browser.close(); });
+})().catch(async (error) => { await browser?.contexts()[0]?.pages()[0]?.screenshot({ path: path.join(output, "failure.png"), animations: "disabled" }).catch(() => {}); console.error(error.stack); process.exitCode = 1; }).finally(async () => { if (browser) await browser.close(); });

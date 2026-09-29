@@ -33,7 +33,9 @@ const config = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
       for (const tab of ['chat','ops','lanes','settings']) {
         await page.locator(`[data-bottom="${tab}"]`).click();
         await page.locator(`[data-view="${tab}"]:not([hidden])`).waitFor();
-        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),`${engine} ${tab} overflows at ${width}`);
+        await page.locator(`[data-view="${tab}"]`).evaluate(view => Promise.all(view.getAnimations().map(animation => animation.finished)));
+        const layout = await page.evaluate(() => ({width: innerWidth, scroll: document.documentElement.scrollWidth}));
+        assert(layout.width <= width && layout.scroll <= width, `${engine} ${tab} overflows at ${width}: ${JSON.stringify(layout)}`);
       }
       await page.locator('[data-bottom="chat"]').click();
       for (const id of ['attach-plus','live-call','send']) {
