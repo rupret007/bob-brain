@@ -75,6 +75,8 @@ class CapabilityTests(Fixture):
         self.assertIn('read-only', reply('Can you text Instinct?', self.root))
         self.assertIn('not phone push', reply('Can you set reminders?', self.root))
         self.assertIn('sampled frames', reply('Can you watch videos?', self.root))
+        self.assertIn('delivery is unconfirmed', reply('Can you send texts?', self.root))
+        self.assertIn('without resending', reply('Can you send texts?', self.root))
 
     def test_worker_capability_uses_current_solo_and_maintenance_markers(self):
         self.assertIn('can be queued', reply('Can you start workers?', self.root))

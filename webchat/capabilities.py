@@ -43,7 +43,8 @@ def reply(text, root):
                      'or review an exact draft before sending through Andrea. Instinct stays read-only. ' + worker),
         'texting': ('Yes—Web Bob supports reading texts and sending a reviewed draft to a direct recipient through '
                     'Andrea’s BlueBubbles bridge. Review the exact recipient and message, then confirm that draft '
-                    'separately; if the bridge is unavailable, it stays unsent. Instinct stays read-only.'),
+                    'separately. A missing delivery receipt means delivery is unconfirmed; use Check delivery on '
+                    'the draft to inspect it without resending. Instinct stays read-only.'),
         'instinct': ('I can read and summarize Instinct’s messages and prepare an unsent reply draft. '
                      'Instinct is read-only here; its drafts cannot be sent from Web Bob.'),
         'memory': ('Ask “remember that…” and I’ll show the memory for your confirmation before saving it locally. '

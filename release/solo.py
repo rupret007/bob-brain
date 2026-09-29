@@ -267,8 +267,14 @@ def delivered_notice_replay(client, root):
     require(answer.get('provider') == 'texting' and 'nothing was resent' in answer['content'].lower() and
             after['drafts'][notice['draft_id']]['state'] == 'sent' and len(after['audit']) == 1 and
             after['audit'][0]['event'] == 'owner_sent_via_andrea', 'Existing verified receipt was not recovered')
+    _, cancelled = submit(client, notice['conversation_id'], 'cancel text draft ' + notice['draft_id'])
+    final = json.loads(path.read_text())['_texting']
+    require(cancelled.get('provider') == 'texting' and 'already verified sent' in cancelled['content'] and
+            'cannot recall' in cancelled['content'] and 'Nothing sent.' not in cancelled['content'] and
+            final == after, 'Cancellation must preserve the verified delivery outcome and consumed consent')
     return [dict(check='existing delivered milestone receipt recovered without another confirmation or send',
-                 passed=True, real_texts_sent=0, additional_confirmations=0)]
+                 passed=True, real_texts_sent=0, additional_confirmations=0),
+            dict(check='cancel after delivery preserves the verified outcome and makes no recall claim', passed=True)]
 
 
 def instinct_replay(client, cid):

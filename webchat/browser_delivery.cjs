@@ -38,6 +38,13 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       const card = page.locator(`.text-draft-card[data-draft-id="${draft.id}"]`);
       await card.getByRole('button', {name: 'Check delivery', exact: true}).waitFor();
       assert.equal(await card.locator('.text-confirmation').count(), 0);
+      for (const command of ['cancel text', 'yes wbtxt-invalid']) {
+        const answer = (await say(command)).messages.at(-1);
+        assert(answer.content.includes('Delivery remains unconfirmed'));
+        assert(!answer.content.includes('Nothing sent.'));
+        assert.equal(await card.getAttribute('data-state'), 'delivery_unconfirmed');
+        await card.getByRole('button', {name: 'Check delivery', exact: true}).waitFor();
+      }
       for (const width of [320, 390, 430]) {
         await page.setViewportSize({width, height: 844});
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
@@ -49,6 +56,10 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       assert((await (await response).json()).messages.at(-1).content.includes('nothing was resent'));
       await page.locator(`.text-draft-card[data-draft-id="${draft.id}"][data-state="sent"]`).waitFor();
       assert.equal(await card.getByRole('button', {name: 'Check delivery', exact: true}).count(), 0);
+      const cancelled = (await say('cancel text draft ' + draft.id)).messages.at(-1);
+      assert(cancelled.content.includes('already verified sent'));
+      assert(cancelled.content.includes('cannot recall'));
+      assert(!cancelled.content.includes('Nothing sent.'));
       await page.reload();
       await page.locator(`.text-draft-card[data-draft-id="${draft.id}"][data-state="sent"]`).waitFor();
       await page.setViewportSize({width: 390, height: 844});
@@ -56,7 +67,7 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       const screenshot = engine + '-delivery-recovered.png';
       await page.screenshot({path: path.join(config.output, screenshot), animations: 'disabled'});
       assert.deepEqual(errors, []);
-      results.push({engine, passed: true, screenshot, checks: ['uncertain receipt', 'no reusable confirmation', 'check after reload', 'verified receipt without resend', 'persisted sent card', '320/390/430 layout']});
+      results.push({engine, passed: true, screenshot, checks: ['uncertain receipt', 'cancel and malformed yes preserve uncertain outcome', 'no reusable confirmation', 'check after reload', 'verified receipt without resend', 'cannot cancel a sent message', 'persisted sent card', '320/390/430 layout']});
       await context.close();
     } finally { await browser.close(); }
   }

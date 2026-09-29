@@ -394,6 +394,33 @@ class TextingTests(unittest.TestCase):
         self.assertEqual(len(self.mock.sends), 1)
         self.assertEqual(self.mock.calls.count(("POST", "/web-bob/v1/confirm")), 1)
 
+    def test_cancel_and_malformed_approval_preserve_observed_delivery_outcome(self):
+        self.mock.enable_web_bob_send = True
+        for lost in (True, False):
+            self.mock.drop_send_response = lost
+            card = self.draft()
+            self.say(card['confirm_message'])
+            expected = 'delivery_unconfirmed' if lost else 'sent'
+            outcome = 'Delivery remains unconfirmed' if lost else 'already verified sent'
+            calls = list(self.mock.calls)
+            audit = copy.deepcopy(self.private()['audit'])
+            for command in ('cancel text', 'cancel', 'never mind',
+                            'cancel text draft ' + card['id'], 'edit text draft ' + card['id'],
+                            'yes wbtxt-invalid', card['confirm_message'] + ' please', 'yes'):
+                with self.subTest(lost=lost, command=command):
+                    answer = self.say(command)['messages'][-1]
+                    self.assertEqual(answer['provider'], 'texting')
+                    self.assertIn(outcome, answer['content'])
+                    self.assertNotIn('Nothing sent.', answer['content'])
+                    self.assertNotIn('Text draft cancelled', answer['content'])
+                    self.assertEqual(self.private()['drafts'][card['id']]['state'], expected)
+                    self.assertEqual(self.private()['audit'], audit)
+                    self.assertEqual(self.mock.calls, calls)
+                    self.assertIsNone(self.private()['drafts'][card['id']]['token'])
+        self.assertEqual(len(self.mock.sends), 2)
+        self.assertEqual(self.mock.calls.count(('POST', '/web-bob/v1/confirm')), 2)
+        self.assertFalse(self.providers.calls)
+
     def test_invalid_andrea_receipts_do_not_claim_sent_or_not_sent(self):
         self.mock.enable_web_bob_send = True
         for receipt in ({}, {"ok": False}, {"ok": True}, {"ok": True, "messageGuid": ""},
