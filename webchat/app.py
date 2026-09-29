@@ -550,6 +550,15 @@ class Chat(TaskDispatch):
                 for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
                     conversation.pop(key, None)
                 return self.intent_reply(conversation, capability, provider='capabilities')
+            from memory_view import matches as memory_view_matches, inspect as inspect_memory
+            if not public_attachments and worker is None and memory_view_matches(text):
+                self.texting.invalidate(conversation)
+                for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
+                    conversation.pop(key, None)
+                for message in conversation['messages']:
+                    if message.get('request_id') == request_id:
+                        message['private_memory'] = True
+                return self.intent_reply(conversation, inspect_memory(self.ledger_root(identifier), self.redact), provider='memory')
             # Text intent and confirmations never enter generic job/provider routing.
             def persist_texting(value):
                 for key in ("pending_job", "pending_job_id", "pending_council", "pending_council_id"):

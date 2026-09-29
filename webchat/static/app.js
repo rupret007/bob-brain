@@ -346,6 +346,10 @@ if ($("login-form")) {
     }
   });
   $("provider-choice").addEventListener("change", () => remember("bob.provider", $("provider-choice").value));
+  $("show-memory")?.addEventListener("click", () => {
+    setBottomTab("chat");
+    submitChatText("show my saved memories");
+  });
   function render(conversation) {
     if (conversation.id !== current) return;
     const nextRevision = JSON.stringify(conversation);
@@ -371,11 +375,12 @@ if ($("login-form")) {
       const article = document.createElement("article");
       article.className = `message ${message.role} ${pending ? "pending" : ""} ${message.status === "error" ? "error" : ""}`;
       if (message.texting) article.classList.add("texting");
+      if (message.private_memory) article.classList.add("private-memory");
       if (message.role === "user") article.setAttribute("aria-label", "You");
       else article.setAttribute("aria-label", message.provider ? `Assistant, ${providers[message.provider] || "Bob"}` : "Assistant");
       const body = document.createElement("div"); body.className = "body";
       if (pending) body.textContent = providers[message.provider] ? `${providers[message.provider]} is replying…` : "One moment…";
-      else if (message.role === "assistant" && !message.texting) body.innerHTML = renderMarkdown(message.content || "");
+      else if (message.role === "assistant" && !message.texting && !message.private_memory) body.innerHTML = renderMarkdown(message.content || "");
       else body.textContent = message.content;
       article.append(body);
       appendMessageAttachments(article, message.attachments);

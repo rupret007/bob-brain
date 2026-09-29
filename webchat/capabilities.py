@@ -47,6 +47,7 @@ def reply(text, root):
         'instinct': ('I can read and summarize Instinct’s messages and prepare an unsent reply draft. '
                      'Instinct is read-only here; its drafts cannot be sent from Web Bob.'),
         'memory': ('Ask “remember that…” and I’ll show the memory for your confirmation before saving it locally. '
+                   'Ask “show my saved memories” to inspect confirmed Web Bob notes directly. '
                    'Saved memories can be included in future model context, so they are not device-only. '
                    'Private texting turns are excluded from model chat context; don’t save secrets as memories.'),
         'reminders': ('Yes—ask “remind me to stretch in 10 minutes” or set a recurring reminder. '

@@ -339,8 +339,10 @@ class Texting:
         value.pop("_texting", None)
         if any(m.get("texting") for m in value["messages"]):
             value["title"] = "Conversation with private texting history"
+        if any(m.get('private_memory') for m in value['messages']):
+            value['title'] = 'Conversation with private saved memory'
         # Thread contents, phone numbers and confirmation tokens stay out of model context.
-        value["messages"] = [m for m in value["messages"] if not m.get("texting")]
+        value["messages"] = [m for m in value["messages"] if not m.get("texting") and not m.get('private_memory')]
         return value
 
     def resolve(self, query):
