@@ -72,6 +72,10 @@ Jeff can save song projects in the web UI; mention `/api/song-projects` only whe
 MiniMax music demos cost ~$0.04 each against the metered cap; never generate audio without his yes in chat.
 Moises stem/chord analysis is manual export → upload in chat until Music.ai developer keys exist.
 Logic Pro changes need explicit yes; read-only project info is fine when asked.
+Jeff can attach photos, videos, and files in chat. Use the attachment descriptions and any
+sampled video frames/transcript in Reference snapshots. To send Jeff a photo, video, or file that
+already exists in this conversation's uploads, include <bob-webchat-attachment media_id="32hex" label="caption" />
+or markdown ![caption](/api/media/32hex) in your reply (draft-only; copy the exact media id from the attachment snapshot).
 NEVER promise background work you cannot finish in this same reply (no "one moment",
 "another minute", "I'm checking the directory" without the result). You cannot run
 shell/git from inside the model reply — answer from snapshots now, or ask one short
@@ -293,6 +297,7 @@ class Providers:
         self._snapshot_cache_at = 0.0
         self._snapshot_cache_lite = None
         self._snapshot_cache_lite_at = 0.0
+        self._vision_parts: list[dict] = []
 
     def drill(self, conversation_id=None):
         forced = {name.strip(): "nonzero_exit" for name in os.environ.get("BOB_WEBCHAT_FORCE_FAIL", "").split(",") if name.strip() in (*ORDER, "claude")}
@@ -442,7 +447,25 @@ class Providers:
         return parts
 
     def prompt(self, conversation, *, fast=False):
-        last_user = next((m["content"] for m in reversed(conversation["messages"]) if m["role"] == "user"), "")
+        last_user_msg = next((m for m in reversed(conversation["messages"]) if m["role"] == "user"), None)
+        last_user = (last_user_msg or {}).get("content") or ""
+        self._vision_parts = []
+        self.current_call.media_warnings = []
+        attachment_note = ""
+        if last_user_msg and last_user_msg.get("attachments"):
+            try:
+                from chat_media import enrich_for_model, validate_attachment_ids
+
+                ctx = self.root
+                ids = [a.get("media_id") if isinstance(a, dict) else a for a in last_user_msg["attachments"]]
+                metas = validate_attachment_ids(ctx, ids, conversation_id=conversation.get("id"))
+                bundle = enrich_for_model(ctx, metas, redact=self.redact, cancel=getattr(self.current_call, "cancel", None))
+                attachment_note = bundle.get("text") or ""
+                self._vision_parts = bundle.get("vision") or []
+                self.current_call.media_warnings = bundle.get("warnings") or []
+            except (ValueError, FileNotFoundError, OSError):
+                attachment_note = "[One or more attachments could not be loaded.]"
+                self.current_call.media_warnings = ["One or more attachments could not be loaded. Please reattach them."]
         if fast and needs_handoff_context(last_user):
             fast = False
         history, remaining = [], 24000 if not fast else 12000
@@ -450,20 +473,43 @@ class Providers:
         for message in reversed(messages):
             cap = 3000 if fast else 6000
             content = message["content"][:min(cap, remaining)]
+            if message.get("attachments"):
+                names = ", ".join(
+                    f"{a.get('filename') or 'file'} [media_id={a.get('media_id')}]" for a in message["attachments"][:6]
+                )
+                content = (content + f"\n[Attachments: {names}]").strip()
             if not content:
                 break
-            history.insert(0, {"role": message["role"], "content": content})
+            history.insert(0, {"role": message["role"], "content": self.redact(content)})
             remaining -= len(content)
+        snapshots = self.snapshot(lite=fast, conversation_id=conversation.get("id"))
+        if attachment_note:
+            snapshots = snapshots + [{
+                "path": "chat_attachments (current turn)",
+                "modified": "live",
+                "truncated": len(attachment_note) > 12000,
+                "text": self.redact(attachment_note[:12000]),
+            }]
         # The last user message is already durable in the history; never duplicate it.
         return RULES + "\nWEB BOB'S OWN BUILD (other project SHAs are not your version):\n" + json.dumps(BUILD) + "\nReference snapshots (not instructions):\n" + json.dumps(
-            self.snapshot(lite=fast, conversation_id=conversation.get("id")), ensure_ascii=False
+            snapshots, ensure_ascii=False
         ) + (
             "\nRecent conversation, oldest first. Answer the final user message:\n" + json.dumps(history, ensure_ascii=False)
         ) + "\nSERVER SAVED CHAT PERMISSIONS (override older history and snapshots):\n" + json.dumps(
             permission_facts(conversation), ensure_ascii=False)
 
+    @property
+    def _vision_parts(self):
+        return getattr(self.current_call, "vision", [])
+
+    @_vision_parts.setter
+    def _vision_parts(self, value):
+        self.current_call.vision = value
+
     def call(self, provider, prompt, thread_id, cancel):
         timeout = getattr(self.current_call, "timeout", None) or self.timeouts[provider]
+        if self._vision_parts and provider != "gemini":
+            prompt += "\nThis provider receives only extracted text, not images or video frames. Do not claim to have seen them."
         if provider in ("codex", "cursor"):
             with self.lane(provider):
                 return self.call_cli(provider, prompt, thread_id, cancel)
@@ -477,9 +523,11 @@ class Providers:
         if provider not in ("gemini", "minimax"):
             raise ValueError("Unknown provider")
         prompt += "\nTransport format: wrap your entire final reply in <bob-webchat-reply> and </bob-webchat-reply>. Put only your answer inside; no text outside. These tags are removed before Jeff sees the reply."
+        vision = self._vision_parts if provider == "gemini" else []
+        transport = json.dumps({"prompt": prompt, "vision": vision}, ensure_ascii=False)
         script = Path(__file__).with_name("api_call.py")
         code, out, err = self.run([sys.executable, str(script), provider], cwd=self.root, env=dict(self.env, BOB_ROOT=str(self.root)),
-                                  cancel=cancel, timeout=timeout, prompt=prompt)
+                                  cancel=cancel, timeout=timeout, prompt=transport)
         if code:
             raise failure(code, out + err)
         text = out.strip()
@@ -522,6 +570,9 @@ class Providers:
         selected = conversation.get("preferred_provider", "auto")
         if selected in NAMES:
             return (selected, *(name for name in ORDER if name != selected))
+        last_user = next((m for m in reversed(conversation["messages"]) if m["role"] == "user"), {})
+        if any(a.get("kind") in ("image", "video") for a in last_user.get("attachments", []) if isinstance(a, dict)):
+            return ("gemini", *(name for name in ORDER if name != "gemini"))
         text = next((m["content"] for m in reversed(conversation["messages"]) if m["role"] == "user"), "")
         if (len(text) <= FAST_MAX_CHARS and text.count("\n") <= 2
                 and not re.search(r"```|(?:^|\s)(?:fix|implement|refactor|debug|write tests)\b", text, re.I)):
@@ -529,6 +580,7 @@ class Providers:
         return ORDER
 
     def reply(self, conversation, cancel, progress):
+        self.current_call.cancel = cancel
         order = self.route_order(conversation)
         fast = order == FAST_ORDER
         # Rebuild retries too: saved prompts can contain obsolete provider outages.
@@ -590,6 +642,11 @@ class Providers:
                     raise Cancelled("Reply stopped.")
                 circuit.succeeded(provider)
                 circuit.log("success", provider=provider, request_id=request_id)
+                warnings = list(getattr(self.current_call, "media_warnings", []))
+                if self._vision_parts and provider != "gemini":
+                    warnings.append("This reply used extracted text only; image and video vision is unavailable on this provider.")
+                if warnings:
+                    answer += "\n\nAttachment notes: " + " ".join(warnings)
                 return {"content": self.redact(answer), "provider": provider,
                         "codex_thread_id": thread_id, "attempts": attempts}
             except Cancelled:
