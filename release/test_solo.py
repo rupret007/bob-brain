@@ -189,6 +189,26 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
             solo.verify_gates('a' * 40, 'voice', checks, review)
 
+    def test_improve_requires_voice_availability_browser_without_replacing_real_audio(self):
+        self.check['feature'] = 'improve'
+        for name in ('media-browser', 'voice-js', 'voice-browser', 'instinct-browser',
+                     'remaining-browser', 'cold-browser', 'bridge-contract'):
+            self.check['results'][name] = self.check['results']['browser']
+        sha = solo.andrea_pin()['sha']
+        self.check['andrea'] = dict(sha=sha, results=[])
+        solo.atomic_json(self.folder / 'bridge-contract.json', dict(all_pass=True, andrea_sha=sha, real_texts_sent=0))
+        checks = self.folder / 'checks.json'
+        solo.atomic_json(checks, self.check)
+        with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
+            solo.verify_checks('a' * 40, 'improve', checks)
+        self.check['results']['voice-availability-browser'] = self.check['results']['browser']
+        solo.atomic_json(checks, self.check)
+        solo.verify_checks('a' * 40, 'improve', checks)
+        del self.check['results']['voice-browser']
+        solo.atomic_json(checks, self.check)
+        with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
+            solo.verify_checks('a' * 40, 'improve', checks)
+
     def test_instinct_requires_read_only_browser_proof(self):
         self.check['feature'] = self.review['feature'] = 'instinct'
         for name in ('media-browser', 'voice-js', 'voice-browser'):

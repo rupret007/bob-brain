@@ -520,6 +520,7 @@ def checks(root, feature):
         commands['remaining-browser'] = [sys.executable, 'webchat/remaining_proof.py', '--output-dir', str(out / 'remaining-browser')]
     if feature == 'improve':
         commands['cold-browser'] = [sys.executable, 'webchat/cold_start_proof.py', '--output-dir', str(out / 'cold-browser')]
+        commands['voice-availability-browser'] = [sys.executable, 'webchat/voice_availability_proof.py', '--output-dir', str(out / 'voice-availability-browser')]
     for path in sorted((CODE / 'webchat').glob('test_*.mjs')):
         commands[path.stem] = ['node', str(path)]
 
@@ -592,6 +593,7 @@ def verify_checks(sha, feature, check_path):
         required.add('remaining-browser')
     if feature == 'improve':
         required.add('cold-browser')
+        required.add('voice-availability-browser')
     if ORDER.index(feature) >= ORDER.index('bridge'):
         required.add('bridge-contract')
         require(check.get('andrea', {}).get('sha') == andrea_pin()['sha'], 'Andrea exact-tip evidence missing')

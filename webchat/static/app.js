@@ -872,7 +872,7 @@ if ($("login-form")) {
       $("end-call").textContent = voice.active ? "Hang up" : "Back to chat";
       $("resume-call").hidden = phase !== "paused";
       $("retry-voice-save").hidden = phase !== "unsaved";
-      $("call-hint").textContent = voice.active ? "Your transcript saves to this chat." : "You can start another call from the waveform button.";
+      $("call-hint").textContent = voice.active ? "Your transcript saves to this chat." : "Choose Back to chat, then use the waveform button to call again.";
     },
     onTranscript(entries) {
       const rows = entries.filter(e => e.content.trim()).map(entry => {

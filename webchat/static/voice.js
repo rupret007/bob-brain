@@ -79,7 +79,10 @@ class BobVoice {
         }
       };
       s.socket.onerror = () => this.fail(s, "The voice connection failed. Check your connection and try again.");
-      s.socket.onclose = () => this.fail(s, "Call disconnected. Tap the waveform to call again.");
+      s.socket.onclose = event => this.fail(s,
+        event?.code === 1011 && /\bprepayment credits are depleted\b/i.test(event.reason || "")
+          ? "Live voice is out of prepaid credits. Restore credits in Google AI Studio before calling again."
+          : "Call disconnected. Return to chat to start another call.");
       s.expiry = setTimeout(() => this.fail(s, "This 10-minute call has ended. Tap the waveform to continue."), Math.max(0, info.expires_at * 1000 - Date.now()));
       s.flushTimer = setInterval(() => this.save(s), 700);
       s.pulseTimer = setInterval(async () => {
