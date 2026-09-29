@@ -5,6 +5,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import Mock
 from result_acceptance import ResultRejected, accept
+from api_worker import render_report
 
 
 class SoloRegressionTests(unittest.TestCase):
@@ -14,7 +15,8 @@ class SoloRegressionTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(fixture[key].encode()).hexdigest(), fixture[key + '_sha256'])
         reviewer = Mock(return_value='{"accepted":true,"reason":"looks fine"}')
         with self.assertRaisesRegex(ResultRejected, 'Regression draft contradicts literal guard outcome'):
-            accept(fixture['prompt'], fixture['answer'], reviewer, kind=fixture['kind'])
+            rendered = render_report(fixture['prompt'], fixture['answer'], kind=fixture['kind'])
+            accept(fixture['prompt'], rendered, reviewer, kind=fixture['kind'])
         reviewer.assert_not_called()
 
 

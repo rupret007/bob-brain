@@ -143,8 +143,11 @@ def checks(root, feature):
         env = {k: v for k, v in os.environ.items() if not any(s in k.upper() for s in ('KEY', 'TOKEN', 'SECRET', 'PASSWORD'))}
         env.pop('PYTHONPATH', None)
         env.pop('NODE_PATH', None)
+        # macOS /var is a symlink: existing repo identity tests expect canonical
+        # temporary paths, matching the predecessor release harness.
+        env['TMPDIR'] = '/private/tmp'
         env['BOB_PLAYWRIGHT_MODULE'] = str(root / 'conductor/webchat/node_modules/playwright')
-        with tempfile.TemporaryDirectory(prefix='solo-tests-') as tmp, log.open('w') as stream:
+        with tempfile.TemporaryDirectory(prefix='solo-tests-', dir='/private/tmp') as tmp, log.open('w') as stream:
             env['BOB_ROOT'] = tmp
             result = subprocess.run(argv, cwd=CODE, env=env, stdout=stream, stderr=subprocess.STDOUT, timeout=900)
         body = log.read_text()
