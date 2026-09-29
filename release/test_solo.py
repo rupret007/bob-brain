@@ -126,6 +126,44 @@ class EvidenceTests(unittest.TestCase):
     def test_complete_evidence_passes_without_council(self):
         self.assertIn('self_review_sha256', self.verify())
 
+    def attempts(self, states):
+        for index, passed in enumerate(states, 1):
+            folder = self.folder / f'attempt-{index:04d}'
+            folder.mkdir()
+            check = dict(self.check, all_pass=passed)
+            solo.atomic_json(folder / 'checks.json', check)
+        return folder / 'checks.json'
+
+    def test_two_complete_latest_predeploy_greens_required(self):
+        path = self.attempts([False, True, True])
+        pair = solo.consecutive_checks('a' * 40, 'texting', path)
+        self.assertEqual(len(pair), 2)
+        self.assertEqual(pair[-1]['sha256'], solo.digest(path))
+
+    def test_single_predeploy_green_is_not_enough(self):
+        path = self.attempts([True])
+        with self.assertRaisesRegex(Exception, 'Two consecutive'):
+            solo.consecutive_checks('a' * 40, 'texting', path)
+
+    def test_failure_between_predeploy_greens_is_not_skipped(self):
+        path = self.attempts([True, False, True])
+        with self.assertRaisesRegex(Exception, 'failed'):
+            solo.consecutive_checks('a' * 40, 'texting', path)
+
+    def test_earlier_green_pair_cannot_override_latest_failure(self):
+        self.attempts([True, True, False])
+        with self.assertRaisesRegex(Exception, 'latest'):
+            solo.consecutive_checks('a' * 40, 'texting', self.folder / 'attempt-0002/checks.json')
+
+    def test_both_predeploy_suite_hashes_are_rechecked(self):
+        path = self.attempts([True, True])
+        earlier = self.folder / 'attempt-0001/checks.json'
+        check = json.loads(earlier.read_text())
+        check['results']['webchat']['log_sha256'] = 'changed'
+        solo.atomic_json(earlier, check)
+        with self.assertRaisesRegex(Exception, 'changed'):
+            solo.consecutive_checks('a' * 40, 'texting', path)
+
     def test_stale_candidate_review_rejected(self):
         self.review['sha'] = 'b' * 40
         with self.assertRaisesRegex(Exception, 'Stale'):
