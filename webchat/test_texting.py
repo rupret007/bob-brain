@@ -525,6 +525,24 @@ class TextingTests(unittest.TestCase):
         with patch.dict(os.environ, {"http_proxy": "http://127.0.0.1:1", "HTTP_PROXY": "http://127.0.0.1:1"}):
             self.assertEqual(len(self.texting.bluebubbles.chats()), 2)
 
+    def test_slow_read_budget_does_not_extend_or_retry_sends(self):
+        from unittest.mock import MagicMock
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'{"status":200,"data":[]}'
+        def delayed(request, timeout):
+            if timeout < 6:
+                raise TimeoutError('simulated slow local transport')
+            return response
+        opener = MagicMock()
+        opener.open.side_effect = delayed
+        with patch('texting.urllib.request.build_opener', return_value=opener):
+            self.assertEqual(self.texting.bluebubbles.chats(), [])
+            self.assertEqual(opener.open.call_args.kwargs['timeout'], 12)
+            self.assertIsNone(self.texting.andrea.deliver('iMessage;-;fixture', 'Test'))
+            self.assertEqual(opener.open.call_args.kwargs['timeout'], 5)
+            self.assertEqual(opener.open.call_count, 2)
+
     def test_andrea_authenticated_health_and_missing_bridge_honesty(self):
         content = self.say("texting status")["messages"][-1]["content"]
         self.assertIn("reachable", content)

@@ -66,14 +66,14 @@ def local_url(value):
     return value.rstrip("/")
 
 
-def request_json(base, path, *, data=None, headers=None):
+def request_json(base, path, *, data=None, headers=None, timeout=5):
     # No environment proxies, redirects, retries, or URL supplied by a chat.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     request = urllib.request.Request(local_url(base) + path,
         data=json.dumps(data).encode() if data is not None else None,
         headers={"Content-Type": "application/json", **(headers or {})})
     try:
-        with opener.open(request, timeout=5) as response:
+        with opener.open(request, timeout=timeout) as response:
             raw = response.read(MAX_RESPONSE + 1)
         if len(raw) > MAX_RESPONSE:
             raise TextingError("The messaging response was too large. Try a smaller thread.")
@@ -110,7 +110,10 @@ class BlueBubbles:
         except (sqlite3.Error, OSError, ValueError, TypeError):
             raise TextingError("BlueBubbles read configuration is unavailable. Nothing was sent.") from None
         query = urllib.parse.urlencode({"password": password, **(params or {})})
-        result = request_json(f"http://127.0.0.1:{port}", "/api/v1" + path + "?" + query, data=data)
+        # Large recent-thread queries can exceed five seconds while Messages is
+        # syncing. Reads get a bounded longer budget; sends retain their original
+        # timeout and are never retried after an uncertain delivery outcome.
+        result = request_json(f"http://127.0.0.1:{port}", "/api/v1" + path + "?" + query, data=data, timeout=12)
         rows = result.get("data")
         if result.get("status", 200) != 200 or not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
             raise TextingError("BlueBubbles returned an invalid read response. Nothing was sent.")
