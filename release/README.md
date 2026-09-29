@@ -55,6 +55,28 @@ endpoints. Two consecutive rounds must pass. Any post-activation failure restore
 and authenticates the immediate predecessor before publishing failure evidence.
 `rollback --root ROOT --feature FEATURE --record RELEASE_JSON` provides recovery.
 
+The current controller holds `conductor/locks/webbob-release.lock` through
+preflight, snapshots, activation, both live rounds, recovery and publication.
+A competing deployment or rollback fails before changing pins or evidence.
+Nested recovery keeps the same ownership; exec children do not inherit it.
+The private regular lock inode is permanent: never delete it to clear a busy
+release. Kernel cleanup releases ownership when the controller exits.
+
+Recovery accepts only that transaction's candidate, saved original pins or
+predecessor snapshots, with matching build identities. Mixed pins from partial
+activation are recoverable. An old rollback refuses to replace another release,
+including a different deployment of the same SHA. Legacy receipts without
+original pins can still recover their own candidate or predecessor snapshots;
+an unfamiliar source requires investigation instead of guessing ownership.
+
+This serializes controllers running this implementation. Historical frozen
+scripts and external operators do not acquire this lock. It does not drain
+calls/replies, protect against a supervisor restart, or recover an activation
+after SIGKILL. A killed controller releases the lock but still requires explicit
+verified recovery. Shared work admission, a durable activation journal and
+supervisor recovery remain necessary for atomic deployment drain; current
+production and this candidate do not declare that compatibility.
+
 Always maintain at least 5 GiB free; recovery reserves and bounded atomic
 evidence writes are retained from the existing release tooling. Authentication
 secrets never appear in arguments, evidence or source control.

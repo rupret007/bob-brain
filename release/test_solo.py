@@ -32,7 +32,19 @@ class TransactionTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.path = self.root / 'record.json'
-        self.record = dict(previous='b' * 40, sha='c' * 40, snapshots={'webchat': 'frozen-predecessor'})
+        state = self.root / 'conductor/state'
+        state.mkdir(parents=True)
+        candidate = self.root / 'candidate'
+        candidate.mkdir()
+        (candidate / 'webbob-build.json').write_text(json.dumps(dict(sha='c' * 40)))
+        snapshots = {}
+        for name in ('webchat', 'dispatch'):
+            prior = self.root / ('previous-' + name)
+            prior.mkdir()
+            (prior / 'webbob-build.json').write_text(json.dumps(dict(sha='b' * 40)))
+            snapshots[name] = str(prior)
+            (state / (name + '-code-root')).write_text(str(candidate.resolve()) + '\n')
+        self.record = dict(previous='b' * 40, sha='c' * 40, snapshots=snapshots, rollback=str(self.root))
         for name in ('require_disk_space', 'release_recovery', 'restart', 'versions'):
             p = patch.object(solo, name)
             setattr(self, name, p.start())

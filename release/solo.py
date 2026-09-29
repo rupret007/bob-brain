@@ -24,7 +24,8 @@ from datetime import datetime, timezone
 CODE = Path(__file__).resolve().parents[1]
 if __name__ == '__main__' and '--root' in sys.argv:
     os.environ['BOB_ROOT'] = sys.argv[sys.argv.index('--root') + 1]
-sys.path[:0] = [str(CODE / d) for d in ('webchat', 'services', 'state', 'reviews')]
+sys.path[:0] = [str(CODE / d) for d in ('webchat', 'services', 'state', 'reviews', 'release')]
+from release_ownership import serialized
 from texting_deploy_record import atomic_json, atomic_text, require_disk_space, reserve_recovery, release_recovery
 from live_redeploy_check import Client, require
 
@@ -672,6 +673,7 @@ def versions(root, expected):
     return result
 
 
+@serialized
 def restart(root, pins):
     """Only the web server restarts; no job-runner or council resurrection."""
     from state import lock
@@ -723,10 +725,28 @@ def restart(root, pins):
         return dict(before=before, after=after, restarted=['svc-webchat'])
 
 
+def verify_recovery_pins(root, record):
+    """An old rollback must never replace a newer release, even at the same SHA."""
+    candidate = Path(record['rollback']) / 'candidate'
+    for name in ('webchat', 'dispatch'):
+        current = Path((root / 'conductor/state' / (name + '-code-root')).read_text().strip())
+        allowed = {candidate.resolve(): record['sha'],
+                   Path(record['snapshots'][name]).resolve(): record['previous']}
+        original = record.get('original_pins', {}).get(name)
+        if original:
+            allowed[Path(original).resolve()] = record['previous']
+        require(current.is_absolute() and current.resolve() in allowed,
+                'Rollback refused: code pin belongs to an unrelated release')
+        require(json.loads((current / 'webbob-build.json').read_text())['sha'] == allowed[current.resolve()],
+                'Rollback refused: pinned build identity changed')
+
+
+@serialized
 def recover(root, record):
-    release_recovery(record)
+    verify_recovery_pins(root, record)
     for name, expected in record.get('snapshot_hashes', {}).items():
         require(source_digest(Path(record['snapshots'][name])) == expected, 'Rollback snapshot changed: ' + name)
+    release_recovery(record)
     unchanged = False
     try:
         versions(root, record['previous'])
@@ -741,6 +761,7 @@ def recover(root, record):
     record.update(rolled_back=True, all_pass=False, status='ROLLED_BACK')
 
 
+@serialized
 def transaction(root, record, path, activate, live, publish=atomic_json, final_path=None):
     """Any post-activation failure, including final publication, restores predecessor."""
     activated = False
@@ -778,6 +799,7 @@ def transaction(root, record, path, activate, live, publish=atomic_json, final_p
         raise
 
 
+@serialized
 def deploy(args):
     root = args.root
     sha = identity()
@@ -819,13 +841,14 @@ def deploy(args):
     folder = root / 'rollbacks' / ('webbob-solo-' + args.feature + '-' + stamp)
     folder.mkdir(mode=0o700)
     record = dict(sha=sha, feature=args.feature, previous=args.previous, gates=gates, draft_pr=args.pr,
-                  rollback=str(folder), all_pass=False, activated=False, snapshots={}, at=time.time())
+                  rollback=str(folder), all_pass=False, activated=False, snapshots={}, original_pins={}, at=time.time())
     if index:
         shutil.copyfile(predecessor, folder / 'predecessor-receipt.json')
         record['predecessor_receipt'] = str(folder / 'predecessor-receipt.json')
     for name in ('webchat', 'dispatch'):
         prior = Path((root / 'conductor/state' / (name + '-code-root')).read_text().strip())
         require(json.loads((prior / 'webbob-build.json').read_text())['sha'] == args.previous, 'Pin baseline mismatch')
+        record['original_pins'][name] = str(prior)
         snapshot = folder / ('previous-' + name)
         shutil.copytree(prior, snapshot, ignore=shutil.ignore_patterns('.git', '.password', '.session-secret',
             'keys.env', '.env', '.env.*', 'sessions', 'node_modules', '__pycache__', 'uploads', 'evidence', 'task-runs'))
@@ -872,6 +895,13 @@ def deploy(args):
     print('LIVE_PASS ' + sha + ' rollback=' + str(folder), flush=True)
 
 
+@serialized
+def rollback(root, path):
+    record = json.loads(path.read_text())
+    recover(root, record)
+    atomic_json(path, record)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('check', 'deploy', 'rollback'))
@@ -894,9 +924,7 @@ def main():
     elif args.action == 'deploy':
         deploy(args)
     else:
-        record = json.loads(args.record.read_text())
-        recover(args.root, record)
-        atomic_json(args.record, record)
+        rollback(args.root, args.record)
 
 
 if __name__ == '__main__':
