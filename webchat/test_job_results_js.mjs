@@ -135,13 +135,15 @@ for (const location of ["Jobs", "chat"]) {
     const retryButton = {isConnected: true, focus() { assert.fail("Retry button received focus after dismissal"); }};
     let restored = 0;
     const replacement = {dataset: location === "Jobs" ? {resultUrl: url} : {jobId: "one"},
+      getClientRects() { return [{}]; },
       focus() { restored++; }};
     f.context.document.activeElement = original;
     const first = f.open(url);
     f.calls[0].reject(new Error("read failed"));
     await first;
     original.isConnected = false;
-    f.context.document.querySelectorAll = () => [{dataset: {resultUrl: "/api/jobs/result?id=other"}}, replacement];
+    f.context.document.querySelectorAll = () => [{dataset: {resultUrl: "/api/jobs/result?id=other"},
+      getClientRects() { return [{}]; }}, replacement];
     f.context.document.activeElement = retryButton;
     const retry = f.elements["retry-report"].listeners.click();
     f.calls[1].resolve({text: "Recovered"});
@@ -161,4 +163,20 @@ test("a response delivered after its deadline cannot appear as a successful read
   f.elements["close-report"].listeners.click();
   f.elements["retry-report"].listeners.click();
   assert.equal(f.calls.length, 1, "Closing forgets the failed read; no hidden retry remains");
+});
+
+test("result focus skips a matching link in a hidden panel", async () => {
+  const f = fixture(), url = "/api/jobs/result?id=one";
+  const original = {isConnected: false};
+  const hidden = {dataset: {jobId: "one"}, getClientRects() { return []; },
+    focus() { assert.fail("A matching link in the hidden chat panel stole focus"); }};
+  let restored = false;
+  const visible = {dataset: {resultUrl: url}, getClientRects() { return [{}]; },
+    focus() { restored = true; }};
+  f.context.document.querySelectorAll = () => [hidden, visible];
+  const pending = f.open(url, "Project", "Task", original);
+  f.calls[0].resolve({text: "Result"});
+  await pending;
+  f.elements["close-report"].listeners.click();
+  assert.equal(restored, true);
 });

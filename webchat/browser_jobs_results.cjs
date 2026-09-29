@@ -50,6 +50,7 @@ async function until(page, predicate) {
       await page.locator('#login-form button').click();
       await page.waitForURL(config.url + '/');
       await page.locator('#message:enabled').waitFor();
+      await page.locator('#messages .job-result-link').waitFor();
       await page.locator('[data-bottom="ops"]').click();
       await page.locator('.finished-job button').nth(1).waitFor();
       page.on('request', request => { if (request.method() !== 'GET') writes.push(new URL(request.url()).pathname); });
@@ -69,7 +70,7 @@ async function until(page, predicate) {
           await held;
           await route.fulfill({response}).catch(() => {});
         };
-        await page.route('**/api/jobs/result?id=result-first', handler);
+        await page.route('**/api/jobs/result?id=webchat-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', handler);
         return {started, handler};
       };
       const readCount = () => page.evaluate(() => window.__resultReads.length);
@@ -79,6 +80,7 @@ async function until(page, predicate) {
       await first.click();
       await held.started;
       await close();
+      await page.evaluate(() => { window.__selectedButton = document.querySelectorAll('.finished-job button')[1]; });
       await second.click();
       await until(page, () => document.getElementById('report-body').textContent.startsWith('Selected saved result'));
       release();
@@ -89,7 +91,7 @@ async function until(page, predicate) {
       assert.equal(await page.locator('#report-body img').count(), 0);
       assert.equal(await page.locator('#retry-report').isVisible(), false);
       assert.equal(await page.evaluate(() => window.__resultReads[0].aborted), true);
-      await page.unroute('**/api/jobs/result?id=result-first', held.handler);
+      await page.unroute('**/api/jobs/result?id=webchat-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', held.handler);
       await page.evaluate(() => { window.__deliverLateResult = false; });
       const layouts = [];
       for (const width of [320, 390, 430]) {
@@ -112,8 +114,9 @@ async function until(page, predicate) {
       const refreshed = page.waitForResponse(r => new URL(r.url()).pathname === '/api/jobs/activity');
       await page.evaluate(() => document.getElementById('refresh-jobs').click());
       await refreshed;
+      await until(page, () => !window.__selectedButton.isConnected);
       await close();
-      await until(page, () => document.activeElement?.dataset.resultUrl === '/api/jobs/result?id=result-second');
+      await until(page, () => document.activeElement?.dataset.resultUrl === '/api/jobs/result?id=webchat-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
       // Escape must cancel a genuine fetch and let the owner keep using Jobs.
       const escape = await holdFirst(), escapeIndex = await readCount();
       await first.click();
@@ -122,7 +125,7 @@ async function until(page, predicate) {
       await until(page, () => !document.getElementById('report').open);
       assert.equal(await page.evaluate(i => window.__resultReads[i].aborted, escapeIndex), true);
       release();
-      await page.unroute('**/api/jobs/result?id=result-first', escape.handler);
+      await page.unroute('**/api/jobs/result?id=webchat-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', escape.handler);
       // A real 15-second stalled read must end and offer exactly one manual retry.
       const stalled = await holdFirst(), timeoutIndex = await readCount();
       const began = Date.now();
@@ -138,7 +141,7 @@ async function until(page, predicate) {
       const retryScreenshot = engine + '-result-retry.png';
       await page.screenshot({path: path.join(config.output, retryScreenshot), animations: 'disabled'});
       release();
-      await page.unroute('**/api/jobs/result?id=result-first', stalled.handler);
+      await page.unroute('**/api/jobs/result?id=webchat-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', stalled.handler);
       await page.locator('#retry-report').click();
       await until(page, () => document.getElementById('report-body').textContent === 'First saved result');
       const reads = await page.evaluate(() => window.__resultReads);
@@ -149,11 +152,11 @@ async function until(page, predicate) {
       await close();
       // A failed HTTP response must also be retryable without leaking its details.
       const failed = route => route.fulfill({status: 503, json: {error: 'private fixture transport detail'}});
-      await page.route('**/api/jobs/result?id=result-first', failed);
+      await page.route('**/api/jobs/result?id=webchat-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', failed);
       await first.click();
       await page.locator('#retry-report').waitFor();
       assert(!(await page.locator('#report').innerText()).includes('private fixture'));
-      await page.unroute('**/api/jobs/result?id=result-first', failed);
+      await page.unroute('**/api/jobs/result?id=webchat-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', failed);
       await page.locator('#retry-report').click();
       await until(page, () => document.getElementById('report-body').textContent === 'First saved result');
       await close();
@@ -162,7 +165,7 @@ async function until(page, predicate) {
       assert.deepEqual(external, []);
       results.push({engine, passed: true, timeoutMs, layouts, screenshot, retryScreenshot,
         checks: ['late result cannot overwrite selected job', 'literal result content', 'close aborts read',
-          'Escape aborts read', 'focus returns to result button', 'real 15-second timeout',
+          'Escape aborts read', 'focus returns to visible result button despite hidden matching chat link', 'real 15-second timeout',
           'manual GET retry for same result', 'HTTP failure recovery', 'no mutation or external request']});
       await context.close();
     } catch (error) {

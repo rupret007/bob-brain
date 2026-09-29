@@ -21,7 +21,8 @@ def main():
     with InstinctFixture() as fixture:
         journal = fixture.root / 'conductor/state/queue.jsonl'
         journal.parent.mkdir(parents=True, exist_ok=True)
-        rows = [dict(id='result-' + name, conversation_id='private-fixture-history',
+        rows = [dict(id='webchat-' + ('a' if name == 'first' else 'b') * 32,
+                     conversation_id='private-fixture-history',
                      status='succeeded', project='Web Bob', title=title,
                      finished_at=time.time() - index, result=body)
                 for index, (name, title, body) in enumerate((
@@ -29,6 +30,11 @@ def main():
                     ('second', 'Selected job', 'Selected saved result <img src=x onerror=alert(1)>'),
                 ))]
         journal.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+        conversation = fixture.chat.get(fixture.identifier)
+        conversation['messages'].append(dict(
+            id='fixture-result-link', role='assistant', status='done', provider='fixture',
+            content='[Saved result](/api/jobs/result?id=webchat-' + 'b' * 32 + ')'))
+        fixture.chat.save(conversation)
         original = journal.read_bytes()
         server = Server(('127.0.0.1', 0), fixture.chat)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

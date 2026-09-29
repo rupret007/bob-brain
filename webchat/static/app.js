@@ -141,8 +141,9 @@ if ($("login-form")) {
     const origin = jobResultOrigin;
     jobResultOrigin = null;
     // Polling can replace the Jobs button while its report is open.
-    const opener = origin?.opener?.isConnected ? origin.opener
+    const opener = origin?.opener?.isConnected && origin.opener.getClientRects().length ? origin.opener
       : [...document.querySelectorAll('[data-result-url], [data-job-id]')].find(node =>
+        node.getClientRects().length &&
         (node.dataset.resultUrl || '/api/jobs/result?id=' + node.dataset.jobId) === origin?.url);
     opener?.focus();
   });
