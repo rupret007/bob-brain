@@ -28,7 +28,7 @@ sys.path[:0] = [str(CODE / d) for d in ('webchat', 'services', 'state', 'reviews
 from texting_deploy_record import atomic_json, atomic_text, require_disk_space, reserve_recovery, release_recovery
 from live_redeploy_check import Client, require
 
-ORDER = ('texting', 'gaps', 'media', 'voice', 'ui', 'instinct', 'remaining', 'bridge')
+ORDER = ('texting', 'gaps', 'media', 'voice', 'ui', 'instinct', 'remaining', 'bridge', 'improve')
 BASE = 'draft/webbob-clean-0927'
 
 
@@ -169,14 +169,14 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
         protected.bind_state(root / 'conductor/webchat')
         protected.observe(chats)
         choices = [c for c in chats if not protected.is_target(recipient(c)) and
-                   (feature != 'bridge' or bridge_replay_target(c))]
+                   (ORDER.index(feature) < ORDER.index('bridge') or bridge_replay_target(c))]
         require(bool(choices), 'No ordinary messaging thread available for no-send replay')
         target = choices[0]['guid']
     _, drafted = submit(client, cid, 'draft reply to ' + target + ': Web Bob no-send verification. Cancel this draft.')
     card = drafted.get('text_draft', {})
     require(card.get('state') == 'pending' and card.get('body') == 'Web Bob no-send verification. Cancel this draft.',
             'Draft did not bind the exact recipient/body')
-    if feature == 'bridge':
+    if ORDER.index(feature) >= ORDER.index('bridge'):
         require(card.get('delivery_available') is True, 'Andrea did not persist the exact draft challenge')
     token = card['confirm_message']
     _, bare = submit(client, cid, 'yes')
@@ -186,7 +186,7 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
     _, stale = submit(client, cid, token)
     require('already used, cancelled, or replaced' in stale['content'], 'Cancelled token was accepted')
     receipts.append(dict(check='exact draft, bare approval, cancel, stale token', passed=True))
-    if feature == 'bridge' and real_reads:
+    if ORDER.index(feature) >= ORDER.index('bridge') and real_reads:
         receipts.extend(bridge_replay(root, cid, card['id']))
     _, newer = submit(client, cid, 'draft reply to ' + target + ': Version interruption check. Do not send.')
     require(newer.get('text_draft', {}).get('state') == 'pending', 'Interruption-check draft failed')
@@ -203,11 +203,32 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
         receipts.extend(instinct_replay(client, cid))
     if ORDER.index(feature) >= ORDER.index('remaining'):
         receipts.extend(remaining_replay(client, cid))
+    if feature == 'improve':
+        receipts.extend(capability_replay(client, cid, root))
     from task_dispatch import task_queue
     require(not any(r['conversation_id'] == cid for r in task_queue.tasks(root).values()), 'Replay queued work')
     saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
     require(not saved.get('_texting', {}).get('audit'), 'Replay attempted delivery')
     return dict(all_pass=True, conversation_id=cid, checks=receipts, real_texts_sent=0, queued_workers=0)
+
+
+def capability_replay(client, cid, root):
+    from capabilities import reply
+    checks = []
+    for prompt in ('Can you send texts?', 'What can you do?', 'Can you remember things?',
+                   'Can you start workers?', 'Can you text Instinct?', 'Can you set reminders?',
+                   'Can you watch videos?', 'Can we talk?'):
+        started = time.monotonic()
+        value, answer = submit(client, cid, prompt)
+        elapsed = time.monotonic() - started
+        require(answer.get('provider') == 'capabilities' and answer['content'] == reply(prompt, root),
+                'Capability reply must be accurate and server-owned')
+        require(not answer.get('attempts'), 'Capability question entered a model lane')
+        again, duplicate = submit(client, cid, prompt, answer['request_id'])
+        require(answer == duplicate and len(value['messages']) == len(again['messages']),
+                'Capability replay was not idempotent')
+        checks.append(dict(prompt=prompt, passed=True, seconds=round(elapsed, 4), provider='capabilities'))
+    return checks
 
 
 def instinct_replay(client, cid):
@@ -350,7 +371,7 @@ def staging(root, sha, feature):
     with tempfile.TemporaryDirectory(prefix='solo-staging-') as folder:
         private = Path(folder)
         mock = MockMessaging(private)
-        mock.enable_web_bob_send = feature == 'bridge'
+        mock.enable_web_bob_send = ORDER.index(feature) >= ORDER.index('bridge')
         if ORDER.index(feature) >= ORDER.index('instinct'):
             from instinct_fixture import GUID, MESSAGES
             mock.chats.append(dict(guid=GUID, displayName='Instinct',
@@ -410,10 +431,16 @@ def checks(root, feature):
     sha = identity()
     out = root / 'conductor/reviews' / f'SOLO-0018-{feature}-{sha[:12]}'
     out.mkdir(mode=0o700, exist_ok=True)
+    if feature == 'improve':
+        attempts = sorted(out.glob('attempt-*'))
+        out = out / f'attempt-{len(attempts) + 1:04d}'
+        out.mkdir(mode=0o700)
+        # A crash or failed staging run remains a failed attempt, never an old green.
+        atomic_json(out / 'checks.json', dict(sha=sha, feature=feature, all_pass=False, at=time.time()))
     require_disk_space(root, CODE, 'checks')
     commands = {name: [sys.executable, '-m', 'unittest', 'discover', '-s', name, '-p', 'test_*.py']
                 for name in ('webchat', 'services', 'reviews', 'release')}
-    if feature == 'bridge':
+    if ORDER.index(feature) >= ORDER.index('bridge'):
         commands['bridge-contract'] = [sys.executable, 'release/bridge_probe.py', '--andrea',
             str(root / 'workspaces/andrea-webbob-bridge-0018'), '--output', str(out / 'bridge-contract.json')]
     commands['eval'] = [sys.executable, 'webchat/bob_parity_eval.py']
@@ -474,7 +501,7 @@ def checks(root, feature):
     require(identity() == sha, 'Candidate changed during checks')
     passed = all(r['exit'] == 0 and r['skipped'] == 0 for r in results.values())
     record = dict(sha=sha, feature=feature, all_pass=passed, results=results, at=time.time())
-    if passed and feature == 'bridge':
+    if passed and ORDER.index(feature) >= ORDER.index('bridge'):
         record['andrea'] = andrea_gates(root)
     if passed:
         record['staging'] = staging(root, sha, feature)
@@ -483,10 +510,9 @@ def checks(root, feature):
     print(str(out / 'checks.json'), flush=True)
 
 
-def verify_gates(sha, feature, check_path, review_path):
+def verify_checks(sha, feature, check_path):
     check = json.loads(check_path.read_text())
-    review = json.loads(review_path.read_text())
-    require(check['sha'] == review['sha'] == sha and check['feature'] == review['feature'] == feature,
+    require(check['sha'] == sha and check['feature'] == feature,
             'Stale or wrong-feature release evidence')
     require(check['all_pass'] and check['staging']['all_pass'], 'Tests/evals/staging failed')
     required = {'webchat', 'services', 'reviews', 'release', 'eval', 'browser'}
@@ -498,7 +524,7 @@ def verify_gates(sha, feature, check_path, review_path):
         required.add('instinct-browser')
     if ORDER.index(feature) >= ORDER.index('remaining'):
         required.add('remaining-browser')
-    if feature == 'bridge':
+    if ORDER.index(feature) >= ORDER.index('bridge'):
         required.add('bridge-contract')
         require(check.get('andrea', {}).get('sha') == andrea_pin()['sha'], 'Andrea exact-tip evidence missing')
         for row in check['andrea']['results']:
@@ -512,10 +538,29 @@ def verify_gates(sha, feature, check_path, review_path):
         row = check['results'][name]
         require(row['exit'] == 0 and row['skipped'] == 0 and digest(row['log']) == row['log_sha256'],
                 'Failed/skipped/changed check: ' + name)
+
+
+def consecutive_checks(sha, feature, check_path):
+    attempts = sorted(check_path.parent.parent.glob('attempt-*'))
+    require(len(attempts) >= 2 and attempts[-1] == check_path.parent,
+            'Two consecutive latest pre-deploy greens are required')
+    for attempt in attempts[-2:]:
+        verify_checks(sha, feature, attempt / 'checks.json')
+    return [dict(path=str(p / 'checks.json'), sha256=digest(p / 'checks.json')) for p in attempts[-2:]]
+
+
+def verify_gates(sha, feature, check_path, review_path):
+    verify_checks(sha, feature, check_path)
+    review = json.loads(review_path.read_text())
+    require(review['sha'] == sha and review['feature'] == feature, 'Stale or wrong-feature release evidence')
+    pair = consecutive_checks(sha, feature, check_path) if feature == 'improve' else None
     require(review['reviewer'] == 'Codex solo' and review['verdict'] == 'PASS' and
             review['checks_sha256'] == digest(check_path) and review['findings'] and
             not review.get('unresolved_blockers'), 'Self-review missing or unresolved')
-    return dict(checks_sha256=digest(check_path), self_review_sha256=digest(review_path))
+    result = dict(checks_sha256=digest(check_path), self_review_sha256=digest(review_path))
+    if pair:
+        result['predeploy_greens'] = pair
+    return result
 
 
 def versions(root, expected):
@@ -644,7 +689,16 @@ def deploy(args):
     require(not {'svc-job-runner', 'svc-reviewer'} & screen_sessions().keys(), 'Council/worker service is running')
     index = ORDER.index(args.feature)
     if index:
-        prior = json.loads((root / 'conductor/reviews' / ('SOLO-0018-' + ORDER[index - 1] + '-live.json')).read_text())
+        predecessor = root / 'conductor/reviews' / ('SOLO-0018-' + ORDER[index - 1] + '-live.json')
+        if args.feature == 'improve':
+            latest = root / 'conductor/reviews/SOLO-0018-improve-live.json'
+            if latest.exists():
+                value = json.loads(latest.read_text())
+                if value.get('all_pass') and value.get('sha') == args.previous:
+                    predecessor = latest
+                elif value.get('previous') == args.previous and value.get('rolled_back'):
+                    predecessor = Path(value['predecessor_receipt'])
+        prior = json.loads(predecessor.read_text())
         require(prior['all_pass'] and prior['sha'] == args.previous and len(prior['rounds']) == 2 and
                 all(r['all_pass'] for r in prior['rounds']), 'Predecessor has not passed two live rounds')
     else:
@@ -668,6 +722,9 @@ def deploy(args):
     folder.mkdir(mode=0o700)
     record = dict(sha=sha, feature=args.feature, previous=args.previous, gates=gates, draft_pr=args.pr,
                   rollback=str(folder), all_pass=False, activated=False, snapshots={}, at=time.time())
+    if index:
+        shutil.copyfile(predecessor, folder / 'predecessor-receipt.json')
+        record['predecessor_receipt'] = str(folder / 'predecessor-receipt.json')
     for name in ('webchat', 'dispatch'):
         prior = Path((root / 'conductor/state' / (name + '-code-root')).read_text().strip())
         require(json.loads((prior / 'webbob-build.json').read_text())['sha'] == args.previous, 'Pin baseline mismatch')

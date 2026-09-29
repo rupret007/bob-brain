@@ -91,6 +91,17 @@ def run_eval(root: Path | None = None) -> dict:
     import chat_intent
 
     rules_lower = RULES.lower()
+    from capabilities import QUESTIONS, topic, reply as capability_reply
+    rows.append(_case('texting capability does not deny installed bridge',
+                       'can you send texts' in QUESTIONS['texting']
+                       and 'separately' in capability_reply('Can you send texts?', root)
+                       and 'only Andrea\'s registered owner chat can approve' not in RULES))
+    rows.append(_case('memory capability states model context boundary',
+                       'future model context' in capability_reply('Is my memory private?', root)))
+    rows.append(_case('Instinct capability remains read only',
+                       'cannot be sent' in capability_reply('Can you text Instinct?', root)))
+    rows.append(_case('capability questions preserve concrete actions',
+                       topic('Can you remind me to stretch in 10 minutes?') is None))
     rows.append(_case("prompt bans 'unknown task' wording", 'never say "unknown task"' in rules_lower
                        and "must stay unknown" not in rules_lower
                        and "say its current task is unknown" not in rules_lower))

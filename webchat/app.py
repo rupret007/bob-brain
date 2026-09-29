@@ -543,6 +543,13 @@ class Chat(TaskDispatch):
             if VERSION_QUESTION.search(text):
                 self.texting.invalidate(conversation)
                 return self.intent_reply(conversation, BUILD["short_sha"])
+            from capabilities import reply as capability_reply
+            capability = capability_reply(text, self.root) if not public_attachments and worker is None else None
+            if capability is not None:
+                self.texting.invalidate(conversation)
+                for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
+                    conversation.pop(key, None)
+                return self.intent_reply(conversation, capability, provider='capabilities')
             # Text intent and confirmations never enter generic job/provider routing.
             def persist_texting(value):
                 for key in ("pending_job", "pending_job_id", "pending_council", "pending_council_id"):
