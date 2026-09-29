@@ -151,11 +151,14 @@ async function instrument(page) {
       assert.ok(await page.locator('.call-bob').count()>before.replies, 'A new completed story reply is required');
       const story=await page.locator('.call-bob').last().textContent();
       const words=story.trim().split(/\s+/).length;
+      results.requested_story={words,sha256:require('node:crypto').createHash('sha256').update(story).digest('hex'),
+        // These are our synthetic spoken requests, never owner chat history.
+        spoken_request:await page.locator('.call-you').last().textContent(),
+        reply_word_counts:await page.locator('.call-bob').evaluateAll(nodes=>nodes.map(n=>n.textContent.trim().split(/\s+/).length))};
       assert.ok(words>=100 && words<=250, 'Requested roughly 150-word story; received '+words+' words');
       assert.match(story,/compass/i);
       assert.doesNotMatch(story,/(?:better at|prefer|can only|must|need to|have to)\s+(?:keep(?:ing)?\s+(?:things|it|replies)\s+)?(?:brief|short|casual)|can(?:not|'t)\s+(?:tell|write|give)\s+(?:you\s+)?(?:a\s+)?(?:long|story)/i);
       assert.ok(await page.evaluate(n=>voiceProof.outputPackets>n,before.outputPackets), 'Story must include actual audio');
-      results.requested_story={words,sha256:require('node:crypto').createHash('sha256').update(story).digest('hex')};
       results.checks.push('requested longer story completes with real spoken audio while short answers stay brief');
       await screenshot('iphone-requested-story');
       await page.waitForFunction(()=>document.querySelector('#call-dialog').dataset.phase==='listening',null,{timeout:90000});
@@ -263,6 +266,7 @@ async function instrument(page) {
     await screenshot('failure').catch(()=>{});
     console.error(error.message);console.error('UI:',await page.locator('#call-status').textContent().catch(()=>''));
     console.error('Page errors:',errors);process.exitCode=1;
+    if(results.requested_story)console.error('Requested story diagnostics:',JSON.stringify(results.requested_story));
     console.error('Media diagnostics:',await page.evaluate(()=>({contexts:voiceProof.contexts.map(c=>c.state),microphone:voiceProof.microphoneContext?.state,
       tracks:voiceProof.tracks.map(t=>t.readyState),sockets:voiceProof.sockets.map(s=>s.readyState),closes:voiceProof.closes,input:voiceProof.inputPackets,output:voiceProof.outputPackets,
       playbackErrors:voiceProof.playbackErrors,maxQueuedAudioSeconds:voiceProof.maxQueuedAudioSeconds,
