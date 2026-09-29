@@ -383,10 +383,15 @@ class Chat(TaskDispatch):
             return self.public(conversation)
         return None
 
-    def intent_reply(self, conversation, content, provider="dispatcher"):
+    def intent_reply(self, conversation, content, provider="dispatcher", *, reconcile=False):
         conversation["messages"][-1].update(status="done", provider=provider, content=content)
         self.save(conversation)
         self.conversations[conversation["id"]] = conversation
+        if reconcile:
+            # An explicit resume owns recovery after its permission is durable;
+            # it must not rely on the next browser history read to queue work.
+            self.reconcile_tasks()
+            return self.public(self.get(conversation["id"]))
         return self.public(conversation)
 
     def status_reply(self, conversation, text):
@@ -408,7 +413,8 @@ class Chat(TaskDispatch):
 
     def history(self, identifier):
         with self.lock:
-            self.reconcile_tasks()
+            # Recovery belongs to startup and the background loop. A page read
+            # must not enqueue a saved intent or acknowledge an outbox result.
             return self.public(self.get(identifier))
 
     def worker_info(self, identifier):
@@ -649,7 +655,7 @@ class Chat(TaskDispatch):
             if ((followup and not task) or (route != "auto" and not task)
                     or (task and needs_task_detail(task))):
                 return self.intent_reply(conversation, "Ready when you are." if was_held and transition == "resume" and not task
-                                         else "What would you like me to work on?")
+                                         else "What would you like me to work on?", reconcile=transition == "resume")
             if task:
                 conversation.pop("pending_job", None)
                 conversation.pop("pending_job_id", None)
@@ -657,7 +663,7 @@ class Chat(TaskDispatch):
                     return self.submit_max_task(conversation, task, request_id)
                 return self.submit_task(conversation, task, request_id, worker or route)
             if transition == "resume":
-                return self.intent_reply(conversation, "Ready when you are.")
+                return self.intent_reply(conversation, "Ready when you are.", reconcile=True)
             pending = conversation.get("pending_job")
             pending_council = conversation.get("pending_council")
             council_confirm, council_proposal = parse_council_confirm_proposal(text)

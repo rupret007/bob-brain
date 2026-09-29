@@ -68,6 +68,12 @@ Models shows current activity and reply availability, with measured usage in
 collapsed details. Writing help stays in chat. The removed Songs interface does
 not delete previously saved projects. Settings saves your preferred first-choice model on this device.
 Opening these tabs does not request a model answer or change the queue.
+Conversation history reads also leave saved job intents and result receipts
+unchanged. Startup and the existing one-second background loop recover accepted
+jobs and deliver results; both recovery paths defer new effects once shutdown
+begins. Queue inspection preserves interrupted journal bytes; the next locked
+writer repairs a torn final append before committing. This separates reading
+from recovery but does not provide an atomic deployment drain.
 
 ## Conversation and provider behavior
 
