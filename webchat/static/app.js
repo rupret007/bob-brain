@@ -1162,6 +1162,14 @@ if ($("login-form")) {
     return (rows || []).filter((row) => { if (seen.has(row.key)) return false; seen.add(row.key); return true; });
   }
   function renderJobs(data) {
+    const dispatch = data.dispatch;
+    const waiting = Number.isInteger(dispatch?.queued) && dispatch.queued > 0
+      ? ` ${dispatch.queued} ${dispatch.queued === 1 ? 'job is' : 'jobs are'} waiting.` : '';
+    const dispatchMessage = dispatch?.mode === 'solo'
+      ? 'Solo mode: additional workers and council are paused.'
+      : dispatch?.paused ? 'Automatic dispatch is paused.' : '';
+    $("jobs-dispatch").textContent = dispatchMessage + waiting;
+    $("jobs-dispatch").hidden = !(dispatchMessage || waiting);
     const teammates = $('teammate-cards');
     if (teammates) {
       teammates.replaceChildren();
@@ -1259,6 +1267,8 @@ if ($("login-form")) {
   }
   let jobsRefreshing = false, jobsFetchedAt = 0;
   function clearJobs() {
+    $("jobs-dispatch").textContent = '';
+    $("jobs-dispatch").hidden = true;
     $("jobs-notice").hidden = false;
     $("jobs-notice").textContent = "Live work is unavailable. Retrying…";
     $("jobs-empty").hidden = true;

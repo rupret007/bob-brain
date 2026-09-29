@@ -1568,7 +1568,6 @@ class Handler(BaseHTTPRequestHandler):
             data['reminders'] = chat.reminders.listing()
             from teammates import status as teammate_status
             data['teammates'] = teammate_status(chat.root)['teammates']
-            data['dispatch_paused'] = (chat.root / 'conductor/MAINTENANCE').exists()
             return self.send(200, json.loads(chat.redact(json.dumps(data))))
         if route == "/api/jobs/result":
             identifier = parse_qs(urlsplit(self.path).query).get("id", [""])[0]
