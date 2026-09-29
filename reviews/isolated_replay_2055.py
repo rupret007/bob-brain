@@ -32,6 +32,7 @@ PROJECTS = ("WebJam", "AdoptIQ", "StoryBoard", "Fantasy Football")
 SCOPE = "isolated-local-remotes"
 CURSOR_MODEL = "gpt-5.6-sol-high"  # Confirmed in cursor-agent --list-models on 2026-09-28.
 SOURCE_FILES = ("reviews/isolated_replay_2055.py", "webchat/app.py", "webchat/integration_rubric.py",
+                "webchat/reply_authority.py",
                 "webchat/task_dispatch.py", "webchat/dispatch_receipts.py", "webchat/live_status_snapshot.py",
                 "webchat/status_observation.py", "webchat/build_info.py", "services/dispatch_worker.py",
                 "services/draft_publish.py", "services/command.py", "services/lanes.py", "services/api_worker.py",
@@ -87,6 +88,15 @@ def explicit_cursor_model(argv):
         require("--model" not in argv, "Unexpected preexisting Cursor model override")
         argv[1:1] = ["--model", CURSOR_MODEL]
     return argv
+
+
+def private_context_providers(root, private, runner=None):
+    """Use private prompt snapshots while retaining the real provider/meter root."""
+    from providers import Providers, Redactor, run
+    class PrivateContextProviders(Providers):
+        def context_root(self, conversation_id=None):
+            return private
+    return PrivateContextProviders(root, Redactor(root, ""), runner=runner or run)
 
 
 def lane_availability(worker_name, *, now=None, probe_lease=True, check_reservations=True):
@@ -568,7 +578,7 @@ def run_replay(root, candidate, output, timeout=1800):
     manifest = json.loads(manifest_path.read_text())
     private = Path(manifest["private_root"])
     from app import Chat, Server
-    from providers import Providers, Redactor, run as provider_run
+    from providers import run as provider_run
     from live_redeploy_check import Client
     from live_status_snapshot import build_live_status_snapshot
     from integration_rubric import check_reply
@@ -591,7 +601,7 @@ def run_replay(root, candidate, output, timeout=1800):
     def private_provider_run(argv, **kwargs):
         return provider_run(explicit_cursor_model(argv), **kwargs)
     chat = Chat(private / "conductor/webchat", private,
-                Providers(root, Redactor(root, ""), runner=private_provider_run))
+                private_context_providers(root, private, runner=private_provider_run))
     server = Server(("127.0.0.1", 0), chat)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     client = Client("http://127.0.0.1:" + str(server.server_port), chat.folder / ".password")

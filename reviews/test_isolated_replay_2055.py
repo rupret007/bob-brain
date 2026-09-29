@@ -248,6 +248,32 @@ class LaneReadinessTests(unittest.TestCase):
 
 
 class SessionAndProofTests(unittest.TestCase):
+    def test_private_prompt_context_keeps_real_provider_transport_and_meter_root(self):
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as folder:
+            real, private = Path(folder) / "real", Path(folder) / "private"
+            for root, text in ((real, "production_context_must_not_leak"), (private, "private_context_expected")):
+                state = root / "conductor/state"
+                state.mkdir(parents=True)
+                (state / "NOW.md").write_text(text)
+            calls = []
+            def transport(argv, **kwargs):
+                calls.append((argv, kwargs))
+                return 0, "<bob-webchat-reply>Hi Jeff!</bob-webchat-reply>", ""
+            providers = replay.private_context_providers(real, private, runner=transport)
+            try:
+                self.assertEqual(providers.root, real)
+                self.assertEqual(providers.context_root("private-conversation"), private)
+                context = json.dumps(providers.snapshot(lite=True, conversation_id="private-conversation"))
+                self.assertIn("private_context_expected", context)
+                self.assertNotIn("production_context_must_not_leak", context)
+                answer, _ = providers.call("gemini", "Hi", None, threading.Event())
+                self.assertEqual(answer, "Hi Jeff!")
+                self.assertEqual(calls[0][1]["env"]["BOB_ROOT"], str(real))
+                self.assertEqual(calls[0][1]["cwd"], real)
+                self.assertEqual(providers.circuit.path.parent, real / "conductor/webchat/sessions")
+            finally:
+                providers.close()
+
     def test_ten_original_messages_over_private_http_create_six_real_queue_rows(self):
         from app import Chat, Server
         from live_redeploy_check import Client
