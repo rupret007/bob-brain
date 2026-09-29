@@ -42,6 +42,30 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
         await page.locator('.message.assistant').filter({hasText: expected}).last().waitFor();
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       }
+      const memory = engine + ' private note <img src="https://example.invalid/memory-probe"> **literal words**';
+      const proposal = (await say('remember that ' + memory)).messages.at(-1).action_card;
+      assert.equal(proposal.kind, 'memory');
+      assert((await say('yes, save memory proposal ' + proposal.proposal_id)).messages.at(-1).content.includes('Saved to durable memory'));
+      await page.locator('[data-bottom="settings"]').click();
+      await page.locator('summary').getByText('Saved memory', {exact: true}).click();
+      const memoryResponse = page.waitForResponse(r => r.url() === config.url + '/api/messages' && r.request().method() === 'POST');
+      await page.getByRole('button', {name: 'Show saved notes in chat', exact: true}).click();
+      const inspected = (await (await memoryResponse).json()).messages.at(-1);
+      assert.equal(inspected.provider, 'memory');
+      assert.equal(inspected.private_memory, true);
+      assert(inspected.content.includes(memory));
+      const notes = page.locator('.message.assistant.private-memory').last();
+      await notes.waitFor();
+      assert((await notes.textContent()).includes(memory));
+      assert.equal(await notes.locator('img, a, strong').count(), 0, 'Saved notes must render as literal text');
+      assert.equal(await notes.locator('.body').evaluate(el => getComputedStyle(el).whiteSpace), 'pre-wrap');
+      for (const width of [320, 390, 430]) {
+        await page.setViewportSize({width, height: 844});
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      }
+      await page.setViewportSize({width: 390, height: 844});
+      await notes.scrollIntoViewIfNeeded();
+      await page.screenshot({path: path.join(config.output, engine + '-saved-memory.png'), animations: 'disabled'});
       const saved = await say('remind me to ' + body + ' in 1 second');
       assert.equal(saved.messages.at(-1).provider, 'reminders');
       await page.locator('.message.assistant').filter({hasText: 'Reminder: ' + body}).waitFor({timeout: 8000});
@@ -92,7 +116,7 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       await page.screenshot({path: path.join(config.output, screenshot), animations: 'disabled'});
       assert.deepEqual(errors, []);
-      results.push({engine, passed: true, screenshot, checks: ['archived lane outcome unverified, real time label, 320/390/430 layout', 'dispatch pause/queue visible, stale status cleared and recovered', 'capability answers visible without model calls', 'real due notification without worker scheduler', 'recurring reminder visible in Jobs', 'open reminder chat', 'cancel', 'saved Karen status', 'private band digest', 'phone overflow']});
+      results.push({engine, passed: true, screenshot, checks: ['saved-memory inspection from Settings, literal text, no external content, phone layout', 'archived lane outcome unverified, real time label, 320/390/430 layout', 'dispatch pause/queue visible, stale status cleared and recovered', 'capability answers visible without model calls', 'real due notification without worker scheduler', 'recurring reminder visible in Jobs', 'open reminder chat', 'cancel', 'saved Karen status', 'private band digest', 'phone overflow']});
       await context.close();
     } finally { await browser.close(); }
   }

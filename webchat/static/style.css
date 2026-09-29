@@ -816,6 +816,7 @@ code { overflow-wrap: anywhere; font-size: 11px; }
 
 /* Text previews preserve the exact body and never interpret message HTML. */
 .message.assistant.texting .body { white-space: pre-wrap; }
+.message.assistant.private-memory .body { white-space: pre-wrap; }
 .text-draft-card { border: 1px solid #718eb7; border-radius: 12px; padding: 14px; margin-top: 12px; min-width: 0; }
 .text-draft-card h3 { font-size: 1rem; margin: 0 0 10px; }
 .text-recipient, .text-draft-body { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
