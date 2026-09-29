@@ -489,6 +489,8 @@ def build_live_status_snapshot(root: Path, *, now: float | None = None) -> dict:
             "Also say what is moving, the worker/model, and elapsed time from work. "
             "Live process observations in work include lane screens and workers outside the queue. "
             "Running means a live worker process, not proof of forward progress or completion. "
+            "bob_lanes.finished_recent contains lanes not currently observed, not confirmed completions. "
+            "Their last_activity_at is a file timestamp; neither that timestamp nor a report proves success. "
             "An unverified screen has no confirmed worker; a claimed entry is only a queue record. "
             "Missing model or elapsed time is unknown; do not invent it. "
             "Hide internal IDs, screen names, history and raw fields unless Jeff asks for those details. Never print None. "

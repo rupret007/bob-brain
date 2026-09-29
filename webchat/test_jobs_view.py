@@ -159,6 +159,21 @@ class JobsViewTests(unittest.TestCase):
         self.assertEqual(view["recently_finished"][0]["state"], "failed")
         self.assertEqual(result_text(self.root, "failed")["text"], "Check failed")
 
+    def test_archived_lane_without_completion_receipt_never_gets_done_badge(self):
+        self.write('logs/webbob-archived-prompt.txt', 'Project: Web Bob\nTask: Finish the release.\nWrite reviews/RELEASE.md\n')
+        self.write('reviews/RELEASE.md', 'PASS in an old report is not a current receipt.\n')
+        view = build_jobs_view(self.root)
+        row = next(r for r in view['recently_finished'] if r['key'] == 'lane-webbob-archived')
+        self.assertEqual(row['state'], 'unverified')
+        self.assertEqual(row['source'], 'lane_observation')
+        self.assertIsNone(row['finished_at'])
+        self.assertIsInstance(row['last_activity_at'], float)
+
+    def test_failed_screen_sample_does_not_create_recent_completion_cards(self):
+        self.write('logs/webbob-archived-prompt.txt', 'Project: Web Bob\nTask: Finish the release.\n')
+        with patch('live_status_snapshot._screen_sessions', return_value=None):
+            self.assertFalse(build_jobs_view(self.root)['recently_finished'])
+
     def test_health_and_cost_use_persisted_evidence(self):
         self.write("conductor/webchat/sessions/provider-health.json", json.dumps(dict(codex=dict(last_success=9500, checked_at=9500), minimax=dict(reason="rate limit", retry_at=11000, checked_at=9900))))
         self.queue(dict(call_id="1", cost_usd=None, reserved_usd=2), dict(call_id="1", cost_usd=1), dict(call_id="2", cost_usd=None, reserved_usd=.5), journal="conductor/ledger/minimax.jsonl")

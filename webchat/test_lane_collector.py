@@ -60,6 +60,23 @@ class LaneCollectorTests(unittest.TestCase):
         self.assertEqual(finished["screen"], "lane-webbob-old")
         self.assertEqual(finished["project"], "WebJam")
         self.assertEqual(finished["result_path"], "reviews/WEBJAM-DONE.md")
+        self.assertEqual(finished['state'], 'not_observed')
+        self.assertIsNone(finished['finished_at'])
+        self.assertEqual(finished['last_activity_at'], now - 1800)
+
+    def test_failed_screen_inspection_does_not_infer_ended_lanes(self):
+        (self.root / 'logs/webbob-old-prompt.txt').write_text('Task: Fix the login.\n')
+        observed = dict(sessions={}, work=[], inspection=dict(screens_available=False, processes_available=True))
+        bob = collect_bob_lanes(self.root, observed=observed)
+        self.assertEqual(bob['finished_recent'], [])
+
+    def test_archived_lane_diagnostic_does_not_claim_completion(self):
+        from reply_authority import _lane_line
+        line = _lane_line(dict(screen='lane-old', task='Fix login', state='not_observed', elapsed_seconds=60))
+        self.assertIn('outcome unverified', line)
+        self.assertIn('last activity', line)
+        self.assertNotIn('finished', line)
+        self.assertNotIn('session open', line)
 
     def test_prompt_slug_strips_dates(self):
         self.assertEqual(prompt_slug("proj-adoptiq-2004-prompt"), "lane-proj-adoptiq")

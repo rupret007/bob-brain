@@ -223,6 +223,12 @@ def capability_replay(client, cid, root):
     require(jobs['dispatch']['queued'] == (jobs['details']['queued'] if jobs['inspection']['queue_available'] else None),
             'Jobs waiting count must agree with the inspected queue')
     checks.append(dict(check='Jobs dispatch mode and honest waiting count', passed=True))
+    for row in jobs['recently_finished']:
+        if row.get('source') == 'lane_observation':
+            require(row['state'] == 'unverified' and row.get('finished_at') is None
+                    and isinstance(row.get('last_activity_at'), (int, float)),
+                    'Archived lane has no authority to claim completion')
+    checks.append(dict(check='archived lanes cannot claim verified completion', passed=True))
     for prompt in ('Can you send texts?', 'What can you do?', 'Can you remember things?',
                    'Can you start workers?', 'Can you text Instinct?', 'Can you set reminders?',
                    'Can you watch videos?', 'Can we talk?'):

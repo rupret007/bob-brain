@@ -1235,8 +1235,9 @@ if ($("login-form")) {
       const card = jobElement("article", "finished-job job-card");
       const top = jobElement("div", "job-card-top");
       top.append(jobElement("span", `job-outcome ${job.state === "failed" ? "is-failed" : ""}`,
-        job.state === "done" ? "Finished" : job.state === "failed" ? "Failed" : "Stopped"));
+        job.state === "done" ? "Finished" : job.state === "failed" ? "Failed" : job.state === "unverified" ? "Outcome unverified" : "Stopped"));
       if (Number.isFinite(job.finished_at)) top.append(jobElement("span", "job-elapsed muted", jobAge(data.checked_at - job.finished_at)));
+      else if (Number.isFinite(job.last_activity_at)) top.append(jobElement("span", "job-elapsed muted", 'Last activity ' + jobAge(data.checked_at - job.last_activity_at)));
       card.append(top);
       card.append(jobElement("p", "job-project", job.project));
       card.append(jobElement("p", "finished-task", job.task));
