@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="theme-dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="color-scheme" content="dark light">
+  <meta name="color-scheme" content="dark">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Bob">
   <meta name="mobile-web-app-capable" content="yes">
@@ -17,16 +17,16 @@
   <div class="app">
     <div id="offline-banner" class="offline-banner" role="status" hidden>Reconnecting to Bob…</div>
     <header class="top-bar">
-      <div class="header-pill identity" role="banner">
+      <div class="header-brand">
         <span class="avatar" aria-hidden="true">b</span>
-        <div class="titles">
+        <div class="header-titles">
           <h1>Web Bob</h1>
           <span class="status-dot" id="status-dot" aria-label="Connection status"></span>
-          <span id="build-info" class="build-info"><span>__WEBBOB_SHA__</span> · <time datetime="__WEBBOB_BUILT_AT__">__WEBBOB_BUILT_AT__</time></span>
         </div>
         <p id="connection" class="sr-only">Connecting</p>
       </div>
       <div class="top-actions">
+        <span id="build-info" class="build-info" title="Built __WEBBOB_BUILT_AT__"><code class="build-sha">__WEBBOB_SHA__</code><time class="sr-only" datetime="__WEBBOB_BUILT_AT__">__WEBBOB_BUILT_AT__</time></span>
         <button type="button" id="open-chats" class="icon-btn quiet" aria-label="Conversations" title="Conversations"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-12.3 7.6L3 21l1.9-5.7A8.5 8.5 0 1 1 21 11.5Z"/><path d="M8 9h8M8 13h5"/></svg></button>
       </div>
     </header>
@@ -39,38 +39,56 @@
         <button type="button" class="chip" data-chip="status">View jobs</button>
         <button type="button" class="chip" data-chip="song">Write a song</button>
       </div>
-      <div id="attach-preview" class="attach-preview" hidden aria-label="Attachments to send"></div>
-      <form id="composer" class="composer">
-        <label class="sr-only" for="message">Message Bob</label>
-        <input id="attach-input" type="file" class="sr-only" accept="image/*,video/*,.heic,.heif,.pdf,.txt,.md,.csv,.json,.log" multiple>
-        <button type="button" id="attach-plus" class="composer-plus quiet icon-btn" aria-label="Attach photo, video, or file" title="Photos up to 12MB, videos 35MB, files 8MB; 6 attachments per message">+</button>
-        <div class="composer-pill">
-          <textarea id="message" name="message" placeholder="Ask Bob…" rows="1" maxlength="6000" enterkeyhint="send"></textarea>
-          <button type="button" id="mic" class="composer-mic quiet icon-btn" aria-label="Voice input" title="Dictate a message">🎤</button>
-          <button type="button" id="live-call" class="call-btn" aria-label="Start live voice call" aria-pressed="false" title="Talk to Bob">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M3 10v4m4-7v10m5-14v18m5-14v10m4-7v4"/></svg>
+      <div class="composer-dock">
+        <div id="attach-preview" class="attach-preview" hidden aria-label="Attachments to send"></div>
+        <form id="composer" class="composer">
+          <label class="sr-only" for="message">Message Bob</label>
+          <input id="attach-input" type="file" class="sr-only" accept="image/*,video/*,.heic,.heif,.pdf,.txt,.md,.csv,.json,.log" multiple>
+          <button type="button" id="attach-plus" class="composer-attach quiet icon-btn" aria-label="Attach photo, video, or file" title="Photos up to 12MB, videos 35MB, files 8MB; 6 attachments per message">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
           </button>
-        </div>
-        <button type="button" id="speak" class="quiet icon-btn composer-speak" aria-label="Read last reply aloud" title="Read aloud">🔊</button>
-        <button type="button" id="stop" hidden>Stop</button>
-        <button type="submit" id="send" class="primary send-btn" aria-label="Send">↑</button>
-      </form>
+          <div class="composer-pill">
+            <textarea id="message" name="message" placeholder="Message Bob…" rows="1" maxlength="6000" enterkeyhint="send"></textarea>
+          </div>
+          <div class="composer-voice" aria-label="Voice controls">
+            <button type="button" id="mic" class="composer-mic quiet icon-btn" aria-label="Voice input" title="Dictate">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v3"/></svg>
+            </button>
+            <button type="button" id="live-call" class="voice-wave-btn" aria-label="Start live voice call" aria-pressed="false" title="Talk to Bob">
+              <span class="waveform" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+            </button>
+          </div>
+          <button type="button" id="speak" class="quiet icon-btn composer-speak" aria-label="Read last reply aloud" title="Read aloud">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+          </button>
+          <button type="button" id="stop" hidden>Stop</button>
+          <button type="submit" id="send" class="primary send-btn" aria-label="Send">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="m5 12 14-7-4 7 4 7-14-7Z"/></svg>
+          </button>
+        </form>
+      </div>
     </section>
 
     <section id="view-ops" class="main-view" data-view="ops" hidden>
       <div class="view-scroll jobs-scroll">
-        <section class="jobs-section" aria-labelledby="working-title">
+        <header class="jobs-page-header">
+          <div>
+            <h2 class="view-title" id="working-title">Jobs</h2>
+            <p class="view-lead muted">Live workers, models, and recent completions.</p>
+          </div>
+          <button type="button" id="refresh-jobs" class="refresh-dash">Refresh</button>
+        </header>
+        <section class="jobs-section" aria-labelledby="working-now-label">
           <div class="jobs-heading">
-            <h2 id="working-title">Working now</h2>
+            <h3 id="working-now-label" class="jobs-subtitle">Working now</h3>
             <span id="working-count" class="jobs-count" hidden></span>
-            <button type="button" id="refresh-jobs" class="refresh-dash">Refresh</button>
           </div>
           <p id="jobs-notice" class="jobs-note muted" role="status">Checking live work…</p>
           <div id="live-jobs" class="job-cards"></div>
           <p id="jobs-empty" class="jobs-empty muted" hidden>Nothing running right now.</p>
         </section>
         <section class="jobs-section" aria-labelledby="finished-title">
-          <h2 id="finished-title">Recently finished</h2>
+          <h3 id="finished-title" class="jobs-subtitle">Recently finished</h3>
           <div id="finished-jobs" class="finished-jobs"></div>
           <p id="finished-empty" class="jobs-empty muted" hidden>No finished jobs yet.</p>
         </section>

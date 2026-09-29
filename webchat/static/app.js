@@ -286,11 +286,12 @@ if ($("login-form")) {
   }
   function markSongClean() { songSnapshot = songFieldsText(); }
   async function confirmLeaveSongEdits() {
+    if (!$("song-title")) return true;
     if (songFieldsText() === songSnapshot) return true;
     return window.confirm("You have unsaved song edits. Continue without saving?");
   }
   function setBottomTab(name) {
-    if (activeBottomTab === "song" && name !== "song" && songFieldsText() !== songSnapshot) {
+    if ($("song-title") && activeBottomTab === "song" && name !== "song" && songFieldsText() !== songSnapshot) {
       if (!window.confirm("You have unsaved song edits. Leave this tab anyway?")) return false;
     }
     activeBottomTab = name;
@@ -898,9 +899,14 @@ if ($("login-form")) {
   let songProjectId = stored("bob.songProject") || "", songBusy = false;
   function setSongBusy(value) {
     songBusy = value;
-    for (const id of ["song-new", "song-picker", "song-save", "song-title", "song-lyrics", "song-chords", "song-notes", "song-demo", "song-upload", "song-coach"]) $(id).disabled = value;
+    for (const id of ["song-new", "song-picker", "song-save", "song-title", "song-lyrics", "song-chords", "song-notes", "song-demo", "song-upload", "song-coach"]) {
+      const node = $(id);
+      if (node) node.disabled = value;
+    }
   }
   function clearSongMedia() {
+    const player = $("song-player");
+    if (!player) return;
     $("song-player").pause();
     $("song-player").removeAttribute("src");
     $("song-player").load();
@@ -971,11 +977,11 @@ if ($("login-form")) {
       $("song-summary").textContent = "Could not load songs. Choose a song again or reload to retry.";
     } finally { setSongBusy(false); }
   }
-  $("song-picker").addEventListener("change", async () => {
+  $("song-picker")?.addEventListener("change", async () => {
     if (!(await confirmLeaveSongEdits())) { $("song-picker").value = songProjectId; return; }
     await loadSong($("song-picker").value);
   });
-  $("song-new").addEventListener("click", async () => {
+  $("song-new")?.addEventListener("click", async () => {
     if (songBusy || !(await confirmLeaveSongEdits())) return;
     songProjectId = ""; remember("bob.songProject", "");
     $("song-picker").value = "";
@@ -983,10 +989,10 @@ if ($("login-form")) {
     $("song-title").focus();
   });
   for (const id of ["song-title", "song-lyrics", "song-chords", "song-notes"]) {
-    $(id).addEventListener("input", () => { $("song-summary").textContent = "Unsaved changes"; $("song-notice").textContent = ""; });
+    $(id)?.addEventListener("input", () => { $("song-summary").textContent = "Unsaved changes"; $("song-notice").textContent = ""; });
   }
   window.addEventListener("beforeunload", (event) => {
-    if (songFieldsText() !== songSnapshot) { event.preventDefault(); event.returnValue = ""; }
+    if ($("song-title") && songFieldsText() !== songSnapshot) { event.preventDefault(); event.returnValue = ""; }
   });
   $("song-coach")?.addEventListener("click", () => {
     if (!setBottomTab("chat")) return;
@@ -1002,7 +1008,7 @@ if ($("login-form")) {
     field.dispatchEvent(new Event("input"));
     $("song-notice").textContent = "Prepared in chat — send when ready.";
   });
-  $("song-save").addEventListener("click", async () => {
+  $("song-save")?.addEventListener("click", async () => {
     if (songBusy) return;
     setSongBusy(true);
     $("song-notice").textContent = "Saving…";
@@ -1024,7 +1030,7 @@ if ($("login-form")) {
     } catch (error) { $("song-notice").textContent = `Not saved. ${error.message} Keep this page open to retain your edits.`; }
     finally { setSongBusy(false); }
   });
-  $("song-demo").addEventListener("click", async () => {
+  $("song-demo")?.addEventListener("click", async () => {
     if (songBusy) return;
     setSongBusy(true);
     try {
@@ -1053,7 +1059,7 @@ if ($("login-form")) {
       } catch (error) { $("song-notice").textContent = error.message; }
     } finally { setSongBusy(false); }
   });
-  $("song-upload").addEventListener("change", async (event) => {
+  $("song-upload")?.addEventListener("change", async (event) => {
     if (songBusy) return;
     setSongBusy(true);
     try {
@@ -1163,19 +1169,23 @@ if ($("login-form")) {
     $("jobs-empty").hidden = rows.length > 0 || !complete;
     $("live-jobs").replaceChildren(...rows.map((job) => {
       const card = jobElement("article", "job-card");
-      const header = jobElement("div", "job-card-heading");
-      const state = ({ running: "Live", paused: "Paused", unverified: "Session open", claimed: "Unconfirmed" })[job.state] || "Unconfirmed";
-      const status = jobElement("span", `job-state ${job.state === "running" ? "is-live" : ""}`, state);
+      const top = jobElement("div", "job-card-top");
+      const stateLabel = ({ running: "Live", paused: "Paused", unverified: "Session open", claimed: "Unconfirmed" })[job.state] || "Unconfirmed";
+      const status = jobElement("span", `job-state ${job.state === "running" ? "is-live" : ""}`, stateLabel);
       const dot = jobElement("span", "job-dot");
       dot.setAttribute("aria-hidden", "true");
       status.prepend(dot);
-      if (job.project !== "Project not specified") header.append(jobElement("p", "job-project", job.project));
-      header.append(status);
-      const metadata = jobElement("div", "job-metadata");
+      top.append(status);
+      if (Number.isFinite(job.elapsed_seconds)) top.append(jobElement("span", "job-elapsed", jobDuration(job.elapsed_seconds)));
+      card.append(top);
       const models = (job.models || []).filter((model) => model && model !== "Model not reported");
-      if (models.length) metadata.append(jobElement("span", "job-model", models.join(" / ")));
-      if (Number.isFinite(job.elapsed_seconds)) metadata.append(jobElement("span", "job-elapsed", jobDuration(job.elapsed_seconds)));
-      card.append(header, jobElement("h3", "job-task", job.task), metadata);
+      if (models.length) {
+        const llmRow = jobElement("div", "job-llm-row");
+        models.forEach((model) => llmRow.append(jobElement("span", "job-llm", model)));
+        card.append(llmRow);
+      }
+      if (job.project !== "Project not specified") card.append(jobElement("p", "job-project", job.project));
+      card.append(jobElement("h3", "job-task", job.task));
       if (job.state === "unverified" || job.state === "claimed") {
         card.append(jobElement("p", "job-unconfirmed muted", "Worker activity is not confirmed."));
       }
@@ -1185,14 +1195,15 @@ if ($("login-form")) {
     $("finished-empty").hidden = finished.length > 0;
     $("finished-empty").textContent = data.inspection?.queue_available ? "No finished jobs yet." : "Finished jobs could not be checked.";
     $("finished-jobs").replaceChildren(...finished.map((job) => {
-      const card = jobElement("article", "finished-job");
-      const heading = jobElement("div", "job-card-heading");
-      heading.append(jobElement("h3", "job-project", job.project),
-        jobElement("span", `job-outcome ${job.state === "failed" ? "is-failed" : ""}`,
-          job.state === "done" ? "Finished" : job.state === "failed" ? "Failed" : "Stopped"));
-      card.append(heading, jobElement("p", "finished-task", job.task));
+      const card = jobElement("article", "finished-job job-card");
+      const top = jobElement("div", "job-card-top");
+      top.append(jobElement("span", `job-outcome ${job.state === "failed" ? "is-failed" : ""}`,
+        job.state === "done" ? "Finished" : job.state === "failed" ? "Failed" : "Stopped"));
+      if (Number.isFinite(job.finished_at)) top.append(jobElement("span", "job-elapsed muted", jobAge(data.checked_at - job.finished_at)));
+      card.append(top);
+      card.append(jobElement("p", "job-project", job.project));
+      card.append(jobElement("p", "finished-task", job.task));
       const footer = jobElement("div", "finished-footer");
-      if (Number.isFinite(job.finished_at)) footer.append(jobElement("span", "muted", jobAge(data.checked_at - job.finished_at)));
       if (job.result_url?.startsWith("/api/jobs/result?")) {
         const result = jobElement("button", "job-result-link", "View result");
         result.type = "button";
@@ -1319,7 +1330,9 @@ if ($("login-form")) {
       if ([...$("provider-choice").options].some((option) => option.value === preference)) $("provider-choice").value = preference;
       csrf = (await api("/api/session")).csrf; current = stored("bob.conversation");
       await refreshList(); await poll(); $("messages").scrollTop = $("messages").scrollHeight;
-      await Promise.allSettled([refreshJobs(), refreshOverview(), loadSong()]);
+      const boot = [refreshJobs(), refreshOverview()];
+      if ($("song-editor")) boot.push(loadSong());
+      await Promise.allSettled(boot);
       setInterval(() => { if (!document.hidden) { refreshJobs(); refreshOverview(); } }, 8000);
       setInterval(() => { if (!document.hidden) poll(); }, 1200);
       setInterval(() => { if (overviewFetchedAt && Date.now() - overviewFetchedAt > 30000) clearOverview(); if (jobsFetchedAt && Date.now() - jobsFetchedAt > 30000) clearJobs(); }, 1000);
