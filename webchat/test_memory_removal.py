@@ -209,3 +209,33 @@ class MemoryRemovalTests(unittest.TestCase):
         card = next(m['action_card'] for m in result['messages'] if m.get('action_card', {}).get('proposal_id') == proposal)
         self.assertFalse(card['executable'])
         self.assertEqual(card['state'], 'superseded')
+
+    def test_lost_receipt_after_delete_cannot_remove_a_restored_note_again(self):
+        note = '[2026-09-29] synthetic single note\n'
+        self.path.write_text(note)
+        proposal = self.review()
+        request = str(uuid.uuid4())
+        original_save = self.chat.save
+        def only_consumed_receipt(value):
+            if value['messages'][-1]['content'].startswith('Removal outcome not yet verified.'):
+                return original_save(value)
+            raise OSError('Synthetic receipt write failure')
+        with patch.object(self.chat, 'save', side_effect=only_consumed_receipt):
+            with self.assertRaises(OSError):
+                self.ask('yes, remove saved note proposal ' + proposal, request=request)
+        self.assertEqual(self.path.read_text(), '')
+        self.chat.close()
+        append_memory(self.root, note)
+        self.chat = Chat(self.root / 'conductor/webchat', self.root, self.providers)
+        answer = self.ask('yes, remove saved note proposal ' + proposal, request=request)['messages'][-1]
+        self.assertIn('outcome not yet verified', answer['content'])
+        self.assertEqual(self.path.read_text(), note)
+        self.ask('yes, remove saved note proposal ' + proposal)
+        self.assertEqual(self.path.read_text(), note)
+
+    def test_failure_to_persist_consumption_never_starts_removal(self):
+        proposal = self.review()
+        with patch.object(self.chat, 'save', side_effect=OSError('Synthetic disk failure')):
+            with self.assertRaises(OSError):
+                self.ask('yes, remove saved note proposal ' + proposal)
+        self.assertEqual(self.path.read_text(), self.original)

@@ -77,6 +77,9 @@ def handle(chat, conversation, text, request_id, *, source_voice=None, provider=
             previous_request = earlier_users[-1].get('request_id') if earlier_users else None
             if not pending or pending['proposal_id'] != confirmation[1] or previous_request != pending['proposal_id']:
                 return respond('That removal approval is stale. Open “Manage saved notes” and review the note again.')
+            # Persist consumption before the filesystem effect. A lost final
+            # receipt must never replay deletion, even if identical bytes return.
+            respond('Removal outcome not yet verified. Show saved notes before trying another removal.')
             remove(chat.root, pending['note_id'])
             invalidate = getattr(chat.providers, 'invalidate_snapshot', None)
             if invalidate:
