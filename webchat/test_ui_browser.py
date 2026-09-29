@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Playwright layout smoke for chat + jobs shell (optional dependency)."""
+"""Required real-browser layout check for the integrated UI."""
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import shutil
 import subprocess
@@ -26,11 +27,12 @@ class NoModels:
         raise AssertionError("UI browser test must not call a model")
 
 
-@unittest.skipUnless(shutil.which("node"), "node required")
 class UiBrowserTests(unittest.TestCase):
     def test_phone_chat_and_jobs_render_without_console_errors(self):
-        if not (CODE / "node_modules" / "playwright").is_dir():
-            self.skipTest("playwright not installed in webchat/node_modules")
+        if not shutil.which('node'):
+            self.fail('Node is required for the UI release proof')
+        if not Path(os.environ.get('BOB_PLAYWRIGHT_MODULE', CODE / 'node_modules/playwright')).is_dir():
+            self.fail('Set BOB_PLAYWRIGHT_MODULE to the installed Playwright package')
         root = Path(tempfile.mkdtemp(prefix="webbob-ui-browser-"))
         self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
         folder = root / "conductor/webchat"
@@ -47,11 +49,12 @@ class UiBrowserTests(unittest.TestCase):
         script = CODE / "browser_ui_shell.cjs"
         try:
             with patch("live_status_snapshot._screen_sessions", return_value={}), patch("live_status_snapshot.process_table", return_value={}):
-                subprocess.run(["node", str(script), str(config)], check=True, cwd=str(CODE))
+                subprocess.run(["node", str(script), str(config)], check=True, cwd=str(CODE), timeout=120)
         finally:
             server.shutdown()
             server.server_close()
             thread.join(2)
+            chat.close()
 
 
 if __name__ == "__main__":

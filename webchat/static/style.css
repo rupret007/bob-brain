@@ -473,8 +473,8 @@ select option { background: var(--surface-2); color: var(--text); }
   flex-shrink: 0;
 }
 .composer-mic {
-  min-width: 40px;
-  width: 40px;
+  min-width: 44px;
+  width: 44px;
   padding: 0;
   border-radius: 14px;
   color: var(--muted);

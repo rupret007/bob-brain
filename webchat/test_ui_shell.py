@@ -12,12 +12,12 @@ class UiShellTests(unittest.TestCase):
         cls.css = (STATIC / "style.css").read_text(encoding="utf-8")
         cls.app = (STATIC / "app.js").read_text(encoding="utf-8")
 
-    def test_music_and_song_surfaces_removed_from_shell(self):
+    def test_existing_song_capability_remains_accessible(self):
         for needle in ('id="view-song"', 'data-bottom="song"', "Write a song", "Songs</span>"):
-            self.assertNotIn(needle, self.index)
+            self.assertIn(needle, self.index)
 
     def test_chat_composer_and_build_header_present(self):
-        for needle in ('id="composer"', "composer-dock", 'id="attach"', 'id="live-call"', "waveform", 'class="build-sha"'):
+        for needle in ('id="composer"', "composer-dock", 'id="attach-plus"', 'id="attach-input"', 'id="live-call"', "waveform", 'class="build-sha"'):
             self.assertIn(needle, self.index)
         self.assertIn(".composer-dock", self.css)
         self.assertIn(".job-llm", self.css)
