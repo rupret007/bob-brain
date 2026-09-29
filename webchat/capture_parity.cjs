@@ -47,9 +47,9 @@ const digest = value => crypto.createHash('sha256').update(value).digest('hex');
     }
     // Read-only live cold-path proof: hold the initial status request while the
     // real chat continues polling. Do not create messages, reminders, or sends.
-    let releaseOverview, chatPolls = 0;
+    let releaseOverview, chatPolls = 0, overviewRequests = 0;
     const heldOverview = new Promise(resolve => {releaseOverview = resolve;});
-    const holdOverview = async route => {await heldOverview; await route.continue().catch(() => {});};
+    const holdOverview = async route => {overviewRequests++; await heldOverview; await route.continue().catch(() => {});};
     const countPoll = request => {
       if (request.method() === 'GET' && /^\/api\/conversations\/[0-9a-f-]{36}$/.test(new URL(request.url()).pathname)) chatPolls++;
     };
@@ -61,6 +61,7 @@ const digest = value => crypto.createHash('sha256').update(value).digest('hex');
       await page.locator('#message:enabled').waitFor();
       const deadline = Date.now() + 5000;
       while (chatPolls < 2 && Date.now() < deadline) await page.waitForTimeout(100);
+      assert(overviewRequests > 0, 'The live dashboard request must actually be stalled');
       assert(chatPolls >= 2, 'Delayed status must not block live chat polling');
       assert.equal(await page.locator('#offline-banner').isVisible(), false);
     } finally {
