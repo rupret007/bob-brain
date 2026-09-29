@@ -45,6 +45,29 @@ const digest = value => crypto.createHash('sha256').update(value).digest('hex');
       assets['voice-capture.js'] = digest(await response.body());
       assert.equal(assets['voice-capture.js'], digest(fs.readFileSync(path.join(__dirname, 'static/voice-capture.js'))));
     }
+    // Read-only live cold-path proof: hold the initial status request while the
+    // real chat continues polling. Do not create messages, reminders, or sends.
+    let releaseOverview, chatPolls = 0;
+    const heldOverview = new Promise(resolve => {releaseOverview = resolve;});
+    const holdOverview = async route => {await heldOverview; await route.continue().catch(() => {});};
+    const countPoll = request => {
+      if (request.method() === 'GET' && /^\/api\/conversations\/[0-9a-f-]{36}$/.test(new URL(request.url()).pathname)) chatPolls++;
+    };
+    page.on('request', countPoll);
+    await page.route('**/api/overview**', holdOverview);
+    try {
+      await page.reload();
+      chatPolls = 0;
+      await page.locator('#message:enabled').waitFor();
+      const deadline = Date.now() + 5000;
+      while (chatPolls < 2 && Date.now() < deadline) await page.waitForTimeout(100);
+      assert(chatPolls >= 2, 'Delayed status must not block live chat polling');
+      assert.equal(await page.locator('#offline-banner').isVisible(), false);
+    } finally {
+      releaseOverview();
+      await page.unroute('**/api/overview**', holdOverview);
+      page.off('request', countPoll);
+    }
     const activity = page.waitForResponse(response => new URL(response.url()).pathname === '/api/jobs/activity');
     await page.locator('[data-bottom="ops"]').click();
     const jobs = await (await activity).json();
@@ -83,7 +106,7 @@ const digest = value => crypto.createHash('sha256').update(value).digest('hex');
     await page.screenshot({path: screenshot, animations: 'disabled'});
     assert.deepEqual(errors, []);
     fs.writeFileSync(output, JSON.stringify({pass_check: true, url, version, assets, layouts,
-      working_count: jobs.working.length, dispatch: jobs.dispatch,
+      working_count: jobs.working.length, dispatch: jobs.dispatch, chat_polls_while_overview_stalled: chatPolls,
       recent_outcomes: jobs.recently_finished.map(row => row.state), screenshot, page_errors: errors}, null, 2) + '\n');
     console.log('Jobs screenshot and public build/assets verified: ' + screenshot);
   } finally { await browser.close(); }
