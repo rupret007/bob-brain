@@ -293,7 +293,16 @@ def recover(root, record):
     release_recovery(record)
     for name, expected in record.get('snapshot_hashes', {}).items():
         require(source_digest(Path(record['snapshots'][name])) == expected, 'Rollback snapshot changed: ' + name)
-    restart(root, record['snapshots'])
+    unchanged = False
+    try:
+        versions(root, record['previous'])
+        pins = [Path((root / 'conductor/state' / (name + '-code-root')).read_text().strip()) for name in ('webchat', 'dispatch')]
+        unchanged = all(json.loads((p / 'webbob-build.json').read_text())['sha'] == record['previous'] for p in pins)
+    except (OSError, ValueError, RuntimeError):
+        pass
+    if not unchanged:
+        restart(root, record['snapshots'])
+    record['rollback_restart_needed'] = not unchanged
     record['restored'] = versions(root, record['previous'])
     record.update(rolled_back=True, all_pass=False, status='ROLLED_BACK')
 
@@ -322,7 +331,10 @@ def transaction(root, record, path, activate, live, publish=atomic_json, final_p
     except BaseException as exc:
         record.update(all_pass=False, failure=type(exc).__name__ + ': ' + str(exc))
         if activated:
-            recover(root, record)
+            try:
+                recover(root, record)
+            except BaseException as recovery_error:
+                record['rollback_error'] = type(recovery_error).__name__ + ': ' + str(recovery_error)
         else:
             release_recovery(record)
         # Rollback happens before attempting any potentially failing evidence write.
@@ -336,6 +348,9 @@ def deploy(args):
     root = args.root
     sha = identity()
     gates = verify_gates(sha, args.feature, args.checks, args.review)
+    from runtime import screen_sessions, service_enabled
+    require(not service_enabled('job-runner') and not service_enabled('reviewer'), 'Persistent solo shutdown marker missing')
+    require(not {'svc-job-runner', 'svc-reviewer'} & screen_sessions().keys(), 'Council/worker service is running')
     index = ORDER.index(args.feature)
     if index:
         prior = json.loads((root / 'conductor/reviews' / ('SOLO-0018-' + ORDER[index - 1] + '-live.json')).read_text())

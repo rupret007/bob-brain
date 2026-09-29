@@ -18,6 +18,11 @@ from command import run
 from state import CONDUCTOR, ROOT, alert, append_event, atomic_write, job_event, jobs, journal_rows, lock, log, read_json, stamp, write_json
 
 INTERVALS = {"job-runner": 60, "reviewer": 300, "dashboard-updater": 300, "watchdog": 180}
+SOLO_DISABLED = frozenset(("job-runner", "reviewer"))
+
+
+def service_enabled(name):
+    return name not in SOLO_DISABLED or not (CONDUCTOR / "SOLO-WORKER").exists()
 SERVICES = CONDUCTOR / "services"
 HEARTBEATS = CONDUCTOR / "heartbeats"
 
@@ -101,7 +106,7 @@ def ensure_services(check_stale=False, self_name=None):
         now = time.time()
         failed = []
         for name, interval in INTERVALS.items():
-            if name == self_name:
+            if name == self_name or not service_enabled(name):
                 continue
             session = "svc-" + name
             entry = state.setdefault(name, {})
@@ -209,6 +214,8 @@ def schedule_pass():
 
 
 def runner_cycle():
+    if not service_enabled("job-runner"):
+        return
     from web_dispatch import tick as dispatch_tick
     dispatch_tick()
     # Chat work is polled every five seconds; the project scheduler keeps its
@@ -227,6 +234,8 @@ def runner_cycle():
 
 
 def reviewer_cycle():
+    if not service_enabled("reviewer"):
+        return
     from api import critique
     candidates = [r for r in jobs().values() if r["state"] == "harvested" and r.get("result_path")]
     # Newest unreviewed result first on migration; one result per cycle bounds cost/time.
@@ -471,7 +480,7 @@ def main():
         ensure_services(check_stale="--watchdog-guard" in sys.argv)
         time.sleep(1)
         takeover()
-        missing = [n for n in INTERVALS if "svc-" + n not in screen_sessions()]
+        missing = [n for n in INTERVALS if service_enabled(n) and "svc-" + n not in screen_sessions()]
         if missing:
             raise RuntimeError("screens missing after start: " + ", ".join(missing))
     elif command == "status":
