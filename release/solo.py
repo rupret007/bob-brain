@@ -171,6 +171,16 @@ def media_replay(client, root, *, real):
         served = client.open(urllib.request.Request(client.url + info['url'], headers={'Origin': client.url}), parse=False)
         require(served == raw, 'Media download changed bytes')
         uploaded.append(info)
+    with tempfile.TemporaryDirectory(prefix='solo-live-media-') as tmp:
+        clip = Path(tmp) / 'clip.mp4'
+        subprocess.run(['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi',
+                        '-i', 'color=c=red:s=64x64:d=1', '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+                        '-movflags', '+faststart', str(clip)], check=True, timeout=15)
+        raw = clip.read_bytes()
+        video = client.call('/api/media/upload', dict(conversation_id=cid, filename='clip.mp4', data_base64=base64.b64encode(raw).decode()))
+        partial = client.open(urllib.request.Request(client.url + video['url'],
+                              headers={'Origin': client.url, 'Range': 'bytes=0-15'}), parse=False)
+        require(partial == raw[:16], 'Live video range/seek failed')
     wrong = client.new()
     try:
         client.call(uploaded[0]['url'].replace(cid, wrong))
@@ -181,15 +191,20 @@ def media_replay(client, root, *, real):
     prompt = "Describe the dominant color in the attached image and give the Token value in the text file and PDF. Echo the image as an attachment."
     ids = [row['media_id'] for row in uploaded]
     value, answer = submit(client, cid, prompt, attachments=ids)
-    require('red' in answer['content'].lower() and note in answer['content'] and pdf in answer['content'],
-            'Media model did not read the real image/text/PDF')
-    require(not answer.get('media_warnings'), 'Media model used incomplete attachment content')
-    require(any(a['media_id'] == ids[0] for a in answer.get('attachments', [])), 'Image was not returned as an owned attachment')
+    verify_media_answer(answer, note, pdf, ids[0], real=real)
     repeated, duplicate = submit(client, cid, prompt, answer['request_id'], attachments=ids)
     require(duplicate == answer and len(repeated['messages']) == len(value['messages']), 'Media replay duplicated inference')
     return [dict(check='image/text/PDF upload/download ownership and idempotent multimodal reply',
                  conversation_id=cid, provider=answer.get('provider'), real_provider=real,
                  answer_sha256=hashlib.sha256(answer['content'].encode()).hexdigest(), passed=True)]
+
+
+def verify_media_answer(answer, note, pdf, image_id, *, real):
+    require(not real or answer.get('provider') == 'gemini', 'Live image answer did not use the vision provider')
+    require('red' in answer['content'].lower() and note in answer['content'] and pdf in answer['content'],
+            'Media model did not read the real image/text/PDF')
+    require('Attachment notes:' not in answer['content'], 'Media model used incomplete attachment content')
+    require(any(a['media_id'] == image_id for a in answer.get('attachments', [])), 'Image was not returned as an owned attachment')
 
 
 def staging(root, sha, feature):
