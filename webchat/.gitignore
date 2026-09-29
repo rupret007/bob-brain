@@ -10,4 +10,5 @@ song-projects/
 __pycache__/
 *.pyc
 *.lock
+node_modules/
 drill-fixtures/

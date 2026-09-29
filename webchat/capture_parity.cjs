@@ -55,12 +55,18 @@ const digest = value => crypto.createHash('sha256').update(value).digest('hex');
       assert.equal(await page.locator('#jobs-empty').isVisible(), false);
     }
     const layouts = [];
+    const tabs = html.includes('composer-dock') ? ['chat', 'ops', 'song', 'lanes', 'settings'] : ['ops'];
     for (const width of [320, 390, 430, 900]) {
       await page.setViewportSize({width, height: 844});
+      for (const tab of tabs) {
+      await page.locator(`[data-bottom="${tab}"]`).click();
+      await page.locator(`[data-view="${tab}"]:not([hidden])`).waitFor();
       const metrics = await page.evaluate(() => ({viewport: innerWidth, document: document.documentElement.scrollWidth}));
-      assert(metrics.document <= width, 'Page overflows at ' + width);
-      layouts.push(metrics);
+      assert(metrics.document <= width, tab + ' overflows at ' + width);
+      layouts.push({...metrics, tab});
+      }
     }
+    await page.locator('[data-bottom="ops"]').click();
     await page.setViewportSize({width: 390, height: 844});
     await page.screenshot({path: screenshot});
     assert.deepEqual(errors, []);
