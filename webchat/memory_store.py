@@ -1,0 +1,116 @@
+"""Private, bounded memory I/O through pinned directories, never filesystem links."""
+from contextlib import contextmanager
+import fcntl
+import os
+import secrets
+import stat
+import time
+
+MAX_BYTES = 512 * 1024
+LOCK_SECONDS = 3
+
+
+@contextmanager
+def directory(root, create=False):
+    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for name in ('conductor', 'webchat', 'memory'):
+            if create:
+                try:
+                    os.mkdir(name, mode=0o700, dir_fd=descriptor)
+                except FileExistsError:
+                    pass
+            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        if create:
+            os.fchmod(descriptor, 0o700)
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
+def regular_file(folder, name, flags):
+    fd = os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, mode=0o600, dir_fd=folder)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        os.close(fd)
+        raise OSError('Memory storage must use private regular files.')
+    return fd
+
+
+def read_at(folder, budget):
+    fd = regular_file(folder, 'profile.md', os.O_RDONLY)
+    try:
+        info = os.fstat(fd)
+        clipped = info.st_size > budget
+        if clipped:
+            os.lseek(fd, -budget, os.SEEK_END)
+        with os.fdopen(fd, 'rb', closefd=False) as stream:
+            raw = stream.read(budget)
+        if clipped:
+            raw = raw.partition(b'\n')[2]  # Do not return half a fact or UTF-8 character.
+        try:
+            text = raw.decode('utf-8')
+        except UnicodeDecodeError:
+            raise OSError('Memory storage contains invalid text.') from None
+        return dict(text=text, modified=info.st_mtime, truncated=clipped)
+    finally:
+        os.close(fd)
+
+
+def read_memory(root, budget=MAX_BYTES):
+    if type(budget) is not int or budget < 1:
+        raise OSError('Memory read budget must be positive.')
+    with directory(root) as folder:
+        return read_at(folder, min(MAX_BYTES, budget))
+
+
+def append_memory(root, line):
+    data = line.encode('utf-8')
+    if len(data) > MAX_BYTES:
+        raise OSError('That memory is too large to save.')
+    with directory(root, create=True) as folder:
+        # Exclusive creation avoids macOS O_CREAT/O_NOFOLLOW races between
+        # first writers. Existing locks are opened without creating/replacing them.
+        try:
+            lock = regular_file(folder, 'profile.lock', os.O_RDWR | os.O_CREAT | os.O_EXCL)
+        except FileExistsError:
+            lock = regular_file(folder, 'profile.lock', os.O_RDWR)
+        try:
+            os.fchmod(lock, 0o600)
+            deadline = time.monotonic() + LOCK_SECONDS
+            while True:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise OSError('Memory is busy; the save was not started.') from None
+                    time.sleep(.01)
+            try:
+                existing = read_at(folder, MAX_BYTES)['text']
+            except FileNotFoundError:
+                existing = ''
+            rows = (existing + line).splitlines(keepends=True)
+            total = sum(len(row.encode('utf-8')) for row in rows)
+            start = 0
+            while start < len(rows) and total > MAX_BYTES:
+                total -= len(rows[start].encode('utf-8'))
+                start += 1
+            temporary = '.profile-' + secrets.token_hex(16)
+            fd = regular_file(folder, temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                    stream.write(''.join(rows[start:]))
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, 'profile.md', src_dir_fd=folder, dst_dir_fd=folder)
+                os.fsync(folder)
+            finally:
+                try:
+                    os.unlink(temporary, dir_fd=folder)
+                except FileNotFoundError:
+                    pass
+        finally:
+            os.close(lock)

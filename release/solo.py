@@ -304,6 +304,12 @@ def gaps_replay(client, cid, root, *, real):
     require(saved.get('action_card', {}).get('state') == 'done' and fact.rstrip('.') in profile_path(root).read_text(),
             'Confirmed memory was not persisted')
     require((digest(base) if base.exists() else None) == original_hash, 'Memory modified main checkout')
+    from memory_store import read_memory
+    import stat
+    require(fact.rstrip('.') in read_memory(root)['text'], 'Private memory reader did not recover saved fact')
+    require(stat.S_IMODE(profile_path(root).stat().st_mode) == 0o600 and
+            stat.S_IMODE(profile_path(root).parent.stat().st_mode) == 0o700,
+            'Memory file/directory permissions are not private')
     _, search = submit(client, cid, 'look up Python programming language')
     require(search['provider'] == 'state' and 'python' in search['content'].lower() and 'https://' in search['content'],
             'Web research lacked a supported answer/source')
@@ -313,7 +319,7 @@ def gaps_replay(client, cid, root, *, real):
     import urllib.request
     raw = client.open(urllib.request.Request(client.url + match[0], headers={'Origin': client.url}), parse=False)
     require(raw.startswith(b'\x89PNG\r\n\x1a\n'), 'Authenticated screenshot is not PNG')
-    return [dict(check='confirmed memory overlay; main unchanged', passed=True),
+    return [dict(check='confirmed private memory overlay; bounded safe read; owner-only permissions; main unchanged', passed=True),
             dict(check='web research with source', real_network=real, passed=True),
             dict(check='authenticated screenshot PNG', real_capture=real, sha256=hashlib.sha256(raw).hexdigest(), passed=True)]
 
