@@ -16,6 +16,12 @@ if ($("login-form")) {
   });
 } else {
   let csrf = "", current = "", busy = false, sending = false, revision = "", polling = false, draftRequest = null, pollFailures = 0;
+  let pendingAttachments = [];
+  let uploading = false, quickRequest = null;
+  const composerDrafts = new Map();
+  const MEDIA_LIMITS = { image: 12 * 1024 * 1024, video: 35 * 1024 * 1024, file: 8 * 1024 * 1024 };
+  const MAX_PENDING_ATTACHMENTS = 6;
+  let lastQuietHoursActive = null, lastQuietHoursFetchedAt = 0, lastBootstrapCommand = "";
   const providers = { codex: "Codex", cursor: "Cursor", gemini: "Gemini", minimax: "MiniMax", claude: "Claude", texting: "Texts · private" };
   function escapeHtml(text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -82,13 +88,195 @@ if ($("login-form")) {
       $("report-body").textContent = result.text;
     } catch (_) { $("report-body").textContent = "This result could not be loaded. Please try again."; }
   }
+  function mediaKindFromFile(file) {
+    const extension = file.name.split(".").pop().toLowerCase();
+    if (["jpg", "jpeg", "png", "gif", "webp", "heic", "heif"].includes(extension)) return "image";
+    if (["mp4", "mov", "webm", "m4v", "mkv"].includes(extension)) return "video";
+    if (["pdf", "txt", "md", "csv", "json", "log"].includes(extension)) return "file";
+    return null;
+  }
+  function switchConversation(id) {
+    if (current) composerDrafts.set(current, { attachments: pendingAttachments, message: $("message").value, request: draftRequest });
+    current = id;
+    const draft = composerDrafts.get(id);
+    pendingAttachments = draft?.attachments || [];
+    $("message").value = draft?.message || "";
+    draftRequest = draft?.request || null;
+    revision = ""; busy = false;
+    renderAttachmentStrip(); composerState();
+    remember("bob.conversation", id);
+  }
+  function uploadMedia(file, conversationId) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/media/upload");
+      xhr.timeout = 120000;
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      xhr.setRequestHeader("X-CSRF-Token", csrf);
+      xhr.setRequestHeader("X-Filename", encodeURIComponent(file.name));
+      xhr.setRequestHeader("X-Conversation-Id", conversationId);
+      xhr.upload.onprogress = (event) => {
+        $("notice").textContent = `Uploading ${file.name}${event.lengthComputable ? ` — ${Math.round(event.loaded * 100 / event.total)}%` : "…"}`;
+      };
+      xhr.onload = () => {
+        if (xhr.status === 401) { location.assign("/login"); reject(new Error("Please log in.")); return; }
+        try {
+          const result = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300) resolve(result);
+          else reject(new Error(result.error || "Upload failed. Please retry."));
+        } catch (_) { reject(new Error("Upload failed. Please retry.")); }
+      };
+      xhr.onerror = xhr.ontimeout = xhr.onabort = () => reject(new Error(`Could not upload ${file.name}. Please retry.`));
+      xhr.send(file);
+    });
+  }
+  function mediaLimitForKind(kind) {
+    return MEDIA_LIMITS[kind] || MEDIA_LIMITS.file;
+  }
+  function renderAttachmentStrip() {
+    const host = $("attach-preview");
+    if (!host) return;
+    host.replaceChildren();
+    if (!pendingAttachments.length) {
+      host.hidden = true;
+      return;
+    }
+    host.hidden = false;
+    for (const item of pendingAttachments) {
+      const chip = document.createElement("div");
+      chip.className = "attach-chip";
+      if (item.kind === "image") {
+        const img = document.createElement("img");
+        img.src = item.url + "&preview=1";
+        img.alt = item.filename || "Image preview";
+        chip.append(img);
+      } else if (item.kind === "video") {
+        const label = document.createElement("div");
+        label.className = "attach-file-label";
+        label.textContent = "Video";
+        chip.append(label);
+      } else {
+        const label = document.createElement("div");
+        label.className = "attach-file-label";
+        label.textContent = item.filename || "File";
+        chip.append(label);
+      }
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "attach-remove quiet";
+      remove.setAttribute("aria-label", "Remove attachment");
+      remove.textContent = "×";
+      remove.disabled = sending;
+      remove.addEventListener("click", () => {
+        pendingAttachments = pendingAttachments.filter((row) => row.media_id !== item.media_id);
+        renderAttachmentStrip();
+        composerState();
+      });
+      chip.append(remove);
+      host.append(chip);
+    }
+  }
+  function appendMessageAttachments(parent, attachments) {
+    if (!attachments?.length) return;
+    const wrap = document.createElement("div");
+    wrap.className = "message-attachments";
+    for (const att of attachments) {
+      const url = att.url || `/api/media/${att.media_id}?conversation_id=${current}`;
+      const item = document.createElement("div");
+      item.className = "message-attachment";
+      if (att.kind === "image") {
+        const img = document.createElement("img");
+        img.src = url + "&preview=1";
+        img.alt = att.filename || "Image";
+        img.loading = "lazy";
+        img.addEventListener("error", () => { img.hidden = true; });
+        const open = document.createElement("a");
+        open.href = url; open.target = "_blank"; open.rel = "noopener noreferrer";
+        open.append(img); item.append(open);
+      } else if (att.kind === "video") {
+        const video = document.createElement("video");
+        video.src = url;
+        video.controls = true;
+        video.preload = "metadata";
+        video.playsInline = true;
+        video.addEventListener("error", () => {
+          const fallback = document.createElement("p");
+          fallback.textContent = "Video preview unavailable in this browser. Download the original below.";
+          video.replaceWith(fallback);
+        });
+        item.append(video);
+      }
+      const link = document.createElement("a");
+      link.href = url + "&download=1";
+      link.className = "attach-download";
+      link.textContent = att.filename || "Download file";
+      link.download = att.filename || "";
+      item.append(link); wrap.append(item);
+    }
+    parent.append(wrap);
+  }
   function composerState() {
-    $("send").disabled = busy || sending || !current;
+    const hasText = Boolean($("message").value.trim());
+    const hasAttach = pendingAttachments.length > 0;
+    $("send").disabled = busy || sending || uploading || !current || (!hasText && !hasAttach);
     $("stop").hidden = !busy;
     $("message").disabled = !current;
+    const attachBtn = $("attach-plus");
+    if (attachBtn) attachBtn.disabled = !current || busy || sending || uploading;
+    $("conversations").disabled = sending || uploading;
+    $("new-chat").disabled = sending || uploading;
+    $("conversations-dialog").disabled = sending || uploading;
+    $("new-chat-dialog").disabled = sending || uploading;
+    document.querySelectorAll(".attach-remove").forEach((button) => { button.disabled = sending; });
     const dot = $("status-dot");
     if (dot) dot.classList.toggle("busy", busy || sending);
   }
+  const conductorPrompts = {
+    round: "start a job: Web Bob ready round (draft only, no merge)",
+    council: "run council on: score Web Bob iPhone tab UI and handback failover",
+    status: "status",
+    stop: "stop current job (draft only)",
+  };
+  async function submitChatText(text, { confirmStop = false, confirmMessage } = {}) {
+    if (!text || !current) return;
+    if (confirmStop && !window.confirm(confirmMessage || "Stop this job?")) return;
+    if (uploading || ((busy || sending) && !confirmStop)) {
+      $("notice").textContent = "Wait for the current reply to finish, then try again.";
+      setBottomTab("chat");
+      return;
+    }
+    setBottomTab("chat");
+    const provider = $("provider-choice").value;
+    if (!quickRequest || quickRequest.message !== text || quickRequest.conversation_id !== current || quickRequest.provider !== provider) {
+      quickRequest = { conversation_id: current, message: text, provider, request_id: crypto.randomUUID(), attachments: [] };
+    }
+    const payload = quickRequest;
+    sending = true;
+    composerState();
+    $("notice").textContent = "";
+    try {
+      const conversation = await api("/api/messages", payload);
+      if (payload === quickRequest) quickRequest = null;
+      render(conversation);
+      await refreshList();
+    } catch (error) {
+      $("notice").textContent = error.message;
+    } finally {
+      sending = false;
+      composerState();
+    }
+  }
+  document.querySelector(".app")?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-conductor]");
+    if (!btn) return;
+    const key = btn.dataset.conductor;
+    const text = conductorPrompts[key];
+    if (!text) return;
+    if (key === "round" || key === "council" || key === "status") {
+      setBottomTab("chat");
+    }
+    submitChatText(text, { confirmStop: key === "stop" });
+  });
   let activeBottomTab = "chat";
   let songSnapshot = songFieldsText();
   function songFieldsText() {
@@ -123,8 +311,29 @@ if ($("login-form")) {
   for (const btn of document.querySelectorAll(".bottom-tab")) {
     btn.addEventListener("click", () => setBottomTab(btn.dataset.bottom));
   }
-  $("open-chats").addEventListener("click", () => $("chats-dialog").showModal());
+  $("open-chats").addEventListener("click", () => {
+    syncConversationDialog();
+    $("chats-dialog").showModal();
+  });
   $("close-chats").addEventListener("click", () => $("chats-dialog").close());
+  function syncConversationDialog() {
+    const main = $("conversations");
+    const dialog = $("conversations-dialog");
+    if (!main || !dialog) return;
+    dialog.replaceChildren(...Array.from(main.options).map((opt) => {
+      const clone = document.createElement("option");
+      clone.value = opt.value;
+      clone.textContent = opt.textContent;
+      return clone;
+    }));
+    dialog.value = main.value;
+  }
+  $("conversations-dialog")?.addEventListener("change", async () => {
+    $("conversations").value = $("conversations-dialog").value;
+    $("conversations").dispatchEvent(new Event("change"));
+    $("chats-dialog").close();
+  });
+  $("new-chat-dialog")?.addEventListener("click", () => { $("new-chat").click(); $("chats-dialog").close(); });
   $("quick-chips").addEventListener("click", (event) => {
     const key = event.target.closest("[data-chip]")?.dataset.chip;
     if (key === "song") { setBottomTab("song"); $("song-new").click(); }
@@ -167,6 +376,7 @@ if ($("login-form")) {
       else if (message.role === "assistant" && !message.texting) body.innerHTML = renderMarkdown(message.content || "");
       else body.textContent = message.content;
       article.append(body);
+      appendMessageAttachments(article, message.attachments);
       const messageTools = document.createElement("div");
       messageTools.className = "message-tools";
       if (message.text_draft) article.append(textDraftCard(message.text_draft));
@@ -224,17 +434,13 @@ if ($("login-form")) {
           approve.textContent = memory ? "Save memory" : council ? "Start review" : "Start job";
           approve.addEventListener("click", () => {
             const suffix = proposalId ? ` proposal ${proposalId}` : "";
-            $("message").value = memory ? `yes, save memory${suffix}` : council ? `yes, run council${suffix}` : `yes, start job${suffix}`;
-            $("message").dispatchEvent(new Event("input"));
-            $("composer").requestSubmit();
+            submitChatText(memory ? `yes, save memory${suffix}` : council ? `yes, run council${suffix}` : `yes, start job${suffix}`);
           });
           const deny = document.createElement("button");
           deny.type = "button"; deny.className = "action-deny";
           deny.textContent = memory ? "Dismiss" : council ? "Dismiss" : "Not now";
           deny.addEventListener("click", () => {
-            $("message").value = memory ? "never mind memory" : council ? "never mind council" : "never mind";
-            $("message").dispatchEvent(new Event("input"));
-            $("composer").requestSubmit();
+            submitChatText(memory ? "never mind memory" : council ? "never mind council" : "never mind");
           });
           actions.append(approve, deny);
           card.append(actions);
@@ -419,36 +625,70 @@ if ($("login-form")) {
       setTimeout(() => { btn.textContent = "Copy"; }, 1200);
     } catch (_) { $("notice").textContent = "Could not copy — select the code manually."; }
   });
-  function submitChatText(text) {
-    if (!current || busy || sending) return;
-    $("message").value = text;
-    $("message").dispatchEvent(new Event("input"));
-    $("composer").requestSubmit();
-  }
   $("composer").addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = $("message").value.trim();
-    if (!message || busy || sending) return;
+    if ((!message && !pendingAttachments.length) || busy || sending || uploading) return;
     const provider = $("provider-choice").value;
-    if (!draftRequest || draftRequest.message !== message || draftRequest.conversation_id !== current || draftRequest.provider !== provider) {
-      draftRequest = { conversation_id: current, message, provider, request_id: crypto.randomUUID() };
+    const attachIds = pendingAttachments.map((row) => row.media_id);
+    if (!draftRequest || draftRequest.message !== message || draftRequest.conversation_id !== current || draftRequest.provider !== provider
+        || JSON.stringify(draftRequest.attachments || []) !== JSON.stringify(attachIds)) {
+      draftRequest = { conversation_id: current, message, provider, request_id: crypto.randomUUID(), attachments: attachIds };
     }
     sending = true; composerState(); $("notice").textContent = "";
+    const submitted = draftRequest;
     try {
-      const conversation = await api("/api/messages", draftRequest);
-      const submitted = draftRequest;
+      const conversation = await api("/api/messages", submitted);
       if (submitted.conversation_id === current && submitted.message === $("message").value.trim()) {
         $("message").value = "";
         $("message").style.height = "auto";
-        draftRequest = null;
       }
+      if (submitted === draftRequest) draftRequest = null;
+      pendingAttachments = pendingAttachments.filter((row) => !submitted.attachments.includes(row.media_id));
+      renderAttachmentStrip();
       render(conversation); await refreshList();
     } catch (error) { $("notice").textContent = error.message; }
     finally { sending = false; composerState(); $("message").focus(); }
   });
+  $("attach-plus")?.addEventListener("click", () => $("attach-input")?.click());
+  $("attach-input")?.addEventListener("change", async (event) => {
+    const files = [...(event.target.files || [])];
+    event.target.value = "";
+    if (!files.length || uploading || sending || busy || !current) return;
+    if (pendingAttachments.length + files.length > MAX_PENDING_ATTACHMENTS) {
+      $("notice").textContent = `At most ${MAX_PENDING_ATTACHMENTS} attachments per message.`;
+      return;
+    }
+    uploading = true; composerState();
+    const errors = [];
+    try {
+      for (const file of files) {
+        const kind = mediaKindFromFile(file);
+        const limit = mediaLimitForKind(kind);
+        if (!kind || !file.size || file.size > limit) {
+          errors.push(!kind ? `${file.name}: unsupported file type.` : `${file.name}: file must be between 1 byte and ${limit / 1024 / 1024}MB.`);
+          continue;
+        }
+        try {
+          $("notice").textContent = `Uploading ${file.name}…`;
+          const stored = await uploadMedia(file, current);
+          pendingAttachments.push(stored);
+          renderAttachmentStrip();
+        } catch (error) {
+          errors.push(error.message);
+        }
+      }
+    } finally {
+      uploading = false;
+      $("notice").textContent = errors.join(" ");
+      renderAttachmentStrip();
+      composerState();
+    }
+  });
   $("message").addEventListener("input", () => {
     $("message").style.height = "auto";
     $("message").style.height = Math.min($("message").scrollHeight, 180) + "px";
+    composerState();
   });
   $("message").addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing && !matchMedia("(pointer: coarse)").matches) {
@@ -456,15 +696,17 @@ if ($("login-form")) {
     }
   });
   $("conversations").addEventListener("change", async () => {
+    if (uploading || sending) return;
     if (!setBottomTab("chat")) { $("conversations").value = current; return; }
     $("chats-dialog").close();
-    current = $("conversations").value; remember("bob.conversation", current); revision = ""; busy = false;
+    switchConversation($("conversations").value);
     await poll(); $("messages").scrollTop = $("messages").scrollHeight;
   });
   $("new-chat").addEventListener("click", async () => {
+    if (uploading || sending) return;
     if (!setBottomTab("chat")) return;
     $("chats-dialog").close();
-    try { const conversation = await api("/api/conversations", {}); current = conversation.id; revision = ""; await refreshList(); render(conversation); $("message").focus(); }
+    try { const conversation = await api("/api/conversations", {}); switchConversation(conversation.id); await refreshList(); render(conversation); $("message").focus(); }
     catch (error) { $("notice").textContent = error.message; }
   });
   let micRecognition = null;

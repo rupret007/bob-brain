@@ -140,5 +140,18 @@ class EvidenceTests(unittest.TestCase):
             self.verify()
 
 
+class MediaEvidenceTests(unittest.TestCase):
+    def test_guessed_text_on_nonvision_fallback_is_not_live_vision_evidence(self):
+        answer = dict(provider='codex', content='red note-token pdf-token', attachments=[dict(media_id='picture')])
+        with self.assertRaisesRegex(Exception, 'vision provider'):
+            solo.verify_media_answer(answer, 'note-token', 'pdf-token', 'picture', real=True)
+
+    def test_attachment_extraction_warning_is_not_a_full_media_pass(self):
+        answer = dict(provider='gemini', content='red note-token pdf-token\nAttachment notes: failed to decode',
+                      attachments=[dict(media_id='picture')])
+        with self.assertRaisesRegex(Exception, 'incomplete attachment'):
+            solo.verify_media_answer(answer, 'note-token', 'pdf-token', 'picture', real=True)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -59,10 +59,13 @@ def identity():
     return sha
 
 
-def submit(client, cid, prompt, request=None):
+def submit(client, cid, prompt, request=None, attachments=None):
     import uuid
     request = request or str(uuid.uuid4())
-    value = client.call('/api/messages', dict(conversation_id=cid, message=prompt, request_id=request))
+    payload = dict(conversation_id=cid, message=prompt, request_id=request)
+    if attachments:
+        payload['attachments'] = attachments
+    value = client.call('/api/messages', payload)
     deadline = time.monotonic() + 90
     while True:
         answer = next(m for m in value['messages'] if m.get('role') == 'assistant' and m.get('request_id') == request)
@@ -118,6 +121,8 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
     receipts.append(dict(check='exact draft, bare approval, cancel, stale token', passed=True))
     if ORDER.index(feature) >= ORDER.index('gaps'):
         receipts.extend(gaps_replay(client, cid, root, real=real_reads))
+    if ORDER.index(feature) >= ORDER.index('media'):
+        receipts.extend(media_replay(client, root, real=real_reads))
     from task_dispatch import task_queue
     require(not any(r['conversation_id'] == cid for r in task_queue.tasks(root).values()), 'Replay queued work')
     saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
@@ -150,6 +155,58 @@ def gaps_replay(client, cid, root, *, real):
             dict(check='authenticated screenshot PNG', real_capture=real, sha256=hashlib.sha256(raw).hexdigest(), passed=True)]
 
 
+def media_replay(client, root, *, real):
+    import base64
+    import uuid
+    import urllib.request
+    from test_chat_media import png_fixture, pdf_fixture
+    cid = client.new()
+    note, pdf = 'clarinet-' + uuid.uuid4().hex[:8], 'cello-' + uuid.uuid4().hex[:8]
+    files = [('picture.png', png_fixture()), ('note.txt', ('Token: ' + note).encode()),
+             ('document.pdf', pdf_fixture('Token: ' + pdf))]
+    uploaded = []
+    for filename, raw in files:
+        info = client.call('/api/media/upload', dict(conversation_id=cid, filename=filename,
+                          data_base64=base64.b64encode(raw).decode()))
+        served = client.open(urllib.request.Request(client.url + info['url'], headers={'Origin': client.url}), parse=False)
+        require(served == raw, 'Media download changed bytes')
+        uploaded.append(info)
+    with tempfile.TemporaryDirectory(prefix='solo-live-media-') as tmp:
+        clip = Path(tmp) / 'clip.mp4'
+        subprocess.run(['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi',
+                        '-i', 'color=c=red:s=64x64:d=1', '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+                        '-movflags', '+faststart', str(clip)], check=True, timeout=15)
+        raw = clip.read_bytes()
+        video = client.call('/api/media/upload', dict(conversation_id=cid, filename='clip.mp4', data_base64=base64.b64encode(raw).decode()))
+        partial = client.open(urllib.request.Request(client.url + video['url'],
+                              headers={'Origin': client.url, 'Range': 'bytes=0-15'}), parse=False)
+        require(partial == raw[:16], 'Live video range/seek failed')
+    wrong = client.new()
+    try:
+        client.call(uploaded[0]['url'].replace(cid, wrong))
+    except RuntimeError as error:
+        require('HTTP 404' in str(error), 'Cross-conversation media denial was not 404')
+    else:
+        raise RuntimeError('Cross-conversation attachment access succeeded')
+    prompt = "Describe the dominant color in the attached image and give the Token value in the text file and PDF. Echo the image as an attachment."
+    ids = [row['media_id'] for row in uploaded]
+    value, answer = submit(client, cid, prompt, attachments=ids)
+    verify_media_answer(answer, note, pdf, ids[0], real=real)
+    repeated, duplicate = submit(client, cid, prompt, answer['request_id'], attachments=ids)
+    require(duplicate == answer and len(repeated['messages']) == len(value['messages']), 'Media replay duplicated inference')
+    return [dict(check='image/text/PDF upload/download ownership and idempotent multimodal reply',
+                 conversation_id=cid, provider=answer.get('provider'), real_provider=real,
+                 answer_sha256=hashlib.sha256(answer['content'].encode()).hexdigest(), passed=True)]
+
+
+def verify_media_answer(answer, note, pdf, image_id, *, real):
+    require(not real or answer.get('provider') == 'gemini', 'Live image answer did not use the vision provider')
+    require('red' in answer['content'].lower() and note in answer['content'] and pdf in answer['content'],
+            'Media model did not read the real image/text/PDF')
+    require('Attachment notes:' not in answer['content'], 'Media model used incomplete attachment content')
+    require(any(a['media_id'] == image_id for a in answer.get('attachments', [])), 'Image was not returned as an owned attachment')
+
+
 def staging(root, sha, feature):
     from app import Chat, Server
     # No model inference needed for these deterministic commands. Real messaging reads
@@ -159,7 +216,18 @@ def staging(root, sha, feature):
     with tempfile.TemporaryDirectory(prefix='solo-staging-') as folder:
         private = Path(folder)
         mock = MockMessaging(private)
-        chat = Chat(private / 'conductor/webchat', private, OfflineProviders(),
+        class StagingProviders(OfflineProviders):
+            def reply(self, conversation, cancel, progress):
+                user = next(m for m in reversed(conversation['messages']) if m['role'] == 'user')
+                if user.get('attachments'):
+                    from chat_media import validate_attachment_ids, enrich_for_model
+                    metas = validate_attachment_ids(private, user['attachments'], conversation_id=conversation['id'])
+                    bundle = enrich_for_model(private, metas, redact=lambda text: text)
+                    require(not bundle['warnings'], 'Staging media extraction failed')
+                    tokens = re.findall(r'(?:clarinet|cello)-[0-9a-f]{8}', bundle['text'])
+                    return dict(content='Red. ' + ' '.join(tokens) + ' <bob-webchat-attachment media_id="' + metas[0]['media_id'] + '" />', provider='fixture', attempts=[])
+                return super().reply(conversation, cancel, progress)
+        chat = Chat(private / 'conductor/webchat', private, StagingProviders(),
                     texting=Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token)))
         server = Server(('127.0.0.1', 0), chat)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -195,6 +263,8 @@ def checks(root, feature):
                 for name in ('webchat', 'services', 'reviews', 'release')}
     commands['eval'] = [sys.executable, 'webchat/bob_parity_eval.py']
     commands['browser'] = [sys.executable, 'webchat/texting_proof.py', '--output-dir', str(out / 'texting-browser')]
+    if ORDER.index(feature) >= ORDER.index('media'):
+        commands['media-browser'] = [sys.executable, 'webchat/media_browser_test.py', '--screenshots', str(out / 'media-browser')]
     for path in sorted((CODE / 'webchat').glob('test_*.mjs')):
         commands[path.stem] = ['node', str(path)]
 
@@ -232,10 +302,11 @@ def checks(root, feature):
         return name, receipt
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-        results = dict(pool.map(check, [(n, a) for n, a in commands.items() if n != 'browser']))
+        results = dict(pool.map(check, [(n, a) for n, a in commands.items() if not n.endswith('browser')]))
     # Browser/listener assertions are serialized after suites that use private listeners.
-    name, receipt = check(('browser', commands['browser']))
-    results[name] = receipt
+    for name in (n for n in commands if n.endswith('browser')):
+        name, receipt = check((name, commands[name]))
+        results[name] = receipt
     require(identity() == sha, 'Candidate changed during checks')
     passed = all(r['exit'] == 0 and r['skipped'] == 0 for r in results.values())
     record = dict(sha=sha, feature=feature, all_pass=passed, results=results, at=time.time())
@@ -253,6 +324,8 @@ def verify_gates(sha, feature, check_path, review_path):
             'Stale or wrong-feature release evidence')
     require(check['all_pass'] and check['staging']['all_pass'], 'Tests/evals/staging failed')
     required = {'webchat', 'services', 'reviews', 'release', 'eval', 'browser'}
+    if ORDER.index(feature) >= ORDER.index('media'):
+        required.add('media-browser')
     required.update(p.stem for p in (CODE / 'webchat').glob('test_*.mjs'))
     require(required <= check['results'].keys(), 'Missing mandatory suite')
     for name in required:

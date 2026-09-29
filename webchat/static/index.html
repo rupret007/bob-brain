@@ -38,11 +38,14 @@
         <button type="button" class="chip" data-chip="status">View jobs</button>
         <button type="button" class="chip" data-chip="song">Write a song</button>
       </div>
+      <div id="attach-preview" class="attach-preview" hidden aria-label="Attachments to send"></div>
       <form id="composer" class="composer">
         <label class="sr-only" for="message">Message Bob</label>
+        <input id="attach-input" type="file" class="sr-only" accept="image/*,video/*,.heic,.heif,.pdf,.txt,.md,.csv,.json,.log" multiple>
+        <button type="button" id="attach-plus" class="composer-plus quiet icon-btn" aria-label="Attach photo, video, or file" title="Photos up to 12MB, videos 35MB, files 8MB; 6 attachments per message">+</button>
         <div class="composer-pill">
           <button type="button" id="mic" class="composer-mic quiet icon-btn" aria-label="Voice input" title="Voice input">🎤</button>
-          <textarea id="message" name="message" placeholder="Ask Bob…" rows="1" maxlength="6000" required enterkeyhint="send"></textarea>
+          <textarea id="message" name="message" placeholder="Ask Bob…" rows="1" maxlength="6000" enterkeyhint="send"></textarea>
         </div>
         <button type="button" id="speak" class="quiet icon-btn composer-speak" aria-label="Read last reply aloud" title="Read aloud">🔊</button>
         <button type="button" id="live-call" class="call-btn" aria-label="Live voice call" title="Live call">
@@ -153,6 +156,8 @@
             <option value="claude">Claude first</option>
           </select>
           <p class="view-hint muted">If your choice cannot reply, Bob tries another model.</p>
+          <label class="sr-only field-label" for="conversations">Active conversation</label>
+          <select id="conversations" class="sr-only" aria-label="Conversation"></select>
         </div>
         <details class="disclosure">
           <summary>Voice</summary>
@@ -193,8 +198,10 @@
 
   <dialog id="chats-dialog">
     <div class="report-heading"><h2>Conversations</h2><button type="button" id="close-chats" aria-label="Close">Close</button></div>
-    <select id="conversations" size="8" aria-label="Pick conversation"></select>
-    <button type="button" id="new-chat" class="primary">New chat</button>
+    <p class="muted sheet-hint">Switch chats here; your draft message is kept on this device.</p>
+    <select id="conversations-dialog" size="8" aria-label="Pick conversation"></select>
+    <button type="button" id="new-chat-dialog" class="primary">New chat</button>
+    <button type="button" id="new-chat" class="sr-only" tabindex="-1" aria-hidden="true">New chat</button>
   </dialog>
 
   <dialog id="report">
