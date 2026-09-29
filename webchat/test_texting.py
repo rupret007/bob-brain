@@ -233,8 +233,16 @@ class TextingTests(unittest.TestCase):
         self.say(draft["confirm_message"])
         self.assertEqual(len(self.private()["audit"]), 1)
         self.assertEqual(self.providers.calls, [])
-        self.assertEqual(len(self.mock.calls), 2)  # recipient lookup plus Andrea send probe
+        self.assertEqual(len(self.mock.calls), 3)  # draft lookup, refreshed read-only identities, Andrea probe
         self.assertEqual(self.mock.calls[-1], ("POST", "/web-bob/send"))
+
+    def test_version_lookup_revokes_previous_text_consent(self):
+        draft = self.draft()
+        self.say('what version are you?')
+        reply = self.say(draft['confirm_message'])['messages'][-1]
+        self.assertIn('already used, cancelled, or replaced', reply['content'])
+        self.assertFalse(self.private()['audit'])
+        self.assertNotIn(('POST', '/web-bob/send'), self.mock.calls)
 
     def test_wrong_conversation_login_or_token_cannot_confirm(self):
         draft = self.draft()
@@ -385,13 +393,17 @@ class TextingTests(unittest.TestCase):
                         {"ok": True, "messageGuid": " "}, {"ok": True, "messageGuid": 1}):
             with self.subTest(receipt=receipt):
                 draft = self.draft()
-                with patch("texting.request_json", return_value=receipt) as requested:
+                from texting import request_json
+                def response(base, path, **kwargs):
+                    return receipt if path == '/web-bob/send' else request_json(base, path, **kwargs)
+                with patch("texting.request_json", side_effect=response) as requested:
                     value = self.say(draft["confirm_message"])
                     self.assertEqual(value["messages"][-1]["content"], DELIVERY_UNCONFIRMED)
                     self.assertEqual(self.private()["drafts"][draft["id"]]["state"], "delivery_unconfirmed")
                     self.assertIsNone(self.private()["drafts"][draft["id"]]["token"])
                     self.say(draft["confirm_message"])
-                    self.assertEqual(requested.call_count, 1)
+                    self.assertEqual(sum(call.args[1] == '/web-bob/send' for call in requested.call_args_list), 1)
+                    self.assertEqual(requested.call_count, 2)  # identity refresh plus one delivery, no retry
 
     def test_texting_persists_each_turn_and_clears_pending_work(self):
         for text in ("texts", "draft reply to Alex Morgan: Hello", "yes", "cancel text draft"):

@@ -170,6 +170,7 @@ class Chat(TaskDispatch):
             root, self.redact, overlay_roots=self.overlay_roots, overlay_pins=self.overlay_pins,
         )
         self.texting = texting or Texting()
+        self.texting.instinct.bind_state(folder)
         self.voice = VoiceCalls(self)
         for path in self.state.glob("*.json"):
             if not UUID.fullmatch(path.stem):
@@ -538,6 +539,7 @@ class Chat(TaskDispatch):
                 conversation.pop("pending_memory", None)
                 conversation.pop("pending_memory_id", None)
             if VERSION_QUESTION.search(text):
+                self.texting.invalidate(conversation)
                 return self.intent_reply(conversation, BUILD["short_sha"])
             # Text intent and confirmations never enter generic job/provider routing.
             def persist_texting(value):

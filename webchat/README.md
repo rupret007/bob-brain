@@ -528,3 +528,55 @@ python3 webchat/media_browser_test.py --screenshots reviews
 The browser test uses installed Playwright WebKit and Chromium, local fixture
 media, and an ephemeral loopback listener. Set `BOB_PLAYWRIGHT_MODULE` if needed.
 See `reviews/MEDIA-FIXED-0927.md` for finding dispositions and test limits.
+
+### Instinct partnership thread (draft lane; not deployed)
+
+In authenticated Web Bob chat, use `Instinct status`, `latest Instinct replies`,
+`read Instinct thread`, `digest Instinct`, or `weekly Instinct partnership audit`.
+Each request reads the existing BlueBubbles allowlist with its read-only
+`config.db` credentials: up to 200 recent chats and 30 messages from the resolved
+thread. Status reports the observation time and message window, never delivery
+or partnership health inferred from an old message. Digests flag possible bills
+and deadlines, security, and appointments using keyword matches plus dated
+excerpts. Counts apply only to this window; attachments are not analyzed.
+
+The default resolver requires an exact `Instinct` display name and a verified
+single recipient. Duplicate transports may use the newest `lastMessage` only
+when their participant addresses are identical. Ambiguous recipients, tied or
+unknown duplicate timestamps, groups, and missing threads fail closed. If the
+thread has no display name or needs disambiguation, an operator can pin its
+already-verified BlueBubbles GUID using `BOB_INSTINCT_CHAT_GUID` (or the private `conductor/webchat/instinct.json` file with `{"chat_guid":"verified exact thread ID"}`); there is no
+fallback from a missing pin to another contact. No production mapping, phone
+number, thread content, or credential is checked into this branch.
+
+`draft reply to Instinct` suggests conservative wording based on the latest
+incoming text's categories. `draft reply to Instinct: exact body` uses the supplied
+body. Both show the exact recipient and body (including `[Bob via Andrea]`) in the
+existing texting card. Even `send a message to Instinct: ...` only creates a
+draft. Instinct drafts never receive a send token. Even a valid legacy token is
+refused on the server for Instinct, pinned identities and matching alternate
+transports/groups. Editing a draft cannot remove this restriction for an Instinct
+recipient. No direct BlueBubbles send, automatic reply, routine, watcher or job
+is created. Jeff's current read-only instruction overrides older tagged-brief
+permissions in Bob's historical skill.
+
+Incoming text is quoted as untrusted data and never evaluated or sent to a model.
+Suggestions use local templates. Instinct turns carry the existing `texting`
+privacy flag, so thread contents, draft bodies, and consent tokens stay out of
+provider context and operational handback logs. Read excerpts hide phone numbers
+and email handles; consent cards show recipients so Jeff can verify them.
+
+Offline validation uses synthetic read-only messaging fixtures:
+
+```bash
+cd webchat
+python3 -m pytest -q test_instinct.py test_texting.py test_texting_e2e.py
+python3 instinct_eval.py
+python3 bob_parity_eval.py
+```
+
+The Instinct rubric also runs inside the broader Bob parity eval. Releases use
+`release/solo.py`: exact-tip self-review, full tests/evals, staging and two
+consecutive live greens. No model council or worker preflight is required.
+
+Instinct identities learned from the verified mapping are retained in that private file across restarts. Direct thread IDs, renamed threads, alternate transports and groups containing a protected address remain read-only. Never put this private mapping in Git.

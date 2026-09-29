@@ -106,7 +106,17 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
         receipts.append(dict(prompt='texts', provider='texting', passed=True,
                              answer_sha256=hashlib.sha256(answer['content'].encode()).hexdigest()))
     from texting import BlueBubbles
-    target = BlueBubbles().chats()[0]['guid'] if real_reads else 'Alex Morgan'
+    target = 'Alex Morgan'
+    if real_reads:
+        from instinct import Instinct
+        from texting import recipient
+        chats = BlueBubbles().chats()
+        protected = Instinct(None)
+        protected.bind_state(root / 'conductor/webchat')
+        protected.observe(chats)
+        choices = [c for c in chats if not protected.is_target(recipient(c))]
+        require(bool(choices), 'No ordinary messaging thread available for no-send replay')
+        target = choices[0]['guid']
     _, drafted = submit(client, cid, 'draft reply to ' + target + ': Web Bob no-send verification. Cancel this draft.')
     card = drafted.get('text_draft', {})
     require(card.get('state') == 'pending' and card.get('body') == 'Web Bob no-send verification. Cancel this draft.',
@@ -119,15 +129,45 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
     _, stale = submit(client, cid, token)
     require('already used, cancelled, or replaced' in stale['content'], 'Cancelled token was accepted')
     receipts.append(dict(check='exact draft, bare approval, cancel, stale token', passed=True))
+    _, newer = submit(client, cid, 'draft reply to ' + target + ': Version interruption check. Do not send.')
+    require(newer.get('text_draft', {}).get('state') == 'pending', 'Interruption-check draft failed')
+    confirmation = newer['text_draft']['confirm_message']
+    submit(client, cid, 'what version are you?')
+    _, revoked = submit(client, cid, confirmation)
+    require('already used, cancelled, or replaced' in revoked['content'], 'Version lookup retained stale text consent')
+    receipts.append(dict(check='version lookup revokes previous text consent', passed=True))
     if ORDER.index(feature) >= ORDER.index('gaps'):
         receipts.extend(gaps_replay(client, cid, root, real=real_reads))
     if ORDER.index(feature) >= ORDER.index('media'):
         receipts.extend(media_replay(client, root, real=real_reads))
+    if ORDER.index(feature) >= ORDER.index('instinct'):
+        receipts.extend(instinct_replay(client, cid))
     from task_dispatch import task_queue
     require(not any(r['conversation_id'] == cid for r in task_queue.tasks(root).values()), 'Replay queued work')
     saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
     require(not saved.get('_texting', {}).get('audit'), 'Replay attempted delivery')
     return dict(all_pass=True, conversation_id=cid, checks=receipts, real_texts_sent=0, queued_workers=0)
+
+
+def instinct_replay(client, cid):
+    _, answer = submit(client, cid, 'digest Instinct')
+    require(answer.get('provider') == 'instinct' and 'read from BlueBubbles' in answer['content'],
+            'Verified live Instinct mapping/read is unavailable')
+    for category in ('Bills / deadlines', 'Security', 'Appointments'):
+        require(category + ':' in answer['content'], 'Missing Instinct digest category')
+    digest_hash = hashlib.sha256(answer['content'].encode()).hexdigest()
+    _, drafted = submit(client, cid, 'draft reply to Instinct: Please prepare options for Jeff to review.')
+    card = drafted.get('text_draft', {})
+    require(card.get('state') == 'read_only' and card.get('read_only') and card.get('confirm_message') is None,
+            'Instinct draft exposed send authority')
+    require(card.get('body') == '[Bob via Andrea]\nPlease prepare options for Jeff to review.', 'Instinct draft differs')
+    for attempt in ('yes', 'yes wbtxt-' + 'a' * 32):
+        _, denied = submit(client, cid, attempt)
+        require('Instinct is read-only' in denied['content'], 'Instinct confirmation was not permanently refused')
+    _, cancelled = submit(client, cid, 'cancel text draft ' + card['id'])
+    require('Nothing sent.' in cancelled['content'], 'Instinct cancellation failed')
+    return [dict(check='verified Instinct digest, all flag categories, read-only draft, confirmations refused, cancel',
+                 answer_sha256=digest_hash, passed=True)]
 
 
 def gaps_replay(client, cid, root, *, real):
@@ -216,6 +256,11 @@ def staging(root, sha, feature):
     with tempfile.TemporaryDirectory(prefix='solo-staging-') as folder:
         private = Path(folder)
         mock = MockMessaging(private)
+        if ORDER.index(feature) >= ORDER.index('instinct'):
+            from instinct_fixture import GUID, MESSAGES
+            mock.chats.append(dict(guid=GUID, displayName='Instinct',
+                participants=[dict(address='+15550101999')], lastMessage=dict(MESSAGES[0])))
+            mock.messages = [dict(m) for m in MESSAGES]
         class StagingProviders(OfflineProviders):
             def reply(self, conversation, cancel, progress):
                 user = next(m for m in reversed(conversation['messages']) if m['role'] == 'user')
@@ -268,6 +313,8 @@ def checks(root, feature):
     if ORDER.index(feature) >= ORDER.index('voice'):
         commands['voice-js'] = ['node', '--test', 'webchat/test_voice_js.cjs']
         commands['voice-browser'] = [sys.executable, 'release/voice_probe.py', '--root', str(root), '--output', str(out / 'voice-browser')]
+    if ORDER.index(feature) >= ORDER.index('instinct'):
+        commands['instinct-browser'] = [sys.executable, 'webchat/instinct_proof.py', '--output-dir', str(out / 'instinct-browser')]
     for path in sorted((CODE / 'webchat').glob('test_*.mjs')):
         commands[path.stem] = ['node', str(path)]
 
@@ -331,6 +378,8 @@ def verify_gates(sha, feature, check_path, review_path):
         required.add('media-browser')
     if ORDER.index(feature) >= ORDER.index('voice'):
         required.update(('voice-js', 'voice-browser'))
+    if ORDER.index(feature) >= ORDER.index('instinct'):
+        required.add('instinct-browser')
     required.update(p.stem for p in (CODE / 'webchat').glob('test_*.mjs'))
     require(required <= check['results'].keys(), 'Missing mandatory suite')
     for name in required:

@@ -134,6 +134,17 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
             solo.verify_gates('a' * 40, 'voice', checks, review)
 
+    def test_instinct_requires_read_only_browser_proof(self):
+        self.check['feature'] = self.review['feature'] = 'instinct'
+        for name in ('media-browser', 'voice-js', 'voice-browser'):
+            self.check['results'][name] = self.check['results']['browser']
+        checks, review = self.folder / 'checks.json', self.folder / 'review.json'
+        solo.atomic_json(checks, self.check)
+        self.review['checks_sha256'] = solo.digest(checks)
+        solo.atomic_json(review, self.review)
+        with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
+            solo.verify_gates('a' * 40, 'instinct', checks, review)
+
     def test_skipped_required_checks_rejected(self):
         self.check['results']['webchat']['skipped'] = 1
         with self.assertRaisesRegex(Exception, 'skipped'):
@@ -161,6 +172,20 @@ class MediaEvidenceTests(unittest.TestCase):
                       attachments=[dict(media_id='picture')])
         with self.assertRaisesRegex(Exception, 'incomplete attachment'):
             solo.verify_media_answer(answer, 'note-token', 'pdf-token', 'picture', real=True)
+
+
+class InstinctEvidenceTests(unittest.TestCase):
+    def test_missing_mapping_is_not_a_live_pass(self):
+        with patch.object(solo, 'submit', return_value=({}, dict(provider='instinct', content='Verified thread not found'))):
+            with self.assertRaisesRegex(Exception, 'mapping/read is unavailable'):
+                solo.instinct_replay(Mock(), 'conversation')
+
+    def test_confirmable_instinct_draft_is_not_a_live_pass(self):
+        digest = dict(provider='instinct', content='read from BlueBubbles\nBills / deadlines: 0\nSecurity: 0\nAppointments: 0')
+        card = dict(text_draft=dict(state='pending', confirm_message='yes wbtxt-' + 'a' * 32))
+        with patch.object(solo, 'submit', side_effect=[({}, digest), ({}, card)]):
+            with self.assertRaisesRegex(Exception, 'send authority'):
+                solo.instinct_replay(Mock(), 'conversation')
 
 
 if __name__ == '__main__':
