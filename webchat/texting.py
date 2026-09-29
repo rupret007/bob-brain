@@ -205,6 +205,8 @@ class Texting:
         self.andrea = andrea or Andrea()
         self.clock = clock
         self.epoch = secrets.token_hex(16)
+        from instinct import Instinct
+        self.instinct = Instinct(self)
 
     def invalidate(self, conversation, state="superseded"):
         for draft in conversation.get("_texting", {}).get("drafts", {}).values():
@@ -238,6 +240,8 @@ class Texting:
         return value
 
     def resolve(self, query):
+        if query.casefold() == "instinct":
+            return self.instinct.resolve()
         chats = self.bluebubbles.chats()
         exact = [c for c in chats if query == c.get("guid")]
         matches = exact or [c for c in chats if label(c).casefold() == query.casefold() or
@@ -255,6 +259,9 @@ class Texting:
             raise TextingError("Log in again before preparing a confirmation-bound text draft.")
         if not body.strip() or len(body) > 4000:
             raise TextingError("Write a text body between 1 and 4,000 characters.")
+        body = self.instinct.prepare_body(target, body)
+        if len(body) > 4000:
+            raise TextingError("Keep the text, including its Bob via Andrea tag, within 4,000 characters.")
         state = conversation.setdefault("_texting", {"drafts": {}, "audit": []})
         self.invalidate(conversation)
         identifier = secrets.token_hex(8)
@@ -318,6 +325,8 @@ class Texting:
         # texting commands use this stripped value; other work keeps normal routing.
         clean = re.sub(r"^(?:(?:ask|have|tell|use) (?:codex|claude|cursor|gemini|minimax|mini)(?: to)?\s+|"
                        r"start (?:a )?job:\s*|(?:codex|claude|cursor|gemini|minimax|mini):\s*)", "", clean, flags=re.I)
+        if self.instinct.handle(conversation, clean, actor, request_id, persist, redact):
+            return True
         command = clean.casefold().rstrip(".?!")
         text_context = active and (active["state"] in ("pending", "editing") or
             len(conversation["messages"]) >= 3 and conversation["messages"][-3].get("texting"))
