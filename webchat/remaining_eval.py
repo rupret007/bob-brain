@@ -56,7 +56,7 @@ def run_eval():
         check('band digest uses configured thread', report['teammate_evidence']['all_read'] and report['teammate_evidence']['band_reads'][0]['messages'] == 4)
         check('band thread stays outside provider context', not Texting.provider_view(f.chat.conversations[private])['messages'])
         check('no tasks or model calls from reminders or status', not task_queue.tasks(f.root) and not f.providers.calls)
-        check('no Andrea sends or unexpected writes', not f.mock.sends and not f.mock.unexpected_writes and ('POST', '/web-bob/send') not in f.mock.calls)
+        check('no Andrea sends or unexpected writes', not f.mock.sends and not f.mock.unexpected_writes and ('POST', '/web-bob/v1/confirm') not in f.mock.calls)
     return dict(total=len(cases), passed=sum(c['pass'] for c in cases), cases=cases)
 
 

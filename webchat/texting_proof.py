@@ -55,7 +55,8 @@ def main():
             assert len(audits) == 1 and audits[0]["body"] == "I’ll bring the charts at 7."
             assert audits[0]["event"] == "owner_confirmed_not_sent"
             assert not mock.sends
-            assert mock.calls.count(("POST", "/web-bob/send")) == 1
+            assert ("POST", "/web-bob/v1/draft") in mock.calls
+            assert ("POST", "/web-bob/v1/confirm") not in mock.calls
             assert ("POST", "/api/v1/message/text") not in mock.calls
             assert not mock.unexpected_writes
             assert not providers.calls

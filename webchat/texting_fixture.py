@@ -1,9 +1,11 @@
 """Synthetic loopback BlueBubbles + Andrea contract fixture. Never sends real texts."""
 import copy
+import hashlib
 import json
 import secrets
 import sqlite3
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -27,6 +29,7 @@ MESSAGES = [
 class MockMessaging:
     def __init__(self, folder):
         self.calls, self.unexpected_writes, self.sends = [], [], []
+        self.bridge_drafts = {}
         self.enable_web_bob_send = False
         self.drop_send_response = False
         self.andrea_error_status = None
@@ -44,14 +47,36 @@ class MockMessaging:
                 url = urlsplit(self.path)
                 fixture.calls.append((self.command, url.path))
                 allowed_post = self.command == "POST" and url.path in ("/api/v1/chat/query", "/api/v1/message/text")
-                if url.path == "/web-bob/send":
-                    if not fixture.enable_web_bob_send:
-                        return self.respond(404, {"error": "Web Bob send not available"})
+                if url.path.startswith("/web-bob/v1/"):
                     if self.headers.get("Authorization") != "Bearer " + fixture.token:
                         return self.respond(401, {"error": "Unauthorized"})
+                    if url.path.endswith('/health'):
+                        return self.respond(200, dict(ok=True, protocol=1, service='andrea-web-bob',
+                            connected=True, paused=not fixture.enable_web_bob_send, instinctReadOnly=True))
+                    payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                    if url.path.endswith('/draft'):
+                        if not fixture.enable_web_bob_send:
+                            return self.respond(404, {"error": "Web Bob bridge unavailable"})
+                        identifier = secrets.token_hex(32)
+                        digest = hashlib.sha256(json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode()).hexdigest()
+                        row = dict(ok=True, draftId=identifier, digest=digest, challenge='wbtxt-' + secrets.token_hex(16),
+                                   actionId=secrets.token_hex(16), expiresAt=time.time()*1000 + 300000)
+                        fixture.bridge_drafts[identifier] = dict(row=row, scope=payload, state='pending')
+                        return self.respond(200, row)
+                    bound = fixture.bridge_drafts.get(payload.get('bridgeDraftId'))
+                    if not bound or any(payload.get(k) != v for k, v in bound['scope'].items()):
+                        return self.respond(403, {'error': 'Wrong draft binding'})
+                    if url.path.endswith('/cancel'):
+                        bound['state'] = 'cancelled'
+                        return self.respond(200, {'ok': True})
+                    if url.path != '/web-bob/v1/confirm' or not fixture.enable_web_bob_send:
+                        return self.respond(404, {'error': 'Unavailable'})
+                    if (bound['state'] != 'pending' or payload.get('confirmation') != 'yes ' + bound['row']['challenge'] or
+                            payload.get('confirmationRequestId') == payload.get('draftRequestId')):
+                        return self.respond(409, {'error': 'Stale or missing separate confirmation'})
                     if fixture.andrea_error_status is not None:
                         return self.respond(fixture.andrea_error_status, {"error": fixture.andrea_error_body})
-                    payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                    bound['state'] = 'consumed'
                     guid = payload.get("chatGuid")
                     text = payload.get("text")
                     if not isinstance(guid, str) or not guid or not isinstance(text, str) or not text.strip():
@@ -62,7 +87,8 @@ class MockMessaging:
                     if fixture.drop_send_response:
                         self.close_connection = True
                         return
-                    return self.respond(200, {"ok": True, "messageGuid": "mock-" + secrets.token_hex(8)})
+                    return self.respond(200, {"ok": True, "state": "sent", "messageGuid": "mock-" + secrets.token_hex(8),
+                        **{k: bound['row'][k] for k in ('draftId', 'digest', 'actionId')}})
                 if self.command == "POST" and url.path == "/api/v1/message/text":
                     if not fixture.enable_web_bob_send:
                         fixture.unexpected_writes.append(url.path)

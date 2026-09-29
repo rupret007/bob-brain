@@ -29,9 +29,9 @@ HELP = ("I can read recent texts and keep replies as drafts. Try ‘texts’, "
         "‘read texts from Alex’, ‘summarize texts from Alex’, or "
         "‘draft reply to Alex: I’ll be there at 6.’ Review the recipient and body, "
         "then send the card’s exact yes + token as a separate chat message. "
-        "Andrea’s current bridge cannot accept sends from Web Bob; drafts stay unsent.")
-BRIDGE_BLOCKED = ("Not sent. Your confirmation was recorded here, but Andrea’s current "
-                  "control API does not accept sends or owner approvals from Web Bob. "
+        "Direct-recipient sends use Andrea’s configured owner bridge. If it is unavailable, drafts stay unsent. Instinct is always read-only.")
+BRIDGE_BLOCKED = ("Not sent. Your confirmation was recorded here, but Andrea’s "
+                  "owner bridge could not accept this exact draft. "
                   "Ask Andrea for a fresh recipient-bound draft in its registered owner "
                   "chat and approve that card there. This Web Bob confirmation cannot be reused.")
 SENT_VIA_ANDREA = "Sent via Andrea’s BlueBubbles bridge."
@@ -133,35 +133,104 @@ class BlueBubbles:
 
 
 class Andrea:
-    """Authenticated control health and an optional owner-approved Web Bob bridge."""
+    """Dedicated owner bridge; never use Andrea's read/control credentials."""
     def __init__(self, base=None, token=None):
-        self.base = base or os.environ.get("BOB_ANDREA_CONTROL_URL", "http://127.0.0.1:4315")
-        self.token = token if token is not None else os.environ.get("BOB_ANDREA_CONTROL_TOKEN", "")
+        self.base, self.token = base or "http://127.0.0.1:4316", token or ""
+        if base is None and token is None:
+            config_path = os.environ.get("BOB_ANDREA_WEBBOB_CONFIG")
+            if config_path:
+                try:
+                    path = Path(config_path)
+                    if not path.is_absolute() or path.is_symlink() or path.stat().st_mode & 0o077 or path.stat().st_size > 24000:
+                        raise ValueError("private config required")
+                    cfg = json.loads(path.read_text())
+                    self.base = local_url(cfg["url"])
+                    if not isinstance(cfg["token"], str) or len(cfg["token"]) < 32:
+                        raise ValueError("dedicated token required")
+                    self.token = cfg["token"]
+                except (OSError, ValueError, KeyError, TypeError, TextingError):
+                    self.token = ""
+
+    def call(self, route, payload=None):
+        return request_json(self.base, "/web-bob/v1/" + route, data=payload,
+                            headers={"Authorization": "Bearer " + self.token},
+                            timeout=15 if route == "draft" else 5)
+
+    @staticmethod
+    def scope(draft):
+        def canonical(address):
+            value = address.strip().lower()
+            if "@" in value:
+                return value
+            digits = re.sub(r"\D", "", value)
+            return "+" + ("1" if len(digits) == 10 else "") + digits
+        return dict(issuer="web-bob", audience="andrea", actor=draft["actor"],
+                    conversationId=draft["conversation_id"], epoch=draft["epoch"],
+                    draftId=draft["id"], revision=draft["revision"], draftRequestId=draft["request_id"],
+                    chatGuid=draft["recipient"]["guid"],
+                    addresses=[canonical(a) for a in draft["recipient"]["addresses"]], text=draft["body"])
+
+    @staticmethod
+    def scope_digest(scope):
+        return hashlib.sha256(json.dumps(scope, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+
+    def prepare(self, draft):
+        if not self.token:
+            return None
+        scope = self.scope(draft)
+        try:
+            result = self.call("draft", scope)
+        except TextingError:
+            return None  # No send endpoint is called while preparing a draft.
+        if (result.get("ok") is not True or result.get("digest") != self.scope_digest(scope) or
+                not re.fullmatch(r"[a-f0-9]{64}", str(result.get("draftId", ""))) or
+                not re.fullmatch(r"wbtxt-[a-f0-9]{32}", str(result.get("challenge", ""))) or
+                not isinstance(result.get("actionId"), str) or not result["actionId"] or
+                not isinstance(result.get("expiresAt"), (int, float)) or
+                not time.time() * 1000 < result["expiresAt"] <= (time.time() + CONFIRM_SECONDS + 5) * 1000):
+            return None
+        return result
+
+    def cancel(self, draft):
+        remote = draft.get("bridge")
+        if not remote or not self.token:
+            return
+        try:
+            self.call("cancel", {**self.scope(draft), "bridgeDraftId": remote["draftId"]})
+        except TextingError:
+            pass  # Local consent is revoked regardless; the remote challenge expires.
 
     def status(self):
         if not self.token:
-            return "Andrea control access is not configured for this Web Bob instance."
-        result = request_json(self.base, "/health", headers={"Authorization": "Bearer " + self.token})
-        if result.get("service") != "bluebubbles-control" or result.get("ok") is not True:
-            raise TextingError("Andrea did not return a recognized control-service response.")
-        return ("Andrea’s control service is reachable. " +
-                ("Its BlueBubbles channel is connected." if result.get("connected") is True else
-                 "Its BlueBubbles channel is unavailable."))
+            return "Andrea Web Bob bridge access is not configured. Delivery is blocked."
+        result = self.call("health")
+        if (result.get("service") != "andrea-web-bob" or result.get("protocol") != 1 or
+                result.get("ok") is not True or result.get("instinctReadOnly") is not True):
+            raise TextingError("Andrea did not return a recognized owner-bridge response. Delivery is blocked.")
+        if result.get("paused") is not False or result.get("connected") is not True:
+            return "Andrea’s Web Bob bridge is reachable, but outbound messaging is paused or unavailable. Delivery is blocked."
+        return "Andrea’s Web Bob bridge is connected. Review an exact direct-recipient draft and confirm it separately to send. Instinct remains read-only."
 
-    def deliver(self, chat_guid, body):
+    def deliver(self, draft, confirmation, request_id):
         """Return True for delivery, False for rejection, or None for an unknown outcome."""
-        if not self.token or not isinstance(chat_guid, str) or not chat_guid or not isinstance(body, str) or not body.strip():
+        remote = draft.get("bridge")
+        if not self.token or not remote:
+            return False
+        scope = self.scope(draft)
+        if remote["digest"] != self.scope_digest(scope):
             return False
         try:
-            result = request_json(self.base, "/web-bob/send",
-                                  data={"chatGuid": chat_guid, "text": body},
-                                  headers={"Authorization": "Bearer " + self.token})
+            result = self.call("confirm", {**scope, "bridgeDraftId": remote["draftId"],
+                "confirmation": confirmation, "confirmationRequestId": request_id,
+                "approvedAt": draft["approved_at"] * 1000})
         except TextingError as exc:
             # Auth or an absent endpoint rejects the handoff. A lost response or
             # server error may follow delivery, so it cannot prove "not sent".
-            return False if exc.status in (401, 403, 404, 405) else None
+            return False if exc.status in (400, 401, 403, 404, 405, 409, 413, 415) else None
         guid = result.get("messageGuid")
-        return True if result.get("ok") is True and isinstance(guid, str) and guid.strip() else None
+        return True if (result.get("ok") is True and result.get("state") == "sent" and
+            result.get("draftId") == remote["draftId"] and result.get("digest") == remote["digest"] and
+            result.get("actionId") == remote["actionId"] and isinstance(guid, str) and guid.strip()) else None
 
 
 def fingerprint(draft):
@@ -212,6 +281,7 @@ class Texting:
         for draft in conversation.get("_texting", {}).get("drafts", {}).values():
             if draft["state"] in ("pending", "editing"):
                 draft.update(state=state, token=None)
+                self.andrea.cancel(draft)
 
     def public(self, conversation):
         value = copy.deepcopy(conversation)
@@ -223,6 +293,7 @@ class Texting:
                 continue
             card = {key: copy.deepcopy(draft[key]) for key in
                     ("id", "recipient", "body", "revision", "state", "expires_at")}
+            card['delivery_available'] = bool(draft.get('bridge')) and card['state'] == 'pending'
             if draft.get('read_only') or self.instinct.is_target(draft['recipient']):
                 card['read_only'] = True
                 if card['state'] == 'pending':
@@ -276,6 +347,12 @@ class Texting:
                      actor=actor, request_id=request_id)
         if self.instinct.is_target(target):
             draft.update(state='read_only', token=None, read_only=True)
+        else:
+            bridge = self.andrea.prepare(draft)
+            if bridge:
+                draft["bridge"] = {k: bridge[k] for k in ("draftId", "digest", "actionId")}
+                draft["token"] = bridge["challenge"]
+                draft["expires_at"] = min(draft["expires_at"], bridge["expiresAt"] / 1000)
         draft["fingerprint"] = fingerprint(draft)
         state["drafts"][identifier] = draft
         state["active"] = identifier
@@ -320,7 +397,7 @@ class Texting:
         state["audit"].append(audit)
         conversation["messages"][-1].update(status="done", provider="texting", content=DELIVERY_UNCONFIRMED)
         persist(conversation)
-        delivered = self.andrea.deliver(draft["recipient"]["guid"], draft["body"])
+        delivered = self.andrea.deliver(draft, text, request_id)
         if delivered is True:
             draft["state"] = "sent"
             audit["event"] = "owner_sent_via_andrea"
@@ -381,6 +458,7 @@ class Texting:
                 if not draft or state.get("active") != draft["id"] or draft["state"] not in ("pending", "expired", "editing", "confirmed_not_sent", "read_only"):
                     raise TextingError("That draft is no longer current. Prepare a fresh text draft.")
                 draft.update(state="editing" if edit[1].lower() == "edit" else "cancelled", token=None)
+                self.andrea.cancel(draft)
                 content = "Confirmation cleared. Edit the draft card, then review it again." if draft["state"] == "editing" else "Text draft cancelled. Nothing sent."
             elif replace or compose:
                 # Even a failed/ambiguous edit withdraws the previous confirmation.
@@ -418,7 +496,7 @@ class Texting:
                     else:
                         content += "Last 30 messages at most, oldest first:\n" + "\n".join(self.message_line(m, 1200) for m in messages)
                 elif command == "texting status":
-                    content = self.andrea.status() + " Web Bob delivery is blocked: Andrea requires approval in its registered owner chat."
+                    content = self.andrea.status()
                 else:
                     content = HELP
         except TextingError as exc:

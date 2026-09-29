@@ -110,7 +110,7 @@ class TextingTests(unittest.TestCase):
                 self.assertEqual(self.private()["drafts"][draft["id"]]["state"], "pending")
                 self.assertEqual(self.private()["audit"], [])
                 self.assertEqual(self.mock.sends, [])
-                self.assertNotIn(("POST", "/web-bob/send"), self.mock.calls)
+                self.assertNotIn(("POST", "/web-bob/v1/confirm"), self.mock.calls)
         self.assertEqual(self.providers.calls, [])
         self.assertEqual(task_queue.tasks(self.root), {})
         self.assertEqual(self.say(draft["confirm_message"])["messages"][-1]["content"], SENT_VIA_ANDREA)
@@ -135,7 +135,7 @@ class TextingTests(unittest.TestCase):
         self.assertEqual("yes " + pending["token"], draft["confirm_message"])
         self.assertEqual(conversation["_texting"]["audit"], [])
         self.assertEqual(self.mock.sends, [])
-        self.assertNotIn(("POST", "/web-bob/send"), self.mock.calls)
+        self.assertNotIn(("POST", "/web-bob/v1/confirm"), self.mock.calls)
 
         later_request = str(uuid.uuid4())
         value = self.say(draft["confirm_message"], request_id=later_request)
@@ -144,7 +144,7 @@ class TextingTests(unittest.TestCase):
         self.assertEqual(len(self.private()["audit"]), 1)
         self.assertEqual(self.private()["audit"][0]["request_id"], later_request)
         self.assertEqual(self.mock.sends, [{"chatGuid": draft["recipient"]["guid"], "text": draft["body"]}])
-        self.assertEqual(self.mock.calls.count(("POST", "/web-bob/send")), 1)
+        self.assertEqual(self.mock.calls.count(("POST", "/web-bob/v1/confirm")), 1)
 
     def test_worker_routing_cannot_bypass_text_draft_gate(self):
         for request in ("ask Codex to send a text to Alex Morgan: Hello",
@@ -189,7 +189,7 @@ class TextingTests(unittest.TestCase):
         self.assertEqual(self.private()["audit"][0]["event"], "owner_sent_via_andrea")
         self.assertEqual(len(self.mock.sends), before_sends + 1)
         self.assertEqual(self.mock.sends[-1], {"chatGuid": draft["recipient"]["guid"], "text": draft["body"]})
-        self.assertIn(("POST", "/web-bob/send"), self.mock.calls)
+        self.assertIn(("POST", "/web-bob/v1/confirm"), self.mock.calls)
 
     def test_separate_yes_success_message_content(self):
         self.mock.enable_web_bob_send = True
@@ -201,7 +201,7 @@ class TextingTests(unittest.TestCase):
         self.assertEqual(history["messages"][-1]["content"], SENT_VIA_ANDREA)
         self.assertEqual(history["messages"][-3]["text_draft"]["state"], "sent")
         self.assertIsNone(history["messages"][-3]["text_draft"]["confirm_message"])
-        self.assertEqual(self.mock.calls.count(("POST", "/web-bob/send")), 1)
+        self.assertEqual(self.mock.calls.count(("POST", "/web-bob/v1/confirm")), 1)
 
     def test_token_comparison_timing_safe(self):
         # Verify the constant-time primitive, not noisy HTTP wall-clock timings.
@@ -234,7 +234,8 @@ class TextingTests(unittest.TestCase):
         self.assertEqual(len(self.private()["audit"]), 1)
         self.assertEqual(self.providers.calls, [])
         self.assertEqual(len(self.mock.calls), 3)  # draft lookup, refreshed read-only identities, Andrea probe
-        self.assertEqual(self.mock.calls[-1], ("POST", "/web-bob/send"))
+        self.assertIn(("POST", "/web-bob/v1/draft"), self.mock.calls)
+        self.assertNotIn(("POST", "/web-bob/v1/confirm"), self.mock.calls)
 
     def test_version_lookup_revokes_previous_text_consent(self):
         draft = self.draft()
@@ -242,7 +243,7 @@ class TextingTests(unittest.TestCase):
         reply = self.say(draft['confirm_message'])['messages'][-1]
         self.assertIn('already used, cancelled, or replaced', reply['content'])
         self.assertFalse(self.private()['audit'])
-        self.assertNotIn(('POST', '/web-bob/send'), self.mock.calls)
+        self.assertNotIn(('POST', '/web-bob/v1/confirm'), self.mock.calls)
 
     def test_wrong_conversation_login_or_token_cannot_confirm(self):
         draft = self.draft()
@@ -317,9 +318,11 @@ class TextingTests(unittest.TestCase):
         request_id = str(uuid.uuid4())
         text = "draft text to Alex Morgan: Hello"
         first = self.say(text, request_id=request_id)
+        calls_after_first = list(self.mock.calls)
         second = self.say(text, request_id=request_id)
         self.assertEqual(first, second)
-        self.assertEqual(len(self.mock.calls), 1)
+        self.assertEqual(self.mock.calls, calls_after_first)
+        self.assertEqual(self.mock.calls.count(('POST', '/web-bob/v1/draft')), 1)
         with self.assertRaises(RequestError):
             self.say(text + " changed", request_id=request_id)
 
@@ -332,7 +335,7 @@ class TextingTests(unittest.TestCase):
         self.assertEqual(self.private()["audit"], [])
         self.assertEqual(self.private()["drafts"][draft["id"]]["state"], "pending")
         self.assertEqual(self.mock.sends, [])
-        self.assertNotIn(("POST", "/web-bob/send"), self.mock.calls)
+        self.assertNotIn(("POST", "/web-bob/v1/confirm"), self.mock.calls)
 
     def test_receipt_save_failure_keeps_consent_consumed_after_restart(self):
         self.mock.enable_web_bob_send = True
@@ -386,23 +389,24 @@ class TextingTests(unittest.TestCase):
         finally:
             restored.close()
         self.assertEqual(len(self.mock.sends), 1)
-        self.assertEqual(self.mock.calls.count(("POST", "/web-bob/send")), 1)
+        self.assertEqual(self.mock.calls.count(("POST", "/web-bob/v1/confirm")), 1)
 
     def test_invalid_andrea_receipts_do_not_claim_sent_or_not_sent(self):
+        self.mock.enable_web_bob_send = True
         for receipt in ({}, {"ok": False}, {"ok": True}, {"ok": True, "messageGuid": ""},
                         {"ok": True, "messageGuid": " "}, {"ok": True, "messageGuid": 1}):
             with self.subTest(receipt=receipt):
                 draft = self.draft()
                 from texting import request_json
                 def response(base, path, **kwargs):
-                    return receipt if path == '/web-bob/send' else request_json(base, path, **kwargs)
+                    return receipt if path == '/web-bob/v1/confirm' else request_json(base, path, **kwargs)
                 with patch("texting.request_json", side_effect=response) as requested:
                     value = self.say(draft["confirm_message"])
                     self.assertEqual(value["messages"][-1]["content"], DELIVERY_UNCONFIRMED)
                     self.assertEqual(self.private()["drafts"][draft["id"]]["state"], "delivery_unconfirmed")
                     self.assertIsNone(self.private()["drafts"][draft["id"]]["token"])
                     self.say(draft["confirm_message"])
-                    self.assertEqual(sum(call.args[1] == '/web-bob/send' for call in requested.call_args_list), 1)
+                    self.assertEqual(sum(call.args[1] == '/web-bob/v1/confirm' for call in requested.call_args_list), 1)
                     self.assertEqual(requested.call_count, 2)  # identity refresh plus one delivery, no retry
 
     def test_texting_persists_each_turn_and_clears_pending_work(self):
@@ -506,7 +510,7 @@ class TextingTests(unittest.TestCase):
     def test_andrea_errors_do_not_leak_secrets(self):
         self.mock.enable_web_bob_send = True
         secret_path = "/private/fixture-andrea/config.env"
-        self.mock.andrea_error_body = (f"{self.mock.base}/web-bob/send?password={self.mock.password} "
+        self.mock.andrea_error_body = (f"{self.mock.base}/web-bob/v1/confirm?password={self.mock.password} "
                                        f"Bearer {self.mock.token} {secret_path}")
         for status in (401, 403, 404, 405, 500):
             with self.subTest(status=status):
@@ -539,6 +543,10 @@ class TextingTests(unittest.TestCase):
 
     def test_slow_read_budget_does_not_extend_or_retry_sends(self):
         from unittest.mock import MagicMock
+        self.mock.enable_web_bob_send = True
+        self.draft()
+        pending = copy.deepcopy(self.private()["drafts"][self.private()["active"]])
+        pending["approved_at"] = self.now[0]
         response = MagicMock()
         response.__enter__.return_value = response
         response.read.return_value = b'{"status":200,"data":[]}'
@@ -551,15 +559,15 @@ class TextingTests(unittest.TestCase):
         with patch('texting.urllib.request.build_opener', return_value=opener):
             self.assertEqual(self.texting.bluebubbles.chats(), [])
             self.assertEqual(opener.open.call_args.kwargs['timeout'], 12)
-            self.assertIsNone(self.texting.andrea.deliver('iMessage;-;fixture', 'Test'))
+            self.assertIsNone(self.texting.andrea.deliver(pending, 'yes ' + pending['token'], str(uuid.uuid4())))
             self.assertEqual(opener.open.call_args.kwargs['timeout'], 5)
             self.assertEqual(opener.open.call_count, 2)
 
     def test_andrea_authenticated_health_and_missing_bridge_honesty(self):
         content = self.say("texting status")["messages"][-1]["content"]
         self.assertIn("reachable", content)
-        self.assertIn("delivery is blocked", content)
-        self.assertEqual(self.mock.calls, [("GET", "/health")])
+        self.assertIn("Delivery is blocked", content)
+        self.assertEqual(self.mock.calls, [("GET", "/web-bob/v1/health")])
         with self.assertRaises(TextingError):
             Andrea(self.mock.base, "bad-token").status()
         self.assertIn("not configured", Andrea(self.mock.base, "").status())
