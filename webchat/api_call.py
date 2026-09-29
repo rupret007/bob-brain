@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Metered Gemini/MiniMax calls for web chat without conductor lane locks."""
+import base64
+import json
 import os
 import re
 import sys
@@ -29,11 +31,39 @@ def strip_reply_tags(text):
     return text.strip()
 
 
+def split_transport(raw):
+    try:
+        payload = json.loads(raw)
+        prompt, vision = payload["prompt"], payload.get("vision", [])
+        if not isinstance(prompt, str) or not isinstance(vision, list) or len(vision) > 24:
+            raise ValueError()
+        for part in vision:
+            if not isinstance(part, dict):
+                raise ValueError()
+            mime = part.get("mime")
+            if mime not in ("image/jpeg", "image/png", "image/webp"):
+                raise ValueError()
+            raw_b64 = part.get("data_base64")
+            if not isinstance(raw_b64, str):
+                raise ValueError()
+            try:
+                base64.b64decode(raw_b64, validate=True)
+            except ValueError:
+                raise ValueError() from None
+        return prompt, vision
+    except (ValueError, KeyError, TypeError, AttributeError):
+        raise ValueError("Invalid chat transport payload.") from None
+
+
 def main():
     lane = sys.argv[1]
     if lane not in ("gemini", "minimax"):
         return 2
-    prompt = sys.stdin.read()
+    try:
+        prompt, vision = split_transport(sys.stdin.read())
+    except ValueError:
+        print("invalid transport payload", file=sys.stderr)
+        return 1
     if not prompt.strip():
         print("empty prompt", file=sys.stderr)
         return 1
@@ -44,9 +74,17 @@ def main():
     from api import model_call
     from lanes import slot
 
+    vision_params = getattr(model_call, "__code__", None)
+    supports_vision = vision_params is not None and "vision" in vision_params.co_varnames
+    if vision and not supports_vision:
+        raise RuntimeError("model_call does not support vision parameter. Upgrade services/api.py.")
+
     with slot(lane):
         budget.check(lane)
-        answer = strip_reply_tags(model_call(lane, prompt, purpose="webchat"))
+        kwargs = {"purpose": "webchat"}
+        if supports_vision:
+            kwargs["vision"] = vision or None
+        answer = strip_reply_tags(model_call(lane, prompt, **kwargs))
     print(answer)
     return 0
 

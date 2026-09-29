@@ -1,5 +1,6 @@
 """API child process must honor separate deployed code and live data roots."""
 import os
+import json
 import shutil
 import subprocess
 import sys
@@ -33,10 +34,36 @@ class APIRootTests(unittest.TestCase):
             for lane in ("minimax", "gemini"):
                 with self.subTest(lane=lane):
                     result = subprocess.run([sys.executable, str(code / "webchat/api_call.py"), lane],
-                                            cwd=base, env=env, input="fixture prompt", text=True,
+                                            cwd=base, env=env, input=json.dumps({"prompt": "fixture prompt", "vision": []}), text=True,
                                             capture_output=True, timeout=10)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(result.stdout.strip(), "Pinned API helper worked.")
+
+    def test_vision_child_transport_round_trip_and_invalid_envelope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'webchat').mkdir()
+            (root / 'services').mkdir()
+            for name in ('api_call.py', 'billing.py'):
+                shutil.copyfile(Path(__file__).with_name(name), root / 'webchat' / name)
+            (root / 'services/budget.py').write_text('CAP_USD = 59.0\ndef check(lane): pass\n')
+            (root / 'services/lanes.py').write_text('from contextlib import nullcontext\ndef slot(lane): return nullcontext()\n')
+            (root / 'services/api.py').write_text(
+                'def model_call(lane, prompt, purpose, vision=None):\n'
+                '    assert "---BOB_VISION_JSON---" in prompt\n'
+                '    assert vision == [{"mime": "image/jpeg", "data_base64": "YQ=="}]\n'
+                '    return "A complete offline vision transport reply."\n')
+            command = [sys.executable, str(root / 'webchat/api_call.py'), 'gemini']
+            env = dict(os.environ, BOB_ROOT=str(root))
+            good = json.dumps({'prompt': 'Before\n---BOB_VISION_JSON---\nAfter',
+                               'vision': [{'mime': 'image/jpeg', 'data_base64': 'YQ=='}]})
+            result = subprocess.run(command, env=env, input=good, text=True, capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('complete offline vision', result.stdout)
+            for bad in ('[]', '{"prompt":null}', 'raw text'):
+                result = subprocess.run(command, env=env, input=bad, text=True, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stderr.strip(), 'invalid transport payload')
 
 
 if __name__ == "__main__":

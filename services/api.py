@@ -105,7 +105,7 @@ def extract(model, data):
 
 
 
-def model_call(model, prompt, max_tokens=8192, purpose="api", *, model_id=None, google_search=False):
+def model_call(model, prompt, max_tokens=8192, purpose="api", *, model_id=None, google_search=False, vision=None):
     if model not in MODELS:
         raise ValueError("Unsupported API worker; Grok/xAI is never allowed")
     model_id = model_id or MODELS[model]
@@ -118,15 +118,20 @@ def model_call(model, prompt, max_tokens=8192, purpose="api", *, model_id=None, 
     key = os.environ.get(key_name)
     if not key:
         raise RuntimeError(key_name + " missing")
+    vision = vision or []
     if model == "minimax":
         url = "https://api.minimax.io/v1/text/chatcompletion_v2"
+        if vision:
+            raise ValueError("The configured MiniMax M2.7 model accepts text only.")
         payload = {"model": model_id, "messages": [{"role": "user", "content": prompt}],
                    "max_tokens": max_tokens, "temperature": 0.2, "reasoning_split": True}
         headers = {"Authorization": "Bearer " + key}
     else:
         url = "https://generativelanguage.googleapis.com/v1beta/models/" + model_id + ":generateContent"
+        parts = [{"inline_data": {"mime_type": part["mime"], "data": part["data_base64"]}} for part in vision]
+        parts.append({"text": prompt})
         pro = model_id == "gemini-2.5-pro"
-        payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        payload = {"contents": [{"role": "user", "parts": parts}],
                    "generationConfig": {"maxOutputTokens": max_tokens if pro else min(max_tokens, 4096), "temperature": 0.2,
                                         "thinkingConfig": {"thinkingBudget": 1024 if pro else 0}}}
         if google_search:

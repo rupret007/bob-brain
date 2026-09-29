@@ -25,7 +25,7 @@ from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import URLError
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from providers import Cancelled, ProviderError, Providers, Redactor, UUID, clean_env, run
 from failover import AllDown
@@ -44,6 +44,19 @@ from music_notebook import get_project, list_projects, save_project, try_music_c
 from reply_guard import repair_hollow_progress
 from drill_fixture import try_bob_state_running_line
 from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
+from chat_media import (
+    MAX_VIDEO_BYTES,
+    MAX_ATTACHMENTS_PER_MESSAGE,
+    PROCESS_SLOTS,
+    load_meta,
+    media_limit,
+    prompt_image_bytes,
+    public_attachment,
+    resolve_media,
+    store_media,
+    strip_assistant_attachment_markers,
+    validate_attachment_ids,
+)
 from ops_panel import conductor_snapshot, draft_head_sha, enrich_live_ops, load_live_ops, maybe_spawn_dashboard_refresh
 from quiet_hours import in_quiet_hours
 from task_dispatch import FOLLOW_UP, PREAMBLE, TaskDispatch, followup_work, needs_task_detail, parse_work, task_queue
@@ -78,6 +91,8 @@ COOKIE = "bob_session"
 SESSION_SECONDS = 12 * 60 * 60
 MAX_BODY = 32768
 MAX_AUDIO_BODY = 35 * 1024 * 1024
+# Base64 expands 3 bytes to 4 characters: ceil(video_limit * 4 / 3) + JSON overhead
+MAX_MEDIA_BODY = 4 * ((MAX_VIDEO_BYTES + 2) // 3) + MAX_BODY
 
 
 def hard_rule_refusal(text):
@@ -447,26 +462,39 @@ class Chat(TaskDispatch):
             self.sessions[digest] = {"expires": now + SESSION_SECONDS, "csrf": secrets.token_urlsafe(32), "digest": digest}
             return token
 
-    def submit(self, identifier, text, request_id, provider="auto", worker=None, actor=None):
+    def submit(self, identifier, text, request_id, provider="auto", worker=None, actor=None, attachments=None):
         if provider not in ("auto", "minimax", "gemini", "codex", "claude", "cursor"):
             raise RequestError(400, "Choose auto, minimax, gemini, codex, claude, or cursor.")
-        if not isinstance(text, str) or not text.strip() or len(text) > 6000:
+        if not isinstance(text, str):
+            raise RequestError(400, "Write a message between 1 and 6,000 characters.")
+        text = text.strip()
+        raw_attachments = attachments if attachments is not None else []
+        try:
+            attachment_metas = validate_attachment_ids(self.root, raw_attachments, conversation_id=identifier)
+        except ValueError as exc:
+            raise RequestError(400, str(exc)) from exc
+        except FileNotFoundError:
+            raise RequestError(404, "One or more attachments were not found.") from None
+        if not text and not attachment_metas:
+            raise RequestError(400, "Write a message or attach a file.")
+        if text and len(text) > 6000:
             raise RequestError(400, "Write a message between 1 and 6,000 characters.")
         if not isinstance(request_id, str) or not UUID.fullmatch(request_id):
             raise RequestError(400, "A valid request ID is required.")
-        text = text.strip()
         try:
             text.encode("utf-8")
         except UnicodeError:
             raise RequestError(400, "The message contains invalid text.") from None
-        if self.redact(text) != text:
+        if text and self.redact(text) != text:
             raise RequestError(400, "This message appears to contain a secret. Remove it before sending; it was not saved or sent to a model.")
+        public_attachments = [public_attachment(meta) for meta in attachment_metas]
         with self.lock:
             conversation = copy.deepcopy(self.get(identifier))
             for message in conversation["messages"]:
                 if message.get("request_id") == request_id:
                     if (message["content"] != text or message.get("preferred_provider", "auto") != provider
-                            or message.get("requested_worker") != worker):
+                            or message.get("requested_worker") != worker
+                            or message.get("attachments", []) != public_attachments):
                         raise RequestError(409, "That request ID was already used for a different message.")
                     return self.public(conversation)
             self.sweep_stuck()
@@ -477,14 +505,19 @@ class Chat(TaskDispatch):
             intent_state = chat_intent.state_for(conversation)
             was_held = bool(intent_state["holds"])
             conversation["preferred_provider"] = provider
+            user_message = {
+                "id": str(uuid.uuid4()), "request_id": request_id, "preferred_provider": provider, "role": "user",
+                "content": text, "status": "done", "created_at": time.time(), "requested_worker": worker,
+            }
+            if public_attachments:
+                user_message["attachments"] = public_attachments
             conversation["messages"] += [
-                {"id": str(uuid.uuid4()), "request_id": request_id, "preferred_provider": provider, "role": "user", "content": text,
-                 "status": "done", "created_at": time.time(), "requested_worker": worker},
+                user_message,
                 {"id": str(uuid.uuid4()), "request_id": request_id, "role": "assistant", "content": "", "status": "queued",
                  "provider": None, "attempts": [], "created_at": time.time()},
             ]
             if conversation["title"] == "New conversation":
-                conversation["title"] = text[:65]
+                conversation["title"] = (text or (public_attachments[0].get("filename") if public_attachments else "") or "Attachment")[:65]
             if not parse_memory_confirm(text)[0] and not parse_remember(text) and not MEMORY_DISMISS.match(text):
                 conversation.pop("pending_memory", None)
                 conversation.pop("pending_memory_id", None)
@@ -788,6 +821,28 @@ class Chat(TaskDispatch):
                     answer["status_observation"] = bind_observation(observation, value)
                 else:
                     answer["content"] = repair_hollow_progress(answer["content"])
+                cleaned, outbound = strip_assistant_attachment_markers(answer["content"])
+                answer.pop("attachments", None)  # Only server-validated markers can attach media.
+                if outbound:
+                    seen = set()
+                    resolved = []
+                    unavailable = False
+                    for item in outbound:
+                        mid = item.get("media_id")
+                        if mid in seen:
+                            continue
+                        seen.add(mid)
+                        try:
+                            if len(resolved) >= MAX_ATTACHMENTS_PER_MESSAGE:
+                                raise ValueError()
+                            resolved.append(public_attachment(load_meta(self.root, mid, conversation_id=identifier)))
+                        except (FileNotFoundError, OSError, ValueError):
+                            unavailable = True
+                    if resolved:
+                        answer["attachments"] = resolved
+                    if unavailable:
+                        cleaned += "\n\nOne or more requested attachments could not be included. Please reattach the file in this conversation."
+                answer["content"] = cleaned
                 rid = user_msg.get("request_id")
                 value["messages"][-1].update(answer, status="done")
                 if rid:
@@ -1235,12 +1290,53 @@ class Handler(BaseHTTPRequestHandler):
         for key, value in {
             "Content-Type": content_type, "Content-Length": str(len(data)), "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
-            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; manifest-src 'self'; connect-src 'self'; worker-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
             "X-Bob-Webchat": "1", **extra, **(headers or {}),
         }.items():
             self.send_header(key, value)
         self.end_headers()
-        self.wfile.write(data)
+        if self.command != "HEAD":
+            self.wfile.write(data)
+
+    def send_media(self, path, meta):
+        size = path.stat().st_size
+        start, end, status = 0, size - 1, 200
+        headers = {"Accept-Ranges": "bytes"}
+        requested = self.headers.get("Range")
+        if requested:
+            match = re.fullmatch(r"bytes=(\d*)-(\d*)", requested)
+            try:
+                if not match or not any(match.groups()):
+                    raise ValueError()
+                first, last = match.groups()
+                if first:
+                    start, end = int(first), min(int(last), size - 1) if last else size - 1
+                else:
+                    if int(last) <= 0:
+                        raise ValueError()
+                    start = max(0, size - int(last))
+                if start > end or start >= size:
+                    raise ValueError()
+            except ValueError:
+                return self.send(416, b"", headers={**headers, "Content-Range": f"bytes */{size}"})
+            status = 206
+            headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+        headers["Content-Length"] = str(end - start + 1)
+        query = parse_qs(urlsplit(self.path).query)
+        disposition = "attachment" if meta["kind"] == "file" or query.get("download") == ["1"] else "inline"
+        headers["Content-Disposition"] = disposition + "; filename*=UTF-8''" + quote(meta["filename"], safe="")
+        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        self.send(status, b"", mime, headers)
+        if self.command != "HEAD":
+            with path.open("rb") as handle:
+                handle.seek(start)
+                remaining = end - start + 1
+                while remaining:
+                    chunk = handle.read(min(64 * 1024, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
 
     def body(self, form=False, limit=None):
         if self.headers.get("Transfer-Encoding"):
@@ -1256,13 +1352,29 @@ class Handler(BaseHTTPRequestHandler):
         if mime != ("application/x-www-form-urlencoded" if form else "application/json"):
             raise RequestError(415, "Unsupported content type.")
         try:
-            raw = self.rfile.read(size).decode("utf-8")
+            raw = self.read_content(size, cap).decode("utf-8")
             data = {k: v[0] for k, v in parse_qs(raw).items()} if form else json.loads(raw)
             if not isinstance(data, dict):
                 raise ValueError()
             return data
         except (UnicodeError, ValueError):
             raise RequestError(400, "Invalid request body.") from None
+
+    def read_content(self, size: int, cap: int, *, incomplete: str = "Incomplete request body. Please retry.") -> bytes:
+        """Read exactly size bytes without exceeding cap; fail closed on short reads."""
+        if size > cap:
+            raise RequestError(413, "Request is empty or too large.")
+        chunks, remaining = [], size
+        while remaining > 0:
+            part = self.rfile.read(min(remaining, 64 * 1024))
+            if not part:
+                break
+            chunks.append(part)
+            remaining -= len(part)
+        blob = b"".join(chunks)
+        if len(blob) != size:
+            raise RequestError(400, incomplete)
+        return blob
 
     def cookie(self, token, clear=False):
         secure = self.origin.startswith("https://")
@@ -1288,7 +1400,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not hmac.compare_digest(csrf.encode(), session["csrf"].encode()):
                         raise RequestError(403, "Invalid request token. Reload the page.")
                 self.post(session)
-            elif self.command == "GET":
+            elif self.command in ("GET", "HEAD"):
                 self.get(session)
             else:
                 raise RequestError(405, "Method not allowed.")
@@ -1300,6 +1412,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send(500, {"error": "The request failed. Please try again."})
 
     do_GET = dispatch
+    do_HEAD = dispatch
     do_POST = dispatch
     do_OPTIONS = dispatch
     do_PUT = dispatch
@@ -1422,6 +1535,27 @@ class Handler(BaseHTTPRequestHandler):
             if not path:
                 raise RequestError(404, "Capture not found.") from None
             return self.send(200, path.read_bytes(), "image/png")
+        if route.startswith("/api/media/"):
+            media_id = route.removeprefix("/api/media/").strip("/")
+            query = parse_qs(urlsplit(self.path).query)
+            conversation_id = query.get("conversation_id", [None])[0]
+            try:
+                chat.get(conversation_id)
+                meta = load_meta(chat.root, media_id, conversation_id=conversation_id)
+                path = resolve_media(chat.root, media_id, conversation_id=conversation_id)
+            except (ValueError, FileNotFoundError):
+                raise RequestError(404, "Attachment not found.") from None
+            if query.get("preview") == ["1"] and path.suffix in (".heic", ".heif"):
+                if not PROCESS_SLOTS.acquire(blocking=False):
+                    raise RequestError(503, "Image preview is busy. Download the original or retry.")
+                try:
+                    blob, _ = prompt_image_bytes(path)
+                    return self.send(200, blob, "image/jpeg")
+                except (ValueError, OSError):
+                    raise RequestError(422, "Image preview unavailable. Download the original.") from None
+                finally:
+                    PROCESS_SLOTS.release()
+            return self.send_media(path, meta)
         if route == "/api/lanes":
             identifier = parse_qs(urlsplit(self.path).query).get("conversation_id", [None])[0]
             if identifier:
@@ -1458,7 +1592,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(202, {"ok": True, "spawned": spawned})
         if route == "/api/messages":
             data = self.body()
-            return self.send(202, chat.submit(data.get("conversation_id"), data.get("message"), data.get("request_id"), data.get("provider", "auto"), worker=data.get("worker"), actor=session["digest"]))
+            return self.send(202, chat.submit(
+                data.get("conversation_id"), data.get("message", ""), data.get("request_id"),
+                data.get("provider", "auto"), worker=data.get("worker"), actor=session["digest"], attachments=data.get("attachments"),
+            ))
         if route == "/api/cancel":
             chat.stop(self.body().get("conversation_id"))
             return self.send(202, {"ok": True})
@@ -1518,6 +1655,46 @@ class Handler(BaseHTTPRequestHandler):
             chat.record_turn(ask=f"audio upload {name}", provider=None, jobs=[], files=[stored["path"]],
                             commits=[], confirmations=[], refusals=[], open_items=[])
             return self.send(201, stored)
+        if route == "/api/media/upload":
+            mime = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            if mime == "application/octet-stream":
+                name = unquote(self.headers.get("X-Filename", ""))
+                conversation_id = self.headers.get("X-Conversation-Id")
+                chat.get(conversation_id)
+                try:
+                    limit = media_limit(name)
+                    size = int(self.headers.get("Content-Length", "0"))
+                except ValueError as exc:
+                    raise RequestError(400, "Invalid attachment name, type, or size.") from exc
+                if self.headers.get("Transfer-Encoding"):
+                    raise RequestError(400, "Transfer encoding is not supported.")
+                if not 0 < size <= limit:
+                    raise RequestError(413, "Attachment is empty or too large.")
+                blob = self.read_content(
+                    size, limit, incomplete="Incomplete attachment upload. Please retry.")
+            else:
+                # Compatibility for existing JSON clients, including base64 expansion.
+                data = self.body(limit=MAX_MEDIA_BODY)
+                name, conversation_id = data.get("filename"), data.get("conversation_id")
+                chat.get(conversation_id)
+                raw = data.get("data_base64")
+                if not isinstance(raw, str):
+                    raise RequestError(400, "Attachment payload required.")
+                try:
+                    blob = base64.b64decode(raw, validate=True)
+                except ValueError:
+                    raise RequestError(400, "Invalid attachment encoding.") from None
+                try:
+                    limit = media_limit(name)
+                except ValueError as exc:
+                    raise RequestError(400, str(exc)) from exc
+                if len(blob) > limit:
+                    raise RequestError(413, f"Attachment too large ({limit // (1024 * 1024)}MB max).")
+            try:
+                stored = store_media(chat.root, blob, name, conversation_id=conversation_id, redact=chat.redact)
+            except ValueError as exc:
+                raise RequestError(400, str(exc)) from exc
+            return self.send(201, public_attachment(stored))
         raise RequestError(404, "Not found.")
 
 
