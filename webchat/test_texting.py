@@ -236,6 +236,14 @@ class TextingTests(unittest.TestCase):
         self.assertEqual(len(self.mock.calls), 3)  # draft lookup, refreshed read-only identities, Andrea probe
         self.assertEqual(self.mock.calls[-1], ("POST", "/web-bob/send"))
 
+    def test_version_lookup_revokes_previous_text_consent(self):
+        draft = self.draft()
+        self.say('what version are you?')
+        reply = self.say(draft['confirm_message'])['messages'][-1]
+        self.assertIn('already used, cancelled, or replaced', reply['content'])
+        self.assertFalse(self.private()['audit'])
+        self.assertNotIn(('POST', '/web-bob/send'), self.mock.calls)
+
     def test_wrong_conversation_login_or_token_cannot_confirm(self):
         draft = self.draft()
         other = self.chat.new_conversation()["id"]

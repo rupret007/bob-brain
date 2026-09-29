@@ -539,6 +539,7 @@ class Chat(TaskDispatch):
                 conversation.pop("pending_memory", None)
                 conversation.pop("pending_memory_id", None)
             if VERSION_QUESTION.search(text):
+                self.texting.invalidate(conversation)
                 return self.intent_reply(conversation, BUILD["short_sha"])
             # Text intent and confirmations never enter generic job/provider routing.
             def persist_texting(value):

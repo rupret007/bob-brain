@@ -129,6 +129,13 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
     _, stale = submit(client, cid, token)
     require('already used, cancelled, or replaced' in stale['content'], 'Cancelled token was accepted')
     receipts.append(dict(check='exact draft, bare approval, cancel, stale token', passed=True))
+    _, newer = submit(client, cid, 'draft reply to ' + target + ': Version interruption check. Do not send.')
+    require(newer.get('text_draft', {}).get('state') == 'pending', 'Interruption-check draft failed')
+    confirmation = newer['text_draft']['confirm_message']
+    submit(client, cid, 'what version are you?')
+    _, revoked = submit(client, cid, confirmation)
+    require('already used, cancelled, or replaced' in revoked['content'], 'Version lookup retained stale text consent')
+    receipts.append(dict(check='version lookup revokes previous text consent', passed=True))
     if ORDER.index(feature) >= ORDER.index('gaps'):
         receipts.extend(gaps_replay(client, cid, root, real=real_reads))
     if ORDER.index(feature) >= ORDER.index('media'):
