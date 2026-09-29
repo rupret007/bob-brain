@@ -1,0 +1,144 @@
+"""Release failure behavior and evidence authority, without touching production."""
+import copy
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import Mock, patch
+
+import solo
+
+
+class TransactionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.path = self.root / 'record.json'
+        self.record = dict(previous='b' * 40, sha='c' * 40, snapshots={'webchat': 'frozen-predecessor'})
+        for name in ('require_disk_space', 'release_recovery', 'restart', 'versions'):
+            p = patch.object(solo, name)
+            setattr(self, name, p.start())
+            self.addCleanup(p.stop)
+        self.versions.return_value = {'local': {'sha': 'b' * 40}, 'public': {'sha': 'b' * 40}}
+
+    def attempt(self, activate=None, live=None, **kw):
+        solo.transaction(self.root, self.record, self.path, activate or Mock(),
+                         live or Mock(return_value={'all_pass': True}), **kw)
+
+    def test_requires_two_live_greens(self):
+        live = Mock(return_value={'all_pass': True})
+        self.attempt(live=live)
+        self.assertEqual(live.call_count, 2)
+        self.assertEqual(len(json.loads(self.path.read_text())['rounds']), 2)
+        self.restart.assert_not_called()
+
+    def test_second_live_failure_rolls_back_to_immediate_predecessor(self):
+        with self.assertRaisesRegex(Exception, 'Live replay failed'):
+            self.attempt(live=Mock(side_effect=[{'all_pass': True}, {'all_pass': False}]))
+        self.restart.assert_called_once_with(self.root, self.record['snapshots'])
+        self.versions.assert_called_once_with(self.root, 'b' * 40)
+        self.assertFalse(json.loads(self.path.read_text())['all_pass'])
+
+    def test_partial_startup_failure_also_rolls_back(self):
+        with self.assertRaisesRegex(RuntimeError, 'startup'):
+            self.attempt(activate=Mock(side_effect=RuntimeError('startup')))
+        self.restart.assert_called_once()
+
+    def test_disk_failure_before_activation_never_restarts(self):
+        self.require_disk_space.side_effect = OSError('disk floor')
+        activate = Mock()
+        with self.assertRaises(OSError):
+            self.attempt(activate=activate)
+        activate.assert_not_called()
+        self.restart.assert_not_called()
+
+    def test_disk_failure_in_live_round_restores_first(self):
+        self.require_disk_space.side_effect = [{}, OSError('disk floor')]
+        with self.assertRaises(OSError):
+            self.attempt()
+        self.restart.assert_called_once()
+
+    def test_final_evidence_write_failure_cannot_leave_candidate_live(self):
+        def publish(path, value):
+            if value.get('all_pass'):
+                raise OSError('publish failed')
+            solo.atomic_json(path, value)
+        with self.assertRaises(OSError):
+            self.attempt(publish=publish)
+        self.restart.assert_called_once()
+
+    def test_success_alias_failure_rolls_back(self):
+        alias = self.root / 'latest.json'
+        def publish(path, value):
+            if path == alias:
+                raise OSError('alias failed')
+            solo.atomic_json(path, value)
+        with self.assertRaises(OSError):
+            self.attempt(publish=publish, final_path=alias)
+        self.restart.assert_called_once()
+        self.assertFalse(json.loads(self.path.read_text())['all_pass'])
+
+    def test_keyboard_interrupt_rolls_back(self):
+        with self.assertRaises(KeyboardInterrupt):
+            self.attempt(live=Mock(side_effect=KeyboardInterrupt))
+        self.restart.assert_called_once()
+
+
+class EvidenceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.folder = Path(self.tmp.name)
+        self.log = self.folder / 'tests.log'
+        self.log.write_text('Ran tests OK')
+        names = {'webchat', 'services', 'reviews', 'release', 'eval', 'browser'}
+        names.update(p.stem for p in (solo.CODE / 'webchat').glob('test_*.mjs'))
+        self.check = dict(sha='a' * 40, feature='texting', all_pass=True, staging={'all_pass': True},
+                          results={n: dict(exit=0, skipped=0, log=str(self.log), log_sha256=solo.digest(self.log)) for n in names})
+        self.review = dict(sha='a' * 40, feature='texting', reviewer='Codex solo', verdict='PASS',
+                           findings=['Inspected auth, durable consent, unknown outcome, rollback'])
+
+    def verify(self):
+        checks, review = self.folder / 'checks.json', self.folder / 'review.json'
+        solo.atomic_json(checks, self.check)
+        self.review['checks_sha256'] = solo.digest(checks)
+        solo.atomic_json(review, self.review)
+        return solo.verify_gates('a' * 40, 'texting', checks, review)
+
+    def test_complete_evidence_passes_without_council(self):
+        self.assertIn('self_review_sha256', self.verify())
+
+    def test_stale_candidate_review_rejected(self):
+        self.review['sha'] = 'b' * 40
+        with self.assertRaisesRegex(Exception, 'Stale'):
+            self.verify()
+
+    def test_cross_feature_evidence_rejected(self):
+        self.check['feature'] = 'media'
+        with self.assertRaisesRegex(Exception, 'wrong-feature'):
+            self.verify()
+
+    def test_missing_suite_rejected(self):
+        del self.check['results']['services']
+        with self.assertRaisesRegex(Exception, 'Missing'):
+            self.verify()
+
+    def test_skipped_required_checks_rejected(self):
+        self.check['results']['webchat']['skipped'] = 1
+        with self.assertRaisesRegex(Exception, 'skipped'):
+            self.verify()
+
+    def test_changed_log_rejected(self):
+        self.log.write_text('Different bytes')
+        with self.assertRaisesRegex(Exception, 'changed'):
+            self.verify()
+
+    def test_unresolved_review_blocker_rejected(self):
+        self.review['unresolved_blockers'] = ['Broken consent']
+        with self.assertRaisesRegex(Exception, 'unresolved'):
+            self.verify()
+
+
+if __name__ == '__main__':
+    unittest.main()
