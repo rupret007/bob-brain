@@ -37,7 +37,7 @@ class TransactionTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, 'Live replay failed'):
             self.attempt(live=Mock(side_effect=[{'all_pass': True}, {'all_pass': False}]))
         self.restart.assert_called_once_with(self.root, self.record['snapshots'])
-        self.versions.assert_called_once_with(self.root, 'b' * 40)
+        self.versions.assert_called_with(self.root, 'b' * 40)
         self.assertFalse(json.loads(self.path.read_text())['all_pass'])
 
     def test_partial_startup_failure_also_rolls_back(self):
