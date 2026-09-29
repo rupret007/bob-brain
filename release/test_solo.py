@@ -45,6 +45,7 @@ class TransactionTests(unittest.TestCase):
             snapshots[name] = str(prior)
             (state / (name + '-code-root')).write_text(str(candidate.resolve()) + '\n')
         self.record = dict(previous='b' * 40, sha='c' * 40, snapshots=snapshots, rollback=str(self.root))
+        self.record['snapshot_hashes'] = {name: solo.source_digest(path) for name, path in snapshots.items()}
         for name in ('require_disk_space', 'release_recovery', 'restart', 'versions'):
             p = patch.object(solo, name)
             setattr(self, name, p.start())

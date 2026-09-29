@@ -33,6 +33,7 @@ class ReleaseOwnershipTests(unittest.TestCase):
             self.record['snapshots'][name] = str(snapshot)
             self.record['original_pins'][name] = str(prior)
         self.code(self.folder / 'candidate', 'c' * 40)
+        self.record['snapshot_hashes'] = {name: solo.source_digest(path) for name, path in self.record['snapshots'].items()}
         self.pins(self.folder / 'candidate')
 
     def code(self, path, sha):

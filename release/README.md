@@ -69,13 +69,33 @@ including a different deployment of the same SHA. Legacy receipts without
 original pins can still recover their own candidate or predecessor snapshots;
 an unfamiliar source requires investigation instead of guessing ownership.
 
-This serializes controllers running this implementation. Historical frozen
-scripts and external operators do not acquire this lock. It does not drain
-calls/replies, protect against a supervisor restart, or recover an activation
-after SIGKILL. A killed controller releases the lock but still requires explicit
-verified recovery. Shared work admission, a durable activation journal and
-supervisor recovery remain necessary for atomic deployment drain; current
-production and this candidate do not declare that compatibility.
+Before changing pins, the controller now durably records its recovery identity,
+snapshot hashes and publication paths in the private bounded
+`conductor/locks/webbob-activation.json`. A killed controller leaves that journal
+in place. Cooperating deploys refuse before preflight or snapshots until recovery
+finishes; they never treat an interrupted round as a green. Run
+`recover-pending --root ROOT --feature FEATURE` using the verified candidate's
+`release/solo.py` to restore the recorded immediate predecessor. This command
+does not activate the candidate or rerun its live rounds. The matching manual
+`rollback` command also completes the journal and updates its saved live receipt.
+
+Recovery verifies receipt identity, both current pins and both snapshot hashes
+before any restart. It accepts mixed pins after a partial activation/rollback.
+A missing progress receipt can be rebuilt from the journal, while changed or
+unsafe receipts and unrelated pins are refused. Both authenticated predecessor
+versions and recovery publications must succeed before the journal is removed.
+Failure or process death during recovery retains the obligation for another
+explicit attempt. Even a killed controller that published two live greens is
+rolled back if it did not durably finish the transaction. Never delete a pending
+journal to bypass recovery. Legacy rollback records must contain their original
+snapshot hashes; missing provenance requires investigation.
+
+This covers cooperating release controllers. Historical frozen scripts,
+supervisor restarts and runtime work do not participate. Recovery is explicit,
+not a supervisor/startup hook, and does not drain calls or replies. Shared work
+admission, supervisor recovery and a compatible first-release procedure remain
+necessary for atomic deployment drain. Neither current production nor this
+candidate declares that compatibility.
 
 Always maintain at least 5 GiB free; recovery reserves and bounded atomic
 evidence writes are retained from the existing release tooling. Authentication

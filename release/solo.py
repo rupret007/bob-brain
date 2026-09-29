@@ -26,6 +26,7 @@ if __name__ == '__main__' and '--root' in sys.argv:
     os.environ['BOB_ROOT'] = sys.argv[sys.argv.index('--root') + 1]
 sys.path[:0] = [str(CODE / d) for d in ('webchat', 'services', 'state', 'reviews', 'release')]
 from release_ownership import serialized
+import activation_journal as journal
 from texting_deploy_record import atomic_json, atomic_text, require_disk_space, reserve_recovery, release_recovery
 from live_redeploy_check import Client, require
 
@@ -676,6 +677,7 @@ def versions(root, expected):
 @serialized
 def restart(root, pins):
     """Only the web server restarts; no job-runner or council resurrection."""
+    journal.permit_restart(root, pins)
     from state import lock
     from runtime import screen_sessions
     with lock('supervisor'):
@@ -743,6 +745,7 @@ def verify_recovery_pins(root, record):
 
 @serialized
 def recover(root, record):
+    journal.match(root, record)
     verify_recovery_pins(root, record)
     for name, expected in record.get('snapshot_hashes', {}).items():
         require(source_digest(Path(record['snapshots'][name])) == expected, 'Rollback snapshot changed: ' + name)
@@ -764,11 +767,14 @@ def recover(root, record):
 @serialized
 def transaction(root, record, path, activate, live, publish=atomic_json, final_path=None):
     """Any post-activation failure, including final publication, restores predecessor."""
+    journal.require_clear(root)
     activated = False
+    intent = None
     try:
         require_disk_space(root, CODE, 'before-activation')
         record.update(activated=True, status='ACTIVATING')
         publish(path, record)
+        intent = journal.begin(root, record, path, final_path)
         activated = True
         activate()
         record['rounds'] = []
@@ -783,6 +789,7 @@ def transaction(root, record, path, activate, live, publish=atomic_json, final_p
         if final_path:
             publish(final_path, record)
         release_recovery(record)
+        journal.finish(root, intent)
     except BaseException as exc:
         record.update(all_pass=False, failure=type(exc).__name__ + ': ' + str(exc))
         if activated:
@@ -796,12 +803,15 @@ def transaction(root, record, path, activate, live, publish=atomic_json, final_p
         atomic_json(path, record)
         if final_path:
             atomic_json(final_path, record)
+        if intent and record.get('rolled_back') and not record.get('rollback_error'):
+            journal.finish(root, intent)
         raise
 
 
 @serialized
 def deploy(args):
     root = args.root
+    journal.require_clear(root)
     sha = identity()
     gates = verify_gates(sha, args.feature, args.checks, args.review)
     from runtime import screen_sessions, service_enabled
@@ -897,14 +907,33 @@ def deploy(args):
 
 @serialized
 def rollback(root, path):
-    record = json.loads(path.read_text())
+    intent = journal.pending(root)
+    if intent:
+        require(Path(path).resolve() == Path(intent['path']).resolve(),
+                'Rollback does not belong to the unfinished Web Bob activation')
+        record = journal.saved_record(root, intent)
+    else:
+        record = journal.private_json(path)
+        # Validate before creating a recovery obligation for a stale receipt.
+        verify_recovery_pins(root, record)
+        intent = journal.begin(root, record, path)
     recover(root, record)
     atomic_json(path, record)
+    if intent['final_path']:
+        atomic_json(intent['final_path'], record)
+    journal.finish(root, intent)
+
+
+@serialized
+def recover_pending(root):
+    intent = journal.pending(root)
+    require(intent is not None, 'No unfinished Web Bob activation to recover')
+    rollback(root, Path(intent['path']))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('check', 'deploy', 'rollback'))
+    parser.add_argument('action', choices=('check', 'deploy', 'rollback', 'recover-pending'))
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--feature', choices=ORDER, required=True)
     parser.add_argument('--previous')
@@ -923,6 +952,8 @@ def main():
         checks(args.root, args.feature)
     elif args.action == 'deploy':
         deploy(args)
+    elif args.action == 'recover-pending':
+        recover_pending(args.root)
     else:
         rollback(args.root, args.record)
 
