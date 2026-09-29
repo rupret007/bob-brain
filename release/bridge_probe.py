@@ -25,7 +25,8 @@ def probe(andrea):
     manifest = json.loads((andrea/'dist/build-provenance.json').read_text())
     assert manifest['gitCommit'] == sha and manifest['gitDirtyPathCount'] == 0
     digest = hashlib.sha256()
-    for file in sorted((andrea/'dist').rglob('*')):
+    # Match Andrea's lexical relative-file ordering, not Path's component order.
+    for file in sorted((andrea/'dist').rglob('*'), key=lambda p: p.relative_to(andrea/'dist').as_posix()):
         if file.is_file() and file.name != 'build-provenance.json':
             digest.update(file.relative_to(andrea/'dist').as_posix().encode()+b'\0')
             digest.update(file.read_bytes()+b'\0')
