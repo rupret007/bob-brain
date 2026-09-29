@@ -15,7 +15,7 @@ if ($("login-form")) {
     finally { button.disabled = false; }
   });
 } else {
-  let csrf = "", current = "", busy = false, sending = false, revision = "", polling = false, draftRequest = null, pollFailures = 0;
+  let csrf = "", current = "", busy = false, replyStopping = false, sending = false, revision = "", polling = false, draftRequest = null, pollFailures = 0;
   let pendingAttachments = [];
   let uploading = false, quickRequest = null;
   const composerDrafts = new Map();
@@ -161,7 +161,7 @@ if ($("login-form")) {
     pendingAttachments = draft?.attachments || [];
     $("message").value = draft?.message || "";
     draftRequest = draft?.request || null;
-    revision = ""; busy = false;
+    revision = ""; busy = false; replyStopping = false;
     renderAttachmentStrip(); composerState();
     remember("bob.conversation", id);
   }
@@ -278,7 +278,7 @@ if ($("login-form")) {
     const hasText = Boolean($("message").value.trim());
     const hasAttach = pendingAttachments.length > 0;
     $("send").disabled = busy || sending || uploading || !current || (!hasText && !hasAttach);
-    $("stop").hidden = !busy;
+    $("stop").hidden = !busy || replyStopping;
     $("message").disabled = !current;
     const attachBtn = $("attach-plus");
     if (attachBtn) attachBtn.disabled = !current || busy || sending || uploading;
@@ -395,13 +395,19 @@ if ($("login-form")) {
   function render(conversation) {
     if (conversation.id !== current) return;
     const nextRevision = JSON.stringify(conversation);
-    busy = conversation.messages.some((message) => ["running", "queued", "waiting"].includes(message.status));
+    const wasStopping = replyStopping;
+    replyStopping = Boolean(conversation.reply_stopping);
+    busy = replyStopping || conversation.messages.some((message) => ["running", "queued", "waiting"].includes(message.status));
     composerState();
     if (nextRevision === revision) return;
     revision = nextRevision;
     const last = conversation.messages.at(-1);
-    if (last?.status === "cancelled" && last.role === "assistant" && !sending) {
+    if (replyStopping && !sending) {
+      $("notice").textContent = "Stopping the reply. You can keep writing; Send will return when it finishes.";
+    } else if (last?.status === "cancelled" && last.role === "assistant" && !sending) {
       $("notice").textContent = "Reply stopped. Send again when ready.";
+    } else if (wasStopping && !sending) {
+      $("notice").textContent = "The previous reply has finished stopping. You can send again.";
     }
     const panel = $("messages"), nearBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 100;
     const openDetails = new Set([...panel.querySelectorAll("details[open]")].map((detail) => detail.dataset.detailKey));

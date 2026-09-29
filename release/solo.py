@@ -522,6 +522,7 @@ def checks(root, feature):
         commands['cold-browser'] = [sys.executable, 'webchat/cold_start_proof.py', '--output-dir', str(out / 'cold-browser')]
         commands['voice-availability-browser'] = [sys.executable, 'webchat/voice_availability_proof.py', '--output-dir', str(out / 'voice-availability-browser')]
         commands['jobs-results-browser'] = [sys.executable, 'webchat/jobs_results_proof.py', '--output-dir', str(out / 'jobs-results-browser')]
+        commands['reply-lifecycle-browser'] = [sys.executable, 'webchat/reply_lifecycle_proof.py', '--output-dir', str(out / 'reply-lifecycle-browser')]
     for path in sorted((CODE / 'webchat').glob('test_*.mjs')):
         commands[path.stem] = ['node', str(path)]
 
@@ -593,7 +594,7 @@ def verify_checks(sha, feature, check_path):
     if ORDER.index(feature) >= ORDER.index('remaining'):
         required.add('remaining-browser')
     if feature == 'improve':
-        required.update(('cold-browser', 'voice-availability-browser', 'jobs-results-browser'))
+        required.update(('cold-browser', 'voice-availability-browser', 'jobs-results-browser', 'reply-lifecycle-browser'))
     if ORDER.index(feature) >= ORDER.index('bridge'):
         required.add('bridge-contract')
         require(check.get('andrea', {}).get('sha') == andrea_pin()['sha'], 'Andrea exact-tip evidence missing')

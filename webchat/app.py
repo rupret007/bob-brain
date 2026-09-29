@@ -261,7 +261,10 @@ class Chat(TaskDispatch):
                     "pending_memory", "pending_memory_id"}
         # Extensions never see core-private state or mutable conversation objects.
         filtered = {k: copy.deepcopy(v) for k, v in value.items() if k not in excluded}
-        return {k: v for k, v in self.texting.public(filtered).items() if k not in excluded}
+        public = {k: v for k, v in self.texting.public(filtered).items() if k not in excluded}
+        info = self.workers.get(value["id"])
+        public["reply_stopping"] = bool(info and info["cancel"].is_set())
+        return public
 
     def bob_gaps_memory_turn(self, conversation, text, request_id, provider="auto"):
         if provider != "auto":
@@ -430,7 +433,8 @@ class Chat(TaskDispatch):
                     pending = value["messages"][-1]
                 if pending and pending["status"] in ("queued", "running"):
                     pending.update(status="error",
-                        content="This reply timed out. Tap Stop if it is still running, then send again.")
+                        content="This reply timed out. Wait for it to finish stopping before sending another message.")
+                    value["codex_thread_id"] = None
                     value.pop("retry_prompt", None)
                     self.save(value)
 
@@ -512,6 +516,8 @@ class Chat(TaskDispatch):
                             or message.get("attachments", []) != public_attachments):
                         raise RequestError(409, "That request ID was already used for a different message.")
                     return self.public(conversation)
+            if self.closing.is_set():
+                raise RequestError(503, "Web Bob is restarting. Your new message was not saved; try again shortly.")
             self.sweep_stuck()
             if identifier in self.workers:
                 raise RequestError(409, "Bob is finishing another reply in this conversation. Stop it or wait, then try again.")
@@ -845,28 +851,50 @@ class Chat(TaskDispatch):
             worker = threading.Thread(target=self.complete, args=(identifier, cancel, snapshot), daemon=True)
             self.workers[identifier] = {"thread": worker, "cancel": cancel, "started_at": time.time(),
                                         "reply_id": self.get(identifier)["messages"][-1]["id"]}
-            worker.start()
+            try:
+                worker.start()
+            except RuntimeError:
+                self.workers.pop(identifier, None)
+                self.overlay_pins.pop(identifier, None)
+                value = self.get(identifier)
+                value.pop("retry_prompt", None)
+                value["messages"][-1].update(status="error", provider=None,
+                    content="The reply could not start. Your message is saved; send it again to retry.")
+                self.save(value)
 
     def complete(self, identifier, cancel, conversation):
-        with self.lock:
-            reply_id = self.workers[identifier]["reply_id"]
-            def reply(value):
-                return next(m for m in value["messages"] if m["id"] == reply_id)
-            value = self.get(identifier)
-            if value["messages"] and reply(value)["status"] == "queued":
-                reply(value).update(status="running", provider=None, attempts=[])
-                self.save(value)
+        reply_id = conversation["messages"][-1]["id"]
+        def reply(value):
+            return next(m for m in value["messages"] if m["id"] == reply_id)
+        def pending(value):
+            info = self.workers.get(identifier)
+            return (info is not None and info["cancel"] is cancel
+                    and reply(value)["status"] in ("queued", "running"))
         def progress(provider, attempts):
             with self.lock:
                 value = self.get(identifier)
+                if cancel.is_set() or not pending(value):
+                    return
                 reply(value).update(status="running", provider=provider, attempts=attempts)
                 self.save(value)
         try:
-            answer = self.providers.reply(self.texting.provider_view(conversation), cancel, progress)
-            if cancel.is_set():
-                raise Cancelled("Reply stopped.")
             with self.lock:
                 value = self.get(identifier)
+                if not pending(value):
+                    return
+                if cancel.is_set():
+                    raise Cancelled("Reply stopped.")
+                reply(value).update(status="running", provider=None, attempts=[])
+                self.save(value)
+            answer = self.providers.reply(self.texting.provider_view(conversation), cancel, progress)
+            with self.lock:
+                value = self.get(identifier)
+                # Check after acquiring the lock: Stop/timeout may have won it
+                # while the provider was returning. Terminal outcomes stay final.
+                if not pending(value):
+                    return
+                if cancel.is_set():
+                    raise Cancelled("Reply stopped.")
                 value["codex_thread_id"] = answer.pop("codex_thread_id", None)
                 value.pop("retry_prompt", None)
                 # Provider metadata cannot mint receipts or dispatcher authority.
@@ -928,8 +956,13 @@ class Chat(TaskDispatch):
         except AllDown as exc:
             with self.lock:
                 value = self.get(identifier)
+                if not pending(value):
+                    return
                 value["codex_thread_id"] = None
-                value["retry_prompt"] = exc.prompt
+                if cancel.is_set():
+                    value.pop("retry_prompt", None)
+                else:
+                    value["retry_prompt"] = exc.prompt
                 reply(value).update(status="cancelled" if cancel.is_set() else "waiting",
                     provider=None, content="Reply stopped." if cancel.is_set() else str(exc),
                     attempts=exc.attempts, retry_at=exc.retry_at)
@@ -937,15 +970,21 @@ class Chat(TaskDispatch):
         except Exception as exc:
             with self.lock:
                 value = self.get(identifier)
+                if not pending(value):
+                    return
                 value["codex_thread_id"] = None
                 value.pop("retry_prompt", None)
-                message = str(exc) if isinstance(exc, ProviderError) else "The reply failed unexpectedly. Your message is saved; please try again."
-                reply(value).update(status="cancelled" if isinstance(exc, Cancelled) else "error", content=self.redact(message))
+                cancelled = cancel.is_set() or isinstance(exc, Cancelled)
+                message = ("Reply stopped." if cancelled else str(exc) if isinstance(exc, ProviderError)
+                           else "The reply failed unexpectedly. Your message is saved; please try again.")
+                reply(value).update(status="cancelled" if cancelled else "error", content=self.redact(message))
                 self.save(value)
         finally:
             with self.lock:
-                self.workers.pop(identifier, None)
-                self.overlay_pins.pop(identifier, None)
+                info = self.workers.get(identifier)
+                if info is not None and info["cancel"] is cancel:
+                    self.workers.pop(identifier, None)
+                    self.overlay_pins.pop(identifier, None)
 
     def stop(self, identifier):
         with self.lock:
@@ -953,6 +992,13 @@ class Chat(TaskDispatch):
             info = self.workers.get(identifier)
             if info:
                 info["cancel"].set()
+                pending = next((m for m in value["messages"] if m["id"] == info["reply_id"]), None)
+                if pending and pending["status"] in ("queued", "running"):
+                    pending.update(status="cancelled", content="Reply stopped.")
+                    pending.pop("retry_at", None)
+                    value.pop("retry_prompt", None)
+                    value["codex_thread_id"] = None
+                    self.save(value)
             else:
                 waiting = next((m for m in reversed(value["messages"]) if m.get("status") == "waiting"), None)
                 if waiting is None:
@@ -965,6 +1011,8 @@ class Chat(TaskDispatch):
 
     def retry_queued(self):
         with self.lock:
+            if self.closing.is_set():
+                return
             self.sweep_stuck()
             queued = sorted((c for c in self.conversations.values() if c["messages"] and c["messages"][-1]["status"] == "waiting"), key=lambda c: c["messages"][-1]["created_at"])
             for value in queued:
@@ -981,6 +1029,8 @@ class Chat(TaskDispatch):
 
     def deliver_reminders(self):
         with self.lock:
+            if self.closing.is_set():
+                return
             def deliver(row, notice):
                 conversation = self.conversations.get(row['conversation_id'])
                 if not conversation:
@@ -1018,8 +1068,10 @@ class Chat(TaskDispatch):
         self.queue_thread.start()
 
     def close(self):
-        self.closing.set()
         with self.lock:
+            # Share submit/retry admission's lock so shutdown cannot strand a
+            # saved turn between its acceptance and worker launch.
+            self.closing.set()
             for info in self.workers.values():
                 info["cancel"].set()
         if self.queue_thread:
