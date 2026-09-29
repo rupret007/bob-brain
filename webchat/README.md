@@ -295,6 +295,17 @@ The regular `install.sh` installs all three LaunchAgents. The webchat agent chec
 once a minute and starts a missing screen. LaunchAgents run at **user login**,
 not before login. A live but unresponsive screen is reported, never killed.
 
+The periodic Python launcher takes the installation's release-controller lock
+before checking health and holds it through startup readiness. A cooperating
+release or rollback, or another periodic launcher, causes it to refuse that
+attempt. An unfinished or unreadable activation journal also stops periodic
+startup before network or screen operations; inspect the release receipt and
+use the explicit recovery procedure in [the release guide](../release/README.md).
+The launcher never clears that journal or recovers a release automatically.
+This coordination covers updated periodic launchers and release controllers.
+Direct `run.sh` invocations and older launchers remain outside it; it does not
+drain active chat or voice work or verify a healthy server's release identity.
+
 **macOS permission:** if `webchat-launchd.log` says `Operation not permitted`, open
 System Settings → Privacy & Security → Full Disk Access, add `/bin/bash` using
 Cmd+Shift+G in the file chooser, and enable it. Then rerun the install command.

@@ -90,9 +90,9 @@ rolled back if it did not durably finish the transaction. Never delete a pending
 journal to bypass recovery. Legacy rollback records must contain their original
 snapshot hashes; missing provenance requires investigation.
 
-This covers cooperating release controllers. Historical frozen scripts,
-supervisor restarts and runtime work do not participate. Recovery is explicit,
-not a supervisor/startup hook, and does not drain calls or replies. Shared work
+This covers cooperating release controllers and the updated periodic Python
+launcher. Historical frozen scripts, direct server launches and runtime work do
+not participate. Recovery is explicit and does not drain calls or replies. Shared work
 admission, supervisor recovery and a compatible first-release procedure remain
 necessary for atomic deployment drain. Neither current production nor this
 candidate declares that compatibility.
@@ -108,9 +108,15 @@ The periodic `webchat/start.py` launcher leaves an existing `svc-webchat` sessio
 alone when a health probe fails, including detached, attached or dead screen
 entries. Unknown or failed screen inventories also refuse startup. Only a known
 inventory without that session permits a new launch, with drills off by default.
-This prevents an automatic health check from quitting a slow chat. It does not
-share the release controller lock or recover an activation journal; the broader
-startup/release coordination remains unfinished.
+The launcher shares the installation's release-controller lock from before
+health inspection through its readiness wait. A busy or unsafe lock refuses
+startup; it is never unlinked. An unfinished or unreadable activation journal
+also refuses before health or screen operations, retaining evidence for explicit
+recovery. The launcher neither restarts an existing session nor clears or
+automatically recovers the journal. Different pinned code directories use the
+same lock. Direct `run.sh` invocations still rely on their caller's coordination;
+older launchers, release identity checks, supervisor recovery and runtime work
+admission remain outside this change.
 
 Always maintain at least 5 GiB free; recovery reserves and bounded atomic
 evidence writes are retained from the existing release tooling. Authentication
