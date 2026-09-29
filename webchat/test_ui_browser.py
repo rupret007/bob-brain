@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import Chat, Server
+from music_notebook import save_project
 
 CODE = Path(__file__).resolve().parent
 
@@ -40,6 +41,9 @@ class UiBrowserTests(unittest.TestCase):
         password = secrets.token_urlsafe(24)
         (folder / ".password").write_text(password + "\n", encoding="utf-8")
         chat = Chat(folder, root, NoModels())
+        saved = save_project(root, {"title": "Preserved private song", "lyrics": "Keep this existing draft"})
+        song_path = root / "conductor/webchat/song-projects" / (saved["id"] + ".json")
+        song_bytes = song_path.read_bytes()
         server = Server(("127.0.0.1", 0), chat)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -50,6 +54,7 @@ class UiBrowserTests(unittest.TestCase):
         try:
             with patch("live_status_snapshot._screen_sessions", return_value={}), patch("live_status_snapshot.process_table", return_value={}):
                 subprocess.run(["node", str(script), str(config)], check=True, cwd=str(CODE), timeout=120)
+            self.assertEqual(song_bytes, song_path.read_bytes(), "Shell navigation must preserve saved songs")
         finally:
             server.shutdown()
             server.server_close()

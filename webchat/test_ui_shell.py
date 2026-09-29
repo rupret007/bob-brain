@@ -12,9 +12,9 @@ class UiShellTests(unittest.TestCase):
         cls.css = (STATIC / "style.css").read_text(encoding="utf-8")
         cls.app = (STATIC / "app.js").read_text(encoding="utf-8")
 
-    def test_existing_song_capability_remains_accessible(self):
+    def test_removed_song_ui_stays_out_of_phone_shell(self):
         for needle in ('id="view-song"', 'data-bottom="song"', "Write a song", "Songs</span>"):
-            self.assertIn(needle, self.index)
+            self.assertNotIn(needle, self.index)
 
     def test_chat_composer_and_build_header_present(self):
         for needle in ('id="composer"', "composer-dock", 'id="attach-plus"', 'id="attach-input"', 'id="live-call"', "waveform", 'class="build-sha"'):
@@ -26,10 +26,6 @@ class UiShellTests(unittest.TestCase):
         self.assertIn("jobs-page-header", self.index)
         self.assertIn('id="live-jobs"', self.index)
         self.assertIn("job-llm-row", self.app)
-
-    def test_app_js_tolerates_missing_song_editor(self):
-        self.assertIn('if ($("song-editor")) boot.push(loadSong());', self.app)
-        self.assertIn('if (!$("song-title")) return true;', self.app)
 
 
 if __name__ == "__main__":

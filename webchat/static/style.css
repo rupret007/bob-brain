@@ -188,7 +188,7 @@ h1 { font-size: 18px; letter-spacing: -.35px; }
 .field-label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
 .settings-group { margin: 16px 0; }
 .settings-group-title { font-size: 16px; font-weight: 600; margin: 0 0 8px; }
-#conversations, #song-picker {
+#conversations {
   width: 100%;
   min-height: 44px;
   border: 1px solid var(--line);
@@ -684,24 +684,6 @@ button.send-btn {
 .message-tools .provider-hint { margin: 0; }
 .settings-logout { margin-top: 24px; }
 .status-dot.connected:not(.busy):not(.warn) { background: #6fcf97; }
-#view-song input, #view-song textarea {
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--bg);
-  color: var(--text);
-  padding: 10px 12px;
-  font-size: 16px;
-}
-#song-lyrics { min-height: 200px; max-height: none; resize: vertical; }
-#song-editor > .song-actions { margin-top: 16px; }
-.song-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.upload-label { width: 100%; font-size: 14px; color: var(--muted); margin-top: 8px; }
-#song-upload { padding: 8px; margin-top: 8px; min-width: 0; }
-#song-player { width: 100%; margin-top: 4px; }
-.song-versions { list-style: none; padding: 0; margin: 0; font-size: 13px; }
-.song-versions li + li { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
-.version-lyrics { white-space: pre-wrap; color: var(--text); }
 #provider-choice {
   width: 100%;
   min-height: 44px;

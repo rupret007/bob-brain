@@ -336,23 +336,8 @@ if ($("login-form")) {
     }
     submitChatText(text, { confirmStop: key === "stop" });
   });
-  let activeBottomTab = "chat";
-  let songSnapshot = songFieldsText();
-  function songFieldsText() {
-    return ["song-title", "song-lyrics", "song-chords", "song-notes"]
-      .map((id) => $(id)?.value || "").join("\x1e");
-  }
-  function markSongClean() { songSnapshot = songFieldsText(); }
-  async function confirmLeaveSongEdits() {
-    if (!$("song-title")) return true;
-    if (songFieldsText() === songSnapshot) return true;
-    return window.confirm("You have unsaved song edits. Continue without saving?");
-  }
   function setBottomTab(name) {
-    if ($("song-title") && activeBottomTab === "song" && name !== "song" && songFieldsText() !== songSnapshot) {
-      if (!window.confirm("You have unsaved song edits. Leave this tab anyway?")) return false;
-    }
-    activeBottomTab = name;
+    if (!["chat", "ops", "lanes", "settings"].includes(name)) name = "chat";
     for (const btn of document.querySelectorAll(".bottom-tab")) {
       const on = btn.dataset.bottom === name;
       btn.classList.toggle("active", on);
@@ -363,7 +348,7 @@ if ($("login-form")) {
       view.hidden = !on;
       view.classList.toggle("active", on);
     }
-    document.title = `Bob · ${{chat: "Chat", ops: "Jobs", song: "Songs", lanes: "Models", settings: "Settings"}[name]}`;
+    document.title = `Bob · ${{chat: "Chat", ops: "Jobs", lanes: "Models", settings: "Settings"}[name]}`;
     if (name === "ops") refreshJobs();
     if (["lanes", "settings"].includes(name) && Date.now() - overviewFetchedAt > 8000) refreshOverview();
     return true;
@@ -396,7 +381,6 @@ if ($("login-form")) {
   $("new-chat-dialog")?.addEventListener("click", () => { $("new-chat").click(); $("chats-dialog").close(); });
   $("quick-chips").addEventListener("click", (event) => {
     const key = event.target.closest("[data-chip]")?.dataset.chip;
-    if (key === "song") { setBottomTab("song"); $("song-new").click(); }
     if (key === "status") setBottomTab("ops");
     if (key === "texts") {
       setBottomTab("chat");
@@ -960,194 +944,9 @@ if ($("login-form")) {
     if (voice.pending.length) { event.preventDefault(); event.returnValue = ""; }
   });
   $("logout").addEventListener("click", async () => {
-    if (!(await confirmLeaveSongEdits())) return;
     $("settings-notice").textContent = "";
-    try { await voice.stop(); await api("/api/logout", {}); markSongClean(); location.assign("/login"); }
+    try { await voice.stop(); await api("/api/logout", {}); location.assign("/login"); }
     catch (_) { $("settings-notice").textContent = "Could not log out. Please try again."; }
-  });
-  let songProjectId = stored("bob.songProject") || "", songBusy = false;
-  function setSongBusy(value) {
-    songBusy = value;
-    for (const id of ["song-new", "song-picker", "song-save", "song-title", "song-lyrics", "song-chords", "song-notes", "song-demo", "song-upload", "song-coach"]) {
-      const node = $(id);
-      if (node) node.disabled = value;
-    }
-  }
-  function clearSongMedia() {
-    const player = $("song-player");
-    if (!player) return;
-    $("song-player").pause();
-    $("song-player").removeAttribute("src");
-    $("song-player").load();
-    $("song-player").hidden = true;
-    $("song-versions").replaceChildren();
-    $("song-history").hidden = true;
-    $("song-notice").textContent = "";
-    for (const id of ["song-arrangement", "song-audio", "song-history"]) $(id).open = false;
-  }
-  function showSong(project, keepAudio = false) {
-    if (!keepAudio) clearSongMedia();
-    for (const key of ["title", "lyrics", "chords", "notes"]) $("song-" + key).value = project[key] || "";
-    $("song-editor").hidden = false;
-    $("songs-empty").hidden = true;
-    $("song-summary").textContent = project.updated_at ? `Saved ${timestamp(project.updated_at)}` : "New song · not saved yet";
-    const seen = new Set();
-    const versions = (project.versions || []).slice().reverse().filter((row) => {
-      const key = JSON.stringify([row.at, row.lyrics]);
-      if (!row.at || seen.has(key)) return false;
-      seen.add(key); return true;
-    });
-    $("song-history").hidden = !versions.length;
-    $("song-versions").replaceChildren(...versions.map((row) => {
-      const item = element("li");
-      item.append(element("p", timestamp(row.at)));
-      if (row.lyrics) item.append(element("p", row.lyrics, "version-lyrics"));
-      return item;
-    }));
-    markSongClean();
-  }
-  async function loadSongList() {
-    const list = await api("/api/song-projects");
-    const seen = new Set();
-    list.projects = (list.projects || []).filter((project) => {
-      if (!project.id || seen.has(project.id)) return false;
-      seen.add(project.id); return true;
-    });
-    $("song-picker").replaceChildren(...list.projects.map((project) => {
-      const option = element("option", project.title || "Untitled song");
-      option.value = project.id;
-      return option;
-    }));
-    $("song-library").hidden = !list.projects.length;
-    return list;
-  }
-  async function loadSong(id) {
-    if (songBusy) return;
-    setSongBusy(true);
-    try {
-      const list = await loadSongList();
-      const row = list.projects.find((project) => project.id === (id || songProjectId)) || list.projects[0];
-      if (!row) {
-        songProjectId = ""; remember("bob.songProject", "");
-        clearSongMedia();
-        $("song-editor").hidden = true;
-        $("songs-empty").hidden = false;
-        $("song-summary").textContent = "No saved songs yet.";
-        markSongClean();
-        return;
-      }
-      const project = await api(`/api/song-projects/${row.id}`);
-      songProjectId = row.id;
-      remember("bob.songProject", songProjectId);
-      $("song-picker").value = songProjectId;
-      showSong(project);
-    } catch (_) {
-      $("song-picker").value = songProjectId;
-      $("song-summary").textContent = "Could not load songs. Choose a song again or reload to retry.";
-    } finally { setSongBusy(false); }
-  }
-  $("song-picker")?.addEventListener("change", async () => {
-    if (!(await confirmLeaveSongEdits())) { $("song-picker").value = songProjectId; return; }
-    await loadSong($("song-picker").value);
-  });
-  $("song-new")?.addEventListener("click", async () => {
-    if (songBusy || !(await confirmLeaveSongEdits())) return;
-    songProjectId = ""; remember("bob.songProject", "");
-    $("song-picker").value = "";
-    showSong({});
-    $("song-title").focus();
-  });
-  for (const id of ["song-title", "song-lyrics", "song-chords", "song-notes"]) {
-    $(id)?.addEventListener("input", () => { $("song-summary").textContent = "Unsaved changes"; $("song-notice").textContent = ""; });
-  }
-  window.addEventListener("beforeunload", (event) => {
-    if ($("song-title") && songFieldsText() !== songSnapshot) { event.preventDefault(); event.returnValue = ""; }
-  });
-  $("song-coach")?.addEventListener("click", () => {
-    if (!setBottomTab("chat")) return;
-    const title = ($("song-title")?.value || "Untitled").trim().slice(0, 80);
-    const lyricLine = ($("song-lyrics")?.value || "").trim().split("\n").find((l) => l.trim())?.slice(0, 120) || "";
-    const chords = ($("song-chords")?.value || "").trim().slice(0, 80);
-    const field = $("message");
-    const draft = lyricLine
-      ? `help with rhyme and meter for "${title}" — opening line: ${lyricLine}${chords ? ` · chords: ${chords}` : ""}`
-      : `help with rhyme and song structure for "${title}" (add lyrics in Songs if you want line-level edits)`;
-    field.value = draft;
-    field.focus();
-    field.dispatchEvent(new Event("input"));
-    $("song-notice").textContent = "Prepared in chat — send when ready.";
-  });
-  $("song-save")?.addEventListener("click", async () => {
-    if (songBusy) return;
-    setSongBusy(true);
-    $("song-notice").textContent = "Saving…";
-    try {
-      const project = await api("/api/song-projects", {
-        id: songProjectId || undefined,
-        title: $("song-title").value,
-        lyrics: $("song-lyrics").value,
-        chords: $("song-chords").value,
-        notes: $("song-notes").value,
-        version_note: "Saved",
-      });
-      songProjectId = project.id; remember("bob.songProject", songProjectId);
-      // Apply the saved response before refreshing the list, which can fail independently.
-      showSong(project, true);
-      $("song-notice").textContent = "Song saved.";
-      try { await loadSongList(); $("song-picker").value = project.id; }
-      catch (_) { $("song-notice").textContent = "Song saved. Reload to refresh the song list."; }
-    } catch (error) { $("song-notice").textContent = `Not saved. ${error.message} Keep this page open to retain your edits.`; }
-    finally { setSongBusy(false); }
-  });
-  $("song-demo")?.addEventListener("click", async () => {
-    if (songBusy) return;
-    setSongBusy(true);
-    try {
-      const lyrics = $("song-lyrics").value.trim();
-      if (!lyrics) { $("song-notice").textContent = "Add lyrics first."; return; }
-      let receipt = "";
-      try {
-        const quote = await api("/api/music/demo", { lyrics, style: $("song-notes").value || "acoustic songwriter" });
-        if (quote.needs_confirm) {
-          receipt = quote.receipt || "";
-          if (!quote.can_afford_demo) { $("song-notice").textContent = quote.message || "The spending limit does not allow this audio request."; return; }
-          if (!window.confirm(quote.message || "Create rough audio from these lyrics?")) return;
-        }
-      } catch (error) { $("song-notice").textContent = error.message; return; }
-      $("song-notice").textContent = "Creating audio…";
-      try {
-        const demo = await api("/api/music/demo", {
-          lyrics, style: $("song-notes").value || "acoustic songwriter", confirm: true, receipt,
-        });
-        if (demo.audio_id) {
-          const player = $("song-player");
-          player.hidden = false;
-          player.src = `/api/audio/${demo.audio_id}`;
-          $("song-notice").textContent = "Audio ready to play.";
-        } else $("song-notice").textContent = demo.message || "No audio was returned. Try again.";
-      } catch (error) { $("song-notice").textContent = error.message; }
-    } finally { setSongBusy(false); }
-  });
-  $("song-upload")?.addEventListener("change", async (event) => {
-    if (songBusy) return;
-    setSongBusy(true);
-    try {
-      const file = event.target.files?.[0];
-      if (!file) return;
-      $("song-notice").textContent = "Uploading…";
-      try {
-        const buffer = await file.arrayBuffer();
-        const bytes = new Uint8Array(buffer);
-        let binary = "";
-        for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-        const stored = await api("/api/audio/upload", { filename: file.name, data_base64: btoa(binary) });
-        const player = $("song-player");
-        player.hidden = false;
-        player.src = `/api/audio/${stored.audio_id}`;
-        $("song-notice").textContent = `Uploaded ${file.name}`;
-      } catch (error) { $("song-notice").textContent = error.message; }
-      event.target.value = "";
-    } finally { setSongBusy(false); }
   });
   function element(tag, text, className = "") {
     const node = document.createElement(tag);
@@ -1441,7 +1240,6 @@ if ($("login-form")) {
       csrf = (await api("/api/session")).csrf; current = stored("bob.conversation");
       await refreshList(); await poll(); $("messages").scrollTop = $("messages").scrollHeight;
       const boot = [refreshJobs(), refreshOverview()];
-      if ($("song-editor")) boot.push(loadSong());
       // Secondary tabs must not hold up chat polling or reconnect listeners.
       // Each refresh owns its errors and loading guard; observe all rejections.
       void Promise.allSettled(boot);

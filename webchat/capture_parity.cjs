@@ -91,7 +91,7 @@ const digest = value => crypto.createHash('sha256').update(value).digest('hex');
     await page.locator('[data-bottom="settings"]').click();
     await page.locator('summary').getByText('Saved memory', {exact: true}).click();
     await page.getByRole('button', {name: 'Show saved notes in chat', exact: true}).waitFor();
-    const tabs = html.includes('composer-dock') ? ['chat', 'ops', 'song', 'lanes', 'settings'] : ['ops'];
+    const tabs = html.includes('composer-dock') ? ['chat', 'ops', 'lanes', 'settings'] : ['ops'];
     for (const width of [320, 390, 430, 900]) {
       await page.setViewportSize({width, height: 844});
       for (const tab of tabs) {

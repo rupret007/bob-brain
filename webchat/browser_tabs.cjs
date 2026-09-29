@@ -8,15 +8,14 @@ const url = process.env.WEBBOB_TEST_URL;
 assert(url && /^http:\/\/127\.0\.0\.1:\d+$/.test(url) && !url.endsWith(":8787"), "Use the isolated proof runner");
 const password = fs.readFileSync(process.env.WEBBOB_TEST_PASSWORD_FILE, "utf8").trim();
 const output = process.env.WEBBOB_TEST_OUTPUT;
-const tabs = { chat: "Chat", ops: "Jobs", song: "Songs", lanes: "Models", settings: "Settings" };
-const evidence = { screenshots: [], layouts: [], checks: [], screenshot_data: "Actual isolated server responses; empty private chats/songs, current read-only host activity, unchecked private model health." };
+const tabs = { chat: "Chat", ops: "Jobs", lanes: "Models", settings: "Settings" };
+const evidence = { screenshots: [], layouts: [], checks: [], screenshot_data: "Actual isolated server responses; empty private chats, current read-only host activity, unchecked private model health." };
 const errors = [];
 let browser;
 
 async function ready(page) {
   await page.waitForFunction(() => document.querySelector("#send")?.disabled === false
-    && !/Checking|Refreshing/.test(document.querySelector("#jobs-notice").textContent)
-    && !/Loading/.test(document.querySelector("#song-summary").textContent));
+    && !/Checking|Refreshing/.test(document.querySelector("#jobs-notice").textContent));
 }
 async function tab(page, name) {
   await page.locator(`[data-bottom="${name}"]`).click();
@@ -79,7 +78,7 @@ async function layout(page, width, name) {
       }
     }
   }
-  evidence.checks.push("All five tabs fit 320, 390 and 430 pixels; navigation targets meet 44 pixels; details start collapsed.");
+  evidence.checks.push("All four tabs fit 320, 390 and 430 pixels; navigation targets meet 44 pixels; details start collapsed.");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ colorScheme: "light" });
   for (const name of Object.keys(tabs)) { await tab(page, name); await layout(page, 390, name); }
@@ -89,65 +88,12 @@ async function layout(page, width, name) {
   await page.reload();
   await ready(page);
   assert.equal(await page.locator("#provider-choice").inputValue(), "minimax");
-  assert.equal(await page.locator("#attach-plus").count(), 0);
+  assert.equal(await page.locator("#attach-plus").count(), 1);
   assert.equal(await page.locator("#conversations").count(), 1);
-  evidence.checks.push("Reply preference survives reload; one conversation picker; unfinished attachment control removed.");
+  evidence.checks.push("Reply preference survives reload; one conversation picker; attachment control present.");
 
-  await tab(page, "song");
-  assert(await page.locator("#songs-empty").isVisible());
-  await page.locator("#song-new").click();
-  await page.locator("#song-title").blur();
-  await page.waitForTimeout(150);
-  await page.screenshot({ path: path.join(output, "webbob-tab-songs-editor-0927.png"), animations: "disabled" });
-  evidence.screenshots.push("webbob-tab-songs-editor-0927.png");
-  for (const width of [320, 390, 430]) {
-    await page.setViewportSize({ width, height: 844 });
-    await layout(page, width, "song");
-    await page.locator("#song-audio summary").click();
-    assert(await page.locator("#song-upload").isVisible());
-    assert(await page.evaluate(() => document.documentElement.scrollWidth === innerWidth));
-    await page.locator("#song-audio summary").click();
-  }
-  await page.setViewportSize({ width: 390, height: 844 });
-  evidence.checks.push("Light theme across all tabs and empty song editor/audio controls at all three phone widths.");
-  await page.locator("#song-title").fill("Notebook regression");
-  await page.locator("#song-lyrics").fill("These are temporary browser test lyrics.");
-  const save = page.waitForResponse((res) => res.url().endsWith("/api/song-projects") && res.request().method() === "POST");
-  await page.locator("#song-save").click();
-  const saved = await (await save).json();
-  await page.waitForFunction(() => document.querySelector("#song-notice").textContent === "Song saved." && !document.querySelector("#song-save").disabled);
-  assert.equal(await page.locator("#song-picker").inputValue(), saved.id);
-  assert.equal(await page.locator("#song-versions li").count(), 1);
-  await page.locator("#song-history summary").click();
-  assert((await page.locator("#song-versions").innerText()).includes("temporary browser test lyrics"));
-  // A prior audio source must not carry into a different song.
-  await page.evaluate(() => { const player = document.querySelector("#song-player"); player.src = "/api/audio/prior-recording"; player.hidden = false; });
-  await page.locator("#song-new").click();
-  assert.equal(await page.locator("#song-player").getAttribute("src"), null);
-  assert(await page.locator("#song-history").isHidden());
-  await page.locator("#song-picker").selectOption(saved.id);
-  await page.waitForFunction(() => document.querySelector("#song-title").value === "Notebook regression" && !document.querySelector("#song-save").disabled);
-  await page.locator("#song-lyrics").fill("Keep these unsaved edits.");
-  page.once("dialog", (dialog) => dialog.dismiss());
-  await page.locator('[data-bottom="chat"]').click();
-  assert(await page.locator("#view-song").isVisible());
-  await page.locator("#open-chats").click();
-  const priorConversation = await page.locator("#conversations").inputValue();
-  page.once("dialog", (dialog) => dialog.dismiss());
-  await page.locator("#new-chat").click();
-  assert(await page.locator("#chats-dialog").isVisible());
-  assert.equal(await page.locator("#conversations").inputValue(), priorConversation);
-  assert(await page.locator("#view-song").isVisible());
-  await page.locator("#close-chats").click();
-  await page.route("**/api/song-projects", (route) => route.request().method() === "POST"
-    ? route.fulfill({ status: 503, json: { error: "Save unavailable." } }) : route.continue());
-  await page.locator("#song-save").click();
-  await page.waitForFunction(() => document.querySelector("#song-notice").textContent.startsWith("Not saved."));
-  assert.equal(await page.locator("#song-lyrics").inputValue(), "Keep these unsaved edits.");
-  await page.unroute("**/api/song-projects");
-  await page.locator("#song-save").click();
-  await page.waitForFunction(() => document.querySelector("#song-notice").textContent === "Song saved." && !document.querySelector("#song-save").disabled);
-  evidence.checks.push("Real private song save/load/version history; previous audio and versions cleared on new song; unsaved edits protected; failed save never claims persistence.");
+  assert.equal(await page.locator('[data-bottom="song"], [data-chip="song"], #view-song').count(), 0);
+  evidence.checks.push("Songs tab, chip and notebook removed from the shell.");
 
   const fixture = {
     inspection: { processes_available: true, screens_available: true, queue_available: true },
