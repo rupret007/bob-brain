@@ -98,10 +98,12 @@ def identity():
     return sha
 
 
-def submit(client, cid, prompt, request=None, attachments=None):
+def submit(client, cid, prompt, request=None, attachments=None, *, provider=None):
     import uuid
     request = request or str(uuid.uuid4())
     payload = dict(conversation_id=cid, message=prompt, request_id=request)
+    if provider:
+        payload['provider'] = provider
     if attachments:
         payload['attachments'] = attachments
     value = client.call('/api/messages', payload)
@@ -225,9 +227,10 @@ def sticky_greeting_replay(client, *, real):
     cid = client.new()
     receipts = []
     for number in (1, 2):
-        value, answer = submit(client, cid, RESTART_PROMPT)
+        # Select Gemini for the product-answer check and require its receipt.
+        value, answer = submit(client, cid, RESTART_PROMPT, provider='gemini' if real else None)
         provider = answer.get('provider')
-        require(provider in ({'gemini', 'minimax', 'codex', 'cursor', 'claude'} if real else {'fixture'}),
+        require(provider in ({'gemini'} if real else {'fixture'}),
                 'Substantive restart request bypassed the model')
         content = answer['content']
         require(len(content.split()) >= 20 and all(
@@ -235,7 +238,8 @@ def sticky_greeting_replay(client, *, real):
             for word in ('adoptiq', 'fantasyfootball', 'webjam', 'gemini', 'minimax')),
             'Restart answer did not address the projects and model restriction')
         require('ready when you are' not in content.lower(), 'Sticky greeting returned')
-        again, duplicate = submit(client, cid, RESTART_PROMPT, answer['request_id'])
+        again, duplicate = submit(client, cid, RESTART_PROMPT, answer['request_id'],
+                                  provider='gemini' if real else None)
         require(duplicate == answer and len(again['messages']) == len(value['messages']),
                 'Restart request retry was not idempotent')
         receipts.append(dict(check='Jeff sticky-greeting live replay', turn=number,

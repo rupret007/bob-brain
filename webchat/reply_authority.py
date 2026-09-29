@@ -336,6 +336,30 @@ def operational_reply(root, provider, text="", *, observation=None, redact=lambd
     return content
 
 
+def unperformed_restart(root, text):
+    """Preserve a restart request's explicit scope without inventing effects."""
+    from pathlib import Path
+    from chat_intent import command, project_targets
+    from dispatch_receipts import NO_DISPATCH
+    directive = command(text)
+    if not re.match(r"^(?:(?:go(?:\s+ahead)?|resume)(?:\s+and)?[\s,:!]+)?restart\b", directive, re.I):
+        return NO_DISPATCH
+    targets = project_targets(directive, {'project_order': []})
+    if not targets:
+        return NO_DISPATCH
+    content = "I haven't restarted " + _join(targets) + ". No new work was queued."
+    names = r"(?:Gemini|MiniMax|Codex|Claude|Cursor)"
+    restriction = re.search(r"\b(?:only\s+(?:use|using)|(?:use|using)\s+only)\s+(" + names +
+                            r"(?:\s*(?:,|&|and)\s*(?:and\s+)?" + names + r")*)\b", directive, re.I)
+    if restriction:
+        labels = {name.lower(): name for name in ('Gemini', 'MiniMax', 'Codex', 'Claude', 'Cursor')}
+        requested = list(dict.fromkeys(labels[name.lower()] for name in re.findall(names, restriction[1], re.I)))
+        content += " Your " + _join(requested) + " restriction has not been applied to any job."
+    if (Path(root) / 'conductor/SOLO-WORKER').exists():
+        content += " Additional workers are paused in solo mode."
+    return content + " I can help define the next task for each project here."
+
+
 def enforce(root, text, answer, conversation=None, *, observation=None, redact=lambda value: value):
     content = answer["content"]
     from worker_assignment import requested_workers
@@ -360,7 +384,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
         content = "".join(part for part in sentences if not NO_JOB_NOTICE.search(part)).strip() or NO_DISPATCH
         if claims_dispatch(content) or QUEUE_CLAIM.search(content):
-            return NO_DISPATCH
+            return unperformed_restart(root, text)
         # Keep the useful answer; remove unsupported effects and boilerplate
         # without adding a system notice to ordinary chat.
         # Keep original whitespace so removing a footer doesn't flatten the

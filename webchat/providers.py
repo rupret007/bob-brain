@@ -671,8 +671,11 @@ class Providers:
                     "Use current provider_health for errors; never repeat historical failures as current.")
                 answer, thread_id = self._call_timed(provider, attempt_prompt, conversation.get("codex_thread_id"), cancel, timeout)
                 answer = usable(answer)
-                if re.fullmatch(r"ready when you are[.!\s]*", answer.strip(), re.I):
-                    # A sticky greeting is not a completed model answer.
+                from chat_intent import command
+                user_text = next((m['content'] for m in reversed(conversation['messages']) if m['role'] == 'user'), '')
+                if (re.match(r'^(?:go(?:\s+ahead)?|resume|restart)\b', command(user_text), re.I)
+                        and re.fullmatch(r"ready when you are[.!\s]*", answer.strip(), re.I)):
+                    # A sticky greeting does not answer a substantive resume.
                     # Discard it and use the normal bounded provider failover.
                     raise ProviderError(kind="invalid_output")
                 if cancel.is_set():

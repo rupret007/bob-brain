@@ -18,6 +18,45 @@ ANSWER = ("AdoptIQ, Fantasy Football and WebJam can be scoped to Gemini and Mini
 
 
 class StickyGreetingTests(Fixture):
+    def test_unsupported_restart_promise_retains_requested_scope_without_claiming_effects(self):
+        raw = ("Okay, I'll get AdoptIQ, Fantasy Football, and WebJam restarted. "
+               "I'll make sure to only use Gemini and MiniMax for those projects right now.")
+        (self.root / 'conductor/SOLO-WORKER').touch()
+        with patch.object(self.fake, 'reply', return_value=dict(content=raw, provider='gemini', attempts=[])):
+            self.chat.submit(self.identifier, PROMPT, str(uuid.uuid4()))
+            self.wait()
+        answer = self.chat.history(self.identifier)['messages'][-1]['content']
+        for phrase in ('AdoptIQ', 'Fantasy Football', 'WebJam', 'Gemini', 'MiniMax',
+                       'not been applied', 'paused in solo mode'):
+            self.assertIn(phrase, answer)
+        self.assertNotIn("I'll", answer)
+        self.assertNotIn('Ready when you are', answer)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_restart_scope_fallback_does_not_infer_other_projects_or_saved_model_choice(self):
+        from reply_authority import enforce
+        from dispatch_receipts import NO_DISPATCH
+        raw = dict(content="I'll make sure to maximize the workers.", provider='gemini')
+        answer = enforce(self.root, 'Go ahead and restart WebJam using only MiniMax.', raw)
+        self.assertIn('WebJam', answer)
+        self.assertIn('MiniMax', answer)
+        for absent in ('AdoptIQ', 'Gemini', 'paused in solo mode'):
+            self.assertNotIn(absent, answer)
+        self.assertIn('not been applied', answer)
+        self.assertEqual(enforce(self.root, 'Thanks Bob', raw), NO_DISPATCH)
+        self.assertEqual(enforce(self.root, 'Do not restart WebJam', raw), NO_DISPATCH)
+        self.assertEqual(enforce(self.root, 'Restart all projects', raw), NO_DISPATCH)
+
+    def test_requested_literal_greeting_is_not_rejected(self):
+        provider = Providers(self.root, lambda value: value)
+        conversation = dict(id=self.identifier, messages=[dict(role='user', content='Say exactly: Ready when you are.')])
+        with patch.object(provider, 'route_order', return_value=('gemini',)), \
+                patch.object(provider, 'prompt', return_value='Say exactly: Ready when you are.'), \
+                patch.object(provider, '_call_timed', return_value=('Ready when you are.', None)) as call:
+            answer = provider.reply(conversation, threading.Event(), lambda *args: None)
+        self.assertEqual(answer['content'], 'Ready when you are.')
+        self.assertEqual(call.call_count, 1)
+
     def start_http(self):
         server = Server(('127.0.0.1', 0), self.chat)
         threading.Thread(target=server.serve_forever, daemon=True).start()
