@@ -11,7 +11,8 @@ from pathlib import Path
 from state import atomic_write
 from workspaces import git
 from result_acceptance import (deliverable_requirements, needs_test_drafts, plan_heading, ResultRejected,
-                               DRAFT_ERROR, guard_draft_expected, check_literal_guard_drafts, render_guard_expected)
+                               DRAFT_ERROR, guard_draft_expected, check_deliverables, check_completion_json,
+                               check_literal_guard_drafts, render_guard_expected)
 
 TEXT_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".md", ".txt",
                  ".json", ".toml", ".yaml", ".yml", ".sh", ".html", ".css", ".sql", ".go", ".rs"}
@@ -23,6 +24,7 @@ DEPLOY_SOURCE = re.compile(
     r"reviews/(?:texting_deploy_record|(?:deploy_texting|record_texting_deploy|"
     r"test_disk_evidence|test_record_texting_deploy|test_deploy_texting|"
     r"test_deploy_screens|test_deploy_ancestry)_\d+)\.py\Z")
+PROBE_HISTORY = "services/fixtures/texting_minimax_probe_2256.json"
 RULES = ("Produce a report or proposed patch for the assigned task. The server saves your answer under reviews/. "
          "You have no shell or file-writing tools. Never deploy, push, apply patches, resolve merge conflicts, "
          "or launch workers. Never use Grok/xAI. Do not claim you ran tests. Put test code or unified patches "
@@ -104,12 +106,14 @@ def report_serialization(task, kind=None):
         return ""
     heading = plan_heading(task)
     schema = dict(
-        regression_tests=[dict(name="[failure case]", target="[file/symbol]",
-                               setup="[literal input/state or supplied fixture fields]", action="[exact call]",
-                               expected="[observable failure assertion]"),
-                          dict(name="[successful control]", target="[file/symbol]",
-                               setup="[valid literal input/state or supplied fixture fields]", action="[exact call]",
-                               expected="[observable success assertion]")],
+        # Emit the short action/assertion siblings before the potentially long
+        # setup string: the 2055 probe swallowed both into its second setup.
+        regression_tests=[dict(name="[failure case]", target="[file/symbol]", action="[exact call]",
+                               expected="[observable failure assertion]",
+                               setup="[literal input/state or supplied fixture fields]"),
+                          dict(name="[successful control]", target="[file/symbol]", action="[exact call]",
+                               expected="[observable success assertion]",
+                               setup="[valid literal input/state or supplied fixture fields]")],
         plan=dict(change="[grounded change or validation of existing coverage]",
                   validation="[supported command and passing result]",
                   exit_condition="[actual named task result and gates required to pass; otherwise retain hold]") if heading else None,
@@ -129,12 +133,18 @@ def report_serialization(task, kind=None):
         "the server never fills missing content. Keep nested test input strings solely in setup. "
         "Do not place outer Action/Expected or plan fields inside setup. Supply exactly two cases, a failure "
         "and its successful control. Each has its OWN name, target, setup, action and expected value; "
-        "the renderer puts Target:, Setup:, Action:, Expected: on the SAME line as each value. "
+        "Write each case in the shown order: name, target, action, expected, setup. Finish the action and "
+        "expected properties BEFORE writing the setup string. Before submitting, independently count five "
+        "sibling keys in EACH case; words inside a string never count as keys. "
+        "A case with only name, target and setup is INVALID even when setup includes Action: and Expected:. "
+        "The renderer puts Target:, Setup:, Action:, Expected: on the SAME line as each value. "
         "Use literal inputs or exact supplied fixture fields; trace calls and assertions through supplied code. "
         "Descriptions like 'prompt contains' or 'answer contains' are not concrete inputs. "
         "A nested check_answer/check_deliverables control needs every section its own prompt requires. "
         "Do not handwrite a nested report control: use an explicitly supplied complete fixture field, "
         "or choose a narrow guard with literal inputs when that guard is the assigned behavior. "
+        "Prefer two small direct behavior cases over a recursive report-about-a-report; a successful control "
+        "must be independently specified, not the failure setup with an imagined complete answer. "
         "check_completion_json expects ONLY accepted/reason keys, never the regression_tests/plan/completion "
         "transport envelope. That envelope goes through render_report first; it is not completion JSON. "
         "Prefer a small direct function/state fixture over a long escaped report; never copy historical rejected answers. "
@@ -203,7 +213,8 @@ def render_report(task, answer, kind=None):
         raise ResultRejected("Missing or unknown structured regression report fields")
 
     def line(value, error):
-        if not isinstance(value, str) or not value.strip():
+        if (not isinstance(value, str) or not value.strip()
+                or re.fullmatch(r"(?i)(?:TBD|TODO|N/A|none|\.\.\.)[.!]?", value.strip(" *`\t\r\n"))):
             raise ResultRejected(error)
         # Preserve literal input line breaks as escaped text, never report labels.
         return value.strip().replace('\r\n', '\n').replace('\r', '\n').replace('\n', r'\n')
@@ -227,11 +238,16 @@ def render_report(task, answer, kind=None):
         rendered.append(heading + ':')
         for label, key in (('Change', 'change'), ('Validation', 'validation'), ('Exit condition', 'exit_condition')):
             rendered.append(label + ': ' + line(plan[key], plan_error))
-    # The completion object is copied verbatim as JSON data; check_answer still
-    # validates its exact keys, boolean, reason and accepted=true requirement.
+    # Every structured report carries completion, including plain test-writing
+    # prompts that do not independently request JSON in their task text.
+    check_completion_json('Return JSON with accepted/reason fields.', json.dumps(report['completion']))
     rendered.extend(['', '```json', json.dumps(report['completion'], ensure_ascii=False), '```',
                      'Findings/limits: ' + line(report['findings_limits'], 'Missing concrete Findings/limits closing sentence')])
     answer = '\n'.join(rendered)
+    # Validate the complete outer report before returning it to any worker.
+    # In particular, accepted=true cannot cover a placeholder field, missing
+    # findings, or invalid completion. Publication still needs semantic review.
+    check_deliverables(task, answer, kind)
     check_literal_guard_drafts(answer)  # Never repair a worker's contradictory expectation.
     return answer
 
@@ -296,7 +312,7 @@ def evidence(repo, worker, task, redact, kind=None):
             if b"\0" in raw or remaining <= 0:
                 omitted.append(name)
                 continue
-            projected_fixture = ((name == plan_example and guard_assignment) or
+            projected_fixture = (name == PROBE_HISTORY or (name == plan_example and guard_assignment) or
                                  (preferred and name == "services/fixtures/texting_jobcompletion_1035.json"))
             if projected_fixture and len(raw) > size:
                 # These fixtures exclude historical answers via field projection.
@@ -319,7 +335,7 @@ def evidence(repo, worker, task, redact, kind=None):
                         "Optional unexecuted JSON transport example; choose regressions, plan and findings "
                         "that test YOUR assigned task.\n"
                         + example["evidence_limits"] + "\n\n" + json.dumps(example["complete_report"], ensure_ascii=False, indent=2))
-            elif preferred and name == "services/fixtures/texting_jobcompletion_1035.json" and len(raw) <= size:
+            elif (name == PROBE_HISTORY or preferred and name == "services/fixtures/texting_jobcompletion_1035.json") and len(raw) <= size:
                 # Historical answer/layout text induced paraphrased inputs and
                 # invalid one-case controls. Keep provenance, disclose omission,
                 # and show the concrete transport example after current source.

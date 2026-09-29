@@ -11,8 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
 from api_tasks import report_kind
 
 
-# Inline fixture strings containing escaped fences are not Markdown blocks.
-FENCED_BLOCK = re.compile(r"^[ \t]{0,3}```([^\n]*)\n(.*?)^[ \t]{0,3}```[ \t]*$", re.M | re.S)
+FENCE_START = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})([^\r\n]*)[\r\n]*$")
 
 
 class ResultRejected(RuntimeError):
@@ -24,8 +23,33 @@ GUARD_CONTRADICTION = "Regression draft contradicts literal guard outcome: "
 CASE_HEADING = r"(?im)^[ \t]{0,3}(?:#{1,6}[ \t]*)?(?:\*\*)?Regression test[ \t]*:"
 
 
+def report_blocks(answer):
+    """Separate outer prose from Markdown blocks without exposing nested fences.
+
+    A closing fence must match the opener's character and have at least its
+    length. Unclosed blocks are omitted too; their labels cannot be report
+    fields. Escaped newlines inside a Setup string never start a block.
+    """
+    prose, blocks, body = [], [], []
+    fence = label = None
+    for line in answer.splitlines(keepends=True):
+        if fence is not None:
+            if re.fullmatch(r"[ \t]{0,3}" + re.escape(fence[0]) + "{" + str(len(fence)) + r",}[ \t]*[\r\n]*", line):
+                blocks.append((label, ''.join(body)))
+                fence, label, body = None, None, []
+            else:
+                body.append(line)
+            continue
+        match = FENCE_START.fullmatch(line)
+        if match and not (match[1].startswith('`') and '`' in match[2]):
+            fence, label = match[1], match[2]
+        else:
+            prose.append(line)
+    return ''.join(prose), blocks
+
+
 def draft_prose(answer):
-    return re.sub(r"(?m)^[ \t]*>[^\n]*$", "", FENCED_BLOCK.sub("", answer))
+    return report_blocks(re.sub(r"(?m)^[ \t]*>[^\n]*$", "", answer))[0]
 
 
 def assigned_task(prompt):
@@ -58,7 +82,7 @@ def check_completion_json(prompt, answer):
     if not needs_completion_json(prompt):
         return
     unquoted = re.sub(r"(?m)^[ \t]*>[^\n]*$", "", answer)
-    blocks = FENCED_BLOCK.findall(unquoted)
+    _, blocks = report_blocks(unquoted)
     # Only standalone JSON fences count; Python examples and quoted evidence do not.
     candidates = [body for label, body in blocks if label.strip().lower() == "json"]
     if not blocks and unquoted.strip().startswith("{"):
@@ -87,8 +111,7 @@ def check_completion_json(prompt, answer):
 
 def check_deliverables(prompt, answer, kind=None):
     """Reject absent deliverables before voting; semantics still require review."""
-    prose = FENCED_BLOCK.sub("", answer)
-    prose = re.sub(r"(?m)^[ \t]*>[^\n]*$", "", prose)
+    prose = draft_prose(answer)
     def fields(text, names):
         for name in names:
             match = re.search(r"(?im)^[ \t]{0,3}(?:[-*][ \t]+)?(?:\*\*)?" + name +
@@ -103,7 +126,7 @@ def check_deliverables(prompt, answer, kind=None):
         cases = re.split(CASE_HEADING, prose)[1:]
         structured = any(fields(case, ("Target", "Setup", "Action", "Expected")) for case in cases)
         # Support actual proposed tests as well as behavioral test-case drafts.
-        blocks = [body for _, body in FENCED_BLOCK.findall(answer)]
+        blocks = [body for _, body in report_blocks(answer)[1]]
         code = any(re.search(r"\b(?:def test_\w+|(?:test|it)\s*\(\s*['\"])", block)
                    and re.search(r"\b(?:assert\s+|self\.assert\w+\(|expect\s*\()", block)
                    for block in blocks)
@@ -114,7 +137,8 @@ def check_deliverables(prompt, answer, kind=None):
         plan = re.split(r"(?im)^\s*(?:#{1,6}\s*)?(?:\*\*)?" + heading + r"\s*:", prose, maxsplit=1)
         if len(plan) != 2 or not fields(plan[1], ("Change", "Validation", "Exit condition")):
             raise ResultRejected("Missing actionable " + heading.lower() + " (change, validation and exit condition required)")
-    if needs_test_drafts(prompt, kind) and (kind == "test-writing" or "Your independent subtask:" in prompt):
+    if needs_test_drafts(prompt, kind) and (kind == "test-writing" or "Your independent subtask:" in prompt
+            or re.search(r"Review and regression test-case drafts", assigned_task(prompt), re.I)):
         if len(cases) != 2 or not all(case.splitlines()[0].strip(" *\t") and
                                      fields(case, ("Target", "Setup", "Action", "Expected")) for case in cases):
             raise ResultRejected(DRAFT_ERROR)
@@ -246,8 +270,7 @@ CODING_REQUIREMENTS = (
 
 def check_coding_answer(answer):
     """An explicit admission of unfinished validation cannot win an acceptance vote."""
-    prose = FENCED_BLOCK.sub("", answer)
-    prose = re.sub(r"(?m)^[ \t]*>[^\n]*$", "", prose)
+    prose = draft_prose(answer)
     if re.search(r"\b(?:not|never)\s+(?:re[- ]?)?run\b|\b(?:did(?:n't| not)|haven['’]t|have not)\s+"
                  r"(?:re[- ]?)?run\b|\b(?:tests?|verification|validation)\s+(?:are |is |were )?"
                  r"(?:pending|incomplete|not run)\b|\b(?:will|plan to|need to|still need to)\s+"
@@ -268,8 +291,7 @@ def check_answer(prompt, answer, *, kind=None):
     if blocked_answer(answer):
         raise ResultRejected("Worker reported a blocker: " + answer[:1000])
     # Ignore quoted evidence/code; a review may legitimately discuss refusals.
-    prose = FENCED_BLOCK.sub("", answer)
-    prose = re.sub(r"(?m)^\s*>.*$", "", prose)
+    prose = draft_prose(answer)
     refusal = (r"(?:^|[.!?]\s+|\n)\s*(?:\*\*)?(?:(?:unfortunately|sorry|i(?:'m| am) sorry)[,:]?\s+)?"
                r"(?:as an? (?:ai|language model)[^\n,]*,\s*)?"
                r"i\s+(?:(?:cannot|can['’]t|am unable to|(?:do not|don['’]t) have (?:access|the ability) to)\s+"
