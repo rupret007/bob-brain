@@ -111,8 +111,8 @@ class BlueBubbles:
             raise TextingError("BlueBubbles read configuration is unavailable. Nothing was sent.") from None
         query = urllib.parse.urlencode({"password": password, **(params or {})})
         # Large recent-thread queries can exceed five seconds while Messages is
-        # syncing. Reads get a bounded longer budget; sends retain their original
-        # timeout and are never retried after an uncertain delivery outcome.
+        # syncing. Reads get a bounded budget; confirmations have their own
+        # bounded receipt wait and are never retried after an uncertain outcome.
         result = request_json(f"http://127.0.0.1:{port}", "/api/v1" + path + "?" + query, data=data, timeout=12)
         rows = result.get("data")
         if result.get("status", 200) != 200 or not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
@@ -154,7 +154,7 @@ class Andrea:
     def call(self, route, payload=None):
         return request_json(self.base, "/web-bob/v1/" + route, data=payload,
                             headers={"Authorization": "Bearer " + self.token},
-                            timeout=15 if route == "draft" else 5)
+                            timeout=20 if route == "confirm" else 15 if route == "draft" else 5)
 
     @staticmethod
     def scope(draft):
@@ -227,10 +227,36 @@ class Andrea:
             # Auth or an absent endpoint rejects the handoff. A lost response or
             # server error may follow delivery, so it cannot prove "not sent".
             return False if exc.status in (400, 401, 403, 404, 405, 409, 413, 415) else None
+        return self.delivery_receipt(draft, result)
+
+    @staticmethod
+    def delivery_receipt(draft, result):
+        remote = draft['bridge']
         guid = result.get("messageGuid")
         return True if (result.get("ok") is True and result.get("state") == "sent" and
             result.get("draftId") == remote["draftId"] and result.get("digest") == remote["digest"] and
             result.get("actionId") == remote["actionId"] and isinstance(guid, str) and guid.strip()) else None
+
+    def check_delivery(self, draft):
+        """Inspect consumed consent without confirming again; revoke any unconsumed handoff.
+
+        Andrea's bound cancel route returns the same durable receipt for consumed
+        drafts. For a still-pending handoff it atomically cancels consent, including
+        a confirm handler still waiting on recipient validation. It cannot dispatch.
+        """
+        remote = draft.get('bridge')
+        if not self.token or not remote or remote['digest'] != self.scope_digest(self.scope(draft)):
+            return None
+        try:
+            result = self.call('cancel', {**self.scope(draft), 'bridgeDraftId': remote['draftId']})
+        except TextingError:
+            return None  # A failed inspection says nothing about delivery.
+        if self.delivery_receipt(draft, result) is True:
+            return True
+        if (result.get('ok') is True and result.get('state') == 'cancelled' and
+                all(result.get(k) == remote[k] for k in ('draftId', 'digest', 'actionId'))):
+            return False
+        return None
 
 
 def fingerprint(draft):
@@ -294,8 +320,11 @@ class Texting:
             card = {key: copy.deepcopy(draft[key]) for key in
                     ("id", "recipient", "body", "revision", "state", "expires_at")}
             card['delivery_available'] = bool(draft.get('bridge')) and card['state'] == 'pending'
+            card['check_delivery_message'] = ('check text delivery ' + draft['id']
+                if draft.get('bridge') and draft['state'] == 'delivery_unconfirmed' else None)
             if draft.get('read_only') or self.instinct.is_target(draft['recipient']):
                 card['read_only'] = True
+                card['check_delivery_message'] = None
                 if card['state'] == 'pending':
                     card['state'] = 'read_only'
             if card["state"] == "pending" and (draft["epoch"] != self.epoch or self.clock() >= draft["expires_at"]):
@@ -373,6 +402,10 @@ class Texting:
                 self.invalidate(conversation)
             return "Nothing sent. Review a fresh text draft and send its exact ‘yes wbtxt-…’ message separately in this chat."
         if draft["state"] != "pending":
+            if draft['state'] in ('delivery_unconfirmed', 'sent'):
+                outcome = ('Delivery remains unconfirmed. Use Check delivery.' if draft['state'] == 'delivery_unconfirmed'
+                           else 'This draft was already verified sent via Andrea.')
+                return 'That text confirmation was already used. ' + outcome + ' Nothing was resent.'
             return "Nothing sent. That text confirmation was already used, cancelled, or replaced. Review a fresh draft."
         if self.instinct.is_target(draft['recipient'], refresh=True):
             from instinct import READ_ONLY
@@ -410,6 +443,28 @@ class Texting:
             content = DELIVERY_UNCONFIRMED
         return content
 
+    def check_delivery(self, conversation, identifier):
+        state = conversation.get('_texting', {})
+        draft = state.get('drafts', {}).get(identifier)
+        if not draft or draft['state'] not in ('delivery_unconfirmed', 'sent'):
+            return 'No uncertain delivery to check for that draft. Nothing was sent by this check.'
+        if draft.get('read_only') or self.instinct.is_target(draft['recipient']):
+            from instinct import READ_ONLY
+            return READ_ONLY
+        if draft['state'] == 'sent':
+            return 'This draft was already verified sent via Andrea. Nothing was resent.'
+        delivered = self.andrea.check_delivery(draft)
+        if delivered is None:
+            return DELIVERY_UNCONFIRMED
+        draft['state'] = 'sent' if delivered else 'confirmed_not_sent'
+        draft['token'] = None
+        for audit in state.get('audit', []):
+            if audit.get('draft_id') == identifier:
+                audit.update(event='owner_sent_via_andrea' if delivered else 'owner_confirmed_not_sent',
+                             receipt_checked_at=self.clock())
+        return ('Sent via Andrea’s BlueBubbles bridge. Verified the existing receipt; nothing was resent.'
+                if delivered else 'Not sent. Andrea cancelled the unconsumed handoff; nothing was resent.')
+
     def handle(self, conversation, text, actor, request_id, persist, redact):
         state = conversation.get("_texting", {})
         active = state.get("drafts", {}).get(state.get("active"))
@@ -427,6 +482,7 @@ class Texting:
         # requires the entire message to match the exact yes + token format.
         confirmation = re.match(r"^yes\s+wbtxt-", clean, re.I) or (text_context and command in ("yes", "ok", "send it", "send it now", "send now", "go", "do it"))
         edit = re.fullmatch(r"(edit|cancel) text draft ([0-9a-f]{16})", clean, re.I)
+        check_delivery = re.fullmatch(r"check text delivery ([0-9a-f]{16})", clean, re.I)
         replace = re.fullmatch(r"replace text draft ([0-9a-f]{16}) to (.+?):\s*([\s\S]+)", clean, re.I)
         compose = re.fullmatch(r"(?:draft|write|compose|send) (?:a )?(?:text|reply|sms|message)(?: reply)? to (.+?)(?::\s*| saying )([\s\S]+)", clean, re.I)
         compose = compose or re.fullmatch(r"text (.+?):\s*([\s\S]+)", clean, re.I)
@@ -437,7 +493,7 @@ class Texting:
             r"^(?:draft|write|compose|send) (?:a )?(?:text|reply|sms|message)\b", clean, re.I
         )
         cancel = active and command in ("cancel text", "cancel text draft", "never mind", "cancel")
-        if not any((confirmation, edit, replace, compose, read, listing, help_request, cancel)):
+        if not any((confirmation, check_delivery, edit, replace, compose, read, listing, help_request, cancel)):
             # An intervening turn also withdraws consent, including unsupported edits.
             self.invalidate(conversation)
             return False
@@ -450,6 +506,9 @@ class Texting:
                 # The chat turn itself must be yes + token, never a command prefix
                 # or quoted/embedded approval extracted from another request.
                 content = self.confirm(conversation, text, actor, request_id, persist)
+            elif check_delivery:
+                self.invalidate(conversation)
+                content = self.check_delivery(conversation, check_delivery[1])
             elif cancel:
                 self.invalidate(conversation, "cancelled")
                 content = "Text draft cancelled. Nothing sent."

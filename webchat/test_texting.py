@@ -8,6 +8,7 @@ import os
 import stat
 import tempfile
 import threading
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -377,7 +378,9 @@ class TextingTests(unittest.TestCase):
         self.assertEqual(self.private()["drafts"][draft["id"]]["state"], "delivery_unconfirmed")
         self.assertIsNone(self.private()["drafts"][draft["id"]]["token"])
         self.assertEqual(self.private()["audit"][0]["event"], "owner_confirmed_delivery_unconfirmed")
-        self.say(draft["confirm_message"])
+        repeated = self.say(draft["confirm_message"])
+        self.assertIn('Delivery remains unconfirmed', repeated['messages'][-1]['content'])
+        self.assertNotIn('Nothing sent.', repeated['messages'][-1]['content'])
         restored = Chat(self.folder, self.root, self.providers,
                        texting=Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token)))
         try:
@@ -408,6 +411,68 @@ class TextingTests(unittest.TestCase):
                     self.say(draft["confirm_message"])
                     self.assertEqual(sum(call.args[1] == '/web-bob/v1/confirm' for call in requested.call_args_list), 1)
                     self.assertEqual(requested.call_count, 2)  # identity refresh plus one delivery, no retry
+
+    def test_receipt_slower_than_old_five_second_limit_still_reports_sent_once(self):
+        self.mock.enable_web_bob_send = True
+        self.mock.send_response_delay = 5.4
+        card = self.draft()
+        started = time.monotonic()
+        reply = self.say(card['confirm_message'])['messages'][-1]
+        self.assertGreaterEqual(time.monotonic() - started, 5.4)
+        self.assertEqual(reply['content'], SENT_VIA_ANDREA)
+        self.assertEqual(len(self.mock.sends), 1)
+        self.assertEqual(self.mock.calls.count(('POST', '/web-bob/v1/confirm')), 1)
+
+    def test_lost_receipt_can_be_checked_after_restart_without_reconfirming(self):
+        self.mock.enable_web_bob_send = True
+        self.mock.drop_send_response = True
+        card = self.draft()
+        self.say(card['confirm_message'])
+        self.chat.close()
+        self.chat = Chat(self.folder, self.root, self.providers, texting=Texting(
+            BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token)))
+        # Any authenticated owner session may inspect a persisted receipt;
+        # it supplies no send authority and cannot reuse the old confirmation.
+        check = self.chat.history(self.identifier)['messages'][-3]['text_draft']['check_delivery_message']
+        self.assertEqual(check, 'check text delivery ' + card['id'])
+        reply = self.say(check, actor='new-owner-session')['messages'][-1]
+        self.assertIn('nothing was resent', reply['content'])
+        self.assertEqual(self.private()['drafts'][card['id']]['state'], 'sent')
+        self.assertEqual(self.private()['audit'][0]['event'], 'owner_sent_via_andrea')
+        self.say(check)
+        repeated = self.say(card['confirm_message'])
+        self.assertIn('already verified sent', repeated['messages'][-1]['content'])
+        self.assertEqual(len(self.mock.sends), 1)
+        self.assertEqual(self.mock.calls.count(('POST', '/web-bob/v1/confirm')), 1)
+        self.assertEqual(self.providers.calls, [])
+
+    def test_receipt_check_cannot_send_pending_draft_or_claim_uncertain_success(self):
+        self.mock.enable_web_bob_send = True
+        card = self.draft()
+        with patch.object(self.texting.andrea, 'check_delivery') as inspect:
+            self.say('check text delivery ' + card['id'])
+            inspect.assert_not_called()
+        self.assertEqual(self.mock.sends, [])
+        card = self.draft()
+        self.mock.drop_send_response = True
+        self.say(card['confirm_message'])
+        with patch.object(self.texting.andrea, 'check_delivery', return_value=None):
+            reply = self.say('check text delivery ' + card['id'])['messages'][-1]
+            self.assertEqual(reply['content'], DELIVERY_UNCONFIRMED)
+        self.assertEqual(self.private()['drafts'][card['id']]['state'], 'delivery_unconfirmed')
+        self.assertEqual(len(self.mock.sends), 1)
+
+    def test_protected_draft_never_inspects_bridge_receipts(self):
+        self.mock.enable_web_bob_send = True
+        card = self.draft()
+        draft = self.private()['drafts'][card['id']]
+        draft.update(state='delivery_unconfirmed', read_only=True, token=None)
+        with patch.object(self.texting.andrea, 'check_delivery') as inspect:
+            self.assertIsNone(self.chat.history(self.identifier)['messages'][-1]['text_draft']['check_delivery_message'])
+            reply = self.say('check text delivery ' + card['id'])['messages'][-1]
+            self.assertIn('read-only', reply['content'])
+            inspect.assert_not_called()
+        self.assertEqual(self.mock.sends, [])
 
     def test_texting_persists_each_turn_and_clears_pending_work(self):
         for text in ("texts", "draft reply to Alex Morgan: Hello", "yes", "cancel text draft"):
@@ -541,7 +606,7 @@ class TextingTests(unittest.TestCase):
         with patch.dict(os.environ, {"http_proxy": "http://127.0.0.1:1", "HTTP_PROXY": "http://127.0.0.1:1"}):
             self.assertEqual(len(self.texting.bluebubbles.chats()), 2)
 
-    def test_slow_read_budget_does_not_extend_or_retry_sends(self):
+    def test_read_and_confirmation_waits_are_bounded_and_never_retried(self):
         from unittest.mock import MagicMock
         self.mock.enable_web_bob_send = True
         self.draft()
@@ -560,7 +625,7 @@ class TextingTests(unittest.TestCase):
             self.assertEqual(self.texting.bluebubbles.chats(), [])
             self.assertEqual(opener.open.call_args.kwargs['timeout'], 12)
             self.assertIsNone(self.texting.andrea.deliver(pending, 'yes ' + pending['token'], str(uuid.uuid4())))
-            self.assertEqual(opener.open.call_args.kwargs['timeout'], 5)
+            self.assertEqual(opener.open.call_args.kwargs['timeout'], 20)
             self.assertEqual(opener.open.call_count, 2)
 
     def test_andrea_authenticated_health_and_missing_bridge_honesty(self):

@@ -205,6 +205,8 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
         receipts.extend(remaining_replay(client, cid))
     if feature == 'improve':
         receipts.extend(capability_replay(client, cid, root))
+        if real_reads:
+            receipts.extend(delivered_notice_replay(client, root))
     from task_dispatch import task_queue
     require(not any(r['conversation_id'] == cid for r in task_queue.tasks(root).values()), 'Replay queued work')
     saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
@@ -223,6 +225,12 @@ def capability_replay(client, cid, root):
     require(jobs['dispatch']['queued'] == (jobs['details']['queued'] if jobs['inspection']['queue_available'] else None),
             'Jobs waiting count must agree with the inspected queue')
     checks.append(dict(check='Jobs dispatch mode and honest waiting count', passed=True))
+    for row in jobs['recently_finished']:
+        if row.get('source') == 'lane_observation':
+            require(row['state'] == 'unverified' and row.get('finished_at') is None
+                    and isinstance(row.get('last_activity_at'), (int, float)),
+                    'Archived lane has no authority to claim completion')
+    checks.append(dict(check='archived lanes cannot claim verified completion', passed=True))
     for prompt in ('Can you send texts?', 'What can you do?', 'Can you remember things?',
                    'Can you start workers?', 'Can you text Instinct?', 'Can you set reminders?',
                    'Can you watch videos?', 'Can we talk?'):
@@ -237,6 +245,30 @@ def capability_replay(client, cid, root):
                 'Capability replay was not idempotent')
         checks.append(dict(prompt=prompt, passed=True, seconds=round(elapsed, 4), provider='capabilities'))
     return checks
+
+
+def delivered_notice_replay(client, root):
+    """Recover one already delivered release notice; never submit send authority."""
+    notice_path = root / 'conductor/reviews/BEAT-GROK-0700-milestone-1-notice.json'
+    if not notice_path.exists():
+        return []
+    notice = json.loads(notice_path.read_text())
+    require(notice.get('real_confirmations_submitted') == notice.get('real_texts_sent') == 1 and
+            notice.get('resends') == 0, 'Notice requires reconciliation before receipt replay')
+    path = root / 'conductor/webchat/sessions' / (notice['conversation_id'] + '.json')
+    before = json.loads(path.read_text())['_texting']
+    draft = before['drafts'][notice['draft_id']]
+    require(draft['state'] in ('delivery_unconfirmed', 'sent') and draft['token'] is None and
+            draft['bridge']['actionId'] == notice['action_id'] and
+            hashlib.sha256(draft['body'].encode()).hexdigest() == notice['body_sha256'] and
+            len(before['audit']) == 1, 'Existing notice consent or identity changed')
+    _, answer = submit(client, notice['conversation_id'], 'check text delivery ' + notice['draft_id'])
+    after = json.loads(path.read_text())['_texting']
+    require(answer.get('provider') == 'texting' and 'nothing was resent' in answer['content'].lower() and
+            after['drafts'][notice['draft_id']]['state'] == 'sent' and len(after['audit']) == 1 and
+            after['audit'][0]['event'] == 'owner_sent_via_andrea', 'Existing verified receipt was not recovered')
+    return [dict(check='existing delivered milestone receipt recovered without another confirmation or send',
+                 passed=True, real_texts_sent=0, additional_confirmations=0)]
 
 
 def instinct_replay(client, cid):

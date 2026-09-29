@@ -105,7 +105,9 @@ def _lane_line(row, detailed=False):
     body = (project + ": " if project else "") + task
     duration = _duration(row.get("elapsed_seconds"))
     state = row.get("state") or "running"
-    if state == "finished":
+    if state == 'not_observed':
+        line = f"{label} — {llm}, not currently observed; last activity {duration} ago — {body}; outcome unverified"
+    elif state == "finished":
         line = f"{label} — {llm}, finished {duration} ago — {body}"
     else:
         prefix = {"running": "running ", "paused": "paused ", "unverified": "session open ", "claimed": "claimed "}.get(state, "")
@@ -253,7 +255,7 @@ def format_operational_reply(snap, provider="server", text=""):
         lines = [first]
         lines.extend(_lane_line(row, detailed) for row in live_lanes)
         if finished_lanes and re.search(r"\b(?:finished|done|recent|last)\b", text, re.I):
-            lines.append("Finished (last 12h): " + " | ".join(_lane_line(row, detailed) for row in finished_lanes[:6]))
+            lines.append("Recent lane activity (last 12h; outcomes unverified): " + " | ".join(_lane_line(row, detailed) for row in finished_lanes[:6]))
         other = [row for row in work if row.get("state") == "running" and row.get("screen") not in {lane["screen"] for lane in live_lanes}]
         if other:
             lines.append("Other sessions: " + " | ".join(_work_line(row, detailed) for row in other))

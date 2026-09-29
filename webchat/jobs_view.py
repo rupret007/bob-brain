@@ -237,11 +237,13 @@ def build_jobs_view(root: Path, *, now=None):
             key=lane["screen"],
             project=plain(lane.get("project"), 60) or "Project not specified",
             task=plain(lane.get("task")) or lane["screen"].removeprefix("lane-").replace("-", " "),
-            state="done",
-            finished_at=lane.get("finished_at"),
+            state="unverified",
+            source="lane_observation",
+            finished_at=None,
+            last_activity_at=lane.get("last_activity_at"),
             external_result_url=("/" + lane["result_path"]) if lane.get("result_path") else None,
         ))
-    recent.sort(key=lambda row: number(row.get("finished_at")) or 0, reverse=True)
+    recent.sort(key=lambda row: number(row.get("finished_at")) or number(row.get('last_activity_at')) or 0, reverse=True)
     recent = recent[:5]
     health = provider_health(root, now)
     solo = (root / 'conductor/SOLO-WORKER').exists()

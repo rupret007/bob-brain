@@ -56,6 +56,9 @@ const digest = value => crypto.createHash('sha256').update(value).digest('hex');
     } else if (jobs.dispatch.paused) {
       await page.locator('#jobs-dispatch').getByText(/Automatic dispatch is paused/).waitFor();
     }
+    if (jobs.recently_finished.some(row => row.source === 'lane_observation')) {
+      await page.locator('#finished-jobs').getByText('Outcome unverified', {exact: true}).first().waitFor();
+    }
     if (jobs.working.length) {
       assert(await page.locator('.job-card').count() > 0);
       assert.equal(await page.locator('#jobs-empty').isVisible(), false);
@@ -77,7 +80,8 @@ const digest = value => crypto.createHash('sha256').update(value).digest('hex');
     await page.screenshot({path: screenshot, animations: 'disabled'});
     assert.deepEqual(errors, []);
     fs.writeFileSync(output, JSON.stringify({pass_check: true, url, version, assets, layouts,
-      working_count: jobs.working.length, dispatch: jobs.dispatch, screenshot, page_errors: errors}, null, 2) + '\n');
+      working_count: jobs.working.length, dispatch: jobs.dispatch,
+      recent_outcomes: jobs.recently_finished.map(row => row.state), screenshot, page_errors: errors}, null, 2) + '\n');
     console.log('Jobs screenshot and public build/assets verified: ' + screenshot);
   } finally { await browser.close(); }
 })().catch(error => { console.error(error.message); process.exitCode = 1; });

@@ -163,9 +163,10 @@ def _lane_record(root: Path, screen: str, work_row: dict | None, *, prompts, log
         project=project,
         repo=repo,
         task=task,
-        state=state,
+        state='not_observed' if finished else state,
         elapsed_seconds=elapsed,
-        finished_at=ended_at,
+        finished_at=None,
+        last_activity_at=ended_at,
         prompt_path=str(path_obj.relative_to(root)) if path_obj and path_obj.is_file() else None,
         log_path=str(log_obj.relative_to(root)) if log_obj else None,
         result_path=rel_review,
@@ -213,6 +214,8 @@ def collect_bob_lanes(
     active = set(live_screens)
     finished_recent: list[dict] = []
     for prompt_path in prompts:
+        if not inspection['screens_available']:
+            break  # A failed screen inspection cannot establish that a lane ended.
         screen = prompt_slug(prompt_path.stem)
         if screen in active:
             continue
@@ -252,7 +255,7 @@ def collect_bob_lanes(
                 finished=True,
             )
         )
-    finished_recent.sort(key=lambda row: row.get("finished_at") or 0, reverse=True)
+    finished_recent.sort(key=lambda row: row.get("last_activity_at") or 0, reverse=True)
     return dict(
         captured_at=now,
         inspection=inspection,

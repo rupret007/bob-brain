@@ -45,8 +45,21 @@ def main():
             assert ('POST', '/web-bob/v1/confirm') not in fixture.mock.calls
             assert not fixture.providers.calls and not task_queue.tasks(fixture.root)
             assert not any(c.get('_texting', {}).get('audit') for c in fixture.chat.conversations.values())
+            fixture.mock.drop_send_response = True
+            delivery = subprocess.run(['node', str(Path(__file__).with_name('browser_delivery.cjs'))],
+                input=json.dumps(dict(url=f'http://127.0.0.1:{server.server_port}', password=fixture.chat.password,
+                                     output=str(args.output_dir.resolve()))), text=True, capture_output=True, timeout=100)
+            if delivery.returncode:
+                raise RuntimeError(delivery.stderr)
+            recovered = json.loads(delivery.stdout)
+            assert recovered['all_pass'] and len(recovered['browsers']) == 2
+            assert len(fixture.mock.sends) == fixture.mock.calls.count(('POST', '/web-bob/v1/confirm')) == 2
+            assert not fixture.mock.unexpected_writes and not fixture.providers.calls and not task_queue.tasks(fixture.root)
+            assert all(a['event'] == 'owner_sent_via_andrea' for c in fixture.chat.conversations.values()
+                       for a in c.get('_texting', {}).get('audit', []))
+            evidence['delivery_recovery'] = recovered
             evidence.update(scope='isolated synthetic messaging; real HTTP/browser', real_texts_sent=0,
-                            andrea_calls=0, model_calls=0, queued_workers=0)
+                            synthetic_provider_posts=2, model_calls=0, queued_workers=0)
             (args.output_dir / 'evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
             print(json.dumps(evidence))
         finally:

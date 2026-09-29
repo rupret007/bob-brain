@@ -55,9 +55,22 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       const activity = await (await context.request.get(config.url + '/api/jobs/activity')).json();
       await page.route('**/api/jobs/activity', route => route.fulfill({json: {
         ...activity, checked_at: Date.now() / 1000, dispatch: {paused: true, mode: 'solo', queued: 2},
+        recently_finished: [{key: 'archived', project: 'Web Bob', task: 'An archived lane', state: 'unverified',
+          source: 'lane_observation', finished_at: null, last_activity_at: Date.now() / 1000 - 60}],
       }}));
       await page.locator('#refresh-jobs:enabled').click();
       await page.locator('#jobs-dispatch').getByText('Solo mode: additional workers and council are paused. 2 jobs are waiting.', {exact: true}).waitFor();
+      await page.locator('#finished-jobs').getByText('Outcome unverified', {exact: true}).waitFor();
+      assert((await page.locator('#finished-jobs').textContent()).includes('Last activity'));
+      assert(!(await page.locator('#finished-jobs').textContent()).includes('Finished'));
+      for (const width of [320, 390, 430]) {
+        await page.setViewportSize({width, height: 844});
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+        assert.equal(await page.locator('#finished-jobs article').evaluate(el => el.scrollWidth > el.clientWidth), false);
+      }
+      await page.setViewportSize({width: 390, height: 844});
+      await page.locator('#finished-title').scrollIntoViewIfNeeded();
+      await page.screenshot({path: path.join(config.output, engine + '-outcomes-phone.png'), animations: 'disabled'});
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       await page.unroute('**/api/jobs/activity');
       await page.route('**/api/jobs/activity', route => route.fulfill({status: 503, json: {error: 'fixture offline'}}));
@@ -79,7 +92,7 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       await page.screenshot({path: path.join(config.output, screenshot), animations: 'disabled'});
       assert.deepEqual(errors, []);
-      results.push({engine, passed: true, screenshot, checks: ['dispatch pause/queue visible, stale status cleared and recovered', 'capability answers visible without model calls', 'real due notification without worker scheduler', 'recurring reminder visible in Jobs', 'open reminder chat', 'cancel', 'saved Karen status', 'private band digest', 'phone overflow']});
+      results.push({engine, passed: true, screenshot, checks: ['archived lane outcome unverified, real time label, 320/390/430 layout', 'dispatch pause/queue visible, stale status cleared and recovered', 'capability answers visible without model calls', 'real due notification without worker scheduler', 'recurring reminder visible in Jobs', 'open reminder chat', 'cancel', 'saved Karen status', 'private band digest', 'phone overflow']});
       await context.close();
     } finally { await browser.close(); }
   }

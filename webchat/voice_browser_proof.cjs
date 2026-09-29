@@ -170,6 +170,12 @@ async function instrument(page) {
     results.transcript_sha256=require('node:crypto').createHash('sha256').update(await page.locator('#call-transcript').textContent()).digest('hex');
     await page.locator('#end-call').click();
     await page.waitForFunction(()=>document.querySelector('#call-status').textContent.includes('transcript saved'),null,{timeout:15000});
+    const microphone = await page.evaluate(()=>voiceProof.tracks.map(t=>t.readyState));
+    assert.ok(microphone.length > 0 && microphone.every(state=>state==='ended'),
+      'Hangup must stop microphone tracks immediately: ' + JSON.stringify(microphone));
+    // WebSocket.close starts an asynchronous close handshake. Saving a short
+    // transcript can finish before CLOSED; require completion within five seconds.
+    await page.waitForFunction(()=>voiceProof.sockets.length > 0 && voiceProof.sockets.every(s=>s.readyState===3),null,{timeout:5000});
     results.media=await page.evaluate(()=>({inputPackets:voiceProof.inputPackets,outputPackets:voiceProof.outputPackets,outputBytes:voiceProof.outputBytes,
       starts:voiceProof.starts,stops:voiceProof.stops,tracksEnded:voiceProof.tracks.every(t=>t.readyState==='ended'),socketsClosed:voiceProof.sockets.every(s=>s.readyState===3)}));
     assert.ok(results.media.inputPackets>10&&results.media.outputBytes>10000&&results.media.starts>0);
@@ -192,7 +198,7 @@ async function instrument(page) {
     console.error(error.message);console.error('UI:',await page.locator('#call-status').textContent().catch(()=>''));
     console.error('Page errors:',errors);process.exitCode=1;
     console.error('Media diagnostics:',await page.evaluate(()=>({contexts:voiceProof.contexts.map(c=>c.state),microphone:voiceProof.microphoneContext?.state,
-      tracks:voiceProof.tracks.length,sockets:voiceProof.sockets.map(s=>s.readyState),input:voiceProof.inputPackets,output:voiceProof.outputPackets,
+      tracks:voiceProof.tracks.map(t=>t.readyState),sockets:voiceProof.sockets.map(s=>s.readyState),input:voiceProof.inputPackets,output:voiceProof.outputPackets,
       microphoneFunction: navigator.mediaDevices.getUserMedia.toString().slice(0,100)})).catch(()=>null));
   } finally {
     // Even a failed assertion must hang up its own call before closing the tab.

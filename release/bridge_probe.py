@@ -10,10 +10,11 @@ import sys
 import tempfile
 import time
 import uuid
+from unittest.mock import patch
 
 CODE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CODE / 'webchat'))
-from texting import Andrea, BlueBubbles, Texting
+from texting import Andrea, BlueBubbles, Texting, TextingError, request_json
 from texting_fixture import MockMessaging, OfflineProviders
 from app import Chat
 
@@ -73,9 +74,20 @@ def probe(andrea):
                 assert not (private/'provider-count.json').exists()
                 card = say('draft reply to Alex Morgan: Approved synthetic fixture text.')['text_draft']
                 request_id = str(uuid.uuid4())
-                result = say(card['confirm_message'], request_id)
-                assert result['content'].startswith('Sent via Andrea')
+                # Discard only the response after the actual compiled bridge has
+                # completed its one synthetic delivery. Recover by receipt, never
+                # another confirmation, through the deployed cancel contract.
+                def lost_response(base, path, **kwargs):
+                    result = request_json(base, path, **kwargs)
+                    if path.endswith('/confirm'):
+                        raise TextingError('Synthetic lost acknowledgment')
+                    return result
+                with patch('texting.request_json', side_effect=lost_response):
+                    result = say(card['confirm_message'], request_id)
+                assert 'delivery is unconfirmed' in result['content']
                 assert say(card['confirm_message'], request_id) == result
+                assert say('check text delivery ' + card['id'])['content'].startswith('Sent via Andrea')
+                assert 'already verified sent' in say('check text delivery ' + card['id'])['content']
                 say(card['confirm_message'])
                 counts = json.loads((private/'provider-count.json').read_text())
                 assert counts['sends'] == 1
@@ -85,6 +97,7 @@ def probe(andrea):
                 assert not mock.sends and not mock.unexpected_writes and not chat.providers.calls
                 return dict(all_pass=True, scope='real Python Chat -> Andrea HTTP -> durable SQLite/core action -> synthetic provider',
                             synthetic_provider_posts=1, real_texts_sent=0, worker_dispatches=0,
+                            lost_receipt_recovered_without_confirmation_retry=True,
                             andrea_sha=subprocess.check_output(['git','-C',str(andrea),'rev-parse','HEAD'],text=True).strip(),
                             andrea_artifact_sha256=manifest['artifactSha256'],
                             andrea_fixture_sha256=hashlib.sha256(fixture.read_bytes()).hexdigest())

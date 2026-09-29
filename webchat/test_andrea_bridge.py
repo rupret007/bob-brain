@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from texting import Andrea
+from texting import Andrea, TextingError
 
 
 def draft():
@@ -51,6 +51,32 @@ class AndreaBridgeTests(unittest.TestCase):
             with self.subTest(key=key), patch('texting.request_json') as request:
                 self.assertFalse(self.client.deliver(changed, 'yes wbtxt-' + 'c'*32, 'confirm-123'))
                 request.assert_not_called()
+
+    def test_receipt_check_uses_only_cancel_and_requires_exact_bound_evidence(self):
+        value = self.bound()
+        receipt = dict(ok=True, state='sent', messageGuid='receipt-123', **value['bridge'])
+        with patch('texting.request_json', return_value=receipt) as request:
+            self.assertTrue(self.client.check_delivery(value))
+        self.assertEqual(request.call_args.args[1], '/web-bob/v1/cancel')
+        self.assertNotIn('confirmation', request.call_args.kwargs['data'])
+        for key in ('draftId', 'digest', 'actionId', 'state', 'messageGuid', 'ok'):
+            with self.subTest(key=key), patch('texting.request_json', return_value={**receipt, key: None}):
+                self.assertIsNone(self.client.check_delivery(value))
+        with patch('texting.request_json', side_effect=TextingError('Unavailable', status=403)):
+            self.assertIsNone(self.client.check_delivery(value))
+        for key in ('body', 'actor', 'epoch', 'conversation_id', 'request_id'):
+            changed = copy.deepcopy(value); changed[key] += 'changed'
+            with self.subTest(key=key), patch('texting.request_json') as request:
+                self.assertIsNone(self.client.check_delivery(changed)); request.assert_not_called()
+
+    def test_only_bound_cancelled_receipt_proves_an_unsent_handoff_revoked(self):
+        value = self.bound()
+        receipt = dict(ok=True, state='cancelled', **value['bridge'])
+        with patch('texting.request_json', return_value=receipt):
+            self.assertFalse(self.client.check_delivery(value))
+        for key in ('draftId', 'digest', 'actionId', 'state', 'ok'):
+            with self.subTest(key=key), patch('texting.request_json', return_value={**receipt, key: None}):
+                self.assertIsNone(self.client.check_delivery(value))
 
     def test_prepare_requires_matching_scope_challenge_and_fresh_expiry(self):
         value = draft()
