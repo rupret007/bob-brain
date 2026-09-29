@@ -65,6 +65,9 @@ process.stdin.on('end', async () => {
       });
       await page.route('**/api/voice/start', async route => {
         await page.evaluate(() => voiceAvailability.starts++);
+        if (await page.evaluate(() => voiceAvailability.expiredStart)) {
+          return route.continue();  // Real private HTTP fixture rejects its late token.
+        }
         await route.fulfill({json: {call_id: 'synthetic-fixture', token: 'synthetic-fixture',
           model: 'models/synthetic-fixture', url: 'wss://fixture.invalid', expires_at: Date.now() / 1000 + 600}});
       });
@@ -105,10 +108,25 @@ process.stdin.on('end', async () => {
       assert.equal(await page.locator('#message').inputValue(), 'Unsent draft survives voice recovery');
       assert.equal(await page.evaluate(() => voiceAvailability.starts), 2);
       assert.equal(await page.evaluate(() => voiceAvailability.sockets.every(s => s.readyState === 3)), true);
+      // A token finishing after its server reservation expires must not reach
+      // a WebSocket. Keep the draft and recover through the same phone controls.
+      await page.evaluate(() => { voiceAvailability.expiredStart = true; });
+      await page.locator('#live-call').click();
+      await page.locator('#call-status').filter({hasText: 'This call has ended.'}).waitFor();
+      await until(page, () => voiceAvailability.tracks.every(t => t.readyState === 'ended') &&
+        voiceAvailability.contexts.every(c => c.state === 'closed'));
+      assert.equal(await page.evaluate(() => voiceAvailability.starts), 3);
+      assert.equal(await page.evaluate(() => voiceAvailability.sockets.length), 2);
+      assert.equal(await page.evaluate(() => voiceAvailability.ends), 2);
+      assert.equal(await page.locator('#live-call').getAttribute('aria-pressed'), 'false');
+      await page.screenshot({path: path.join(config.output, engine + '-expired-start.png'), animations: 'disabled'});
+      await page.locator('#end-call').click();
+      assert.equal(await page.locator('#message').inputValue(), 'Unsent draft survives voice recovery');
       assert.deepEqual(errors, []);
       browsers.push({engine, all_pass: true, page_errors: [], synthetic_transport: true,
         checks: ['fixed credit explanation; raw details hidden', '44px visible keyboard recovery',
-          'no automatic retry; composer preserved', 'unknown close stays generic; microphone/socket cleanup']});
+          'no automatic retry; composer preserved', 'unknown close stays generic; microphone/socket cleanup',
+          'actual HTTP rejects expired startup credential; no new socket; draft and audio cleanup preserved']});
     } catch (error) {
       const page = browser.contexts()[0]?.pages()[0];
       if (page) {

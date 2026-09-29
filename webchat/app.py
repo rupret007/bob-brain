@@ -501,7 +501,9 @@ class Chat(TaskDispatch):
         public_attachments = [public_attachment(meta) for meta in attachment_metas]
         with self.lock:
             conversation = copy.deepcopy(self.get(identifier))
-            if source_voice is None and self.voice.active(identifier):
+            if source_voice is None and self.voice.busy(identifier):
+                if not self.voice.active(identifier):
+                    raise RequestError(409, "Voice is still finishing startup. Wait a moment and try again.")
                 raise RequestError(409, "End the voice call before typing in this conversation.")
             for message in conversation["messages"]:
                 if message.get("request_id") == request_id:
@@ -985,7 +987,7 @@ class Chat(TaskDispatch):
                     return False
                 if any(m.get('reminder_notice') == notice for m in conversation['messages']):
                     return True
-                if row['conversation_id'] in self.workers or self.voice.active(row['conversation_id']):
+                if row['conversation_id'] in self.workers or self.voice.busy(row['conversation_id']):
                     return False  # Never insert into an active model/voice turn.
                 if any(m.get('status') in ('queued', 'running', 'waiting') for m in conversation['messages']):
                     return False
@@ -1687,7 +1689,7 @@ class Handler(BaseHTTPRequestHandler):
             data = self.body(limit=128 * 1024)
             owner = session["digest"]
             if route == "/api/voice/start":
-                return self.send(201, chat.voice.start(data.get("conversation_id"), owner))
+                return self.send(201, chat.voice.start(data.get("conversation_id"), owner, session=session))
             if route == "/api/voice/transcript":
                 return self.send(200, chat.voice.transcript(data.get("call_id"), owner, data.get("entries")))
             if route == "/api/voice/tool":
