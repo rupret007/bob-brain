@@ -328,7 +328,7 @@ class ChatDispatchTests(Fixture):
         self.submit()
         self.complete_task()
         self.fake.hold.clear()
-        self.chat.submit(self.identifier, "What is a worker lease?", str(uuid.uuid4()))
+        self.chat.submit(self.identifier, "Explain worker lease semantics briefly.", str(uuid.uuid4()))
         self.chat.reconcile_tasks()
         self.assertFalse(any(m.get("task_status") for m in self.chat.conversations[self.identifier]["messages"]))
         self.fake.hold.set()

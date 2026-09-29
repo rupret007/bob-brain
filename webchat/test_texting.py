@@ -442,7 +442,8 @@ class TextingTests(unittest.TestCase):
         self.draft()
         source = copy.deepcopy(self.chat.conversations[self.identifier])
         private = {key: {"secret": "core-private-" + key} for key in
-                   ("codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job")}
+                   ("codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job",
+                    "pending_memory", "pending_memory_id")}
         source.update(private)
         original = copy.deepcopy(source)
         texting_public = self.texting.public

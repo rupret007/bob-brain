@@ -302,6 +302,13 @@ select option { background: var(--surface-2); color: var(--text); }
   font-size: 13px;
   border-radius: 10px;
 }
+.chat-capture {
+  max-width: min(100%, 520px);
+  border-radius: 8px;
+  margin-top: 0.5rem;
+  border: 1px solid var(--border, #333);
+}
+
 .action-card { border: 1px solid var(--line); border-radius: 10px; margin-top: 8px; padding: 10px; font-size: 12px; }
 
 .notice { min-height: 20px; color: var(--danger); font-size: 13px; margin: 0 0 6px; flex-shrink: 0; }
