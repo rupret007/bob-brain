@@ -289,7 +289,7 @@ class QueueTests(Fixture):
             time.sleep(.01)
         self.assertFalse(self.chat.worker_info(self.identifier))
 
-    def submit(self, text="What is a safe memory question?", request_id=None):
+    def submit(self, text="Describe safe memory in one sentence.", request_id=None):
         self.chat.submit(self.identifier, text, request_id or str(uuid.uuid4()))
         self.wait()
 
@@ -304,7 +304,7 @@ class QueueTests(Fixture):
         self.chat.close()
         self.chat = Chat(self.chat.folder, self.root, self.provider)
         self.assertEqual(self.chat.history(self.identifier)["messages"][-1]["status"], "waiting")
-        self.chat.submit(self.identifier, "What is a safe memory question?", request_id)
+        self.chat.submit(self.identifier, "Describe safe memory in one sentence.", request_id)
         self.assertEqual(len(self.chat.history(self.identifier)["messages"]), 2)
         with self.assertRaises(RequestError):
             self.chat.submit(self.identifier, "Different turn", str(uuid.uuid4()))
