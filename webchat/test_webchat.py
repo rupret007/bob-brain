@@ -72,6 +72,17 @@ class Fixture(unittest.TestCase):
 
 
 class StateTests(Fixture):
+    def test_chat_alignment_uses_one_consistent_live_observation(self):
+        first = dict(webchat_round=71, marker='first observation')
+        second = dict(webchat_round=72, marker='later observation')
+        with patch('app.load_live_ops', side_effect=[dict(live_ops=first), dict(live_ops=second)]) as sample, \
+                patch('app.state_ledger.sync_from_live_ops') as sync:
+            self.chat.submit(self.identifier, 'Explain a suspended fourth chord.', str(uuid.uuid4()))
+            self.wait()
+        self.assertEqual(sync.call_args.args[1], first)
+        self.assertEqual(sync.call_args.kwargs['webchat_round'], first['webchat_round'])
+        self.assertEqual(sample.call_count, 1)
+
     def test_password_persistence_permissions_and_symlinks(self):
         self.assertEqual(password_at(self.folder), self.chat.password)
         self.assertGreaterEqual(len(self.chat.password), 32)
@@ -229,6 +240,60 @@ class HTTPTests(Fixture):
         self.assertEqual(self.request("GET", "/api/status", headers={"Host": "evil.example"})[0], 403)
         self.assertEqual(self.request("POST", "/api/logout", {})[0], 200)
         self.assertEqual(self.request("GET", "/api")[0], 401)
+
+    def test_shell_and_session_stay_responsive_during_chat_io(self):
+        self.login()
+        finished, results = threading.Event(), []
+        def inspect():
+            try:
+                for route in ('/', '/app.js', '/api/version', '/api/session', '/api/reminders'):
+                    results.append(self.request('GET', route)[0])
+            finally:
+                finished.set()
+        # Text reads, bridge receipt waits and other synchronous chat operations
+        # hold this lock; they must not lock a logged-in owner out of the shell.
+        with self.chat.lock:
+            thread = threading.Thread(target=inspect)
+            thread.start()
+            responsive = finished.wait(1)
+        thread.join(5)
+        self.assertTrue(responsive, 'Unrelated chat work blocked authenticated page/session reads')
+        self.assertEqual(results, [200] * 5)
+
+    def test_login_can_finish_while_chat_operation_waits(self):
+        finished, tokens = threading.Event(), []
+        def login():
+            try:
+                tokens.append(self.chat.login(self.chat.password))
+            finally:
+                finished.set()
+        with self.chat.lock:
+            thread = threading.Thread(target=login)
+            thread.start()
+            responsive = finished.wait(1)
+        thread.join(5)
+        self.assertTrue(responsive, 'Unrelated chat work blocked owner login')
+        self.assertEqual(len(tokens), 1)
+        self.assertIsNotNone(self.chat.authenticate('bob_session=' + tokens[0]))
+
+    def test_logout_revokes_authentication_before_waiting_for_voice_cleanup(self):
+        self.login()
+        entered, release, results = threading.Event(), threading.Event(), []
+        def cleanup(_owner):
+            entered.set()
+            release.wait(5)
+        def logout():
+            results.append(self.request('POST', '/api/logout', {})[0])
+        with patch.object(self.chat.voice, 'logout', side_effect=cleanup):
+            thread = threading.Thread(target=logout)
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                self.assertEqual(self.request('GET', '/api/session')[0], 401)
+            finally:
+                release.set()
+                thread.join(5)
+        self.assertEqual(results, [200])
 
     def test_bad_password_throttles_without_creating_sessions(self):
         for _ in range(10):

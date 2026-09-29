@@ -160,6 +160,9 @@ class Chat(TaskDispatch):
         except OSError:
             pass
         self.lock = threading.RLock()
+        # Session checks also gate static assets and independent read endpoints.
+        # Keep them independent of chat I/O such as a bridge receipt wait.
+        self.auth_lock = threading.RLock()
         self.sessions, self.conversations = {}, {}
         self.overlay_roots: dict[str, Path] = {}
         self.overlay_pins: dict[str, Path] = {}
@@ -445,7 +448,7 @@ class Chat(TaskDispatch):
         except (CookieError, KeyError, ValueError):
             return None
         digest = hashlib.sha256(token.encode()).hexdigest()
-        with self.lock:
+        with self.auth_lock:
             session = self.sessions.get(digest)
             if session and session["expires"] > time.time():
                 return session
@@ -453,7 +456,7 @@ class Chat(TaskDispatch):
         return None
 
     def login(self, password):
-        with self.lock:
+        with self.auth_lock:
             now = time.time()
             while self.failures and self.failures[0] < now - 60:
                 self.failures.popleft()
@@ -787,10 +790,11 @@ class Chat(TaskDispatch):
                 return self.status_reply(conversation, text)
             if ledger == self.root:
                 try:
+                    live_ops = load_live_ops(self.root).get("live_ops") or {}
                     state_ledger.sync_from_live_ops(
-                        self.root, load_live_ops(self.root).get("live_ops") or {},
+                        self.root, live_ops,
                         head_sha=draft_head_sha(self.root),
-                        webchat_round=(load_live_ops(self.root).get("live_ops") or {}).get("webchat_round"),
+                        webchat_round=live_ops.get("webchat_round"),
                     )
                 except OSError:
                     pass
@@ -1672,9 +1676,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(303, "", headers={"Location": "/", "Set-Cookie": self.cookie(token)})
         if route == "/api/logout":
             self.body()
-            chat.voice.logout(session["digest"])
-            with chat.lock:
+            with chat.auth_lock:
                 chat.sessions.pop(session["digest"], None)
+            chat.voice.logout(session["digest"])
             return self.send(200, {"ok": True}, headers={"Set-Cookie": self.cookie("", clear=True)})
         if route == "/api/conversations":
             self.body()
