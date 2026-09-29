@@ -120,10 +120,14 @@ server-verified execution instead of an additional semantic review. Semantic
 acceptance checks whether an answer completes the task; it is not independent
 proof of every factual claim.
 
-The local, ignored `state/dispatch-code-root` file pins job-runner and svc-webchat
-to the tested draft checkout. `BOB_ROOT` and `BOB_WEBCHAT_DIR` keep queue data,
+The local, ignored `state/dispatch-code-root` file pins job-runner to the tested
+draft checkout. Web Bob selects `state/webchat-code-root` when present, otherwise
+falls back to the dispatch pin or the installed conductor directory. A Web Bob
+pin enables dispatch integration and disables drills unless drills were explicitly
+set to `1`; it does not start worker services. `BOB_ROOT` and `BOB_WEBCHAT_DIR` keep queue data,
 credentials, logs, static assets and conversation history in their existing
 locations. Worker subprocesses inherit the same code pin, source fresh credentials,
 and protect both the live conductor and deployed code checkout from edits.
-To update deployment, test and locally commit a draft checkout, update the local
-recovery tag and code pin, then restart only job-runner and svc-webchat.
+For solo Web Bob releases, follow `release/README.md`: validate the exact draft,
+preserve the predecessor, activate both pins through the release transaction and
+restart only svc-webchat. Worker services remain stopped.

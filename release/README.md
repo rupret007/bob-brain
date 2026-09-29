@@ -97,6 +97,13 @@ admission, supervisor recovery and a compatible first-release procedure remain
 necessary for atomic deployment drain. Neither current production nor this
 candidate declares that compatibility.
 
+The repository's `webchat/run.sh` now selects the Web Bob code pin before the
+dispatch fallback, matching the existing installed launcher. Private subprocess
+tests cover both pins, each fallback, drill selection and unchanged runtime data.
+This aligns source selection only: it does not recover a pending journal or
+make a partially switched pair of pins safe. Keep using the release transaction;
+startup recovery and admission during interrupted activation remain unfinished.
+
 Always maintain at least 5 GiB free; recovery reserves and bounded atomic
 evidence writes are retained from the existing release tooling. Authentication
 secrets never appear in arguments, evidence or source control.

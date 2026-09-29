@@ -8,6 +8,13 @@ BOB_CODE_ROOT="$BOB_ROOT/conductor"
 if [ -f "$BOB_ROOT/conductor/state/dispatch-code-root" ]; then
   IFS= read -r BOB_CODE_ROOT < "$BOB_ROOT/conductor/state/dispatch-code-root"
 fi
+if [ -f "$BOB_ROOT/conductor/state/webchat-code-root" ]; then
+  IFS= read -r BOB_CODE_ROOT < "$BOB_ROOT/conductor/state/webchat-code-root"
+  export BOB_WEBCHAT_DISPATCH=1
+  if [ "${BOB_WEBCHAT_DRILLS:-}" != "1" ]; then
+    export BOB_WEBCHAT_DRILLS=0
+  fi
+fi
 export BOB_CODE_ROOT
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 export BOB_WEBCHAT_DRILLS="${BOB_WEBCHAT_DRILLS:-0}"
