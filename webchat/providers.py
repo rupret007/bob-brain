@@ -671,6 +671,10 @@ class Providers:
                     "Use current provider_health for errors; never repeat historical failures as current.")
                 answer, thread_id = self._call_timed(provider, attempt_prompt, conversation.get("codex_thread_id"), cancel, timeout)
                 answer = usable(answer)
+                if re.fullmatch(r"ready when you are[.!\s]*", answer.strip(), re.I):
+                    # A sticky greeting is not a completed model answer.
+                    # Discard it and use the normal bounded provider failover.
+                    raise ProviderError(kind="invalid_output")
                 if cancel.is_set():
                     raise Cancelled("Reply stopped.")
                 circuit.succeeded(provider)

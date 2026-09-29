@@ -662,7 +662,12 @@ class Chat(TaskDispatch):
                 if route == "max":
                     return self.submit_max_task(conversation, task, request_id)
                 return self.submit_task(conversation, task, request_id, worker or route)
-            if transition == "resume":
+            # A resume prefix grants permission; it does not consume the rest
+            # of a user request. Unknown verbs (for example "restart") must
+            # reach the model with the original text instead of becoming a
+            # successful, acknowledgement-only reply. Bare follow-ups were
+            # handled above; an explicit hold-lift remains a control turn.
+            if transition == "resume" and chat_intent.LIFT.match(chat_intent.command(text)):
                 return self.intent_reply(conversation, "Ready when you are.", reconcile=True)
             pending = conversation.get("pending_job")
             pending_council = conversation.get("pending_council")
