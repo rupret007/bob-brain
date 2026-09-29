@@ -359,6 +359,20 @@ solo.recover_pending(root)
                 activate.assert_not_called()
                 self.assertIsNone(journal.pending(self.root))
 
+    def test_preactivation_failure_preserves_last_verified_live_receipt(self):
+        prior = {'sha': self.record['previous'], 'status': 'LIVE_PASS', 'all_pass': True}
+        solo.atomic_json(self.final, prior)
+        for fault in ('disk', 'journal'):
+            with self.subTest(fault=fault), patch.object(solo, 'release_recovery'):
+                solo.atomic_json(self.final, prior)
+                target = 'require_disk_space' if fault == 'disk' else 'journal.begin'
+                with patch('solo.' + target, side_effect=OSError('before activation')):
+                    with self.assertRaisesRegex(OSError, 'before activation'):
+                        solo.transaction(self.root, copy.deepcopy(self.record), self.path, Mock(), Mock(),
+                                         final_path=self.final)
+                self.assertEqual(json.loads(self.final.read_text()), prior)
+                self.assertFalse(json.loads(self.path.read_text())['all_pass'])
+
 
 if __name__ == '__main__':
     unittest.main()

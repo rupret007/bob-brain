@@ -801,7 +801,7 @@ def transaction(root, record, path, activate, live, publish=atomic_json, final_p
             release_recovery(record)
         # Rollback happens before attempting any potentially failing evidence write.
         atomic_json(path, record)
-        if final_path:
+        if final_path and activated:
             atomic_json(final_path, record)
         if intent and record.get('rolled_back') and not record.get('rollback_error'):
             journal.finish(root, intent)
