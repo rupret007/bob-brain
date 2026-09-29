@@ -31,6 +31,54 @@ class ReportTaskScopeTests(unittest.TestCase):
         self.assertIn('"target": "[file/symbol]"', contract)
         self.assertNotIn("use both supplied narrow guard cases unchanged", contract)
 
+    def test_report_contract_separates_object_types_and_report_completion_from_lane_exit(self):
+        contract = api_worker.report_serialization(
+            "Project: Web Bob\nYour independent subtask:\nDraft regression tests and an actionable plan.",
+            "test-writing")
+        self.assertIn('"expected": {"guard_outcome":"reject"}', contract)
+        self.assertIn("Do not quote or JSON-encode that object into a string", contract)
+        self.assertIn("running tests is not required for this report", contract)
+        self.assertIn("retain the lane hold", contract)
+        self.assertIn("Use accepted=false if incomplete", contract)
+
+    def test_truncated_projected_fixture_is_omitted_without_leaking_historical_answer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            workspaces.git(repo, "init", "-b", "main")
+            files = {
+                "services/result_acceptance.py": "#" * 14000,
+                "services/dispatch_worker.py": "#" * 12000,
+                "services/api_worker.py": "#" * 24000,
+                "services/test_result_acceptance.py": "#" * 13000,
+            }
+            historical = "services/fixtures/texting_jobcompletion_1035.json"
+            files[historical] = json.dumps(dict(prompt="Captured task", kind="test-writing",
+                job_id="captured", error="Incomplete report", answer="EXCLUDED_HISTORICAL_ANSWER" + "x" * 4000,
+                complete_answer="EXCLUDED_COMPLETE_ANSWER"))
+            for name, content in files.items():
+                path = repo / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+            workspaces.git(repo, "add", ".")
+            workspaces.git(repo, "-c", "user.name=Test", "-c", "user.email=test@localhost",
+                           "commit", "-m", "Bounded fixture projection")
+            body, metadata = api_worker.evidence(repo, "minimax", "Draft Web Bob regression tests.",
+                                                 str, kind="test-writing")
+            self.assertIn(historical, metadata["omitted"])
+            self.assertNotIn(historical, metadata["truncated"])
+            self.assertNotIn("FILE " + historical, body)
+            self.assertNotIn("EXCLUDED_HISTORICAL_ANSWER", body)
+            self.assertNotIn("EXCLUDED_COMPLETE_ANSWER", body)
+            self.assertLessEqual(metadata["source_bytes"], 64000)
+
+    def test_string_encoded_guard_outcome_is_still_rejected_without_repair(self):
+        fixture = json.loads((Path(__file__).parent / "fixtures/texting_regression_drafts_1658.json").read_text())
+        report = fixture["complete_report"]
+        report["regression_tests"] = api_worker.completion_guard_examples(structured=True)
+        report["regression_tests"][0]["expected"] = json.dumps({"guard_outcome": "reject"})
+        with self.assertRaisesRegex(result_acceptance.ResultRejected, "contradicts literal guard outcome"):
+            api_worker.render_report(fixture["prompt"], json.dumps(report), fixture["kind"])
+
     def test_deploy_source_snapshot_stays_tracked_and_excludes_runtime_files(self):
         with tempfile.TemporaryDirectory() as temporary:
             repo = Path(temporary)

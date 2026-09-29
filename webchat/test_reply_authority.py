@@ -139,3 +139,29 @@ class AuthorityTests(unittest.TestCase):
         answer = enforce(Path('/unused'), "Hi Bob", dict(provider="gemini", content=
                          "Hi Jeff! Cursor is handling our chat; Gemini and MiniMax are still failing."))
         self.assertEqual(answer, "Hi Jeff!")
+
+    def test_captured_private_replay_greeting_drops_operations_and_readiness(self):
+        # Real 23041e7 private replay, 8126301c turn 7, Gemini response.
+        captured = ('Hey Jeff!\n\nCodex is currently running a "Web Bob texting deploy 2055" task. '
+                    'Claude, Cursor, Gemini, and MiniMax are all ready for work.')
+        from integration_rubric import check_reply
+        answer = enforce(Path('/unused'), "Hi", dict(provider="gemini", content=captured))
+        self.assertEqual(answer, "Hey Jeff!")
+        errors = check_reply(dict(content=answer, provider="gemini", status="done", request_id="greeting"),
+                             dict(message="Hi", expected="greeting"), "private-greeting", 0, {}, {}, {})
+        self.assertEqual(errors, [])
+
+    def test_plain_greeting_preserves_natural_answers_and_conversational_offers(self):
+        for prompt in ("Hi", "Hello Bob!", "Hey there.", "Good morning, Bob"):
+            for content in ("Hey Jeff! How's your day going?", "Hi Jeff!\n\nWant to talk through your day?",
+                            "Hello! I can explain how jobs are queued if you'd like."):
+                with self.subTest(prompt=prompt, content=content):
+                    self.assertEqual(enforce(Path('/unused'), prompt, dict(provider="gemini", content=content)), content)
+
+    def test_greeting_with_substantive_request_keeps_ordinary_answer(self):
+        content = "Hello! Workers can run independent jobs while a lease prevents duplicate execution."
+        self.assertEqual(enforce(Path('/unused'), "Hi, explain worker leases", dict(provider="gemini", content=content)), content)
+
+    def test_plain_greeting_has_no_work_claim_when_model_returns_only_operations(self):
+        self.assertEqual(enforce(Path('/unused'), "Hi Bob", dict(provider="gemini",
+            content="Workers are idle. The services are healthy.")), "Hi Jeff!")

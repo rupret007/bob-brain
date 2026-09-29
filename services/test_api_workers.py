@@ -293,7 +293,15 @@ class APIWorkerTests(unittest.TestCase):
                                  ("services/api_worker.py", "def evidence(")):
                 section = prompt.split("FILE " + path + "\n", 1)[1].split("\n\nFILE ", 1)[0]
                 self.assertIn(symbol, section)
-            self.assertIn("FILE services/fixtures/texting_jobcompletion_1035.json", prompt)
+            historical = "FILE services/fixtures/texting_jobcompletion_1035.json\n"
+            if historical in prompt:
+                # A bounded snapshot may omit this optional historical fixture.
+                # If supplied, it must be projected, never a raw partial answer.
+                section = prompt.split(historical, 1)[1].split("\n\nFILE ", 1)[0].split(
+                    "END OF REPOSITORY EVIDENCE", 1)[0]
+                self.assertIn("Rendered historical fixture fields only:", section)
+                self.assertNotIn('"answer":', section)
+                self.assertNotIn('"complete_answer":', section)
             self.assertIn("SAME line", prompt[prompt.index("END OF REPOSITORY EVIDENCE"):])
             return complete
         with patch.object(dispatch_worker, "ask", side_effect=response) as ask:
@@ -305,6 +313,7 @@ class APIWorkerTests(unittest.TestCase):
         self.assertEqual(result["result_sha256"], hashlib.sha256(complete.strip().encode()).hexdigest())
         self.assertLessEqual(result["evidence"]["source_bytes"], 64000)
         self.assertTrue(result["evidence"]["omitted"])
+        self.assertNotIn("services/fixtures/texting_jobcompletion_1035.json", result["evidence"]["truncated"])
         self.assertIsNone(result["worktree"])
 
     def test_named_evidence_and_tests_survive_minimax_snapshot_budget(self):

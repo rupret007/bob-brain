@@ -39,6 +39,26 @@ HOLD_CLAIM = re.compile(
     r"\b(?:until you (?:say (?:go|resume)|resume|give (?:the )?go[- ]ahead)|waiting for (?:your|permission)|"
     r"(?:need|require) (?:your |fresh |renewed |explicit )*(?:permission|approval|go[- ]ahead))\b", re.I)
 HOLD_QUESTION = re.compile(r"^(?:(?:are|is|am|do|does|why)\b[^.!]*\b(?:on hold|holds? (?:still )?active|paused|need.{0,20}permission)\b[^.!]*|what holds? are active)\??$", re.I)
+PURE_GREETING = re.compile(r"(?:hi|hey|hello|good (?:morning|afternoon|evening))"
+                           r"(?:[, ]+(?:bob|there))?[.!? ]*", re.I)
+GREETING_OPERATIONS = re.compile(
+    r"\b(?:codex|claude|cursor|gemini|minimax|workers?|jobs?|tasks?|queue|services?|lanes?|llms?)\b"
+    r"[^.!?]{0,200}\b(?:running|working|ready|idle|busy|queued|claimed|paused|cooldown|available|waiting|active|started|failed|healthy)\b|"
+    r"\b(?:running|queued|active|idle|busy)\b[^.!?]{0,80}\b(?:workers?|jobs?|tasks?|services?|lanes?)\b|"
+    r"\bready for (?:new )?work\b", re.I)
+
+
+def greeting_content(content):
+    """A plain greeting does not request the operational context sent to models."""
+    parts = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
+    kept = []
+    for part in parts:
+        # Keep natural conversational offers; they are not claims about live
+        # utilization. The ordinary effect/permission guards still run below.
+        offer = re.match(r"\s*(?:I can\b|Would you like\b|Want (?:me )?to\b|Shall we\b)", part, re.I)
+        if offer or not GREETING_OPERATIONS.search(part):
+            kept.append(part)
+    return "".join(kept).strip() or "Hi Jeff!"
 
 
 DETAILS = re.compile(r"\b(?:raw|diagnostic(?:s)?|internal (?:ids?|details)|(?:job|task|screen|process) (?:ids?|names?)|pids?)\b", re.I)
@@ -329,6 +349,8 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
     # report from operational snapshots included in the model context.
     if CHAT_STYLE.match(PREAMBLE.sub("", text.strip())):
         return "Got it."
+    if PURE_GREETING.fullmatch(text.strip()):
+        content = greeting_content(content)
     if STATUS_QUESTION.search(text) or correcting_status(text, conversation):
         return operational_reply(root, answer["provider"], text, observation=observation, redact=redact)
     else:

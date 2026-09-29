@@ -140,7 +140,9 @@ def report_serialization(task, kind=None):
         "Prefer a small direct function/state fixture over a long escaped report; never copy historical rejected answers. "
         "Cite existing paths/symbols, actual exception text and required kind arguments. "
         "For direct acceptance-guard calls, use literal prompt/answer assignments in setup. "
-        'For a direct guard case use expected={"guard_outcome":"reject"} or {"guard_outcome":"pass"}. '
+        'For a direct guard case, the expected field must be a JSON object: '
+        '"expected": {"guard_outcome":"reject"} or "expected": {"guard_outcome":"pass"}. '
+        "Do not quote or JSON-encode that object into a string. "
         "This explicit outcome is checked against the literal inputs; only then is Expected rendered from "
         "the guard's actual error text or returns None. Wrong outcomes are rejected, never repaired. "
         "Other cases use an expected string. Any string for a guard must quote its full exact ResultRejected "
@@ -154,6 +156,9 @@ def report_serialization(task, kind=None):
         "the false draft belongs inside setup and Action must call the auditor, not the inner guard. "
         "Drafts are unexecuted; no tools or execution claims. Disclose missing original task/evidence. "
         "Completion describes YOUR delivered report, not a server vote or lane closure. "
+        "Complete, grounded unexecuted drafts are the requested report deliverable; running tests is not "
+        "required for this report. A conditional plan may retain the lane hold while completion.accepted "
+        "is true for the finished report. "
         "Use accepted=false if incomplete; missing drafts cannot claim completion. Replace every bracketed value. "
         + ("Tie the plan to the named ongoing task. Read current code: validate existing coverage when already implemented. "
            "For Web Bob validation use python3 -m unittest discover -s services -p 'test_*.py'; "
@@ -289,6 +294,14 @@ def evidence(repo, worker, task, redact, kind=None):
             size = min(48000, max(0, remaining - reserve), share)
             raw = read_source(repo, name, max(0, size) + 1)
             if b"\0" in raw or remaining <= 0:
+                omitted.append(name)
+                continue
+            projected_fixture = ((name == plan_example and guard_assignment) or
+                                 (preferred and name == "services/fixtures/texting_jobcompletion_1035.json"))
+            if projected_fixture and len(raw) > size:
+                # These fixtures exclude historical answers via field projection.
+                # A partial JSON prefix cannot be projected safely: never fall
+                # back to raw text that leaks an excluded, truncated answer.
                 omitted.append(name)
                 continue
             if len(raw) > size:
