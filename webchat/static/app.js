@@ -522,12 +522,17 @@ if ($("login-form")) {
       card.append(edit, cancel);
     }
     const status = document.createElement("p"); status.className = "text-delivery-status";
+    if (draft.check_delivery_message && !draft.read_only && draft.state === "delivery_unconfirmed") {
+      const check = document.createElement("button"); check.type = "button"; check.textContent = "Check delivery";
+      check.addEventListener("click", () => submitChatText(draft.check_delivery_message));
+      card.append(check);
+    }
     status.textContent = draft.read_only || draft.state === "read_only"
       ? "Instinct is read-only. This draft cannot be sent from Web Bob."
       : draft.state === "sent"
       ? "Sent through Andrea’s BlueBubbles bridge."
       : draft.state === "delivery_unconfirmed"
-        ? "Delivery is unconfirmed. Check the recipient’s thread before preparing another draft."
+        ? "Delivery is unconfirmed. Check delivery to look for Andrea’s receipt without resending."
         : draft.state === "confirmed_not_sent"
           ? "Not sent. Andrea could not accept this delivery; this confirmation cannot be reused."
           : "Nothing has been sent until you confirm with the exact yes + token in chat.";

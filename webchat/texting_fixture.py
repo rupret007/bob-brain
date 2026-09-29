@@ -32,6 +32,7 @@ class MockMessaging:
         self.bridge_drafts = {}
         self.enable_web_bob_send = False
         self.drop_send_response = False
+        self.send_response_delay = 0
         self.andrea_error_status = None
         self.andrea_error_body = None
         self.chats, self.messages = copy.deepcopy(CHATS), copy.deepcopy(MESSAGES)
@@ -67,8 +68,10 @@ class MockMessaging:
                     if not bound or any(payload.get(k) != v for k, v in bound['scope'].items()):
                         return self.respond(403, {'error': 'Wrong draft binding'})
                     if url.path.endswith('/cancel'):
-                        bound['state'] = 'cancelled'
-                        return self.respond(200, {'ok': True})
+                        if bound['state'] == 'pending':
+                            bound['state'] = 'cancelled'
+                        return self.respond(200, bound.get('receipt') or dict(ok=True, state=bound['state'],
+                            **{k: bound['row'][k] for k in ('draftId', 'digest', 'actionId')}))
                     if url.path != '/web-bob/v1/confirm' or not fixture.enable_web_bob_send:
                         return self.respond(404, {'error': 'Unavailable'})
                     if (bound['state'] != 'pending' or payload.get('confirmation') != 'yes ' + bound['row']['challenge'] or
@@ -84,11 +87,13 @@ class MockMessaging:
                     fixture.sends.append({"chatGuid": guid, "text": text})
                     # Andrea hands off to BlueBubbles on the same loopback fixture.
                     fixture.calls.append(("POST", "/api/v1/message/text"))
+                    bound['receipt'] = {"ok": True, "state": "sent", "messageGuid": "mock-" + secrets.token_hex(8),
+                        **{k: bound['row'][k] for k in ('draftId', 'digest', 'actionId')}}
+                    time.sleep(fixture.send_response_delay)
                     if fixture.drop_send_response:
                         self.close_connection = True
                         return
-                    return self.respond(200, {"ok": True, "state": "sent", "messageGuid": "mock-" + secrets.token_hex(8),
-                        **{k: bound['row'][k] for k in ('draftId', 'digest', 'actionId')}})
+                    return self.respond(200, bound['receipt'])
                 if self.command == "POST" and url.path == "/api/v1/message/text":
                     if not fixture.enable_web_bob_send:
                         fixture.unexpected_writes.append(url.path)
