@@ -42,7 +42,7 @@ def main():
             evidence = json.loads(result.stdout)
             assert evidence['all_pass'] and len(evidence['browsers']) == 2
             assert not fixture.mock.sends and not fixture.mock.unexpected_writes
-            assert ('POST', '/web-bob/send') not in fixture.mock.calls
+            assert ('POST', '/web-bob/v1/confirm') not in fixture.mock.calls
             assert not fixture.providers.calls and not task_queue.tasks(fixture.root)
             assert not any(c.get('_texting', {}).get('audit') for c in fixture.chat.conversations.values())
             evidence.update(scope='isolated synthetic messaging; real HTTP/browser', real_texts_sent=0,

@@ -76,7 +76,7 @@ class TextingE2ETest(unittest.TestCase):
                 self.assertEqual(status, 202)
                 self.assertIn("Nothing sent", bare["messages"][-1]["content"])
                 self.assertEqual(self.mock.sends, [])
-                self.assertNotIn(("POST", "/web-bob/send"), self.mock.calls)
+                self.assertNotIn(("POST", "/web-bob/v1/confirm"), self.mock.calls)
         status, confirmed = self.post(card["confirm_message"])
         self.assertEqual(status, 202)
         self.assertTrue(confirmed["messages"][-1]["content"].startswith("Sent via Andrea"))
@@ -84,7 +84,7 @@ class TextingE2ETest(unittest.TestCase):
         self.assertEqual(draft_messages[-1]["text_draft"]["state"], "sent")
         self.assertEqual(len(self.mock.sends), 1)
         self.assertEqual(self.mock.sends[0]["text"], "Charts at 7 tonight.")
-        self.assertIn(("POST", "/web-bob/send"), self.mock.calls)
+        self.assertIn(("POST", "/web-bob/v1/confirm"), self.mock.calls)
 
     def test_browser_proof_when_playwright_available(self):
         if shutil.which("node") is None:

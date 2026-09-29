@@ -180,7 +180,7 @@ class InstinctTests(unittest.TestCase):
             self.assertFalse(self.f.mock.sends)
         self.assertFalse(self.f.providers.calls)
         self.assertFalse(task_queue.tasks(self.f.root))
-        self.assertNotIn(("POST", "/web-bob/send"), self.f.mock.calls)
+        self.assertNotIn(("POST", "/web-bob/v1/confirm"), self.f.mock.calls)
         self.assertIn("Nothing sent", self.f.answer((card["confirm_message"] or "yes wbtxt-" + "a" * 32))["content"])
 
     def test_even_exact_looking_confirmation_never_calls_andrea(self):
@@ -205,7 +205,7 @@ class InstinctTests(unittest.TestCase):
         self.assertIn('Instinct is read-only', reply['content'])
         self.assertFalse(conv['_texting']['audit'])
         self.assertFalse(self.f.mock.sends)
-        self.assertNotIn(('POST', '/web-bob/send'), self.f.mock.calls)
+        self.assertNotIn(('POST', '/web-bob/v1/confirm'), self.f.mock.calls)
 
     def test_guid_alternate_transport_and_group_cannot_bypass_read_only(self):
         for guid, people in ((GUID, ['+15550101999']),

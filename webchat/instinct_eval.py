@@ -27,7 +27,7 @@ def run_eval():
         check("tagged body retains Jeff authority", card["body"].startswith("[Bob via Andrea]\n") and "wait for Jeff’s explicit approval" in card["body"])
         for phrase in ("yes", "send it", "ok"):
             f.answer(phrase)
-        check("bare approvals never send", not f.mock.sends and ("POST", "/web-bob/send") not in f.mock.calls)
+        check("bare approvals never send", not f.mock.sends and ("POST", "/web-bob/v1/confirm") not in f.mock.calls)
         f.answer(card["confirm_message"] or "yes wbtxt-" + "a" * 32, actor="different-login")
         check("different login cannot approve", not f.mock.sends)
         f.answer("digest Instinct")
@@ -44,7 +44,7 @@ def run_eval():
         card = f.answer("send a message to Instinct: Please list research options.")["text_draft"]
         check("initial send request only drafts", not f.mock.sends and card["state"] == "read_only" and card["confirm_message"] is None)
         f.answer(card["confirm_message"] or "yes wbtxt-" + "a" * 32)
-        check("even explicit confirmation never sends", not f.mock.sends and ("POST", "/web-bob/send") not in f.mock.calls)
+        check("even explicit confirmation never sends", not f.mock.sends and ("POST", "/web-bob/v1/confirm") not in f.mock.calls)
         f.answer(card["confirm_message"] or "yes wbtxt-" + "a" * 32)
         check("repeated approval cannot bypass read-only", not f.mock.sends)
         f.mock.enable_web_bob_send = False
