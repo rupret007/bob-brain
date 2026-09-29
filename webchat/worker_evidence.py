@@ -80,6 +80,10 @@ def _task(prompt):
     text = re.sub(r"^Project:\s*[^\n]+", "", text, flags=re.I)
     if not text and prompt:
         text = next((line for line in prompt.splitlines()[1:] if line.strip()), "")
+    # A lane slug is metadata, even when it contains an action word like "fix".
+    # Keep the missing-assignment fallback instead of inventing work from its name.
+    if re.fullmatch(r"(?:lane|svc)-[\w.-]+", text.strip(" \t#`"), re.I):
+        return None
     text = re.split(r"[.!?]\s", text, maxsplit=1)[0]
     if re.match(r"Improve .+: inspect the project, choose one useful bounded fix", text):
         text = text.split(":", 1)[0]

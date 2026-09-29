@@ -130,6 +130,9 @@ class ActionPlanTests(unittest.TestCase):
         example = json.loads((REPO / example_path).read_text())
         example['complete_report']['regression_tests'] = api_worker.completion_guard_examples(structured=True)
         for prompt in (DATA['prompt'], json.loads((REPO / 'services/fixtures/texting_jobcompletion_1035.json').read_text())['prompt']):
+            # The optional guard transport example belongs only in assignments
+            # asking for this behavior; generic Web Bob tasks keep their scope.
+            prompt = 'Draft completion-JSON guard regressions.\n' + prompt
             body, meta = api_worker.evidence(REPO, 'minimax', prompt, lambda text: text, kind='test-writing')
             self.assertNotIn(example_path, meta['truncated'])
             self.assertTrue(body.endswith(json.dumps(example['complete_report'], ensure_ascii=False, indent=2)))

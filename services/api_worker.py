@@ -17,6 +17,12 @@ TEXT_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".md", ".t
                  ".json", ".toml", ".yaml", ".yml", ".sh", ".html", ".css", ".sql", ".go", ".rs"}
 EXCLUDED = {"node_modules", ".git", ".venv", "venv", "sessions", "uploads", "logs", "ledger",
             "task-runs", "reviews", "__pycache__"}
+# Source-only exceptions: evidence() still requires these files to be tracked.
+# Runtime review reports, prompts, API receipts and arbitrary Python stay excluded.
+DEPLOY_SOURCE = re.compile(
+    r"reviews/(?:texting_deploy_record|(?:deploy_texting|record_texting_deploy|"
+    r"test_disk_evidence|test_record_texting_deploy|test_deploy_texting|"
+    r"test_deploy_screens|test_deploy_ancestry)_\d+)\.py\Z")
 RULES = ("Produce a report or proposed patch for the assigned task. The server saves your answer under reviews/. "
          "You have no shell or file-writing tools. Never deploy, push, apply patches, resolve merge conflicts, "
          "or launch workers. Never use Grok/xAI. Do not claim you ran tests. Put test code or unified patches "
@@ -26,7 +32,8 @@ RULES = ("Produce a report or proposed patch for the assigned task. The server s
 
 def safe_source(repo, relative):
     path = Path(relative)
-    if path.is_absolute() or ".." in path.parts or any(part in EXCLUDED for part in path.parts):
+    excluded = EXCLUDED - {"reviews"} if DEPLOY_SOURCE.fullmatch(path.as_posix()) else EXCLUDED
+    if path.is_absolute() or ".." in path.parts or any(part in excluded for part in path.parts):
         return False
     if any(part.startswith(".") and part != ".github" for part in path.parts):
         return False
@@ -84,6 +91,13 @@ def completion_guard_examples(*, structured=False):
     return cases
 
 
+def completion_guard_task(task):
+    """Examples follow the assignment, not its repository name or file hints."""
+    assignment = task.split("\nRelevant evidence:", 1)[0]
+    return bool(re.search(r"\b(?:check_completion_json|completion[- ]JSON|accepted/reason)\b",
+                          assignment, re.I))
+
+
 def report_serialization(task, kind=None):
     """Separate nested test inputs from the outer fields without inventing content."""
     if kind in ("coding", "artifact") or not needs_test_drafts(task, kind):
@@ -101,8 +115,10 @@ def report_serialization(task, kind=None):
                   exit_condition="[actual named task result and gates required to pass; otherwise retain hold]") if heading else None,
         completion=dict(accepted=True, reason="[task-specific delivered findings and limits]"),
         findings_limits="[concrete finding; drafts unexecuted and missing evidence]")
-    if 'Web Bob' in task:
-        schema['regression_tests'] = completion_guard_examples(structured=True)
+    examples = ("Optional completion-JSON guard examples, only when they test the assigned behavior. "
+                "They do not replace task-specific drafts:\n" +
+                json.dumps(completion_guard_examples(structured=True), ensure_ascii=False, indent=2) + "\n"
+                if completion_guard_task(task) else "")
     return (
         "\nREPORT SERIALIZATION: return ONLY the following JSON object, without a Markdown fence or prose. "
         "Use readable indented JSON, one field per line. Check commas between every property, including "
@@ -118,7 +134,7 @@ def report_serialization(task, kind=None):
         "Descriptions like 'prompt contains' or 'answer contains' are not concrete inputs. "
         "A nested check_answer/check_deliverables control needs every section its own prompt requires. "
         "Do not handwrite a nested report control: use an explicitly supplied complete fixture field, "
-        "or choose the narrow check_completion_json guard with literal prompt/answer inputs as shown below. "
+        "or choose a narrow guard with literal inputs when that guard is the assigned behavior. "
         "check_completion_json expects ONLY accepted/reason keys, never the regression_tests/plan/completion "
         "transport envelope. That envelope goes through render_report first; it is not completion JSON. "
         "Prefer a small direct function/state fixture over a long escaped report; never copy historical rejected answers. "
@@ -129,9 +145,10 @@ def report_serialization(task, kind=None):
         "the guard's actual error text or returns None. Wrong outcomes are rejected, never repaired. "
         "Other cases use an expected string. Any string for a guard must quote its full exact ResultRejected "
         "error; paraphrased errors and wrong error classes are rejected. "
-        "The Web Bob guard examples below are derived from the running guard; preserve their literal inputs "
-        "and expectations when using them. For this supplied dispatch/completion regression assignment, "
-        "use both supplied narrow guard cases unchanged and adapt the plan/findings to the named ongoing task. "
+        "Choose targets that exercise the behavior in the assigned task and supplied source. "
+        "A valid completion guard example does not test unrelated disk, deployment, or dispatch behavior. "
+        "If the original task or relevant source is missing, disclose that limit and do not infer behavior "
+        "from a lane name. Do not substitute template cases for the requested regressions. "
         "A missing JSON answer NEVER has a pass outcome. "
         "Do not write an intentionally false OUTER expectation to test the draft auditor. To test the auditor, "
         "the false draft belongs inside setup and Action must call the auditor, not the inner guard. "
@@ -143,7 +160,7 @@ def report_serialization(task, kind=None):
            "exit requires actual worker results and live gates, otherwise remain blocked. "
            "The server renders these outer labels (supply values via plan fields, not Markdown):\n" + heading +
            ":\nChange:\nValidation:\nExit condition:\n" if heading else "Use plan=null; no plan is required.\n") +
-        json.dumps(schema, ensure_ascii=False, indent=2) + "\n")
+        examples + json.dumps(schema, ensure_ascii=False, indent=2) + "\n")
 
 
 def render_report(task, answer, kind=None):
@@ -231,10 +248,11 @@ def evidence(repo, worker, task, redact, kind=None):
     # tracked example too; it is evidence, never a replacement worker answer.
     replay_fixture = "services/fixtures/texting_jobcompletion_1403.json"
     plan_example = "services/fixtures/texting_regression_drafts_1658.json"
-    examples = {plan_example, "services/test_replay_completion.py"} if preferred else set()
+    guard_assignment = bool(preferred) and completion_guard_task(task)
+    examples = {plan_example, "services/test_replay_completion.py"} if guard_assignment else set()
     if preferred and "services/result_acceptance.py" in task:
         examples.update((replay_fixture, "services/test_replay_completion.py"))
-    elif preferred:
+    elif guard_assignment:
         examples.add("services/fixtures/texting_jobcompletion_1035.json")
     paths = sorted({name for name in paths if name and safe_source(repo, name)},
                    key=lambda name: (name not in examples, name not in task, preferred.get(name, len(preferred)),
@@ -277,7 +295,7 @@ def evidence(repo, worker, task, redact, kind=None):
                 truncated.append(name)
             text = redact(raw[:size].decode("utf-8", "replace"))
             rendered_fields = None
-            if name == plan_example and len(raw) <= size:
+            if name == plan_example and guard_assignment and len(raw) <= size:
                 # Match the requested transport. A Markdown example competed
                 # with JSON instructions and induced malformed nested drafts.
                 example = json.loads(text)
@@ -285,7 +303,8 @@ def evidence(repo, worker, task, redact, kind=None):
                 example["complete_report"]["regression_tests"] = completion_guard_examples(structured=True)
                 text = ("Rendered fixture fields: evidence_limits and complete_report only. "
                         "regression_tests regenerated from the running completion guard (literal inputs and exact outcomes). "
-                        "Unexecuted JSON transport example; adapt the plan and findings to YOUR assigned task.\n"
+                        "Optional unexecuted JSON transport example; choose regressions, plan and findings "
+                        "that test YOUR assigned task.\n"
                         + example["evidence_limits"] + "\n\n" + json.dumps(example["complete_report"], ensure_ascii=False, indent=2))
             elif preferred and name == "services/fixtures/texting_jobcompletion_1035.json" and len(raw) <= size:
                 # Historical answer/layout text induced paraphrased inputs and
