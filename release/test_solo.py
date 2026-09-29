@@ -9,6 +9,23 @@ from unittest.mock import Mock, patch
 import solo
 
 
+class BridgeReplayTargetTests(unittest.TestCase):
+    def test_excludes_short_codes_groups_and_mismatched_membership(self):
+        for guid, addresses in (
+            ('SMS;-;12345', ['12345']),
+            ('iMessage;+;group', ['+12025550101']),
+            ('iMessage;-;+12025550101', ['+12025550102']),
+            ('iMessage;-;+12025550101', ['+12025550101', '+12025550102']),
+            ('iMessage;-;bad@example', ['bad@example']),
+        ):
+            with self.subTest(guid=guid):
+                self.assertFalse(solo.bridge_replay_target(dict(guid=guid, participants=[dict(address=a) for a in addresses])))
+
+    def test_accepts_verified_direct_phone_or_email_membership(self):
+        for service, address in (('SMS', '+12025550101'), ('iMessage', 'owner@example.com'), ('RCS', '+442079460123')):
+            self.assertTrue(solo.bridge_replay_target(dict(guid=service+';-;'+address, participants=[dict(address=address)])))
+
+
 class TransactionTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
