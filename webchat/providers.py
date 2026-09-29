@@ -364,6 +364,15 @@ class Providers:
         for relative, limit, tail in rows:
             path = base / relative
             try:
+                if relative == 'conductor/webchat/memory/profile.md':
+                    from memory_store import read_memory
+                    memory = read_memory(base, budget=limit * 4)
+                    value = memory['text']
+                    stamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(memory['modified']))
+                    clipped = memory['truncated'] or len(value) > limit
+                    value = value[-limit:] if tail else value[:limit]
+                    parts.append({"path": relative, "modified": stamp, "truncated": clipped, "text": self.redact(value)})
+                    continue
                 value = path.read_text()
                 stamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(path.stat().st_mtime))
                 clipped = len(value) > limit

@@ -1,7 +1,6 @@
 """Bob-the-Bot parity: durable memory, web research, and on-demand screenshots."""
 from __future__ import annotations
 
-import fcntl
 import json
 import re
 import secrets
@@ -12,8 +11,6 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-
-from failover import atomic_text
 
 REMEMBER = re.compile(r"^remember\s+that\s+(.+?)\s*\.?\s*$", re.I | re.S)
 MEMORY_CONFIRM = re.compile(r"^yes[,.]?\s*save\s+memory\s*$", re.I)
@@ -95,26 +92,11 @@ def append_profile_memory(root: Path, fact: str, when: datetime | None = None) -
     when = when or datetime.now(timezone.utc)
     stamp = when.astimezone().strftime("%Y-%m-%d")
     line = f"[{stamp}] {fact.strip()}\n"
-    path = profile_path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.parent / "profile.lock"
+    from memory_store import append_memory
     try:
-        lock_file = lock_path.open("a")
+        append_memory(root, line)
     except OSError as exc:
-        raise OSError(f"Could not open profile lock file {lock_path}: {exc}") from exc
-    try:
-        try:
-            fcntl.flock(lock_file, fcntl.LOCK_EX)
-        except OSError as exc:
-            raise OSError(f"Could not acquire profile lock {lock_path}: {exc}") from exc
-        try:
-            existing = path.read_text(encoding="utf-8") if path.is_file() else ""
-            lines = _trim_profile_lines(existing.splitlines(keepends=True) + [line])
-            atomic_text(path, "".join(lines))
-        finally:
-            fcntl.flock(lock_file, fcntl.LOCK_UN)
-    finally:
-        lock_file.close()
+        raise OSError(f"Could not access private memory or lock {profile_path(root).parent / 'profile.lock'}: {exc}") from exc
     return line.strip()
 
 

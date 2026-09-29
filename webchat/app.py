@@ -287,12 +287,12 @@ class Chat(TaskDispatch):
             conversation.pop("pending_memory_id", None)
             try:
                 saved = append_profile_memory(self.root, pending_memory)
-            except OSError as exc:
+            except OSError:
                 conversation["pending_memory"] = pending_memory
                 conversation["pending_memory_id"] = expected or request_id
                 conversation["messages"][-1].update(
                     status="done",
-                    content=f"Error: Could not save memory to profile. ({exc})",
+                    content="I could not save memory reliably. Your proposal is still available to review.",
                     provider="state",
                     action_card={"id": request_id, "state": "refused", "executable": False, "reason": "Save failed"},
                 )
