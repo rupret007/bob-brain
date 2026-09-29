@@ -48,7 +48,9 @@ def http_json(url, method="GET", payload=None, headers=None, validate=None, allo
                     config += "header = " + json.dumps(name + ": " + value) + "\n"
                 config_path.write_text(config)
                 config_path.chmod(0o600)
-                seconds = 180 if model_id == "gemini-2.5-pro" else 60
+                # Reasoning responses can exceed one minute before any body
+                # arrives; retain the same bounded window for both reasoning models.
+                seconds = 180 if model_id in ("gemini-2.5-pro", "MiniMax-M2.7") else 60
                 cmd = ["curl", "-sS", "-m", str(seconds), "--connect-timeout", "10", "--config", str(config_path),
                        "-X", method, "-o", str(response), "-w", "%{http_code}"]
                 if payload is not None:

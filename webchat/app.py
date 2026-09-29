@@ -53,9 +53,10 @@ from texting import Texting
 
 HERE = Path(os.environ.get("BOB_WEBCHAT_DIR", Path(__file__).resolve().parent)).resolve()
 ROOT = Path(os.environ.get("BOB_ROOT", HERE.parent.parent)).resolve()
-_STATE_LEDGER_DIR = ROOT / "conductor/state"
-if str(_STATE_LEDGER_DIR) not in sys.path:
-    sys.path.insert(0, str(_STATE_LEDGER_DIR))
+_STATE_LEDGER_DIR = Path(__file__).resolve().parents[1] / "state"
+# Data roots never select executable code; prioritize this release even if its
+# state directory already appears later in an inherited PYTHONPATH.
+sys.path.insert(0, str(_STATE_LEDGER_DIR))
 import ledger as state_ledger  # noqa: E402
 HOST, PORT = "127.0.0.1", 8787  # Deliberately no all-interface or port override.
 COOKIE = "bob_session"

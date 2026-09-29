@@ -11,12 +11,20 @@ from pathlib import Path
 from state import atomic_write
 from workspaces import git
 from result_acceptance import (deliverable_requirements, needs_test_drafts, plan_heading, ResultRejected,
-                               DRAFT_ERROR, guard_draft_expected, check_literal_guard_drafts, render_guard_expected)
+                               DRAFT_ERROR, guard_draft_expected, check_deliverables, check_completion_json,
+                               check_literal_guard_drafts, render_guard_expected)
 
 TEXT_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".md", ".txt",
                  ".json", ".toml", ".yaml", ".yml", ".sh", ".html", ".css", ".sql", ".go", ".rs"}
 EXCLUDED = {"node_modules", ".git", ".venv", "venv", "sessions", "uploads", "logs", "ledger",
             "task-runs", "reviews", "__pycache__"}
+# Source-only exceptions: evidence() still requires these files to be tracked.
+# Runtime review reports, prompts, API receipts and arbitrary Python stay excluded.
+DEPLOY_SOURCE = re.compile(
+    r"reviews/(?:texting_deploy_record|(?:deploy_texting|record_texting_deploy|"
+    r"test_disk_evidence|test_record_texting_deploy|test_deploy_texting|"
+    r"test_deploy_screens|test_deploy_ancestry)_\d+)\.py\Z")
+PROBE_HISTORY = "services/fixtures/texting_minimax_probe_2256.json"
 RULES = ("Produce a report or proposed patch for the assigned task. The server saves your answer under reviews/. "
          "You have no shell or file-writing tools. Never deploy, push, apply patches, resolve merge conflicts, "
          "or launch workers. Never use Grok/xAI. Do not claim you ran tests. Put test code or unified patches "
@@ -26,7 +34,8 @@ RULES = ("Produce a report or proposed patch for the assigned task. The server s
 
 def safe_source(repo, relative):
     path = Path(relative)
-    if path.is_absolute() or ".." in path.parts or any(part in EXCLUDED for part in path.parts):
+    excluded = EXCLUDED - {"reviews"} if DEPLOY_SOURCE.fullmatch(path.as_posix()) else EXCLUDED
+    if path.is_absolute() or ".." in path.parts or any(part in excluded for part in path.parts):
         return False
     if any(part.startswith(".") and part != ".github" for part in path.parts):
         return False
@@ -84,25 +93,36 @@ def completion_guard_examples(*, structured=False):
     return cases
 
 
+def completion_guard_task(task):
+    """Examples follow the assignment, not its repository name or file hints."""
+    assignment = task.split("\nRelevant evidence:", 1)[0]
+    return bool(re.search(r"\b(?:check_completion_json|completion[- ]JSON|accepted/reason)\b",
+                          assignment, re.I))
+
+
 def report_serialization(task, kind=None):
     """Separate nested test inputs from the outer fields without inventing content."""
     if kind in ("coding", "artifact") or not needs_test_drafts(task, kind):
         return ""
     heading = plan_heading(task)
     schema = dict(
-        regression_tests=[dict(name="[failure case]", target="[file/symbol]",
-                               setup="[literal input/state or supplied fixture fields]", action="[exact call]",
-                               expected="[observable failure assertion]"),
-                          dict(name="[successful control]", target="[file/symbol]",
-                               setup="[valid literal input/state or supplied fixture fields]", action="[exact call]",
-                               expected="[observable success assertion]")],
+        # Emit the short action/assertion siblings before the potentially long
+        # setup string: the 2055 probe swallowed both into its second setup.
+        regression_tests=[dict(name="[failure case]", target="[file/symbol]", action="[exact call]",
+                               expected="[observable failure assertion]",
+                               setup="[literal input/state or supplied fixture fields]"),
+                          dict(name="[successful control]", target="[file/symbol]", action="[exact call]",
+                               expected="[observable success assertion]",
+                               setup="[valid literal input/state or supplied fixture fields]")],
         plan=dict(change="[grounded change or validation of existing coverage]",
                   validation="[supported command and passing result]",
                   exit_condition="[actual named task result and gates required to pass; otherwise retain hold]") if heading else None,
         completion=dict(accepted=True, reason="[task-specific delivered findings and limits]"),
         findings_limits="[concrete finding; drafts unexecuted and missing evidence]")
-    if 'Web Bob' in task:
-        schema['regression_tests'] = completion_guard_examples(structured=True)
+    examples = ("Optional completion-JSON guard examples, only when they test the assigned behavior. "
+                "They do not replace task-specific drafts:\n" +
+                json.dumps(completion_guard_examples(structured=True), ensure_ascii=False, indent=2) + "\n"
+                if completion_guard_task(task) else "")
     return (
         "\nREPORT SERIALIZATION: return ONLY the following JSON object, without a Markdown fence or prose. "
         "Use readable indented JSON, one field per line. Check commas between every property, including "
@@ -113,37 +133,49 @@ def report_serialization(task, kind=None):
         "the server never fills missing content. Keep nested test input strings solely in setup. "
         "Do not place outer Action/Expected or plan fields inside setup. Supply exactly two cases, a failure "
         "and its successful control. Each has its OWN name, target, setup, action and expected value; "
-        "the renderer puts Target:, Setup:, Action:, Expected: on the SAME line as each value. "
+        "Write each case in the shown order: name, target, action, expected, setup. Finish the action and "
+        "expected properties BEFORE writing the setup string. Before submitting, independently count five "
+        "sibling keys in EACH case; words inside a string never count as keys. "
+        "A case with only name, target and setup is INVALID even when setup includes Action: and Expected:. "
+        "The renderer puts Target:, Setup:, Action:, Expected: on the SAME line as each value. "
         "Use literal inputs or exact supplied fixture fields; trace calls and assertions through supplied code. "
         "Descriptions like 'prompt contains' or 'answer contains' are not concrete inputs. "
         "A nested check_answer/check_deliverables control needs every section its own prompt requires. "
         "Do not handwrite a nested report control: use an explicitly supplied complete fixture field, "
-        "or choose the narrow check_completion_json guard with literal prompt/answer inputs as shown below. "
+        "or choose a narrow guard with literal inputs when that guard is the assigned behavior. "
+        "Prefer two small direct behavior cases over a recursive report-about-a-report; a successful control "
+        "must be independently specified, not the failure setup with an imagined complete answer. "
         "check_completion_json expects ONLY accepted/reason keys, never the regression_tests/plan/completion "
         "transport envelope. That envelope goes through render_report first; it is not completion JSON. "
         "Prefer a small direct function/state fixture over a long escaped report; never copy historical rejected answers. "
         "Cite existing paths/symbols, actual exception text and required kind arguments. "
         "For direct acceptance-guard calls, use literal prompt/answer assignments in setup. "
-        'For a direct guard case use expected={"guard_outcome":"reject"} or {"guard_outcome":"pass"}. '
+        'For a direct guard case, the expected field must be a JSON object: '
+        '"expected": {"guard_outcome":"reject"} or "expected": {"guard_outcome":"pass"}. '
+        "Do not quote or JSON-encode that object into a string. "
         "This explicit outcome is checked against the literal inputs; only then is Expected rendered from "
         "the guard's actual error text or returns None. Wrong outcomes are rejected, never repaired. "
         "Other cases use an expected string. Any string for a guard must quote its full exact ResultRejected "
         "error; paraphrased errors and wrong error classes are rejected. "
-        "The Web Bob guard examples below are derived from the running guard; preserve their literal inputs "
-        "and expectations when using them. For this supplied dispatch/completion regression assignment, "
-        "use both supplied narrow guard cases unchanged and adapt the plan/findings to the named ongoing task. "
+        "Choose targets that exercise the behavior in the assigned task and supplied source. "
+        "A valid completion guard example does not test unrelated disk, deployment, or dispatch behavior. "
+        "If the original task or relevant source is missing, disclose that limit and do not infer behavior "
+        "from a lane name. Do not substitute template cases for the requested regressions. "
         "A missing JSON answer NEVER has a pass outcome. "
         "Do not write an intentionally false OUTER expectation to test the draft auditor. To test the auditor, "
         "the false draft belongs inside setup and Action must call the auditor, not the inner guard. "
         "Drafts are unexecuted; no tools or execution claims. Disclose missing original task/evidence. "
         "Completion describes YOUR delivered report, not a server vote or lane closure. "
+        "Complete, grounded unexecuted drafts are the requested report deliverable; running tests is not "
+        "required for this report. A conditional plan may retain the lane hold while completion.accepted "
+        "is true for the finished report. "
         "Use accepted=false if incomplete; missing drafts cannot claim completion. Replace every bracketed value. "
         + ("Tie the plan to the named ongoing task. Read current code: validate existing coverage when already implemented. "
            "For Web Bob validation use python3 -m unittest discover -s services -p 'test_*.py'; "
            "exit requires actual worker results and live gates, otherwise remain blocked. "
            "The server renders these outer labels (supply values via plan fields, not Markdown):\n" + heading +
            ":\nChange:\nValidation:\nExit condition:\n" if heading else "Use plan=null; no plan is required.\n") +
-        json.dumps(schema, ensure_ascii=False, indent=2) + "\n")
+        examples + json.dumps(schema, ensure_ascii=False, indent=2) + "\n")
 
 
 def render_report(task, answer, kind=None):
@@ -181,7 +213,8 @@ def render_report(task, answer, kind=None):
         raise ResultRejected("Missing or unknown structured regression report fields")
 
     def line(value, error):
-        if not isinstance(value, str) or not value.strip():
+        if (not isinstance(value, str) or not value.strip()
+                or re.fullmatch(r"(?i)(?:TBD|TODO|N/A|none|\.\.\.)[.!]?", value.strip(" *`\t\r\n"))):
             raise ResultRejected(error)
         # Preserve literal input line breaks as escaped text, never report labels.
         return value.strip().replace('\r\n', '\n').replace('\r', '\n').replace('\n', r'\n')
@@ -205,11 +238,16 @@ def render_report(task, answer, kind=None):
         rendered.append(heading + ':')
         for label, key in (('Change', 'change'), ('Validation', 'validation'), ('Exit condition', 'exit_condition')):
             rendered.append(label + ': ' + line(plan[key], plan_error))
-    # The completion object is copied verbatim as JSON data; check_answer still
-    # validates its exact keys, boolean, reason and accepted=true requirement.
+    # Every structured report carries completion, including plain test-writing
+    # prompts that do not independently request JSON in their task text.
+    check_completion_json('Return JSON with accepted/reason fields.', json.dumps(report['completion']))
     rendered.extend(['', '```json', json.dumps(report['completion'], ensure_ascii=False), '```',
                      'Findings/limits: ' + line(report['findings_limits'], 'Missing concrete Findings/limits closing sentence')])
     answer = '\n'.join(rendered)
+    # Validate the complete outer report before returning it to any worker.
+    # In particular, accepted=true cannot cover a placeholder field, missing
+    # findings, or invalid completion. Publication still needs semantic review.
+    check_deliverables(task, answer, kind)
     check_literal_guard_drafts(answer)  # Never repair a worker's contradictory expectation.
     return answer
 
@@ -231,10 +269,11 @@ def evidence(repo, worker, task, redact, kind=None):
     # tracked example too; it is evidence, never a replacement worker answer.
     replay_fixture = "services/fixtures/texting_jobcompletion_1403.json"
     plan_example = "services/fixtures/texting_regression_drafts_1658.json"
-    examples = {plan_example, "services/test_replay_completion.py"} if preferred else set()
+    guard_assignment = bool(preferred) and completion_guard_task(task)
+    examples = {plan_example, "services/test_replay_completion.py"} if guard_assignment else set()
     if preferred and "services/result_acceptance.py" in task:
         examples.update((replay_fixture, "services/test_replay_completion.py"))
-    elif preferred:
+    elif guard_assignment:
         examples.add("services/fixtures/texting_jobcompletion_1035.json")
     paths = sorted({name for name in paths if name and safe_source(repo, name)},
                    key=lambda name: (name not in examples, name not in task, preferred.get(name, len(preferred)),
@@ -273,11 +312,19 @@ def evidence(repo, worker, task, redact, kind=None):
             if b"\0" in raw or remaining <= 0:
                 omitted.append(name)
                 continue
+            projected_fixture = (name == PROBE_HISTORY or (name == plan_example and guard_assignment) or
+                                 (preferred and name == "services/fixtures/texting_jobcompletion_1035.json"))
+            if projected_fixture and len(raw) > size:
+                # These fixtures exclude historical answers via field projection.
+                # A partial JSON prefix cannot be projected safely: never fall
+                # back to raw text that leaks an excluded, truncated answer.
+                omitted.append(name)
+                continue
             if len(raw) > size:
                 truncated.append(name)
             text = redact(raw[:size].decode("utf-8", "replace"))
             rendered_fields = None
-            if name == plan_example and len(raw) <= size:
+            if name == plan_example and guard_assignment and len(raw) <= size:
                 # Match the requested transport. A Markdown example competed
                 # with JSON instructions and induced malformed nested drafts.
                 example = json.loads(text)
@@ -285,9 +332,10 @@ def evidence(repo, worker, task, redact, kind=None):
                 example["complete_report"]["regression_tests"] = completion_guard_examples(structured=True)
                 text = ("Rendered fixture fields: evidence_limits and complete_report only. "
                         "regression_tests regenerated from the running completion guard (literal inputs and exact outcomes). "
-                        "Unexecuted JSON transport example; adapt the plan and findings to YOUR assigned task.\n"
+                        "Optional unexecuted JSON transport example; choose regressions, plan and findings "
+                        "that test YOUR assigned task.\n"
                         + example["evidence_limits"] + "\n\n" + json.dumps(example["complete_report"], ensure_ascii=False, indent=2))
-            elif preferred and name == "services/fixtures/texting_jobcompletion_1035.json" and len(raw) <= size:
+            elif (name == PROBE_HISTORY or preferred and name == "services/fixtures/texting_jobcompletion_1035.json") and len(raw) <= size:
                 # Historical answer/layout text induced paraphrased inputs and
                 # invalid one-case controls. Keep provenance, disclose omission,
                 # and show the concrete transport example after current source.
