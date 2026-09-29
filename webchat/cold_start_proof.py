@@ -1,4 +1,4 @@
-"""Prove chat refresh independence from delayed dashboard loading in browsers."""
+"""Prove chat refresh and safe recovery from lost responses in real browsers."""
 import argparse
 import json
 import os
@@ -36,7 +36,7 @@ def main():
             assert not fixture.mock.sends and not fixture.mock.unexpected_writes
             assert not fixture.providers.calls and not task_queue.tasks(fixture.root)
             assert ('POST', '/web-bob/v1/confirm') not in fixture.mock.calls
-            evidence.update(scope='isolated synthetic reminders; real HTTP/browser; delayed overview response',
+            evidence.update(scope='isolated synthetic reminders; real HTTP/browser; delayed overview and lost POST acknowledgment',
                             real_texts_sent=0, model_calls=0, queued_workers=0)
             (args.output_dir / 'evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
             print(json.dumps(evidence))
