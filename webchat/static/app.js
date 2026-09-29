@@ -1384,7 +1384,9 @@ if ($("login-form")) {
       await refreshList(); await poll(); $("messages").scrollTop = $("messages").scrollHeight;
       const boot = [refreshJobs(), refreshOverview()];
       if ($("song-editor")) boot.push(loadSong());
-      await Promise.allSettled(boot);
+      // Secondary tabs must not hold up chat polling or reconnect listeners.
+      // Each refresh owns its errors and loading guard; observe all rejections.
+      void Promise.allSettled(boot);
       setInterval(() => { if (!document.hidden) { refreshJobs(); refreshOverview(); } }, 8000);
       setInterval(() => { if (!document.hidden) poll(); }, 1200);
       setInterval(() => { if (overviewFetchedAt && Date.now() - overviewFetchedAt > 30000) clearOverview(); if (jobsFetchedAt && Date.now() - jobsFetchedAt > 30000) clearJobs(); }, 1000);
