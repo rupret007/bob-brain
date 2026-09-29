@@ -220,6 +220,20 @@ def group_result_receipt(rows, label):
 
 
 class TaskDispatch:
+    def paused_dispatch_reply(self, conversation):
+        """Keep solo maintenance safe without ending a real request at a dead end."""
+        if not (self.root / 'conductor/SOLO-WORKER').exists():
+            return None
+        message = conversation['messages'][-1]
+        message['dispatch_blocked'] = (
+            "Additional project workers are disabled by the current solo Codex setting. "
+            "This request did not start or queue them, and no provider restriction was applied. "
+            "Web Bob chat can still help with the requested work here.")
+        self.save(conversation)
+        self.conversations[conversation['id']] = conversation
+        self.launch(conversation['id'])
+        return self.public(conversation)
+
     def submit_council(self, conversation, topic, request_id):
         # Council has the same journal and receipt contract as every other job.
         description = ("max-mode Council: " + topic + "\n"
@@ -234,6 +248,9 @@ class TaskDispatch:
         try:
             if self.ledger_root(conversation["id"]) != self.root:
                 raise ValueError("Worker dispatch is disabled in a drill overlay.")
+            paused = self.paused_dispatch_reply(conversation)
+            if paused is not None:
+                return paused
             if (self.root / "conductor/MAINTENANCE").exists():
                 raise ValueError("Scheduling is paused for maintenance; no assignments were queued.")
             packages = plan(self.root, conversation, description, workers)
@@ -293,6 +310,9 @@ class TaskDispatch:
                 raise ValueError(refusal)
             if self.ledger_root(identifier) != self.root:
                 raise ValueError("Worker dispatch is disabled in a drill overlay. Use a normal conversation.")
+            paused = self.paused_dispatch_reply(conversation)
+            if paused is not None:
+                return paused
             if (self.root / "conductor/MAINTENANCE").exists():
                 raise ValueError("Scheduling is paused for maintenance; this task was not queued.")
             if project_batch:

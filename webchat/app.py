@@ -667,7 +667,7 @@ class Chat(TaskDispatch):
             # reach the model with the original text instead of becoming a
             # successful, acknowledgement-only reply. Bare follow-ups were
             # handled above; an explicit hold-lift remains a control turn.
-            if transition == "resume" and chat_intent.LIFT.match(chat_intent.command(text)):
+            if transition == "resume" and chat_intent.LIFT.fullmatch(chat_intent.command(text).rstrip(".! ")):
                 return self.intent_reply(conversation, "Ready when you are.", reconcile=True)
             pending = conversation.get("pending_job")
             pending_council = conversation.get("pending_council")
@@ -809,7 +809,7 @@ class Chat(TaskDispatch):
             from reply_authority import HOLD_QUESTION, STATUS_QUESTION
             if HOLD_QUESTION.match(text):
                 scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
-                return self.intent_reply(conversation, chat_intent.hold_reply(scopes) if scopes else "Ready when you are.")
+                return self.intent_reply(conversation, chat_intent.hold_reply(scopes) if scopes else "There are no active conversation holds.")
             if ledger == self.root and STATUS_QUESTION.search(text):
                 return self.status_reply(conversation, text)
             if ledger == self.root:

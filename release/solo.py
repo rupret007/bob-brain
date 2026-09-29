@@ -226,6 +226,10 @@ def sticky_greeting_replay(client, *, real):
     """Repeat Jeff's exact incident in a fresh persisted conversation."""
     cid = client.new()
     receipts = []
+    submit(client, cid, 'Hey there', provider='gemini' if real else None)
+    # Deliberately persist a dispatcher ready-line before repeating the incident.
+    submit(client, cid, 'Hold WebJam')
+    submit(client, cid, 'go')
     for number in (1, 2):
         # Select Gemini for the product-answer check and require its receipt.
         value, answer = submit(client, cid, RESTART_PROMPT, provider='gemini' if real else None)
@@ -245,6 +249,15 @@ def sticky_greeting_replay(client, *, real):
         receipts.append(dict(check='Jeff sticky-greeting live replay', turn=number,
                              conversation_id=cid, request_id=answer['request_id'], prompt=RESTART_PROMPT,
                              provider=provider, answer=content, real_provider=real, passed=True))
+    start_prompt = 'Ok start up all work here. Max effort on web bob before we loose grok bot'
+    _, started = submit(client, cid, start_prompt, provider='gemini' if real else None)
+    require(started.get('provider') in ({'gemini'} if real else {'fixture'}),
+            'Solo work request bypassed the model')
+    require('solo Codex' in started['content'] and 'Ready when you are' not in started['content'],
+            'Solo work request did not explain the current restriction')
+    receipts.append(dict(check='Jeff start-all-work maintenance recovery', prompt=start_prompt,
+                         provider=started['provider'], answer=started['content'],
+                         conversation_id=cid, request_id=started['request_id'], passed=True))
     return receipts
 
 
@@ -502,7 +515,7 @@ def staging(root, sha, feature):
         class StagingProviders(OfflineProviders):
             def reply(self, conversation, cancel, progress):
                 user = next(m for m in reversed(conversation['messages']) if m['role'] == 'user')
-                if user['content'] == RESTART_PROMPT:
+                if user['content'] in (RESTART_PROMPT, 'Ok start up all work here. Max effort on web bob before we loose grok bot'):
                     return dict(content='AdoptIQ, Fantasy Football and WebJam can be scoped to Gemini and MiniMax. '
                                 'The worker runner is stopped, so those projects have not restarted. '
                                 'We can discuss the next steps here.', provider='fixture', attempts=[])
@@ -514,6 +527,8 @@ def staging(root, sha, feature):
                     tokens = re.findall(r'(?:clarinet|cello)-[0-9a-f]{8}', bundle['text'])
                     return dict(content='Red. ' + ' '.join(tokens) + ' <bob-webchat-attachment media_id="' + metas[0]['media_id'] + '" />', provider='fixture', attempts=[])
                 return super().reply(conversation, cancel, progress)
+        (private / 'conductor').mkdir(exist_ok=True)
+        (private / 'conductor/SOLO-WORKER').touch()
         chat = Chat(private / 'conductor/webchat', private, StagingProviders(),
                     texting=Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token)))
         if ORDER.index(feature) >= ORDER.index('remaining'):
