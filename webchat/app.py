@@ -24,6 +24,7 @@ from collections import deque
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.error import URLError
 from urllib.parse import parse_qs, urlsplit
 
 from providers import Cancelled, ProviderError, Providers, Redactor, UUID, clean_env, run
@@ -50,6 +51,20 @@ import chat_intent
 from jobs_view import build_jobs_view, result_text
 from build_info import BUILD, STATIC, VERSION_QUESTION, render_page
 from texting import Texting
+from bob_gaps import (
+    append_profile_memory,
+    capture_reply,
+    capture_screenshot,
+    format_web_search_reply,
+    memory_confirm_prompt,
+    needs_web_search,
+    parse_memory_confirm,
+    parse_remember,
+    parse_screenshot,
+    resolve_capture_path,
+    web_search,
+)
+from bob_gaps import MEMORY_CANCEL as MEMORY_DISMISS
 
 HERE = Path(os.environ.get("BOB_WEBCHAT_DIR", Path(__file__).resolve().parent)).resolve()
 ROOT = Path(os.environ.get("BOB_ROOT", HERE.parent.parent)).resolve()
@@ -219,10 +234,128 @@ class Chat(TaskDispatch):
             return self.public(value)
 
     def public(self, value):
-        excluded = {"codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job"}
+        excluded = {"codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job",
+                    "pending_memory", "pending_memory_id"}
         # Extensions never see core-private state or mutable conversation objects.
         filtered = {k: copy.deepcopy(v) for k, v in value.items() if k not in excluded}
         return {k: v for k, v in self.texting.public(filtered).items() if k not in excluded}
+
+    def bob_gaps_memory_turn(self, conversation, text, request_id, provider="auto"):
+        if provider != "auto":
+            return None
+        identifier = conversation["id"]
+        ledger = self.ledger_root(identifier)
+        if ledger != self.root:
+            return None
+        pending_memory = conversation.get("pending_memory")
+        memory_confirm, memory_proposal = parse_memory_confirm(text)
+        if memory_confirm and not pending_memory:
+            return self.intent_reply(conversation, "No memory is waiting for confirmation. Ask me to remember it again.", provider="state")
+        if memory_confirm and pending_memory:
+            expected = conversation.get("pending_memory_id")
+            if memory_proposal and (not expected or memory_proposal != expected):
+                conversation["messages"][-1].update(
+                    status="done",
+                    content="That memory button is stale. Use the latest card or ask again.",
+                    provider="state",
+                    action_card={"id": request_id, "state": "refused", "executable": False, "reason": "Stale memory proposal"},
+                )
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                return self.public(conversation)
+            conversation.pop("pending_memory", None)
+            conversation.pop("pending_memory_id", None)
+            try:
+                saved = append_profile_memory(self.root, pending_memory)
+            except OSError as exc:
+                conversation["pending_memory"] = pending_memory
+                conversation["pending_memory_id"] = expected or request_id
+                conversation["messages"][-1].update(
+                    status="done",
+                    content=f"Error: Could not save memory to profile. ({exc})",
+                    provider="state",
+                    action_card={"id": request_id, "state": "refused", "executable": False, "reason": "Save failed"},
+                )
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                return self.public(conversation)
+            conversation["messages"][-1].update(
+                status="done",
+                content=f"Saved to durable memory:\n\n`{saved}`",
+                provider="state",
+                action_card={"id": request_id, "state": "done", "executable": False, "reason": "Memory saved"},
+            )
+            self.save(conversation)
+            self.conversations[identifier] = conversation
+            invalidate = getattr(self.providers, "invalidate_snapshot", None)
+            if invalidate:
+                invalidate()
+            self.record_turn(conversation_id=identifier, ask=text, provider="state", jobs=[], files=["conductor/webchat/memory/profile.md"],
+                        commits=[], confirmations=[pending_memory[:200]], refusals=[], open_items=[], request_id=request_id)
+            state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
+            return self.public(conversation)
+        if MEMORY_DISMISS.match(text) and pending_memory:
+            conversation.pop("pending_memory", None)
+            conversation.pop("pending_memory_id", None)
+            conversation["messages"][-1].update(status="done", content="Memory save cancelled.", provider="state",
+                action_card={"id": request_id, "state": "cancelled", "executable": False, "reason": "Memory dismissed"})
+            self.save(conversation)
+            self.conversations[identifier] = conversation
+            return self.public(conversation)
+        if pending_memory and not memory_confirm:
+            conversation.pop("pending_memory", None)
+        fact = parse_remember(text)
+        if fact:
+            conversation["pending_memory"] = fact
+            conversation["pending_memory_id"] = request_id
+            conversation["messages"][-1].update(
+                status="done",
+                content=memory_confirm_prompt(fact),
+                provider="state",
+                action_card={"id": request_id, "proposal_id": request_id, "kind": "memory", "state": "confirm",
+                             "executable": True, "reason": "Memory: " + fact[:120]},
+            )
+            self.save(conversation)
+            self.conversations[identifier] = conversation
+            return self.public(conversation)
+        return None
+
+    def try_bob_gaps(self, conversation, text, request_id, provider="auto"):
+        """Local parity tools before provider dispatch."""
+        if provider != "auto":
+            return None
+        identifier = conversation["id"]
+        ledger = self.ledger_root(identifier)
+        if ledger != self.root:
+            return None
+        shot_target = parse_screenshot(text)
+        if shot_target is not None:
+            try:
+                capture_id, _path = capture_screenshot(self.root, shot_target or None)
+                conversation["messages"][-1].update(
+                    status="done", content=capture_reply(capture_id, shot_target or None), provider="state")
+            except (OSError, subprocess.CalledProcessError, RuntimeError) as exc:
+                conversation["messages"][-1].update(status="done", content=str(exc), provider="state")
+            self.save(conversation)
+            self.conversations[identifier] = conversation
+            self.record_turn(conversation_id=identifier, ask=text, provider="state", jobs=[], files=["conductor/webchat/captures"],
+                        commits=[], confirmations=[], refusals=[], open_items=[], request_id=request_id)
+            state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
+            return self.public(conversation)
+        if needs_web_search(text):
+            try:
+                result = web_search(text)
+                reply = format_web_search_reply(result)
+            except (OSError, URLError, ValueError, TimeoutError) as exc:
+                reply = f"I could not complete a web search right now ({exc})."
+            conversation["messages"][-1].update(status="done", content=reply, provider="state")
+            self.save(conversation)
+            self.conversations[identifier] = conversation
+            self.record_turn(conversation_id=identifier, ask=text, provider="state", jobs=[], files=[], commits=[],
+                        confirmations=[], refusals=[], open_items=[], request_id=request_id)
+            state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
+            return self.public(conversation)
+        return None
 
     def intent_reply(self, conversation, content, provider="dispatcher"):
         conversation["messages"][-1].update(status="done", provider=provider, content=content)
@@ -352,6 +485,9 @@ class Chat(TaskDispatch):
             ]
             if conversation["title"] == "New conversation":
                 conversation["title"] = text[:65]
+            if not parse_memory_confirm(text)[0] and not parse_remember(text) and not MEMORY_DISMISS.match(text):
+                conversation.pop("pending_memory", None)
+                conversation.pop("pending_memory_id", None)
             if VERSION_QUESTION.search(text):
                 return self.intent_reply(conversation, BUILD["short_sha"])
             # Text intent and confirmations never enter generic job/provider routing.
@@ -365,6 +501,9 @@ class Chat(TaskDispatch):
             from reply_authority import correcting_status
             if correcting_status(text, conversation):
                 return self.status_reply(conversation, text)
+            memory_turn = self.bob_gaps_memory_turn(conversation, text, request_id, provider=provider)
+            if memory_turn:
+                return memory_turn
             transition = chat_intent.apply_turn(intent_state, text, request_id)
             if transition == "hold":
                 held_work, held_worker = followup_work(conversation)
@@ -600,6 +739,9 @@ class Chat(TaskDispatch):
                             request_id=request_id)
                 state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
                 return self.public(conversation)
+            gaps = self.try_bob_gaps(conversation, text, request_id, provider=provider)
+            if gaps:
+                return gaps
             self.launch(identifier)
             return self.public(conversation)
 
@@ -1274,6 +1416,12 @@ class Handler(BaseHTTPRequestHandler):
                 raise RequestError(404, "Audio not found.") from None
             mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
             return self.send(200, path.read_bytes(), mime)
+        if route.startswith("/api/captures/"):
+            capture_id = route.removeprefix("/api/captures/").strip("/")
+            path = resolve_capture_path(chat.root, capture_id)
+            if not path:
+                raise RequestError(404, "Capture not found.") from None
+            return self.send(200, path.read_bytes(), "image/png")
         if route == "/api/lanes":
             identifier = parse_qs(urlsplit(self.path).query).get("conversation_id", [None])[0]
             if identifier:

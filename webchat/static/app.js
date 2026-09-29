@@ -43,6 +43,8 @@ if ($("login-form")) {
     html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
     html = html.replace(/\[([^\]\n]+)\]\(\/api\/jobs\/result\?id=(webchat-[a-f0-9]{32})\)/g,
       '<button type="button" class="job-result-link" data-job-id="$2">$1</button>');
+    html = html.replace(/!\[([^\]]*)\]\((\/api\/captures\/[0-9a-f]+)\)/g,
+      '<img class="chat-capture" src="$2" alt="$1" loading="lazy" />');
     html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" rel="noopener noreferrer" target="_blank">$1</a>');
     html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     html = html.replace(/^### (.+)$/gm, "<h4 class=\"md-h\">$1</h4>");
@@ -215,21 +217,22 @@ if ($("login-form")) {
         if (message.action_card.state === "confirm" && message.action_card.executable) {
           const actions = document.createElement("div"); actions.className = "action-card-actions";
           const council = /council/i.test(message.action_card.reason || "");
+          const memory = message.action_card.kind === "memory" || /^memory:/i.test(message.action_card.reason || "");
           const proposalId = message.action_card.proposal_id || message.action_card.id || "";
           const approve = document.createElement("button");
           approve.type = "button"; approve.className = "action-approve";
-          approve.textContent = council ? "Start review" : "Start job";
+          approve.textContent = memory ? "Save memory" : council ? "Start review" : "Start job";
           approve.addEventListener("click", () => {
             const suffix = proposalId ? ` proposal ${proposalId}` : "";
-            $("message").value = council ? `yes, run council${suffix}` : `yes, start job${suffix}`;
+            $("message").value = memory ? `yes, save memory${suffix}` : council ? `yes, run council${suffix}` : `yes, start job${suffix}`;
             $("message").dispatchEvent(new Event("input"));
             $("composer").requestSubmit();
           });
           const deny = document.createElement("button");
           deny.type = "button"; deny.className = "action-deny";
-          deny.textContent = council ? "Dismiss" : "Not now";
+          deny.textContent = memory ? "Dismiss" : council ? "Dismiss" : "Not now";
           deny.addEventListener("click", () => {
-            $("message").value = council ? "never mind council" : "never mind";
+            $("message").value = memory ? "never mind memory" : council ? "never mind council" : "never mind";
             $("message").dispatchEvent(new Event("input"));
             $("composer").requestSubmit();
           });
