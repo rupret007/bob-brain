@@ -39,14 +39,17 @@ def main():
             print("Bob web chat is healthy at " + URL)
             return 0
         result = subprocess.run(["/usr/bin/screen", "-ls"], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=5)
-        for session in re.findall(r"\t(\d+\.svc-webchat)\s+\(", result.stdout):
-            subprocess.run(["/usr/bin/screen", "-S", session, "-X", "quit"], stdin=subprocess.DEVNULL, timeout=5)
-        result = subprocess.run(["/usr/bin/screen", "-ls"], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=5)
-        if re.search(r"\b\d+\.svc-webchat\s+\(", result.stdout):
-            print("svc-webchat still present after quit; inspect logs/webchat-server.log.")
+        inventory = result.stdout + result.stderr
+        if re.search(r"\b\d+\.svc-webchat(?=\s|$)", inventory):
+            # A slow health probe is not authorization to interrupt an existing chat.
+            print("svc-webchat is present but not responding; inspect it before a deliberate restart.")
+            return 1
+        if not ((result.returncode == 0 and re.search(r"\b\d+ Sockets? in ", inventory))
+                or (result.returncode == 1 and "No Sockets found in " in inventory)):
+            print("Screen inventory is unavailable; refusing to guess whether Web Bob is running.")
             return 1
         env = os.environ.copy()
-        env.setdefault("BOB_WEBCHAT_DRILLS", "1")
+        env.setdefault("BOB_WEBCHAT_DRILLS", "0")
         subprocess.run(["/usr/bin/screen", "-dmS", "svc-webchat", "/bin/bash", str(HERE / "run.sh")],
                        stdin=subprocess.DEVNULL, check=True, timeout=10, env=env)
         for _ in range(40):

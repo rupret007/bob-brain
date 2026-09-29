@@ -104,6 +104,14 @@ This aligns source selection only: it does not recover a pending journal or
 make a partially switched pair of pins safe. Keep using the release transaction;
 startup recovery and admission during interrupted activation remain unfinished.
 
+The periodic `webchat/start.py` launcher leaves an existing `svc-webchat` session
+alone when a health probe fails, including detached, attached or dead screen
+entries. Unknown or failed screen inventories also refuse startup. Only a known
+inventory without that session permits a new launch, with drills off by default.
+This prevents an automatic health check from quitting a slow chat. It does not
+share the release controller lock or recover an activation journal; the broader
+startup/release coordination remains unfinished.
+
 Always maintain at least 5 GiB free; recovery reserves and bounded atomic
 evidence writes are retained from the existing release tooling. Authentication
 secrets never appear in arguments, evidence or source control.
