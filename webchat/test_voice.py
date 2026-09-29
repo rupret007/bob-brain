@@ -57,10 +57,13 @@ class VoiceTests(fixtures.Fixture):
         value = self.chat.conversations[self.identifier]
         value['messages'].append(dict(id=str(uuid.uuid4()), role='assistant', status='done',
                                       content='Private message body and wbtxt-secret', texting=True))
+        value['messages'].append(dict(id=str(uuid.uuid4()), role='assistant', status='done',
+                                      content='Private memory view copper-puffin-739', private_memory=True))
         self.chat.voice.start(self.identifier, self.owner)
         prompt = json.dumps(self.configs[-1])
         self.assertNotIn('Private message body', prompt)
         self.assertNotIn('wbtxt-secret', prompt)
+        self.assertNotIn('copper-puffin-739', prompt)
 
     def test_voice_text_command_marks_its_source_with_later_transcripts_present(self):
         source = self.entry('texting help')

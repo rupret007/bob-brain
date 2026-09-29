@@ -56,6 +56,35 @@ test('hanging up during microphone permission stops a late stream',async()=>{
   const starting=f.controller.start('chat');await f.controller.stop();mic.resolve(f.stream);await starting;
   assert.equal(f.tracks[0].stopped,true);assert.equal(f.sockets.length,0);
 });
+test('hangup handles a rejected audio resume while microphone permission is pending',async()=>{
+  const mic=deferred(),resume=deferred(),f=fixture({getUserMedia:()=>mic.promise});
+  f.window.AudioContext.prototype.resume=()=>resume.promise;
+  const starting=f.controller.start('chat');await f.controller.stop();
+  resume.reject(Object.assign(new Error('Audio context closed'),{name:'InvalidStateError'}));
+  await pause();mic.resolve(f.stream);await starting;await pause();
+  assert.equal(f.controller.active,false);assert.equal(f.tracks[0].stopped,true);
+  assert.equal(f.sockets.length,0);assert.equal(f.requests.length,0);
+  assert.equal(f.states.at(-1).phase,'ended');
+});
+test('audio startup rejection stays handled and reports audio rather than microphone denial',async()=>{
+  const mic=deferred(),resume=deferred(),f=fixture({getUserMedia:()=>mic.promise});
+  f.window.AudioContext.prototype.resume=()=>resume.promise;
+  const starting=f.controller.start('chat');
+  resume.reject(Object.assign(new Error('Private low-level detail'),{name:'NotAllowedError'}));
+  await pause();mic.resolve(f.stream);await starting;await pause();
+  assert.equal(f.controller.active,false);assert.equal(f.tracks[0].stopped,true);
+  assert.equal(f.contexts[0].state,'closed');assert.equal(f.requests.length,0);
+  assert.match(f.states.at(-1).text,/Audio could not start/);
+  assert.doesNotMatch(f.states.at(-1).text,/Microphone blocked|Private low-level detail/);
+});
+test('late startup resume after hangup cannot load a worklet or open a provider',async()=>{
+  const resume=deferred(),f=fixture();
+  f.window.AudioContext.prototype.resume=()=>resume.promise;
+  const starting=f.controller.start('chat');await pause();
+  let modules=0;f.contexts[0].audioWorklet.addModule=async()=>{modules++;};
+  await f.controller.stop();resume.resolve();await starting;
+  assert.equal(modules,0);assert.equal(f.requests.length,0);assert.equal(f.tracks[0].stopped,true);
+});
 test('hanging up while token request is pending ends that late session',async()=>{
   const token=deferred();const f=fixture({api:async(route)=>route.endsWith('/start')?token.promise:{ok:true}});
   const starting=f.controller.start('chat');await pause();await f.controller.stop();
@@ -156,6 +185,20 @@ test('an interrupted turn cannot swallow the next spoken utterance',async()=>{
   f.controller.event(s,{serverContent:{turnComplete:true}});
   assert.equal(s.turns.length,2);assert.equal(s.turns[0].user,'Tell me a story');
   assert.equal(s.turns[1].user,'Stop please');assert.equal(s.turns[1].finished,false);await f.controller.stop();
+});
+test('private memory inspection results never enter a voice tool response',async t=>{
+  const f=fixture({api:async(route)=>{
+    if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
+    if(route.endsWith('/tool'))return {request_id:'r',conversation:{messages:[{role:'assistant',request_id:'r',status:'done',
+      private_memory:true,content:'Private saved-note fixture copper-puffin-739'}]}};
+    return {ok:true};
+  }});
+  t.after(()=>f.controller.stop());await f.controller.start('chat');const s=f.controller.session;
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'show my saved memories'}}});s.inputTurn.lastInputAt=0;
+  await f.controller.tool(s,{id:'memory',name:'ask_bob'});
+  const sent=JSON.stringify(s.socket.sent);
+  assert.ok(!sent.includes('copper-puffin-739'));
+  assert.match(sent,/saved memory view is ready in chat/);
 });
 test('suspended Safari output keeps Resume audio visible',async()=>{
   const f=fixture();await f.controller.start('chat');const s=f.controller.session;

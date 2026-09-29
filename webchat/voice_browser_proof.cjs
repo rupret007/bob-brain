@@ -20,7 +20,7 @@ async function instrument(page) {
   await page.addInitScript(() => {
     const NativeAudio = window.AudioContext;
     const NativeSocket = window.WebSocket;
-    window.voiceProof = {inputPackets:0,outputPackets:0,outputBytes:0,starts:0,stops:0,interruptions:0,tools:0,toolResponses:0,turns:0,tracks:[],sockets:[],audio:[],contexts:[]};
+    window.voiceProof = {inputPackets:0,outputPackets:0,outputBytes:0,starts:0,stops:0,interruptions:0,tools:0,toolResponses:0,turns:0,tracks:[],sockets:[],closes:[],audio:[],contexts:[]};
     window.AudioContext = class extends NativeAudio {
       constructor(...args) { super(...args); voiceProof.contexts.push(this); }
       createBufferSource() {
@@ -33,6 +33,7 @@ async function instrument(page) {
     window.WebSocket = class extends NativeSocket {
       constructor(...args) {
         super(...args); voiceProof.sockets.push(this);
+        this.addEventListener('close', event => voiceProof.closes.push({code:event.code,wasClean:event.wasClean}));
         this.addEventListener('message', event => {
           try {
             const value = JSON.parse(typeof event.data === 'string' ? event.data : new TextDecoder().decode(event.data));
@@ -190,6 +191,40 @@ async function instrument(page) {
     await page.locator('#live-call').click();
     await page.waitForFunction(()=>document.querySelector('#call-status').textContent.includes('Microphone blocked'));
     await screenshot('iphone-permission');results.checks.push('microphone denial shows recovery and leaves chat usable');
+    await page.locator('#end-call').click();
+    await page.evaluate(()=>{
+      window.AudioContext.prototype.resume = function() {
+        return new Promise((_resolve,reject)=>{window.rejectStartupAudio=reject;});
+      };
+      Object.defineProperty(Object.getPrototypeOf(navigator.mediaDevices),'getUserMedia',{configurable:true,writable:true,
+        value:()=>{
+          const destination=voiceProof.contexts.at(-1).createMediaStreamDestination();
+          const stream=destination.stream;voiceProof.tracks.push(...stream.getTracks());
+          return new Promise(resolve=>{window.grantStartupMicrophone=()=>resolve(stream);});
+        }});
+    });
+    await page.locator('#live-call').click();
+    await page.locator('#end-call').click();
+    await page.evaluate(async()=>{
+      rejectStartupAudio(new DOMException('Closed during permission prompt','InvalidStateError'));
+      await new Promise(resolve=>setTimeout(resolve,100));
+      grantStartupMicrophone();
+    });
+    await page.waitForFunction(()=>voiceProof.tracks.length>0&&voiceProof.tracks.every(t=>t.readyState==='ended'));
+    assert.equal(await page.locator('#call-dialog').getAttribute('data-phase'),'ended');
+    await page.locator('#end-call').click();
+    await page.locator('#live-call').click();
+    await page.evaluate(async()=>{
+      rejectStartupAudio(new DOMException('Audio unavailable','NotAllowedError'));
+      await new Promise(resolve=>setTimeout(resolve,100));
+      grantStartupMicrophone();
+    });
+    await page.waitForFunction(()=>document.querySelector('#call-status').textContent.includes('Audio could not start'));
+    assert.equal(await page.locator('#live-call').getAttribute('aria-pressed'),'false');
+    assert.equal(await page.evaluate(()=>voiceProof.sockets.length),0, 'Permission/startup failure must not open the provider');
+    assert.equal(await page.evaluate(()=>voiceProof.tracks.every(t=>t.readyState==='ended')),true);
+    await screenshot('iphone-audio-startup');
+    results.checks.push('late microphone and rejected audio startup clean up without unhandled errors or provider calls');
     assert.deepEqual(errors,[]);results.page_errors=errors;results.ok=true;
     fs.writeFileSync(path.join(evidence,`${engine}-proof.json`),JSON.stringify(results,null,2)+'\n');
     console.log(JSON.stringify(results,null,2));
@@ -198,7 +233,7 @@ async function instrument(page) {
     console.error(error.message);console.error('UI:',await page.locator('#call-status').textContent().catch(()=>''));
     console.error('Page errors:',errors);process.exitCode=1;
     console.error('Media diagnostics:',await page.evaluate(()=>({contexts:voiceProof.contexts.map(c=>c.state),microphone:voiceProof.microphoneContext?.state,
-      tracks:voiceProof.tracks.map(t=>t.readyState),sockets:voiceProof.sockets.map(s=>s.readyState),input:voiceProof.inputPackets,output:voiceProof.outputPackets,
+      tracks:voiceProof.tracks.map(t=>t.readyState),sockets:voiceProof.sockets.map(s=>s.readyState),closes:voiceProof.closes,input:voiceProof.inputPackets,output:voiceProof.outputPackets,
       microphoneFunction: navigator.mediaDevices.getUserMedia.toString().slice(0,100)})).catch(()=>null));
   } finally {
     // Even a failed assertion must hang up its own call before closing the tab.
