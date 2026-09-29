@@ -29,14 +29,25 @@ HELP = ("I can read recent texts and keep replies as drafts. Try ‘texts’, "
         "‘read texts from Alex’, ‘summarize texts from Alex’, or "
         "‘draft reply to Alex: I’ll be there at 6.’ Review the recipient and body, "
         "then send the card’s exact yes + token as a separate chat message. "
-        "Direct-recipient sends use Andrea’s configured owner bridge. If it is unavailable, drafts stay unsent. Instinct is always read-only.")
+        "Direct-recipient sends use Andrea’s configured owner bridge. A missing delivery receipt means delivery is unconfirmed; "
+        "use Check delivery on the draft to inspect it without resending. Instinct is always read-only.")
 BRIDGE_BLOCKED = ("Not sent. Your confirmation was recorded here, but Andrea’s "
                   "owner bridge could not accept this exact draft. "
                   "Ask Andrea for a fresh recipient-bound draft in its registered owner "
                   "chat and approve that card there. This Web Bob confirmation cannot be reused.")
 SENT_VIA_ANDREA = "Sent via Andrea’s BlueBubbles bridge."
-DELIVERY_UNCONFIRMED = ("Confirmation recorded; delivery is unconfirmed. Check the recipient’s "
-                        "thread before preparing another draft. This confirmation cannot be reused.")
+DELIVERY_UNCONFIRMED = ("Confirmation recorded; delivery is unconfirmed. Use Check delivery on this draft "
+                        "to look for Andrea’s receipt without resending. This confirmation cannot be reused.")
+
+
+def consumed_delivery_reply(draft):
+    """An approval or cancellation cannot undo a handoff or establish its outcome."""
+    if draft and draft['state'] in ('delivery_unconfirmed', 'sent'):
+        outcome = ('Delivery remains unconfirmed. Use Check delivery; it never resends.'
+                   if draft['state'] == 'delivery_unconfirmed' else
+                   'This draft was already verified sent via Andrea. Web Bob cannot recall it.')
+        return 'That text confirmation was already used. ' + outcome + ' Nothing was resent.'
+    return None
 
 
 class TextingError(Exception):
@@ -398,16 +409,15 @@ class Texting:
             from instinct import READ_ONLY
             draft.update(state='read_only', token=None, read_only=True)
             return READ_ONLY
+        consumed = consumed_delivery_reply(draft)
+        if consumed:
+            return consumed
         match = re.fullmatch(r"yes (wbtxt-[0-9a-f]{32})", text, re.I)
         if not draft or not match:
             if text.lower().startswith("yes wbtxt-"):
                 self.invalidate(conversation)
             return "Nothing sent. Review a fresh text draft and send its exact ‘yes wbtxt-…’ message separately in this chat."
         if draft["state"] != "pending":
-            if draft['state'] in ('delivery_unconfirmed', 'sent'):
-                outcome = ('Delivery remains unconfirmed. Use Check delivery.' if draft['state'] == 'delivery_unconfirmed'
-                           else 'This draft was already verified sent via Andrea.')
-                return 'That text confirmation was already used. ' + outcome + ' Nothing was resent.'
             return "Nothing sent. That text confirmation was already used, cancelled, or replaced. Review a fresh draft."
         if self.instinct.is_target(draft['recipient'], refresh=True):
             from instinct import READ_ONLY
@@ -513,14 +523,16 @@ class Texting:
                 content = self.check_delivery(conversation, check_delivery[1])
             elif cancel:
                 self.invalidate(conversation, "cancelled")
-                content = "Text draft cancelled. Nothing sent."
+                content = consumed_delivery_reply(active) or "Text draft cancelled. Nothing sent."
             elif edit:
                 draft = state.get("drafts", {}).get(edit[2])
-                if not draft or state.get("active") != draft["id"] or draft["state"] not in ("pending", "expired", "editing", "confirmed_not_sent", "read_only"):
-                    raise TextingError("That draft is no longer current. Prepare a fresh text draft.")
-                draft.update(state="editing" if edit[1].lower() == "edit" else "cancelled", token=None)
-                self.andrea.cancel(draft)
-                content = "Confirmation cleared. Edit the draft card, then review it again." if draft["state"] == "editing" else "Text draft cancelled. Nothing sent."
+                content = consumed_delivery_reply(draft)
+                if content is None:
+                    if not draft or state.get("active") != draft["id"] or draft["state"] not in ("pending", "expired", "editing", "confirmed_not_sent", "read_only"):
+                        raise TextingError("That draft is no longer current. Prepare a fresh text draft.")
+                    draft.update(state="editing" if edit[1].lower() == "edit" else "cancelled", token=None)
+                    self.andrea.cancel(draft)
+                    content = "Confirmation cleared. Edit the draft card, then review it again." if draft["state"] == "editing" else "Text draft cancelled. Nothing sent."
             elif replace or compose:
                 # Even a failed/ambiguous edit withdraws the previous confirmation.
                 self.invalidate(conversation)
