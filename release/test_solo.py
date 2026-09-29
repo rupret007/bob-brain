@@ -156,6 +156,17 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
             solo.verify_gates('a' * 40, 'remaining', checks, review)
 
+    def test_bridge_cannot_release_without_pinned_andrea_evidence(self):
+        self.check['feature'] = self.review['feature'] = 'bridge'
+        for name in ('media-browser', 'voice-js', 'voice-browser', 'instinct-browser', 'remaining-browser', 'bridge-contract'):
+            self.check['results'][name] = self.check['results']['browser']
+        checks, review = self.folder / 'checks.json', self.folder / 'review.json'
+        solo.atomic_json(checks, self.check)
+        self.review['checks_sha256'] = solo.digest(checks)
+        solo.atomic_json(review, self.review)
+        with self.assertRaisesRegex(Exception, 'Andrea exact-tip evidence missing'):
+            solo.verify_gates('a' * 40, 'bridge', checks, review)
+
     def test_skipped_required_checks_rejected(self):
         self.check['results']['webchat']['skipped'] = 1
         with self.assertRaisesRegex(Exception, 'skipped'):

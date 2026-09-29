@@ -28,8 +28,43 @@ sys.path[:0] = [str(CODE / d) for d in ('webchat', 'services', 'state', 'reviews
 from texting_deploy_record import atomic_json, atomic_text, require_disk_space, reserve_recovery, release_recovery
 from live_redeploy_check import Client, require
 
-ORDER = ('texting', 'gaps', 'media', 'voice', 'ui', 'instinct', 'remaining')
+ORDER = ('texting', 'gaps', 'media', 'voice', 'ui', 'instinct', 'remaining', 'bridge')
 BASE = 'draft/webbob-clean-0927'
+
+
+def andrea_pin():
+    return json.loads((CODE / 'release/andrea-bridge.json').read_text())
+
+
+def andrea_gates(root):
+    sha = andrea_pin()['sha']
+    folder = root / 'conductor/reviews' / ('SOLO-0018-andrea-bridge-' + sha[:12])
+    results = [json.loads((folder / (name + '.json')).read_text()) for name in ('major', 'docs', 'build')]
+    for row in results:
+        require(row['sha'] == sha and row['exit'] == 0 and digest(row['log']) == row['log_sha256'],
+                'Andrea exact-tip full checks failed or changed')
+    return dict(sha=sha, results=results)
+
+
+def bridge_replay(root, cid, draft_id):
+    """Inspect health and committed cancellation; never try an ordinary send."""
+    import sqlite3
+    from texting import Andrea
+    config_path = root / 'conductor/webchat/andrea-bridge.json'
+    require(config_path.is_file() and not config_path.is_symlink() and not config_path.stat().st_mode & 0o077,
+            'Bridge configuration is not private')
+    cfg = json.loads(config_path.read_text())
+    health = Andrea(cfg['url'], cfg['token']).call('health')
+    require(health.get('ok') and health.get('connected') and health.get('paused') is False and
+            health.get('instinctReadOnly') is True and health.get('sha') == andrea_pin()['sha'],
+            'Actual Andrea bridge is unavailable or at the wrong revision')
+    saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
+    remote = saved['_texting']['drafts'][draft_id]['bridge']
+    with sqlite3.connect(Path(cfg['audit_db']).resolve().as_uri() + '?mode=ro', uri=True) as db:
+        row = db.execute('SELECT state, digest, actionId FROM webbob_drafts WHERE id = ?', (remote['draftId'],)).fetchone()
+    require(row == ('cancelled', remote['digest'], remote['actionId']), 'Andrea cancellation was not durably recorded')
+    return [dict(check='actual Andrea exact-build health, persisted challenge and durable cancellation',
+                 andrea_sha=health['sha'], passed=True, real_texts_sent=0)]
 
 
 def run(argv, **kw):
@@ -114,13 +149,17 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
         protected = Instinct(None)
         protected.bind_state(root / 'conductor/webchat')
         protected.observe(chats)
-        choices = [c for c in chats if not protected.is_target(recipient(c))]
+        choices = [c for c in chats if not protected.is_target(recipient(c)) and
+                   (feature != 'bridge' or (len(recipient(c)['addresses']) == 1 and
+                    re.fullmatch(r'(?:iMessage|SMS|RCS);-;[^;\s]+', c['guid'])))]
         require(bool(choices), 'No ordinary messaging thread available for no-send replay')
         target = choices[0]['guid']
     _, drafted = submit(client, cid, 'draft reply to ' + target + ': Web Bob no-send verification. Cancel this draft.')
     card = drafted.get('text_draft', {})
     require(card.get('state') == 'pending' and card.get('body') == 'Web Bob no-send verification. Cancel this draft.',
             'Draft did not bind the exact recipient/body')
+    if feature == 'bridge':
+        require(card.get('delivery_available') is True, 'Andrea did not persist the exact draft challenge')
     token = card['confirm_message']
     _, bare = submit(client, cid, 'yes')
     require(bare['content'].startswith('Nothing sent.'), 'Bare yes authorized delivery')
@@ -129,6 +168,8 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
     _, stale = submit(client, cid, token)
     require('already used, cancelled, or replaced' in stale['content'], 'Cancelled token was accepted')
     receipts.append(dict(check='exact draft, bare approval, cancel, stale token', passed=True))
+    if feature == 'bridge' and real_reads:
+        receipts.extend(bridge_replay(root, cid, card['id']))
     _, newer = submit(client, cid, 'draft reply to ' + target + ': Version interruption check. Do not send.')
     require(newer.get('text_draft', {}).get('state') == 'pending', 'Interruption-check draft failed')
     confirmation = newer['text_draft']['confirm_message']
@@ -142,7 +183,7 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
         receipts.extend(media_replay(client, root, real=real_reads))
     if ORDER.index(feature) >= ORDER.index('instinct'):
         receipts.extend(instinct_replay(client, cid))
-    if feature == 'remaining':
+    if ORDER.index(feature) >= ORDER.index('remaining'):
         receipts.extend(remaining_replay(client, cid))
     from task_dispatch import task_queue
     require(not any(r['conversation_id'] == cid for r in task_queue.tasks(root).values()), 'Replay queued work')
@@ -291,6 +332,7 @@ def staging(root, sha, feature):
     with tempfile.TemporaryDirectory(prefix='solo-staging-') as folder:
         private = Path(folder)
         mock = MockMessaging(private)
+        mock.enable_web_bob_send = feature == 'bridge'
         if ORDER.index(feature) >= ORDER.index('instinct'):
             from instinct_fixture import GUID, MESSAGES
             mock.chats.append(dict(guid=GUID, displayName='Instinct',
@@ -309,7 +351,7 @@ def staging(root, sha, feature):
                 return super().reply(conversation, cancel, progress)
         chat = Chat(private / 'conductor/webchat', private, StagingProviders(),
                     texting=Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token)))
-        if feature == 'remaining':
+        if ORDER.index(feature) >= ORDER.index('remaining'):
             band = private / 'bin/band_messages_watch_run.py'
             band.parent.mkdir()
             band.write_text("CHATS = [{'name': 'Stalemate', 'chat_guid': 'fixture-band'}]\n")
@@ -353,6 +395,9 @@ def checks(root, feature):
     require_disk_space(root, CODE, 'checks')
     commands = {name: [sys.executable, '-m', 'unittest', 'discover', '-s', name, '-p', 'test_*.py']
                 for name in ('webchat', 'services', 'reviews', 'release')}
+    if feature == 'bridge':
+        commands['bridge-contract'] = [sys.executable, 'release/bridge_probe.py', '--andrea',
+            str(root / 'workspaces/andrea-webbob-bridge-0018'), '--output', str(out / 'bridge-contract.json')]
     commands['eval'] = [sys.executable, 'webchat/bob_parity_eval.py']
     commands['browser'] = [sys.executable, 'webchat/texting_proof.py', '--output-dir', str(out / 'texting-browser')]
     if ORDER.index(feature) >= ORDER.index('media'):
@@ -362,7 +407,7 @@ def checks(root, feature):
         commands['voice-browser'] = [sys.executable, 'release/voice_probe.py', '--root', str(root), '--output', str(out / 'voice-browser')]
     if ORDER.index(feature) >= ORDER.index('instinct'):
         commands['instinct-browser'] = [sys.executable, 'webchat/instinct_proof.py', '--output-dir', str(out / 'instinct-browser')]
-    if feature == 'remaining':
+    if ORDER.index(feature) >= ORDER.index('remaining'):
         commands['remaining-browser'] = [sys.executable, 'webchat/remaining_proof.py', '--output-dir', str(out / 'remaining-browser')]
     for path in sorted((CODE / 'webchat').glob('test_*.mjs')):
         commands[path.stem] = ['node', str(path)]
@@ -373,6 +418,8 @@ def checks(root, feature):
         env = {k: v for k, v in os.environ.items() if not any(s in k.upper() for s in ('KEY', 'TOKEN', 'SECRET', 'PASSWORD'))}
         env.pop('PYTHONPATH', None)
         env.pop('NODE_PATH', None)
+        env.pop('BOB_ANDREA_WEBBOB_CONFIG', None)
+        env.pop('ANDREA_WEBBOB_CONFIG_PATH', None)
         # macOS /var is a symlink: existing repo identity tests expect canonical
         # temporary paths, matching the predecessor release harness.
         env['TMPDIR'] = '/private/tmp'
@@ -409,6 +456,8 @@ def checks(root, feature):
     require(identity() == sha, 'Candidate changed during checks')
     passed = all(r['exit'] == 0 and r['skipped'] == 0 for r in results.values())
     record = dict(sha=sha, feature=feature, all_pass=passed, results=results, at=time.time())
+    if passed and feature == 'bridge':
+        record['andrea'] = andrea_gates(root)
     if passed:
         record['staging'] = staging(root, sha, feature)
     atomic_json(out / 'checks.json', record)
@@ -429,8 +478,16 @@ def verify_gates(sha, feature, check_path, review_path):
         required.update(('voice-js', 'voice-browser'))
     if ORDER.index(feature) >= ORDER.index('instinct'):
         required.add('instinct-browser')
-    if feature == 'remaining':
+    if ORDER.index(feature) >= ORDER.index('remaining'):
         required.add('remaining-browser')
+    if feature == 'bridge':
+        required.add('bridge-contract')
+        require(check.get('andrea', {}).get('sha') == andrea_pin()['sha'], 'Andrea exact-tip evidence missing')
+        for row in check['andrea']['results']:
+            require(row['exit'] == 0 and digest(row['log']) == row['log_sha256'], 'Andrea suite/log changed')
+        contract = json.loads((check_path.parent / 'bridge-contract.json').read_text())
+        require(contract['all_pass'] and contract['andrea_sha'] == andrea_pin()['sha'] and contract['real_texts_sent'] == 0,
+                'Cross-repository protocol proof failed')
     required.update(p.stem for p in (CODE / 'webchat').glob('test_*.mjs'))
     require(required <= check['results'].keys(), 'Missing mandatory suite')
     for name in required:

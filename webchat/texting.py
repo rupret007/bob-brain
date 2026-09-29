@@ -293,6 +293,7 @@ class Texting:
                 continue
             card = {key: copy.deepcopy(draft[key]) for key in
                     ("id", "recipient", "body", "revision", "state", "expires_at")}
+            card['delivery_available'] = bool(draft.get('bridge')) and card['state'] == 'pending'
             if draft.get('read_only') or self.instinct.is_target(draft['recipient']):
                 card['read_only'] = True
                 if card['state'] == 'pending':

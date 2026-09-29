@@ -19,6 +19,17 @@ from app import Chat
 
 
 def probe(andrea):
+    pin = json.loads((CODE/'release/andrea-bridge.json').read_text())
+    sha = subprocess.check_output(['git','-C',str(andrea),'rev-parse','HEAD'],text=True).strip()
+    assert sha == pin['sha'], 'Andrea source differs from the reviewed protocol pin'
+    manifest = json.loads((andrea/'dist/build-provenance.json').read_text())
+    assert manifest['gitCommit'] == sha and manifest['gitDirtyPathCount'] == 0
+    digest = hashlib.sha256()
+    for file in sorted((andrea/'dist').rglob('*')):
+        if file.is_file() and file.name != 'build-provenance.json':
+            digest.update(file.relative_to(andrea/'dist').as_posix().encode()+b'\0')
+            digest.update(file.read_bytes()+b'\0')
+    assert digest.hexdigest() == manifest['artifactSha256'], 'Andrea compiled bytes differ from checked build'
     fixture = andrea / 'scripts/fixtures/web-bob-bridge-worker.mjs'
     assert fixture.is_file()
     with tempfile.TemporaryDirectory(prefix='webbob-bridge-contract-') as temporary:
@@ -74,6 +85,7 @@ def probe(andrea):
                 return dict(all_pass=True, scope='real Python Chat -> Andrea HTTP -> durable SQLite/core action -> synthetic provider',
                             synthetic_provider_posts=1, real_texts_sent=0, worker_dispatches=0,
                             andrea_sha=subprocess.check_output(['git','-C',str(andrea),'rev-parse','HEAD'],text=True).strip(),
+                            andrea_artifact_sha256=manifest['artifactSha256'],
                             andrea_fixture_sha256=hashlib.sha256(fixture.read_bytes()).hexdigest())
             finally:
                 if chat: chat.close()
