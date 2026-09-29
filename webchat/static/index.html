@@ -10,6 +10,7 @@
   <link rel="manifest" href="/manifest.webmanifest?v=__WEBBOB_SHA__">
   <title>Bob · Chat</title>
   <link rel="stylesheet" href="/style.css?v=__WEBBOB_SHA__">
+  <script src="/voice.js?v=__WEBBOB_SHA__" defer></script>
   <script src="/app.js?v=__WEBBOB_SHA__" defer></script>
 </head>
 <body>
@@ -44,13 +45,13 @@
         <input id="attach-input" type="file" class="sr-only" accept="image/*,video/*,.heic,.heif,.pdf,.txt,.md,.csv,.json,.log" multiple>
         <button type="button" id="attach-plus" class="composer-plus quiet icon-btn" aria-label="Attach photo, video, or file" title="Photos up to 12MB, videos 35MB, files 8MB; 6 attachments per message">+</button>
         <div class="composer-pill">
-          <button type="button" id="mic" class="composer-mic quiet icon-btn" aria-label="Voice input" title="Voice input">🎤</button>
           <textarea id="message" name="message" placeholder="Ask Bob…" rows="1" maxlength="6000" enterkeyhint="send"></textarea>
+          <button type="button" id="mic" class="composer-mic quiet icon-btn" aria-label="Voice input" title="Dictate a message">🎤</button>
+          <button type="button" id="live-call" class="call-btn" aria-label="Start live voice call" aria-pressed="false" title="Talk to Bob">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M3 10v4m4-7v10m5-14v18m5-14v10m4-7v4"/></svg>
+          </button>
         </div>
         <button type="button" id="speak" class="quiet icon-btn composer-speak" aria-label="Read last reply aloud" title="Read aloud">🔊</button>
-        <button type="button" id="live-call" class="call-btn" aria-label="Live voice call" title="Live call">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 10v4h2l3 3V7L6 10H4zm12.5 2c0-1.77-1.02-3.29-2.5-4.03v8.06c1.48-.74 2.5-2.26 2.5-4.03zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
-        </button>
         <button type="button" id="stop" hidden>Stop</button>
         <button type="submit" id="send" class="primary send-btn" aria-label="Send">↑</button>
       </form>
@@ -210,13 +211,18 @@
     <pre id="report-body"></pre>
   </dialog>
 
-  <dialog id="call-dialog" class="call-dialog">
-    <div class="report-heading">
-      <h2>Live call</h2>
-      <button type="button" id="end-call" class="primary">End call</button>
+  <dialog id="call-dialog" class="call-dialog" aria-labelledby="call-title" aria-describedby="call-status">
+    <div class="call-heading">
+      <span class="call-eyebrow">LIVE VOICE · AI</span>
+      <h2 id="call-title">Talk with Bob</h2>
+      <div class="call-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
     </div>
-    <p id="call-status" class="muted">Connecting…</p>
-    <div id="call-transcript" class="call-transcript" aria-live="polite"></div>
+    <p id="call-status" role="status">Connecting…</p>
+    <p id="call-hint" class="muted">Your transcript saves to this chat.</p>
+    <div id="call-transcript" class="call-transcript" role="log" aria-label="Live call transcript" aria-live="polite"></div>
+    <button type="button" id="resume-call" hidden>Resume audio</button>
+    <button type="button" id="retry-voice-save" hidden>Retry save</button>
+    <button type="button" id="end-call" class="hangup-btn">Hang up</button>
   </dialog>
 </body>
 </html>

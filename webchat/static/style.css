@@ -558,12 +558,37 @@ button.send-btn {
   border-radius: 16px;
   background: var(--surface);
   color: var(--text);
-  max-width: min(420px, 96vw);
-  width: 96vw;
+  box-sizing: border-box;
+  width: min(440px, calc(100vw - 24px));
+  max-height: calc(100dvh - 32px);
+  padding: 24px 20px max(20px, env(safe-area-inset-bottom));
+  overflow-y: auto;
 }
+.call-dialog::backdrop { background: #000b; backdrop-filter: blur(6px); }
+.call-heading { text-align: center; }
+.call-heading h2 { margin: 8px 0 20px; font-size: 26px; }
+.call-eyebrow { color: var(--muted); font-size: 11px; letter-spacing: .14em; }
+.call-wave { display: flex; align-items: center; justify-content: center; gap: 6px; height: 84px; margin: 12px auto 22px; }
+.call-wave i { display: block; width: 8px; height: 24px; border-radius: 8px; background: #83d9b1; }
+.call-wave i:nth-child(2), .call-wave i:nth-child(4) { height: 44px; }
+.call-wave i:nth-child(3) { height: 66px; }
+.call-dialog[data-phase="speaking"] .call-wave i { animation: voice-pulse .65s ease-in-out infinite alternate; }
+.call-wave i:nth-child(2) { animation-delay: -.2s !important; }
+.call-wave i:nth-child(4) { animation-delay: -.4s !important; }
+.call-dialog[data-phase="error"] .call-wave i { background: var(--danger); }
+.call-dialog[data-phase="ended"] .call-wave i { background: var(--muted); }
+@keyframes voice-pulse { to { transform: scaleY(.45); } }
+@media (prefers-reduced-motion: reduce) { .call-wave i { animation: none !important; } }
+#call-status, #call-hint { text-align: center; }
+#call-status { min-height: 42px; font-weight: 600; line-height: 1.5; }
+#call-hint { font-size: 12px; }
+.hangup-btn { width: 100%; min-height: 52px; margin-top: 16px; border: 0; border-radius: 28px; background: #bb384d; color: white; font-weight: 650; }
+.call-you, .call-bob { overflow-wrap: anywhere; border-radius: 12px; padding: 10px 12px; margin: 8px 0; }
+.call-you { background: color-mix(in srgb, var(--text) 7%, var(--surface)); }
+.call-bob { border-left: 2px solid #83d9b1; }
 .call-transcript {
-  min-height: 120px;
-  max-height: 40vh;
+  min-height: 80px;
+  max-height: 28dvh;
   overflow-y: auto;
   font-size: 15px;
   line-height: 1.45;
