@@ -10,6 +10,40 @@ from test_webchat import Fixture
 
 
 class ChatDispatchTests(Fixture):
+    def test_partial_group_admission_cannot_replay_after_release_pause_and_restart(self):
+        import max_mode
+        rid = str(uuid.uuid4())
+        value = self.chat.conversations[self.identifier]
+        intent = dict(request_id=rid, prompt='Review supplied evidence', worker='auto', kind='analysis',
+                      goal='Review supplied evidence', subtasks=[dict(worker='gemini', kind='analysis',
+                      title='One part', prompt='Review supplied evidence') for _ in range(2)])
+        message = dict(id=str(uuid.uuid4()), role='assistant', request_id=rid, status='done', content='Saving task',
+                       dispatch_intent=intent)
+        value['messages'].append(message)
+        self.chat.save(value)
+        original = queue.enqueue
+        def interrupted(*args, **kwargs):
+            row = original(*args, **kwargs)
+            marker = self.root / 'conductor/locks/webbob-activation.json'
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text('{}')
+            return row
+        with patch.object(max_mode.task_queue, 'enqueue', side_effect=interrupted):
+            self.chat.reconcile_tasks()
+        result = self.chat.get(self.identifier)['messages'][-1]
+        self.assertEqual(result['action_card']['state'], 'refused')
+        saved = self.chat.conversations[self.identifier]['messages'][-1]
+        self.assertNotIn('dispatch_intent', saved)
+        self.assertEqual(saved['blocked_dispatch_intent'], intent)
+        rows = queue.tasks(self.root)
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(all(r['status'] == 'failed' for r in rows.values()))
+        (self.root / 'conductor/locks/webbob-activation.json').unlink()
+        self.chat.close()
+        self.chat = Chat(self.folder, self.root, self.fake)
+        self.chat.reconcile_tasks()
+        self.assertEqual(queue.tasks(self.root), rows)
+
     def test_plain_review_phrases_start_real_jobs(self):
         for text, worker in (("review PR 161", "auto"), ("Claude review PR #161", "claude")):
             reply = self.chat.submit(self.identifier, text, str(uuid.uuid4()))
@@ -18,7 +52,7 @@ class ChatDispatchTests(Fixture):
             self.assertIn("161", row["prompt"])
         self.assertFalse(self.fake.calls)
 
-    def submit(self, message="Review the supplied evidence: queued jobs have no consumer.", worker=None):
+    def submit(self, message="Start a job: Review the supplied evidence: queued jobs have no consumer.", worker=None):
         return self.chat.submit(self.identifier, message, str(uuid.uuid4()), worker=worker)
 
     def complete_task(self, row=None, result="The queue needs a polling consumer and a durable result outbox."):
@@ -28,7 +62,7 @@ class ChatDispatchTests(Fixture):
         return queue.transition(self.root, claim["id"], claim["claim_token"], "succeeded", result=result)
 
     def test_explicit_job_and_natural_work_dispatch_without_an_extra_confirmation(self):
-        for text in ("start a job: review the task evidence", "Can you fix the queue consumer?", "Please analyze this: 12 + 18", "Use Gemini to review this invariant: one claim per worker"):
+        for text in ("start a job: review the task evidence", "Can you fix the queue consumer?", "Please have Gemini analyze this: 12 + 18", "Use Gemini to review this invariant: one claim per worker"):
             with self.subTest(text=text):
                 value = self.submit(text)
                 self.assertIn("task_id", value["messages"][-1])
@@ -248,7 +282,7 @@ class ChatDispatchTests(Fixture):
     def test_duplicate_request_creates_one_task(self):
         request = str(uuid.uuid4())
         for _ in range(3):
-            self.chat.submit(self.identifier, "Review the supplied task evidence", request)
+            self.chat.submit(self.identifier, "Have Gemini review the supplied task evidence", request)
         self.assertEqual(len(queue.tasks(self.root)), 1)
         self.assertEqual(len(self.chat.history(self.identifier)["messages"]), 2)
 

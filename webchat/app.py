@@ -552,6 +552,10 @@ class Chat(TaskDispatch):
             # Voice reuses its saved user row; every path creates an explicit
             # reply without indexing a possibly empty message list.
             conversation["messages"].append(reply_message)
+            from conversation_focus import update as update_focus
+            update_focus(conversation, source if source_voice else user_message)
+            from self_improvement import observe_turn as observe_improvement_turn
+            observe_improvement_turn(conversation, text, request_id)
             if conversation["title"] == "New conversation":
                 conversation["title"] = (text or (public_attachments[0].get("filename") if public_attachments else "") or "Attachment")[:65]
             if not parse_memory_confirm(text)[0] and not parse_remember(text) and not MEMORY_DISMISS.match(text):
@@ -610,7 +614,13 @@ class Chat(TaskDispatch):
             memory_turn = self.bob_gaps_memory_turn(conversation, text, request_id, provider=provider)
             if memory_turn:
                 return memory_turn
-            transition = chat_intent.apply_turn(intent_state, text, request_id)
+            # Permission changes and worker admission share the queue lock.
+            # A hold is durable before a concurrent claim/execute can proceed.
+            with task_queue.locked(self.root):
+                transition = chat_intent.apply_turn(intent_state, text, request_id)
+                if transition:
+                    self.save(conversation)
+                    self.conversations[identifier] = copy.deepcopy(conversation)
             if transition == "hold":
                 held_work, held_worker = followup_work(conversation)
                 if held_work:
@@ -621,6 +631,9 @@ class Chat(TaskDispatch):
                 conversation["pending_job_id"] = request_id
                 return self.intent_reply(conversation, "Priority order: " + ", ".join(intent_state["project_order"]) + ".")
             if not public_attachments and worker is None:
+                cancelled_task = self.cancel_task_turn(conversation, text)
+                if cancelled_task is not None:
+                    return cancelled_task
                 from self_improvement import handle as improvement_turn
                 improvement = improvement_turn(self, conversation, text, request_id)
                 if improvement is not None:
@@ -812,10 +825,11 @@ class Chat(TaskDispatch):
                     state_ledger.record_webchat_turn(ledger, ask=text, provider="inbox", request_id=request_id)
                 return self.public(conversation)
             from reply_authority import HOLD_QUESTION, STATUS_QUESTION
+            from answer_intent import conceptual
             if HOLD_QUESTION.match(text):
                 scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
                 return self.intent_reply(conversation, chat_intent.hold_reply(scopes) if scopes else "There are no active conversation holds.")
-            if ledger == self.root and STATUS_QUESTION.search(text):
+            if ledger == self.root and STATUS_QUESTION.search(text) and not conceptual(text):
                 return self.status_reply(conversation, text)
             if ledger == self.root:
                 try:
@@ -845,7 +859,7 @@ class Chat(TaskDispatch):
                             commits=[], confirmations=[], refusals=[], open_items=[], request_id=request_id)
                 state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
                 return self.public(conversation)
-            local_status = state_ledger.try_status_reply(ledger, text) if provider == "auto" else None
+            local_status = state_ledger.try_status_reply(ledger, text) if provider == "auto" and not conceptual(text) else None
             if local_status:
                 conversation["messages"][-1].update(status="done", content=local_status, provider="state")
                 self.save(conversation)

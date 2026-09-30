@@ -15,6 +15,7 @@ from state import CONDUCTOR, alert, append_event, atomic_write, log, read_json, 
 import budget
 import re
 import shlex
+from result_acceptance import ResultRejected
 
 MODELS = {"minimax": "MiniMax-M2.7", "gemini": "gemini-2.5-flash"}
 
@@ -63,6 +64,10 @@ def http_json(url, method="GET", payload=None, headers=None, validate=None, allo
                 if reservation:
                     budget.settle(lane, reservation, data)
                 return validate(data) if validate else data
+        except ResultRejected:
+            # A successful transport with unusable evidence is a terminal
+            # quality failure, not a reason to buy the same answer repeatedly.
+            raise
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
             last = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
             log("HTTP attempt %d/%d failed: %s" % (attempt + 1, attempts, last))
@@ -71,7 +76,7 @@ def http_json(url, method="GET", payload=None, headers=None, validate=None, allo
     raise RuntimeError(last)
 
 
-def extract(model, data):
+def extract(model, data, *, google_search=False):
     if model == "minimax":
         base = data.get("base_resp", {})
         if base.get("status_code", 0) != 0:
@@ -99,6 +104,8 @@ def extract(model, data):
                 sources.append(url)
         if sources:
             text += "\n\nSearch sources:\n" + "\n".join("- " + url for url in sources)
+        elif google_search:
+            raise ResultRejected('The research response supplied no consulted search sources. Current-source claims are unverified.')
     if len(text) < 20:
         raise RuntimeError("empty or unusably short final answer")
     return text
@@ -137,7 +144,7 @@ def model_call(model, prompt, max_tokens=8192, purpose="api", *, model_id=None, 
         if google_search:
             payload["tools"] = [{"google_search": {}}]
         headers = {"x-goog-api-key": key}
-    return http_json(url, "POST", payload, headers, lambda data: extract(model, data),
+    return http_json(url, "POST", payload, headers, lambda data: extract(model, data, google_search=google_search),
                      lane=model, prompt=prompt, max_tokens=max_tokens, purpose=purpose,
                      model_id=model_id, google_search=google_search)
 

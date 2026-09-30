@@ -121,6 +121,7 @@ class TransactionTests(unittest.TestCase):
             setattr(self, name, p.start())
             self.addCleanup(p.stop)
         self.versions.return_value = {'local': {'sha': 'b' * 40}, 'public': {'sha': 'b' * 40}}
+        self.restart.return_value = dict(before={}, after={}, restarted=['svc-webchat'])
 
     def attempt(self, activate=None, live=None, **kw):
         solo.transaction(self.root, self.record, self.path, activate or Mock(),

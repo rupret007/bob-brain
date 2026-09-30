@@ -239,13 +239,26 @@ def resources_replay(client, root, *, real):
         'Ok well make that your goal. Research what grok bot does and self improve to be better than it.',
         'Ok enable what we need to enable') + ((RESOURCE_ACTION_PROMPT,) if solo_mode else ())
     for index, prompt in enumerate(prompts):
+        if index == 2:
+            # Follow-ups now advance through the executor. Repeated release
+            # gates exercise the saved hold boundary; the one unheld owner
+            # execution proof is performed separately after LIVE_PASS.
+            _, held = submit(client, cid, 'Hold Web Bob')
+            require(held.get('provider') == 'dispatcher' and 'On hold: Web Bob' in held['content'],
+                    'Improvement continuation hold was not acknowledged')
         before = client.call('/api/conversations/' + cid)['messages']
         value, answer = submit(client, cid, prompt)
         if index == 0:
             require(answer.get('provider') in ({'gemini', 'minimax', 'codex', 'claude', 'cursor'} if real else {'fixture'}),
                     'Unscoped resource request bypassed the model')
-        else:
+        elif index == 1:
             verify_improvement_reply(root, before, answer)
+        else:
+            saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
+            require('Web Bob' in saved['intent_state']['holds'] and
+                    answer.get('provider') == 'dispatcher' and answer['content'].startswith('On hold: Web Bob') and
+                    saved.get('improvement_goal', {}).get('investigation'),
+                    'Improvement follow-up ignored a saved hold or lost completed investigation')
         require(not answer.get('status_observation') and
                 'Codex, Claude, Cursor, Gemini and MiniMax are idle.' not in answer['content'],
                 'Resource-use action returned canned operational status')
@@ -257,7 +270,7 @@ def resources_replay(client, root, *, real):
         saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
         require(next(m for m in saved['messages'] if m['id'] == answer['id']) == answer,
                 'Improvement/resource reply was not durably saved')
-        receipts.append(dict(check='Jeff resource request uses model or completed improvement audit', prompt=prompt,
+        receipts.append(dict(check='Jeff resource request uses model, source investigation, or saved continuation hold', prompt=prompt,
                              conversation_id=cid, request_id=answer['request_id'], provider=answer['provider'],
                              answer=answer['content'], improvement_receipt=answer.get('improvement_receipt'),
                              real_provider=real and index == 0, passed=True))
@@ -270,6 +283,15 @@ def resources_replay(client, root, *, real):
         receipts.append(held_action_replay(client, root, RESOURCE_ACTION_PROMPT))
     require(not any(row['conversation_id'] == cid for row in task_queue.tasks(root).values()),
             'Improvement audit replay queued workers')
+    # An unheld standalone enable must observe actual settings and perform the
+    # bounded local check, never inherit the held conversation's restrictions.
+    enabled_cid = client.new()
+    _, enabled = submit(client, enabled_cid, 'Ok enable what we need to enable')
+    verify_improvement_reply(root, [], enabled)
+    require(not any(row['conversation_id'] == enabled_cid for row in task_queue.tasks(root).values()),
+            'Standalone configuration check queued workers')
+    receipts.append(dict(check='unheld enable observes current settings and records source investigation',
+                         conversation_id=enabled_cid, request_id=enabled['request_id'], passed=True))
     return receipts
 
 
@@ -289,8 +311,13 @@ def verify_improvement_reply(root, before, answer):
             receipt.get('queued_jobs') == 0 and receipt.get('workers_started') == 0 and
             receipt.get('code_changed') is False and not answer.get('task_id') and not answer.get('task_ids'),
             'Audit has no concrete plan or claims unperformed work')
-    require('First step completed:' in answer['content'] and 'Next implementation step:' in answer['content'] and
-            'no code has changed' in answer['content'], 'Audit reply hides its result or execution limits')
+    from improvement_investigation import investigate
+    expected = investigate()
+    require(receipt.get('investigation') == expected and expected['failed'] == 0,
+            'Improvement investigation does not match current source and actual routing outcomes')
+    require(answer.get('improvement_progress', {}).get('investigation_sha256') == expected['sha256'] and
+            'changed no code' in answer['content'] and 'Next:' in answer['content'],
+            'Investigation reply hides its result or execution limits')
 
 
 def held_action_replay(client, root, prompt):
@@ -838,11 +865,13 @@ def verify_worker_service_mode(root, sessions):
 
 @serialized
 def restart(root, pins):
-    """Only the web server restarts; no job-runner or council resurrection."""
+    """Refresh the web server and any already enabled runner under recovery intent."""
     journal.permit_restart(root, pins)
     from state import lock
     from runtime import screen_sessions
-    with lock('supervisor'):
+    import runner_activation
+    pending = journal.pending(root)
+    with runner_activation.coordinated(root), runner_activation.refresh(root, pins, pending) as runner:
         before = screen_sessions()
         verify_worker_service_mode(root, before)
         p = subprocess.run(['lsof', '-t', '-iTCP:8787', '-sTCP:LISTEN'], capture_output=True, text=True)
@@ -883,10 +912,13 @@ def restart(root, pins):
         else:
             raise RuntimeError('New web server did not become healthy')
         after = screen_sessions()
-        require(all(after.get(n) == value for n, value in before.items() if n.startswith('svc-') and n != 'svc-webchat'),
+        changed = {'svc-webchat', 'svc-job-runner'} if runner['required'] else {'svc-webchat'}
+        require(all(after.get(n) == value for n, value in before.items() if n.startswith('svc-') and n not in changed),
                 'Unrelated durable service changed')
         verify_worker_service_mode(root, after)
-        return dict(before=before, after=after, restarted=['svc-webchat'])
+        result = dict(before=before, after=after, restarted=sorted(changed))
+    result.update(after=screen_sessions(), runner=runner)
+    return result
 
 
 def verify_recovery_pins(root, record):
@@ -907,22 +939,44 @@ def verify_recovery_pins(root, record):
 
 @serialized
 def recover(root, record):
+    import runner_activation
+    with runner_activation.coordinated(root):
+        return recover_locked(root, record)
+
+
+def recover_locked(root, record):
+    import runner_activation
+    import task_queue
     journal.match(root, record)
     verify_recovery_pins(root, record)
     for name, expected in record.get('snapshot_hashes', {}).items():
         require(source_digest(Path(record['snapshots'][name])) == expected, 'Rollback snapshot changed: ' + name)
     release_recovery(record)
+    if 'runner_refresh' in record:
+        # Cleanup is required even when a crash happened before either pin
+        # changed, or when no runner was enabled. The unchanged fast path must
+        # not leave held/new candidate tasks for a legacy dispatcher to launch.
+        runner_activation.drain(root)
+        cancelled = task_queue.cancel_for_rollback(root, record.get('at', 0))
+        record['rollback_cancelled_tasks'] = sorted(set(record.get('rollback_cancelled_tasks', [])) |
+                                                   {row['id'] for row in cancelled})
     unchanged = False
     try:
         versions(root, record['previous'])
         pins = [Path((root / 'conductor/state' / (name + '-code-root')).read_text().strip()) for name in ('webchat', 'dispatch')]
         unchanged = all(json.loads((p / 'webbob-build.json').read_text())['sha'] == record['previous'] for p in pins)
+        if unchanged and 'runner_refresh' in record and runner_activation.required(root, record):
+            unchanged = runner_activation.matches(root, pins[1])
     except (OSError, ValueError, RuntimeError):
         pass
     if not unchanged:
-        restart(root, record['snapshots'])
+        record['rollback_runtime'] = restart(root, record['snapshots'])
     record['rollback_restart_needed'] = not unchanged
     record['restored'] = versions(root, record['previous'])
+    if 'runner_refresh' in record and runner_activation.required(root, record):
+        import runner_activation
+        dispatch = Path((root / 'conductor/state/dispatch-code-root').read_text().strip())
+        require(runner_activation.matches(root, dispatch), 'Required runner was not restored to the predecessor dispatch code')
     record.update(rolled_back=True, all_pass=False, status='ROLLED_BACK')
 
 
@@ -953,21 +1007,23 @@ def transaction(root, record, path, activate, live, publish=atomic_json, final_p
         release_recovery(record)
         journal.finish(root, intent)
     except BaseException as exc:
-        record.update(all_pass=False, failure=type(exc).__name__ + ': ' + str(exc))
-        if activated:
-            try:
-                recover(root, record)
-            except BaseException as recovery_error:
-                record['rollback_error'] = type(recovery_error).__name__ + ': ' + str(recovery_error)
-        else:
-            release_recovery(record)
-        # Rollback happens before attempting any potentially failing evidence write.
-        atomic_json(path, record)
-        if final_path and activated:
-            atomic_json(final_path, record)
-        if intent and record.get('rolled_back') and not record.get('rollback_error'):
-            journal.finish(root, intent)
-        raise
+        import runner_activation
+        with runner_activation.coordinated(root):
+            record.update(all_pass=False, failure=type(exc).__name__ + ': ' + str(exc))
+            if activated:
+                try:
+                    recover(root, record)
+                except BaseException as recovery_error:
+                    record['rollback_error'] = type(recovery_error).__name__ + ': ' + str(recovery_error)
+            else:
+                release_recovery(record)
+            # Rollback happens before attempting any potentially failing evidence write.
+            atomic_json(path, record)
+            if final_path and activated:
+                atomic_json(final_path, record)
+            if intent and record.get('rolled_back') and not record.get('rollback_error'):
+                journal.finish(root, intent)
+            raise
 
 
 @serialized
@@ -1013,6 +1069,8 @@ def deploy(args):
     folder.mkdir(mode=0o700)
     record = dict(sha=sha, feature=args.feature, previous=args.previous, gates=gates, draft_pr=args.pr,
                   rollback=str(folder), all_pass=False, activated=False, snapshots={}, original_pins={}, at=time.time())
+    import runner_activation
+    record['runner_refresh'] = runner_activation.obligation(root)
     if index:
         shutil.copyfile(predecessor, folder / 'predecessor-receipt.json')
         record['predecessor_receipt'] = str(folder / 'predecessor-receipt.json')
@@ -1044,6 +1102,11 @@ def deploy(args):
 
     def live():
         pair = versions(root, sha)
+        observed_runner = runner_activation.observe(root)
+        if observed_runner and Path(observed_runner['code_root']).resolve() == release.resolve():
+            runner_activation.preserve_observed(root, record, observed_runner)
+        if runner_activation.required(root, record):
+            require(runner_activation.matches(root, release), 'Live runner is not using the candidate dispatch code')
         results = [replay(Client(url, root / 'conductor/webchat/.password'), root, sha, real_reads=True, feature=args.feature)
                    for url in ('http://127.0.0.1:8787', origin)]
         number = len(record.get('rounds', [])) + 1
@@ -1061,35 +1124,42 @@ def deploy(args):
         return dict(all_pass=all(r['all_pass'] for r in results), versions=pair, endpoints=results,
                     browser=dict(path=str(browser_path), sha256=digest(browser_path), passed=True))
 
-    transaction(root, record, path, lambda: restart(root, dict(webchat=release, dispatch=release)), live,
+    def activate():
+        record['activation_runtime'] = restart(root, dict(webchat=release, dispatch=release))
+
+    transaction(root, record, path, activate, live,
                 final_path=root / 'conductor/reviews' / ('SOLO-0018-' + args.feature + '-live.json'))
     print('LIVE_PASS ' + sha + ' rollback=' + str(folder), flush=True)
 
 
 @serialized
 def rollback(root, path):
-    intent = journal.pending(root)
-    if intent:
-        require(Path(path).resolve() == Path(intent['path']).resolve(),
-                'Rollback does not belong to the unfinished Web Bob activation')
-        record = journal.saved_record(root, intent)
-    else:
-        record = journal.private_json(path)
-        # Validate before creating a recovery obligation for a stale receipt.
-        verify_recovery_pins(root, record)
-        intent = journal.begin(root, record, path)
-    recover(root, record)
-    atomic_json(path, record)
-    if intent['final_path']:
-        atomic_json(intent['final_path'], record)
-    journal.finish(root, intent)
+    import runner_activation
+    with runner_activation.coordinated(root):
+        intent = journal.pending(root)
+        if intent:
+            require(Path(path).resolve() == Path(intent['path']).resolve(),
+                    'Rollback does not belong to the unfinished Web Bob activation')
+            record = journal.saved_record(root, intent)
+        else:
+            record = journal.private_json(path)
+            # Validate before creating a recovery obligation for a stale receipt.
+            verify_recovery_pins(root, record)
+            intent = journal.begin(root, record, path)
+        recover(root, record)
+        atomic_json(path, record)
+        if intent['final_path']:
+            atomic_json(intent['final_path'], record)
+        journal.finish(root, intent)
 
 
 @serialized
 def recover_pending(root):
-    intent = journal.pending(root)
-    require(intent is not None, 'No unfinished Web Bob activation to recover')
-    rollback(root, Path(intent['path']))
+    import runner_activation
+    with runner_activation.coordinated(root):
+        intent = journal.pending(root)
+        require(intent is not None, 'No unfinished Web Bob activation to recover')
+        rollback(root, Path(intent['path']))
 
 
 def main():

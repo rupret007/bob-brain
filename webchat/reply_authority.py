@@ -387,6 +387,8 @@ def unperformed_restart(root, text):
 
 def enforce(root, text, answer, conversation=None, *, observation=None, redact=lambda value: value):
     content = answer["content"]
+    from answer_intent import conceptual
+    reference = conceptual(text)
     from worker_assignment import requested_workers
     blocked = dispatch_block(conversation)
     if requested_workers(text, conversation) and not blocked:
@@ -403,13 +405,14 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         return "Got it."
     if PURE_GREETING.fullmatch(text.strip()):
         content = greeting_content(content)
-    if STATUS_QUESTION.search(text) or correcting_status(text, conversation):
+    if not reference and (STATUS_QUESTION.search(text) or correcting_status(text, conversation)):
         return operational_reply(root, answer["provider"], text, observation=observation, redact=redact)
     else:
-        from dispatch_receipts import claims_dispatch, NO_DISPATCH
+        from dispatch_receipts import claims_dispatch, dispatch_prose, NO_DISPATCH
         sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
         content = "".join(part for part in sentences if not NO_JOB_NOTICE.search(part)).strip() or NO_DISPATCH
-        if claims_dispatch(content) or QUEUE_CLAIM.search(content):
+        supplied = text if reference else ''
+        if claims_dispatch(content, reference=supplied) or QUEUE_CLAIM.search(dispatch_prose(content, reference=supplied)):
             return blocked or unperformed_restart(root, text)
         # Keep the useful answer; remove unsupported effects and boilerplate
         # without adding a system notice to ordinary chat.

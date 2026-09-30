@@ -92,3 +92,14 @@ def execute(row):
     if result.returncode:
         raise RuntimeError("Mini tests failed: " + suite + "\n" + output)
     return "Local CPU test suite: " + suite + "\nExit code: 0\n\n" + output
+
+
+def execution_identity(row):
+    from source_identity import fingerprint
+    suite = row.get('local_suite')
+    if not suite:
+        match = re.search(r'\b(services|webchat)/(test_[a-z0-9_]+)\.py\b', row['prompt'])
+        suite = '/'.join(match.groups()) + '.py' if match else 'services/test_services.py'
+    if not re.fullmatch(r'(?:services|webchat)/test_[a-z0-9_]+\.py', suite):
+        raise RuntimeError('Invalid local execution suite')
+    return fingerprint(CODE_ROOT, suite)

@@ -37,6 +37,27 @@ class APIWorkerTests(unittest.TestCase):
     setUp = dispatch_fixture.DispatchTests.setUp
     tearDown = dispatch_fixture.DispatchTests.tearDown
 
+    def test_external_research_uses_search_without_reading_unrelated_repository(self):
+        job = queue.enqueue(self.root, 'conversation', 'research',
+                            'Research current Gemini pricing and cite official sources', worker='gemini', kind='research')
+        claim = queue.claim(self.root, 'gemini')
+        def answer(model, prompt, **kwargs):
+            self.assertEqual(model, 'gemini')
+            self.assertTrue(kwargs['google_search'])
+            self.assertIn('No repository files were read', prompt)
+            self.assertIn('consult official sources', prompt)
+            self.assertNotIn('FILE ', prompt)
+            return 'Fixture search result citing the consulted official pricing source; no local code was examined.'
+        with patch.object(api, 'model_call', side_effect=answer), \
+                patch.object(api_worker, 'evidence', side_effect=AssertionError('Unexpected repository snapshot')), \
+                patch.object(dispatch_worker, 'prepare_task', side_effect=AssertionError('Unexpected worktree')):
+            self.assertEqual(dispatch_worker.execute(job['id'], claim['claim_token']), 0)
+        row = queue.tasks(self.root)[job['id']]
+        self.assertEqual(row['status'], 'succeeded')
+        self.assertEqual(row['evidence'], dict(scope='external_web', repository_files_read=0))
+        self.assertIsNone(row['repo'])
+        self.assertIsNone(row['worktree'])
+
     def repo(self):
         repo = self.root / "repo"
         repo.mkdir(exist_ok=True)

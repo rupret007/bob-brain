@@ -19,6 +19,58 @@ NAMES = ["Web Bob", "WebJam", "AdoptIQ", "StoryBoard"]
 
 
 class IntentTests(Fixture):
+    def test_partial_reply_save_failure_cannot_erase_a_durable_hold(self):
+        identifier = self.submit('Fix Web Bob login')['messages'][-1]['task_id']
+        original = self.chat.save
+        calls = []
+        def save(value):
+            calls.append(1)
+            if len(calls) == 2:
+                raise OSError('simulated reply write failure')
+            original(value)
+        with patch.object(self.chat, 'save', side_effect=save):
+            with self.assertRaises(OSError):
+                self.submit('Hold Web Bob')
+        self.submit('Thanks.')
+        self.reload()
+        self.assertIn('Web Bob', self.chat.get(self.identifier)['intent_state']['holds'])
+        self.assertIsNone(queue.claim(self.root, 'codex', identifier=identifier))
+
+    def test_cancelled_claim_cannot_execute_or_publish_after_restart(self):
+        identifier = self.submit('Fix Web Bob login')['messages'][-1]['task_id']
+        claim = queue.claim(self.root, 'codex', identifier=identifier)
+        self.submit('Cancel that task')
+        self.reload()
+        self.assertIsNone(queue.transition(self.root, identifier, claim['claim_token'], 'executing'))
+        self.assertIsNone(queue.transition(self.root, identifier, claim['claim_token'], 'succeeded', result='Late result'))
+        self.assertTrue(queue.tasks(self.root)[identifier]['cancelled_at'])
+
+    def test_saved_hold_fences_existing_queue_and_survives_restart(self):
+        bob = self.submit('Fix Web Bob login')['messages'][-1]['task_id']
+        jam = self.submit('Fix WebJam login')['messages'][-1]['task_id']
+        self.submit('Hold Web Bob')
+        self.reload()
+        self.assertIsNone(queue.claim(self.root, 'codex', identifier=bob))
+        self.assertIsNotNone(queue.claim(self.root, 'cursor', identifier=jam))
+        self.submit('Lift the hold on Web Bob')
+        self.assertIsNotNone(queue.claim(self.root, 'codex', identifier=bob))
+        self.assertEqual(len(queue.tasks(self.root)), 2)
+
+    def test_hold_between_claim_and_execution_revokes_start_without_consuming_attempt(self):
+        identifier = self.submit('Fix Web Bob login')['messages'][-1]['task_id']
+        claim = queue.claim(self.root, 'codex', identifier=identifier)
+        queue.transition(self.root, identifier, claim['claim_token'], 'running')
+        self.submit('Hold Web Bob')
+        self.assertIsNone(queue.transition(self.root, identifier, claim['claim_token'], 'executing'))
+        row = queue.tasks(self.root)[identifier]
+        self.assertEqual((row['status'], row['attempts'], row['claim_token']), ('queued', 0, None))
+        self.assertIsNone(queue.claim(self.root, 'cursor', identifier=identifier, allow_fallback=True))
+
+    def test_missing_permission_record_cannot_start_a_new_chat_job(self):
+        identifier = self.submit('Fix Web Bob login')['messages'][-1]['task_id']
+        (self.chat.state / (self.identifier + '.json')).unlink()
+        self.assertIsNone(queue.claim(self.root, 'codex', identifier=identifier))
+
     def test_literal_project_push_saves_scoped_publication_authority(self):
         receipt = self.submit("push WebJam and AdoptIQ")["messages"][-1]
         rows = [queue.tasks(self.root)[identifier] for identifier in receipt["task_ids"]]
@@ -133,7 +185,7 @@ class IntentTests(Fixture):
 
     def test_analysis_spreads_across_free_compatible_workers_and_real_claims_update_receipt(self):
         self.ready("claude", "gemini", "minimax", "codex", "cursor")
-        receipt = self.submit("Compare Web Bob, WebJam, AdoptIQ and StoryBoard using this evidence: each has one queued task.")["messages"][-1]
+        receipt = self.submit("Start a job: Compare Web Bob, WebJam, AdoptIQ and StoryBoard using this evidence: each has one queued task.")["messages"][-1]
         rows = [queue.tasks(self.root)[identifier] for identifier in receipt["task_ids"]]
         self.assertEqual(len({row["requested_worker"] for row in rows}), 4)
         for row in rows:

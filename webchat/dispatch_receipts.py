@@ -17,15 +17,39 @@ CLAIM = re.compile(
     re.I,
 )
 JOB_ID = re.compile(r"\bwebchat-[a-f0-9]{32}\b")
+DIRECT_CLAIM = re.compile(
+    r"\b(?:I|we|Bob|" + WORKERS + r")\b[^.!?\n]{0,90}\b" + EFFECT + r"\b|"
+    r"\b" + WORKERS + r"\b.{0,45}\b(?:is|are) (?:now )?(?:working|running|busy|on it)\b|"
+    r"\b(?:I['’]ve|I have|we['’]ve|we have) (?:put|got|set)\b[^.!?\n]{0,60}\b(?:working|busy|work|task|job)\b",
+    re.I,
+)
 
 
-def claims_dispatch(text):
+def dispatch_prose(text, *, reference=''):
     # Code examples and quoted user input are not action acknowledgements.
     prose = re.sub(r"```.*?```", "", text, flags=re.S)
     prose = re.sub(r"(?:^|(?<=[.!?])\s+)(?:A job|Jobs|A task|Tasks)\b[^.!?]*\b(?:when|if|until)\b[^.!?]*[.!?]?", "", prose, flags=re.I)
     # A conditional offer is not a claim that work was done.
     prose = re.sub(r"(?:^|(?<=[.!?])\s+)I (?:can|could)\b[^\n]*", "", prose, flags=re.I)
-    return bool(CLAIM.search(prose) or JOB_ID.search(prose))
+    if reference:
+        # Exempt only a definition's subject, never the rest of its sentence.
+        # "Queued means accepted; I started it" must still fail the guard.
+        prose = re.sub(r'(?im)(^|[.!?]\s+)(queued)(?=\s+(?:means|does not prove|is a state)\b)',
+                       r'\1The queue state', prose)
+        # A supplied generic state may be discussed verbatim. No actor, owner,
+        # job ID, or named task can acquire an action receipt through this path.
+        state = r'\b(?:the|a) (?:job|task) is (?:queued|running|started|assigned)\b'
+        supplied = {m[0].casefold() for m in re.finditer(state, reference, re.I)}
+        prose = re.sub(state, lambda m: 'the supplied state' if m[0].casefold() in supplied else m[0],
+                       prose, flags=re.I)
+    return prose
+
+
+def claims_dispatch(text, *, reference=''):
+    # Direct actors and concrete IDs never receive a reference exemption.
+    original = dispatch_prose(text)
+    return bool(DIRECT_CLAIM.search(original) or JOB_ID.search(original)
+                or CLAIM.search(dispatch_prose(text, reference=reference)))
 
 
 def receipt_errors(answer, records, conversation_id, request_id, turn_started_at):

@@ -65,8 +65,10 @@ Only a server receipt with a durable job ID confirms a job was queued.
 Never claim work was started, assigned, queued, or is being added by the system
 unless this turn created a durable dispatch receipt and you cite its job ID.
 Do not promise "I'll make sure they're utilized" or "I'll keep them busy".
-If this turn did not dispatch, say plainly that you did not start, assign, or
-queue work. A worker with no assigned job is idle; never call it ready for work.
+Answer questions and produce requested writing directly. Do not add worker or
+dispatch notices to ordinary answers. If asked whether an action happened, state
+only what the saved execution evidence proves; absence of a receipt is not proof
+that no outside action ever happened. A worker with no assigned job is idle.
 The server's saved chat permissions override older hold/permission statements in
 history and handoffs. Go/resume clears the applicable holds. Mention a hold or
 request renewed permission only when that scope appears in the saved active holds.
@@ -517,7 +519,14 @@ class Providers:
             remaining -= len(content)
         from reply_authority import dispatch_block
         blocked = dispatch_block(conversation)
-        snapshots = self.snapshot(lite=fast, conversation_id=conversation.get("id"))
+        from conversation_focus import focus, answer_only
+        retained = focus(conversation)
+        # A poem or supplied calculation needs its conversation, not unrelated
+        # project handoffs, operational logs, or the owner's entire profile.
+        snapshots = [] if answer_only(conversation, last_user) and not needs_handoff_context(last_user) else self.snapshot(lite=fast, conversation_id=conversation.get("id"))
+        if retained:
+            snapshots += [dict(path='conversation user-source index', modified='saved', truncated=False,
+                               text=self.redact(json.dumps(retained, ensure_ascii=False)))]
         if blocked:
             snapshots = snapshots + [{
                 "path": "SERVER DISPATCH RESULT FOR THIS TURN", "modified": "live", "truncated": False,
@@ -608,6 +617,31 @@ class Providers:
                 raise failure(code, out + err)
             return parse_cursor(out), None
 
+    def short_request(self, conversation):
+        text = next((m['content'] for m in reversed(conversation['messages']) if m['role'] == 'user'), '')
+        return (len(text) <= FAST_MAX_CHARS and text.count('\n') <= 2
+                and not re.search(r'```|(?:^|\s)(?:fix|implement|refactor|debug|write tests)\b', text, re.I))
+
+    def available_fast_order(self, conversation):
+        """Budget/health observations guide order; actual admission remains authoritative.
+
+        Unknown quota is not free capacity. Keep the existing compatible API
+        pair, avoid an observed constrained lane, and retain bounded fallback.
+        Explicit provider choice and vision routing bypass this preference.
+        """
+        health = self.circuit_for(conversation.get('id')).snapshot()
+        ranks = {'normal': 0, 'warn': 1, 'slow': 2, 'stop': 3}
+        def priority(name):
+            usage = self.spend(name)
+            tier = usage.get('tier')
+            limit, used = usage.get('cap_usd'), usage.get('committed_usd')
+            if isinstance(limit, (int, float)) and isinstance(used, (int, float)) and limit > 0:
+                fraction = used / limit
+                tier = 'stop' if fraction >= .95 else 'slow' if fraction >= .85 else 'warn' if fraction >= .70 else 'normal'
+            unavailable = health.get(name, {}).get('state') in ('cooldown', 'open', 'busy')
+            return unavailable, ranks.get(tier, 1), FAST_ORDER.index(name)
+        return (*sorted(FAST_ORDER[:2], key=priority), *FAST_ORDER[2:])
+
     def route_order(self, conversation):
         selected = conversation.get("preferred_provider", "auto")
         if selected in NAMES:
@@ -615,20 +649,21 @@ class Providers:
         last_user = next((m for m in reversed(conversation["messages"]) if m["role"] == "user"), {})
         if any(a.get("kind") in ("image", "video") for a in last_user.get("attachments", []) if isinstance(a, dict)):
             return ("gemini", *(name for name in ORDER if name != "gemini"))
-        text = next((m["content"] for m in reversed(conversation["messages"]) if m["role"] == "user"), "")
-        if (len(text) <= FAST_MAX_CHARS and text.count("\n") <= 2
-                and not re.search(r"```|(?:^|\s)(?:fix|implement|refactor|debug|write tests)\b", text, re.I)):
-            return FAST_ORDER
+        if self.short_request(conversation):
+            return self.available_fast_order(conversation)
         return ORDER
 
     def reply(self, conversation, cancel, progress):
         self.current_call.cancel = cancel
         order = self.route_order(conversation)
-        fast = order == FAST_ORDER
+        last_user = next((m for m in reversed(conversation['messages']) if m['role'] == 'user'), {})
+        visual = any(a.get('kind') in ('image', 'video') for a in last_user.get('attachments', []) if isinstance(a, dict))
+        fast = (conversation.get('preferred_provider', 'auto') == 'auto' and self.short_request(conversation)
+                and not visual and set(order) == set(FAST_ORDER))
         # Rebuild retries too: saved prompts can contain obsolete provider outages.
         prompt, attempts = self.prompt(conversation, fast=fast), []
         circuit = self.circuit_for(conversation.get("id"))
-        fast_deadline = time.monotonic() + FAST_BUDGET_SECONDS if order == FAST_ORDER else None
+        fast_deadline = time.monotonic() + FAST_BUDGET_SECONDS if fast else None
         request_id = next((m.get("request_id") for m in reversed(conversation["messages"]) if m["role"] == "user"), None)
         tried = set()
         index = 0
@@ -740,6 +775,30 @@ class Providers:
         return {"providers": rows, "order": list(ORDER), "fast_order": list(FAST_ORDER), "probe_interval_seconds": self.probe_interval}
 
     def spend(self, name):
+        if name in ('gemini', 'minimax'):
+            # Read the same ledger/cap used by admission. A stale lane board
+            # must not advertise headroom after newer calls reserve it. This
+            # path only observes: it never repairs/truncates journal bytes.
+            services = str(Path(__file__).resolve().parents[1] / 'services')
+            if services not in sys.path:
+                sys.path.insert(0, services)
+            from budget import cap
+            limit = cap(name)
+            path = self.root / 'conductor/ledger' / (name + '.jsonl')
+            lock_path = self.root / 'conductor/locks' / ('ledger-' + name + '.lock')
+            try:
+                with lock_path.open('rb') as handle:
+                    fcntl.flock(handle, fcntl.LOCK_SH)
+                    records = {r['call_id']:r for r in map(json.loads, path.read_text().splitlines())}
+                spent = sum(r.get('cost_usd') or 0 for r in records.values())
+                reserved = sum(r.get('reserved_usd', 0) for r in records.values() if r.get('cost_usd') is None)
+                committed = spent + reserved
+                fraction = committed / limit if limit else 1
+                tier = 'stop' if fraction >= .95 else 'slow' if fraction >= .85 else 'warn' if fraction >= .70 else 'normal'
+                return dict(spent_usd=round(spent,8),reserved_usd=round(reserved,8),committed_usd=round(committed,8),
+                            cap_usd=limit,tier=tier,quota_known=True,billing='metered API')
+            except (OSError, ValueError, KeyError, TypeError):
+                return dict(cap_usd=limit,quota_known=False,billing='metered API; ledger unavailable')
         # The lane board reports the enforced ceiling/tier, including Gemini.
         board = self.root / "conductor/lanes.json"
         if board.exists():

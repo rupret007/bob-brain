@@ -9,6 +9,26 @@ import api
 
 
 class ModelResponseTimeoutTests(unittest.TestCase):
+    def test_missing_search_evidence_settles_usage_then_fails_without_paid_retry(self):
+        response = dict(candidates=[dict(finishReason='STOP', content=dict(parts=[dict(
+            text='A plausible current answer with no independently recorded search sources.')]))],
+            usageMetadata=dict(promptTokenCount=25, candidatesTokenCount=30))
+        def transport(argv, **kwargs):
+            Path(argv[argv.index('-o') + 1]).write_text(json.dumps(response))
+            return SimpleNamespace(returncode=0, stdout='200')
+        receipt = {'call_id': 'fixture'}
+        with patch.object(api.budget, 'reserve', return_value=receipt) as reserve, \
+                patch.object(api.budget, 'settle') as settle, \
+                patch.object(api, 'run', side_effect=transport) as run, \
+                patch.object(api.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(api.ResultRejected, 'no consulted search sources'):
+                api.http_json('https://example.invalid', lane='gemini', google_search=True,
+                              validate=lambda data: api.extract('gemini', data, google_search=True))
+        self.assertEqual(reserve.call_count, 1)
+        self.assertEqual(run.call_count, 1)
+        settle.assert_called_once_with('gemini', receipt, response)
+        sleep.assert_not_called()
+
     def test_reasoning_models_have_a_longer_response_window(self):
         for model, seconds in (("MiniMax-M2.7", 180), ("gemini-2.5-pro", 180),
                                ("gemini-2.5-flash", 60), (None, 60)):
