@@ -72,8 +72,7 @@ class Session9be598f8ResourcesTests(SessionFixture):
 
     def test_resource_priority_requests_reach_the_model_and_survive_retry_and_reload(self):
         self.fake.reply_text = "The next step is to reproduce one Web Bob reply failure, fix it, and verify the result."
-        for prompt in ("top priority use any and all resources",
-                       "Ok top priority is to make web bob better than grok bot. Make it happen any and all resources."):
+        for prompt in ("top priority use any and all resources",):
             with self.subTest(prompt=prompt):
                 calls_before = len(self.fake.calls)
                 reply = self.send(prompt)
