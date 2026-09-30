@@ -15,6 +15,24 @@ class CurrentModeReplayTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
 
+    def test_improvement_gate_rejects_stale_or_fabricated_audit_evidence(self):
+        from app import Chat
+        from texting_fixture import OfflineProviders
+        import uuid
+        chat = Chat(self.root / 'conductor/webchat', self.root, OfflineProviders())
+        self.addCleanup(chat.close)
+        cid = chat.conversation_list()['conversations'][0]['id']
+        answer = chat.submit(cid, solo.RESOURCE_PROMPTS[1], str(uuid.uuid4()))['messages'][-1]
+        solo.verify_improvement_reply(self.root, [], answer)
+        for key, bad in (('transcript_sha256', 'old'), ('inspected_message_count', 999),
+                         ('queued_jobs', 1), ('code_changed', True), ('regression_cases', []),
+                         ('scheduling_blocks', {'SOLO-WORKER': True, 'MAINTENANCE': False})):
+            with self.subTest(key=key):
+                altered = copy.deepcopy(answer)
+                altered['improvement_receipt'][key] = bad
+                with self.assertRaises(Exception):
+                    solo.verify_improvement_reply(self.root, [], altered)
+
     def test_exact_action_replay_stays_held_without_global_solo_or_queue_writes(self):
         from app import Chat, Server
         from texting_fixture import MockMessaging, OfflineProviders

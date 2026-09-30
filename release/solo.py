@@ -230,14 +230,22 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
 
 
 def resources_replay(client, root, *, real):
-    """Exercise the normal auto route, including genuine status controls."""
+    """Exercise model fallback, bounded improvement work and genuine status controls."""
+    from task_dispatch import task_queue
     cid = client.new()
     receipts = []
     solo_mode = (root / 'conductor/SOLO-WORKER').exists()
-    for prompt in RESOURCE_PROMPTS + ((RESOURCE_ACTION_PROMPT,) if solo_mode else ()):
+    prompts = RESOURCE_PROMPTS + (RESOURCE_PROMPTS[0],
+        'Ok well make that your goal. Research what grok bot does and self improve to be better than it.',
+        'Ok enable what we need to enable') + ((RESOURCE_ACTION_PROMPT,) if solo_mode else ())
+    for index, prompt in enumerate(prompts):
+        before = client.call('/api/conversations/' + cid)['messages']
         value, answer = submit(client, cid, prompt)
-        require(answer.get('provider') in ({'gemini', 'minimax', 'codex', 'claude', 'cursor'} if real else {'fixture'}),
-                'Resource-use action bypassed the model')
+        if index == 0:
+            require(answer.get('provider') in ({'gemini', 'minimax', 'codex', 'claude', 'cursor'} if real else {'fixture'}),
+                    'Unscoped resource request bypassed the model')
+        else:
+            verify_improvement_reply(root, before, answer)
         require(not answer.get('status_observation') and
                 'Codex, Claude, Cursor, Gemini and MiniMax are idle.' not in answer['content'],
                 'Resource-use action returned canned operational status')
@@ -246,9 +254,13 @@ def resources_replay(client, root, *, real):
         again, duplicate = submit(client, cid, prompt, answer['request_id'])
         require(duplicate == answer and len(again['messages']) == len(value['messages']),
                 'Resource request retry was not idempotent')
-        receipts.append(dict(check='Jeff resource-use action reaches model', prompt=prompt,
+        saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
+        require(next(m for m in saved['messages'] if m['id'] == answer['id']) == answer,
+                'Improvement/resource reply was not durably saved')
+        receipts.append(dict(check='Jeff resource request uses model or completed improvement audit', prompt=prompt,
                              conversation_id=cid, request_id=answer['request_id'], provider=answer['provider'],
-                             answer=answer['content'], real_provider=real, passed=True))
+                             answer=answer['content'], improvement_receipt=answer.get('improvement_receipt'),
+                             real_provider=real and index == 0, passed=True))
     for prompt in ('what is the status?', 'how are the workers doing?'):
         _, answer = submit(client, cid, prompt)
         require(answer.get('provider') == 'state' and answer.get('status_observation'),
@@ -256,7 +268,29 @@ def resources_replay(client, root, *, real):
         receipts.append(dict(check='Resource fix preserves real status route', prompt=prompt, passed=True))
     if not solo_mode:
         receipts.append(held_action_replay(client, root, RESOURCE_ACTION_PROMPT))
+    require(not any(row['conversation_id'] == cid for row in task_queue.tasks(root).values()),
+            'Improvement audit replay queued workers')
     return receipts
+
+
+def verify_improvement_reply(root, before, answer):
+    """Assert actual audit evidence, not just agreeable answer wording."""
+    receipt = answer.get('improvement_receipt') or {}
+    require(answer.get('provider') == 'planner' and answer.get('status') == 'done' and
+            receipt.get('request_id') == answer.get('request_id') and
+            receipt.get('completed_step') == 'local_transcript_and_scheduling_audit',
+            'Self-improvement request did not complete a recorded first step')
+    require(receipt.get('transcript_sha256') == hashlib.sha256(json.dumps(before, sort_keys=True).encode()).hexdigest()
+            and receipt.get('inspected_message_count') == len(before), 'Audit did not inspect this saved history')
+    require(receipt.get('scheduling_blocks') == {name: (root / 'conductor' / name).exists()
+                                                for name in ('SOLO-WORKER', 'MAINTENANCE')},
+            'Enable response used stale scheduling facts')
+    require(receipt.get('regression_cases') and len(receipt.get('plan', [])) == 3 and
+            receipt.get('queued_jobs') == 0 and receipt.get('workers_started') == 0 and
+            receipt.get('code_changed') is False and not answer.get('task_id') and not answer.get('task_ids'),
+            'Audit has no concrete plan or claims unperformed work')
+    require('First step completed:' in answer['content'] and 'Next implementation step:' in answer['content'] and
+            'no code has changed' in answer['content'], 'Audit reply hides its result or execution limits')
 
 
 def held_action_replay(client, root, prompt):

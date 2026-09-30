@@ -620,6 +620,11 @@ class Chat(TaskDispatch):
                 conversation["pending_job"] = "Improve " + ", ".join(intent_state["project_order"])
                 conversation["pending_job_id"] = request_id
                 return self.intent_reply(conversation, "Priority order: " + ", ".join(intent_state["project_order"]) + ".")
+            if not public_attachments and worker is None:
+                from self_improvement import handle as improvement_turn
+                improvement = improvement_turn(self, conversation, text, request_id)
+                if improvement is not None:
+                    return improvement
             from worker_assignment import requested_workers
             assignments = requested_workers(text, conversation)
             if assignments:

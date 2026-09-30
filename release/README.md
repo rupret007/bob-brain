@@ -59,8 +59,12 @@ When the owner has archived `SOLO-WORKER`, releases preserve the enabled worker
 and reviewer services. They never recreate that marker. Live action checks use
 an explicit conversation hold in fresh replay sessions and verify the truthful
 hold receipt without queueing work. The isolated suite verifies actual dispatch.
-Resource-use priority requests must reach the real model without a status
-observation; ordinary status questions must still use server observations.
+An unscoped resource-use request must reach the real model without a status
+observation. Web Bob self-improvement goals and their resource/enable follow-ups
+must instead complete a saved local transcript/scheduling audit with exact-prompt
+regression cases and a concrete next patch plan. Both live rounds verify the
+receipt against the pre-request history and current markers, with no worker
+queue writes. Ordinary status questions still use server observations.
 
 The current controller holds `conductor/locks/webbob-release.lock` through
 preflight, snapshots, activation, both live rounds, recovery and publication.
