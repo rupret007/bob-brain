@@ -204,7 +204,8 @@ class IntentTests(Fixture):
         self.reload()
         self.assertFalse(self.chat.history(self.identifier)["intent_state"]["holds"])
         self.assertEqual(len(queue.tasks(self.root)), 2)
-        self.assertNotIn("hold", self.submit("Are we still on hold?")["messages"][-1]["content"].lower())
+        self.assertEqual(self.submit("Are we still on hold?")["messages"][-1]["content"],
+                         "There are no active conversation holds.")
 
     def test_go_clears_hold_without_replaying_old_jobs_and_rehold_is_explicit(self):
         self.submit(HOLD)
@@ -334,7 +335,7 @@ class IntentTests(Fixture):
         with patch.object(self.fake, "reply", return_value=dict(provider="gemini", attempts=[], content=
                 "Your earlier hold on Web Bob code and service restarts still applies. I need your permission before continuing.")):
             answer = self.submit("Any concerns?")["messages"][-1]["content"]
-        self.assertEqual(answer, "Ready when you are.")
+        self.assertEqual(answer, "I could not produce a useful answer to that request. Please retry.")
         self.assertFalse(queue.tasks(self.root))
 
     def test_reply_cites_only_a_matching_active_hold(self):

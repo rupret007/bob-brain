@@ -32,6 +32,8 @@ from live_redeploy_check import Client, require
 
 ORDER = ('texting', 'gaps', 'media', 'voice', 'ui', 'instinct', 'remaining', 'bridge', 'improve')
 BASE = 'draft/webbob-clean-0927'
+RESTART_PROMPT = ("Go ahead and restart the AdoptIQ, Fantasy Football and WebJam projects back up "
+                  "but I want you to only use Gemini and Minimax on them for right now.")
 
 
 def andrea_pin():
@@ -96,10 +98,12 @@ def identity():
     return sha
 
 
-def submit(client, cid, prompt, request=None, attachments=None):
+def submit(client, cid, prompt, request=None, attachments=None, *, provider=None):
     import uuid
     request = request or str(uuid.uuid4())
     payload = dict(conversation_id=cid, message=prompt, request_id=request)
+    if provider:
+        payload['provider'] = provider
     if attachments:
         payload['attachments'] = attachments
     value = client.call('/api/messages', payload)
@@ -206,6 +210,7 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
     if ORDER.index(feature) >= ORDER.index('remaining'):
         receipts.extend(remaining_replay(client, cid))
     if feature == 'improve':
+        receipts.extend(sticky_greeting_replay(client, real=real_reads))
         receipts.extend(capability_replay(client, cid, root))
         receipts.extend(memory_removal_replay(client, cid, root, real=real_reads))
         if real_reads:
@@ -215,6 +220,45 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
     saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
     require(not saved.get('_texting', {}).get('audit'), 'Replay attempted delivery')
     return dict(all_pass=True, conversation_id=cid, checks=receipts, real_texts_sent=0, queued_workers=0)
+
+
+def sticky_greeting_replay(client, *, real):
+    """Repeat Jeff's exact incident in a fresh persisted conversation."""
+    cid = client.new()
+    receipts = []
+    submit(client, cid, 'Hey there', provider='gemini' if real else None)
+    # Deliberately persist a dispatcher ready-line before repeating the incident.
+    submit(client, cid, 'Hold WebJam')
+    submit(client, cid, 'go')
+    for number in (1, 2):
+        # Select Gemini for the product-answer check and require its receipt.
+        value, answer = submit(client, cid, RESTART_PROMPT, provider='gemini' if real else None)
+        provider = answer.get('provider')
+        require(provider in ({'gemini'} if real else {'fixture'}),
+                'Substantive restart request bypassed the model')
+        content = answer['content']
+        require(len(content.split()) >= 20 and all(
+            word in re.sub(r'[^a-z]', '', content.lower())
+            for word in ('adoptiq', 'fantasyfootball', 'webjam', 'gemini', 'minimax')),
+            'Restart answer did not address the projects and model restriction')
+        require('ready when you are' not in content.lower(), 'Sticky greeting returned')
+        again, duplicate = submit(client, cid, RESTART_PROMPT, answer['request_id'],
+                                  provider='gemini' if real else None)
+        require(duplicate == answer and len(again['messages']) == len(value['messages']),
+                'Restart request retry was not idempotent')
+        receipts.append(dict(check='Jeff sticky-greeting live replay', turn=number,
+                             conversation_id=cid, request_id=answer['request_id'], prompt=RESTART_PROMPT,
+                             provider=provider, answer=content, real_provider=real, passed=True))
+    start_prompt = 'Ok start up all work here. Max effort on web bob before we loose grok bot'
+    _, started = submit(client, cid, start_prompt, provider='gemini' if real else None)
+    require(started.get('provider') in ({'gemini'} if real else {'fixture'}),
+            'Solo work request bypassed the model')
+    require('solo Codex' in started['content'] and 'Ready when you are' not in started['content'],
+            'Solo work request did not explain the current restriction')
+    receipts.append(dict(check='Jeff start-all-work maintenance recovery', prompt=start_prompt,
+                         provider=started['provider'], answer=started['content'],
+                         conversation_id=cid, request_id=started['request_id'], passed=True))
+    return receipts
 
 
 def memory_removal_replay(client, cid, root, *, real):
@@ -471,6 +515,10 @@ def staging(root, sha, feature):
         class StagingProviders(OfflineProviders):
             def reply(self, conversation, cancel, progress):
                 user = next(m for m in reversed(conversation['messages']) if m['role'] == 'user')
+                if user['content'] in (RESTART_PROMPT, 'Ok start up all work here. Max effort on web bob before we loose grok bot'):
+                    return dict(content='AdoptIQ, Fantasy Football and WebJam can be scoped to Gemini and MiniMax. '
+                                'The worker runner is stopped, so those projects have not restarted. '
+                                'We can discuss the next steps here.', provider='fixture', attempts=[])
                 if user.get('attachments'):
                     from chat_media import validate_attachment_ids, enrich_for_model
                     metas = validate_attachment_ids(private, user['attachments'], conversation_id=conversation['id'])
@@ -479,6 +527,8 @@ def staging(root, sha, feature):
                     tokens = re.findall(r'(?:clarinet|cello)-[0-9a-f]{8}', bundle['text'])
                     return dict(content='Red. ' + ' '.join(tokens) + ' <bob-webchat-attachment media_id="' + metas[0]['media_id'] + '" />', provider='fixture', attempts=[])
                 return super().reply(conversation, cancel, progress)
+        (private / 'conductor').mkdir(exist_ok=True)
+        (private / 'conductor/SOLO-WORKER').touch()
         chat = Chat(private / 'conductor/webchat', private, StagingProviders(),
                     texting=Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token)))
         if ORDER.index(feature) >= ORDER.index('remaining'):

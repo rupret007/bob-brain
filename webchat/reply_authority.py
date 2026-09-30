@@ -48,6 +48,25 @@ GREETING_OPERATIONS = re.compile(
     r"\bready for (?:new )?work\b", re.I)
 
 
+STICKY_REPLY = re.compile(r"(?:(?:ready when you are|(?:hi|hey|hello)(?:[, ]+Jeff)?|"
+                         r"(?:I(?:['’]m| am) )?ready to help)[.!,\s]*)+", re.I)
+
+
+def sticky_reply(text, content):
+    # A literal-output request is content, not an accidental greeting.
+    literal = (re.search(r"\b(?:say|reply|return|write|print|output)\s+(?:with\s+)?"
+                         r"(?:exactly|verbatim|the (?:exact|literal) (?:text|words|string))\b", text, re.I)
+               and not re.search(r"\b(?:never|not|don[’']t)\b", text, re.I))
+    if literal and re.search(r"\b(?:ready when you are|ready to help|hi|hey|hello)\b", text, re.I):
+        return False
+    return bool(not PURE_GREETING.fullmatch(text.strip()) and STICKY_REPLY.fullmatch(content.strip()))
+
+
+def dispatch_block(conversation):
+    messages = (conversation or {}).get('messages', [])
+    return messages[-1].get('dispatch_blocked') if messages else None
+
+
 def greeting_content(content):
     """A plain greeting does not request the operational context sent to models."""
     parts = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
@@ -336,16 +355,41 @@ def operational_reply(root, provider, text="", *, observation=None, redact=lambd
     return content
 
 
+def unperformed_restart(root, text):
+    """Preserve a restart request's explicit scope without inventing effects."""
+    from pathlib import Path
+    from chat_intent import command, project_targets
+    from dispatch_receipts import NO_DISPATCH
+    directive = command(text)
+    if not re.match(r"^(?:(?:go(?:\s+ahead)?|resume)(?:\s+and)?[\s,:!]+)?restart\b", directive, re.I):
+        return NO_DISPATCH
+    targets = project_targets(directive, {'project_order': []})
+    if not targets:
+        return NO_DISPATCH
+    content = "I haven't restarted " + _join(targets) + ". No new work was queued."
+    names = r"(?:Gemini|MiniMax|Codex|Claude|Cursor)"
+    restriction = re.search(r"\b(?:only\s+(?:use|using)|(?:use|using)\s+only)\s+(" + names +
+                            r"(?:\s*(?:,|&|and)\s*(?:and\s+)?" + names + r")*)\b", directive, re.I)
+    if restriction:
+        labels = {name.lower(): name for name in ('Gemini', 'MiniMax', 'Codex', 'Claude', 'Cursor')}
+        requested = list(dict.fromkeys(labels[name.lower()] for name in re.findall(names, restriction[1], re.I)))
+        content += " Your " + _join(requested) + " restriction has not been applied to any job."
+    if (Path(root) / 'conductor/SOLO-WORKER').exists():
+        content += " Additional workers are paused in solo mode."
+    return content + " I can help define the next task for each project here."
+
+
 def enforce(root, text, answer, conversation=None, *, observation=None, redact=lambda value: value):
     content = answer["content"]
     from worker_assignment import requested_workers
-    if requested_workers(text, conversation):
+    blocked = dispatch_block(conversation)
+    if requested_workers(text, conversation) and not blocked:
         # Model prose is never an assignment receipt, even if it sounds ready.
         return "I haven't assigned a worker from this reply. No new job was queued."
     state = state_for(conversation if conversation is not None else {})
     scopes = blocked_scopes(state, projects(text))
     if HOLD_QUESTION.match(text.strip()):
-        return hold_reply(scopes) if scopes else "Ready when you are."
+        return hold_reply(scopes) if scopes else "There are no active conversation holds."
     from task_dispatch import CHAT_STYLE, PREAMBLE
     # A style preference calls for a simple acknowledgement, never a status
     # report from operational snapshots included in the model context.
@@ -360,7 +404,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
         content = "".join(part for part in sentences if not NO_JOB_NOTICE.search(part)).strip() or NO_DISPATCH
         if claims_dispatch(content) or QUEUE_CLAIM.search(content):
-            return NO_DISPATCH
+            return blocked or unperformed_restart(root, text)
         # Keep the useful answer; remove unsupported effects and boilerplate
         # without adding a system notice to ordinary chat.
         # Keep original whitespace so removing a footer doesn't flatten the
@@ -377,5 +421,9 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         if scopes:
             content = (content + "\n\n" if content else "") + hold_reply(scopes)
         elif not content:
-            content = "Ready when you are."
+            content = "I could not produce a useful answer to that request. Please retry."
+    if sticky_reply(text, content):
+        content = "I could not produce a useful answer to that request. Please retry."
+    if blocked:
+        content = blocked + "\n\n" + content
     return content

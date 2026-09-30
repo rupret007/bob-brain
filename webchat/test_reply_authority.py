@@ -41,7 +41,7 @@ class AuthorityTests(unittest.TestCase):
                 self.assertEqual(answer, "I did not start, assign, or queue any work in this turn.")
 
     def test_plain_answers_and_job_explanations_are_unchanged(self):
-        for text in ("Got it — I’ll keep it short.", "Hi Jeff!", "A lease expires; a lock needs to be released.",
+        for text in ("Got it — I’ll keep it short.", "A lease expires; a lock needs to be released.",
                      "Jobs wait in the queue until a worker is free.", "I can review PR #161.",
                      "A job is queued when every worker is busy.",
                      "The video is paused. Press play to continue.",
@@ -49,6 +49,11 @@ class AuthorityTests(unittest.TestCase):
                      "Here are the details:\n\n- First fact.\n- Second fact."):
             with self.subTest(text=text):
                 self.assertEqual(enforce(Path('/unused'), "Tell me more", dict(content=text, provider="gemini")), text)
+
+    def test_greeting_only_is_valid_for_greeting_but_not_substantive_followup(self):
+        answer = dict(content='Hi Jeff!', provider='gemini')
+        self.assertEqual(enforce(Path('/unused'), 'Hi Bob', answer), 'Hi Jeff!')
+        self.assertNotEqual(enforce(Path('/unused'), 'Tell me more', answer), 'Hi Jeff!')
 
     def test_guard_keeps_the_answer_and_removes_only_the_false_claim(self):
         for claim in ("I've queued a task.", "Started on Claude — job abc123.",

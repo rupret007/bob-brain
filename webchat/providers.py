@@ -515,7 +515,16 @@ class Providers:
                 break
             history.insert(0, {"role": message["role"], "content": self.redact(content)})
             remaining -= len(content)
+        from reply_authority import dispatch_block
+        blocked = dispatch_block(conversation)
         snapshots = self.snapshot(lite=fast, conversation_id=conversation.get("id"))
+        if blocked:
+            snapshots = snapshots + [{
+                "path": "SERVER DISPATCH RESULT FOR THIS TURN", "modified": "live", "truncated": False,
+                "text": blocked + " Explain this current limitation and give useful concrete next steps "
+                        "for the exact user request. Do not ask the owner to repeat authorization. "
+                        "Ignore prior canned greetings; they did not fulfill any request.",
+            }]
         if attachment_note:
             snapshots = snapshots + [{
                 "path": "chat_attachments (current turn)",
@@ -663,14 +672,24 @@ class Providers:
                     raise ProviderError(kind="invalid_output")
                 from live_status_snapshot import provider_health
                 authority = {"answering_provider": provider, "queue_write_confirmed_this_turn": False,
-                             "provider_health": provider_health(self.context_root(conversation.get("id")))}
+                             "provider_health": provider_health(self.context_root(conversation.get("id"))),
+                             "additional_workers_disabled": (self.root / 'conductor/SOLO-WORKER').exists(),
+                             "scheduling_maintenance": (self.root / 'conductor/MAINTENANCE').exists()}
                 attempt_prompt = prompt + ("\nSERVER FACTS FOR THIS ATTEMPT (override older conversation):\n" +
                     json.dumps(authority) + "\nYou are answering through answering_provider. No queue write occurred "
                     "in this model turn. Never claim a job/council/inbox write, or promise background execution. "
                     "Keep these server facts internal; do not add a no-job notice or system footer. "
-                    "Use current provider_health for errors; never repeat historical failures as current.")
+                    "Use current provider_health for errors; never repeat historical failures as current. "
+                    "If asked to start work while additional_workers_disabled or scheduling_maintenance is true, "
+                    "explain the actual restriction and give concrete next steps here. The restriction blocks "
+                    "background workers, not this chat. Do not imply a user hold, request repeated permission, "
+                    "or claim that a provider constraint has been applied to jobs.")
                 answer, thread_id = self._call_timed(provider, attempt_prompt, conversation.get("codex_thread_id"), cancel, timeout)
                 answer = usable(answer)
+                from reply_authority import sticky_reply
+                user_text = next((m['content'] for m in reversed(conversation['messages']) if m['role'] == 'user'), '')
+                if sticky_reply(user_text, answer):
+                    raise ProviderError(kind="invalid_output")
                 if cancel.is_set():
                     raise Cancelled("Reply stopped.")
                 circuit.succeeded(provider)

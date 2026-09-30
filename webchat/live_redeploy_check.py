@@ -182,7 +182,7 @@ def verify_four(client, root, output):
                 saved = json.loads((root / "conductor/webchat/sessions" / (cid + ".json")).read_text())
                 require(not saved["intent_state"]["holds"], "Cleared hold was not saved to disk")
                 _, answer = submit(case, cid, "Are we still on hold?")
-                require(answer["content"] == "Ready when you are.", "Follow-up revived a stale hold")
+                require(answer["content"] == "There are no active conversation holds.", "Follow-up revived a stale hold")
                 require(not [r for r in task_queue.tasks(root).values() if r["conversation_id"] == cid], "Hold/go replayed unwanted work")
             case.update(pass_check=True, error=None)
         except Exception as exc:

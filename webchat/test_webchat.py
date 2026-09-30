@@ -394,11 +394,9 @@ class HTTPTests(Fixture):
                 self.assertEqual(code, 202)
                 answer = json.loads(body)["messages"][-1]
                 self.assertEqual(answer["status"], "done")
-                if text.startswith("The hold"):
-                    self.assertEqual(answer["content"], "Ready when you are.")
-                else:
-                    self.assertIn("working on", answer["content"])
-                    self.assertNotIn("running for", answer["content"])
+                self.assertIn("working on", answer["content"])
+                self.assertNotIn("Ready when you are", answer["content"])
+                self.assertNotIn("running for", answer["content"])
                 self.assertNotIn("start a job:", answer["content"])
                 self.assertNotIn("None", answer["content"])
         self.assertEqual(self.fake.calls, [])
