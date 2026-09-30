@@ -11,7 +11,7 @@ from state import CONDUCTOR, _append, _rows, lock, read_json
 
 LANES = ("codex", "claude", "cursor", "gemini", "minimax", "mini")
 CAP_USD = 48.0
-GEMINI_CAP_USD = 48.0
+GEMINI_CAP_USD = 50.0
 # USD / million tokens, verified against provider pricing on 2026-09-26.
 RATES = {"minimax": (0.30, 1.20, 0.06, 0.375), "gemini": (0.30, 2.50, 0.03, 0.30)}
 
