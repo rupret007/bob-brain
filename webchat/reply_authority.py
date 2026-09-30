@@ -426,4 +426,13 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         content = "I could not produce a useful answer to that request. Please retry."
     if blocked:
         content = blocked + "\n\n" + content
+    # A real model can still omit part of a restart request. Keep the user's
+    # exact project/provider scope in the answer without inventing execution.
+    scope = unperformed_restart(root, text)
+    if scope != NO_DISPATCH:
+        labels = projects(scope) + [name for name in ('Gemini', 'MiniMax', 'Codex', 'Claude', 'Cursor')
+                                    if re.search(r"\b" + name + r"\b", scope, re.I)]
+        compact = re.sub(r'[^a-z]', '', content.lower())
+        if any(re.sub(r'[^a-z]', '', name.lower()) not in compact for name in labels):
+            content = scope + "\n\n" + content
     return content
