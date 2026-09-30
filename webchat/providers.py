@@ -683,7 +683,10 @@ class Providers:
                     "If asked to start work while additional_workers_disabled or scheduling_maintenance is true, "
                     "explain the actual restriction and give concrete next steps here. The restriction blocks "
                     "background workers, not this chat. Do not imply a user hold, request repeated permission, "
-                    "or claim that a provider constraint has been applied to jobs.")
+                    "or claim that a provider constraint has been applied to jobs. "
+                    "For project restart requests, address every named project and every requested provider, "
+                    "state whether the restriction was applied, and give a concrete next step. "
+                    "A maintenance notice alone does not answer the request.")
                 answer, thread_id = self._call_timed(provider, attempt_prompt, conversation.get("codex_thread_id"), cancel, timeout)
                 answer = usable(answer)
                 from reply_authority import sticky_reply

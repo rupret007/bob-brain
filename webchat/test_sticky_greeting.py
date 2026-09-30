@@ -33,6 +33,21 @@ class StickyGreetingTests(Fixture):
         self.assertNotIn('Ready when you are', answer)
         self.assertFalse(task_queue.tasks(self.root))
 
+    def test_live_model_omission_preserves_exact_projects_and_provider_restriction(self):
+        from reply_authority import enforce
+        (self.root / 'conductor/SOLO-WORKER').touch()
+        # Actual first-live-attempt reply on 691dc58; the release was rolled back.
+        raw = ("I can't start new jobs or restart services right now because the system is in maintenance "
+               "mode for a solo parity release. This means scheduling is paused, and I can't launch workers "
+               "for AdoptIQ, Fantasy Football, or WebJam.")
+        answer = enforce(self.root, PROMPT, dict(content=raw, provider='gemini'))
+        for phrase in ('AdoptIQ', 'Fantasy Football', 'WebJam', 'Gemini', 'MiniMax', 'not been applied'):
+            self.assertIn(phrase, answer)
+        self.assertTrue(answer.endswith(raw))
+        scoped = enforce(self.root, 'Restart WebJam using only MiniMax.', dict(content=raw, provider='gemini'))
+        self.assertIn('Your MiniMax restriction has not been applied', scoped)
+        self.assertNotIn('Your Gemini', scoped)
+
     def test_restart_scope_fallback_does_not_infer_other_projects_or_saved_model_choice(self):
         from reply_authority import enforce
         from dispatch_receipts import NO_DISPATCH
@@ -102,7 +117,8 @@ class StickyGreetingTests(Fixture):
             self.chat.submit(self.identifier, prompt, str(uuid.uuid4()))
             self.wait()
             answer = self.chat.history(self.identifier)['messages'][-1]
-            self.assertEqual(answer['content'], 'A saved reply.')
+            self.assertTrue(answer['content'].endswith('A saved reply.'))
+            self.assertNotIn('Ready when you are', answer['content'])
             self.assertEqual(self.fake.calls[-1]['messages'][-2]['content'], prompt)
         self.assertFalse(task_queue.tasks(self.root))
 
