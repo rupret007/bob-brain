@@ -55,6 +55,13 @@ endpoints. Two consecutive rounds must pass. Any post-activation failure restore
 and authenticates the immediate predecessor before publishing failure evidence.
 `rollback --root ROOT --feature FEATURE --record RELEASE_JSON` provides recovery.
 
+When the owner has archived `SOLO-WORKER`, releases preserve the enabled worker
+and reviewer services. They never recreate that marker. Live action checks use
+an explicit conversation hold in fresh replay sessions and verify the truthful
+hold receipt without queueing work. The isolated suite verifies actual dispatch.
+Resource-use priority requests must reach the real model without a status
+observation; ordinary status questions must still use server observations.
+
 The current controller holds `conductor/locks/webbob-release.lock` through
 preflight, snapshots, activation, both live rounds, recovery and publication.
 A competing deployment or rollback fails before changing pins or evidence.
@@ -101,7 +108,7 @@ Always maintain at least 5 GiB free; recovery reserves and bounded atomic
 evidence writes are retained from the existing release tooling. Authentication
 secrets never appear in arguments, evidence or source control.
 
-Live replay is strictly no-send, no-worker. Synthetic messaging, dispatch tests,
+Live replay is strictly no-send and starts no workers. Synthetic messaging, dispatch tests,
 and historical fixture evals are labeled as such. They do not prove real delivery
 or execution by stopped worker services. Real delivery is permitted only for the
 final Jeff notification through Andrea after all readiness criteria are met.

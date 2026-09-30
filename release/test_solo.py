@@ -9,6 +9,58 @@ from unittest.mock import Mock, patch
 import solo
 
 
+class CurrentModeReplayTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def test_exact_action_replay_stays_held_without_global_solo_or_queue_writes(self):
+        from app import Chat, Server
+        from texting_fixture import MockMessaging, OfflineProviders
+        from texting import Texting, BlueBubbles, Andrea
+        from task_dispatch import task_queue
+        import threading
+        mock = MockMessaging(self.root)
+        chat = Chat(self.root / 'conductor/webchat', self.root, OfflineProviders(),
+                    texting=Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token)))
+        server = Server(('127.0.0.1', 0), chat)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            client = solo.Client('http://127.0.0.1:' + str(server.server_port), chat.folder / '.password')
+            client.login()
+            ids = []
+            for prompt in (solo.START_PROMPT, solo.RESOURCE_ACTION_PROMPT):
+                receipt = solo.held_action_replay(client, self.root, prompt)
+                self.assertTrue(receipt['passed'])
+                self.assertEqual(receipt['queued_workers'], 0)
+                self.assertEqual(receipt['provider'], 'dispatcher')
+                ids.append(receipt['conversation_id'])
+            self.assertEqual(len(set(ids)), 2)
+            self.assertFalse(task_queue.tasks(self.root))
+            self.assertFalse((self.root / 'conductor/SOLO-WORKER').exists())
+            for cid in ids:
+                saved = json.loads((chat.folder / 'sessions' / (cid + '.json')).read_text())
+                self.assertEqual(saved['intent_state']['holds']['all']['released_projects'], [])
+                self.assertEqual(len(saved['messages']), 4)
+        finally:
+            server.shutdown()
+            server.server_close()
+            chat.close()
+            mock.close()
+
+    def test_service_guard_honors_current_mode_without_recreating_solo(self):
+        sessions = {'svc-job-runner': '1.svc-job-runner', 'svc-reviewer': '2.svc-reviewer'}
+        solo.verify_worker_service_mode(self.root, sessions)
+        self.assertFalse((self.root / 'conductor/SOLO-WORKER').exists())
+        (self.root / 'conductor').mkdir(exist_ok=True)
+        (self.root / 'conductor/SOLO-WORKER').touch()
+        with self.assertRaisesRegex(Exception, 'solo mode is active'):
+            solo.verify_worker_service_mode(self.root, sessions)
+        solo.verify_worker_service_mode(self.root, {})
+
+
 class BridgeReplayTargetTests(unittest.TestCase):
     def test_excludes_short_codes_groups_and_mismatched_membership(self):
         for guid, addresses in (

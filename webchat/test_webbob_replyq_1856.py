@@ -67,6 +67,49 @@ class SessionFixture(unittest.TestCase):
         return self.chat.get(self.identifier)["messages"][-1]
 
 
+class Session9be598f8ResourcesTests(SessionFixture):
+    """Exact owner requests must not become canned resource-status replies."""
+
+    def test_resource_priority_requests_reach_the_model_and_survive_retry_and_reload(self):
+        self.fake.reply_text = "The next step is to reproduce one Web Bob reply failure, fix it, and verify the result."
+        for prompt in ("top priority use any and all resources",
+                       "Ok top priority is to make web bob better than grok bot. Make it happen any and all resources."):
+            with self.subTest(prompt=prompt):
+                calls_before = len(self.fake.calls)
+                reply = self.send(prompt)
+                self.assertEqual(reply["status"], "done")
+                self.assertEqual(reply["provider"], "gemini")
+                self.assertEqual(reply["content"], self.fake.reply_text)
+                self.assertNotIn("status_observation", reply)
+                self.assertEqual(len(self.fake.calls), calls_before + 1)
+                self.assertEqual(self.fake.calls[-1]["messages"][-2]["content"], prompt)
+                self.chat.close()
+                self.chat = Chat(self.folder, self.root, self.fake)
+                self.assertEqual(self.chat.history(self.identifier)["messages"][-1], reply)
+                duplicate = self.chat.submit(self.identifier, prompt, reply["request_id"])["messages"][-1]
+                self.assertEqual(duplicate, reply)
+                self.assertEqual(len(self.fake.calls), calls_before + 1)
+
+    def test_make_it_happen_resources_request_dispatches_a_real_job(self):
+        prompt = "Ok make it happen use any and all resources."
+        reply = self.send(prompt)
+        self.assertEqual(reply["provider"], "dispatcher")
+        self.assertNotIn("status_observation", reply)
+        self.assertIn("task_id", reply)
+        row = task_queue.tasks(self.root)[reply["task_id"]]
+        self.assertEqual(row["status"], "queued")
+        self.assertIn("make it happen use any and all resources", row["prompt"])
+
+    def test_criticism_of_resource_action_request_does_not_become_status(self):
+        self.fake.reply_text = "The next step is to reproduce one Web Bob reply failure, fix it, and verify the result."
+        self.send("top priority use any and all resources")
+        reply = self.send("This needs to be way better")
+        self.assertEqual(reply["provider"], "gemini")
+        self.assertEqual(reply["content"], self.fake.reply_text)
+        self.assertNotIn("status_observation", reply)
+        self.assertEqual(len(self.fake.calls), 2)
+
+
 class Session8126301cTests(SessionFixture):
     """'Ok start up all the projects we were working on taking everything' (2026-09-27)."""
 
