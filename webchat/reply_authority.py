@@ -20,7 +20,13 @@ NO_JOB_NOTICE = re.compile(
     r"\b(?:nothing|no work) (?:was |is |has been )?(?:queued|started|running)\b|"
     r"\bstart a job\s*:", re.I)
 STATUS_QUESTION = re.compile(
-    r"\b(?:status|resources?|workers? doing|each (?:worker|model)|all (?:workers|models|LLMs)|"
+    # Resource-use instructions must reach dispatch/model handling. Only an
+    # explicit resource observation belongs in the server-owned status route.
+    r"\b(?:status|resources? (?:usage|utilization|availability|health)|"
+    r"(?:check|show(?: me)?) (?:the )?resources?|"
+    r"(?:what|which) resources? (?:are|do we have)|how are (?:the |our )?resources?(?: doing)?|"
+    r"(?:are we|we) using (?:all (?:of )?(?:the |our )?|any )?resources?|"
+    r"workers? doing|each (?:worker|model)|all (?:workers|models|LLMs)|"
     r"work being performed|what about (?:Gemini|MiniMax|Codex|Claude|Cursor)|"
     r"(?:what(?:['’]s| is) (?:working on what|going on)|what are you working on|each llm)|"
     r"everything (?:going|running)|how(?:['’]s| is| we)? (?:everything|it going|we doing)|"
@@ -84,7 +90,7 @@ DETAILS = re.compile(r"\b(?:raw|diagnostic(?:s)?|internal (?:ids?|details)|(?:jo
 HIDE_DETAILS = re.compile(r"\b(?:no|without|hide|omit|skip|don['’]t show|do not show|leave out)\b.{0,45}"
                           r"\b(?:raw|internal|ids?|names?|pids?|diagnostics?)\b", re.I)
 IDENTITY = re.compile(r"\bwho(?:['’]s| is) (?:answering|responding)\b", re.I)
-HEALTH = re.compile(r"\b(?:health|healthy|failing|errors?|providers?|resources?)\b", re.I)
+HEALTH = re.compile(r"\b(?:health|healthy|failing|errors?|providers?)\b", re.I)
 
 
 def _duration(seconds):

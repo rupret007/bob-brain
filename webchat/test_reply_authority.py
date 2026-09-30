@@ -3,12 +3,42 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from reply_authority import enforce, operational_reply
+from reply_authority import HEALTH, STATUS_QUESTION, correcting_status, enforce, operational_reply
 from test_worker_activity import PS, SCREENS
 from worker_activity import parse_processes
 
 
 class AuthorityTests(unittest.TestCase):
+    def test_any_and_all_resources_action_requests_keep_the_useful_answer(self):
+        useful = "The next step is to reproduce one Web Bob reply failure, fix it, and verify the result."
+        for prompt in ("Ok make it happen use any and all resources.",
+                       "top priority use any and all resources",
+                       "Ok top priority is to make web bob better than grok bot. Make it happen any and all resources."):
+            with self.subTest(prompt=prompt):
+                self.assertIsNone(STATUS_QUESTION.search(prompt))
+                self.assertIsNone(HEALTH.search(prompt))
+                with patch("reply_authority.operational_reply", side_effect=AssertionError("Action request became status")):
+                    self.assertEqual(enforce(Path('/unused'), prompt,
+                                            dict(content=useful, provider="gemini")), useful)
+                conversation = dict(messages=[dict(role="user", content=prompt)])
+                self.assertFalse(correcting_status("This needs to be way better", conversation))
+
+    def test_real_status_and_resource_questions_still_use_live_observations(self):
+        for prompt in ("what is the status?", "how are the workers doing?",
+                       "resource usage", "resource utilization", "resource availability",
+                       "check resources", "show me resources", "what resources are available?",
+                       "how are our resources doing?", "are we using all resources?",
+                       "We using all resources now?"):
+            with self.subTest(prompt=prompt):
+                self.assertIsNotNone(STATUS_QUESTION.search(prompt))
+                with patch("reply_authority.operational_reply", return_value="Observed worker status.") as render:
+                    self.assertEqual(enforce(Path('/unused'), prompt,
+                                            dict(content="An unverified model answer.", provider="gemini")),
+                                     "Observed worker status.")
+                    render.assert_called_once()
+                conversation = dict(messages=[dict(role="user", content=prompt)])
+                self.assertTrue(correcting_status("This needs to be way better", conversation))
+
     def test_services_and_fresh_log_observations_are_available_on_request(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

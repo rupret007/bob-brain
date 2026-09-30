@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Solo release checks and rollback transaction; never starts council or workers.
+"""Release checks and rollback transaction; replay never executes worker jobs.
 
-Historical vendor gates are superseded by Jeff's 2026-09-29 solo instruction.
-Product acceptance tests remain unchanged. Live replay must never send a text.
+Historical vendor gates are superseded by Jeff's 2026-09-29 instructions.
+Checks honor the current dispatch mode. Live replay must never send a text.
 """
 import argparse
 import concurrent.futures
@@ -34,6 +34,12 @@ ORDER = ('texting', 'gaps', 'media', 'voice', 'ui', 'instinct', 'remaining', 'br
 BASE = 'draft/webbob-clean-0927'
 RESTART_PROMPT = ("Go ahead and restart the AdoptIQ, Fantasy Football and WebJam projects back up "
                   "but I want you to only use Gemini and Minimax on them for right now.")
+START_PROMPT = 'Ok start up all work here. Max effort on web bob before we loose grok bot'
+RESOURCE_ACTION_PROMPT = 'Ok make it happen use any and all resources.'
+RESOURCE_PROMPTS = (
+    'top priority use any and all resources',
+    'Ok top priority is to make web bob better than grok bot. Make it happen any and all resources.',
+)
 
 
 def andrea_pin():
@@ -210,7 +216,8 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
     if ORDER.index(feature) >= ORDER.index('remaining'):
         receipts.extend(remaining_replay(client, cid))
     if feature == 'improve':
-        receipts.extend(sticky_greeting_replay(client, real=real_reads))
+        receipts.extend(resources_replay(client, root, real=real_reads))
+        receipts.extend(sticky_greeting_replay(client, root, real=real_reads))
         receipts.extend(capability_replay(client, cid, root))
         receipts.extend(memory_removal_replay(client, cid, root, real=real_reads))
         if real_reads:
@@ -222,7 +229,66 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
     return dict(all_pass=True, conversation_id=cid, checks=receipts, real_texts_sent=0, queued_workers=0)
 
 
-def sticky_greeting_replay(client, *, real):
+def resources_replay(client, root, *, real):
+    """Exercise the normal auto route, including genuine status controls."""
+    cid = client.new()
+    receipts = []
+    solo_mode = (root / 'conductor/SOLO-WORKER').exists()
+    for prompt in RESOURCE_PROMPTS + ((RESOURCE_ACTION_PROMPT,) if solo_mode else ()):
+        value, answer = submit(client, cid, prompt)
+        require(answer.get('provider') in ({'gemini', 'minimax', 'codex', 'claude', 'cursor'} if real else {'fixture'}),
+                'Resource-use action bypassed the model')
+        require(not answer.get('status_observation') and
+                'Codex, Claude, Cursor, Gemini and MiniMax are idle.' not in answer['content'],
+                'Resource-use action returned canned operational status')
+        user = next(m for m in value['messages'] if m.get('role') == 'user' and m.get('request_id') == answer['request_id'])
+        require(user['content'] == prompt, 'Resource request text changed')
+        again, duplicate = submit(client, cid, prompt, answer['request_id'])
+        require(duplicate == answer and len(again['messages']) == len(value['messages']),
+                'Resource request retry was not idempotent')
+        receipts.append(dict(check='Jeff resource-use action reaches model', prompt=prompt,
+                             conversation_id=cid, request_id=answer['request_id'], provider=answer['provider'],
+                             answer=answer['content'], real_provider=real, passed=True))
+    for prompt in ('what is the status?', 'how are the workers doing?'):
+        _, answer = submit(client, cid, prompt)
+        require(answer.get('provider') == 'state' and answer.get('status_observation'),
+                'Real status question lost its server-owned observation')
+        receipts.append(dict(check='Resource fix preserves real status route', prompt=prompt, passed=True))
+    if not solo_mode:
+        receipts.append(held_action_replay(client, root, RESOURCE_ACTION_PROMPT))
+    return receipts
+
+
+def held_action_replay(client, root, prompt):
+    """Exercise exact action routing against a saved hold in a fresh test conversation."""
+    from chat_intent import blocked_scopes, hold_reply
+    from task_dispatch import task_queue
+    cid = client.new()
+    path = root / 'conductor/webchat/sessions' / (cid + '.json')
+    _, held = submit(client, cid, 'Hold all work')
+    saved = json.loads(path.read_text())
+    hold = saved['intent_state']['holds'].get('all')
+    require(held.get('provider') == 'dispatcher' and hold and hold['request_id'] == held['request_id'] and
+            hold.get('released_projects') == [],
+            'Replay hold was not durably confirmed')
+    value, answer = submit(client, cid, prompt)
+    saved = json.loads(path.read_text())
+    scopes = blocked_scopes(saved['intent_state'], [])
+    require(saved['intent_state']['holds'].get('all') == hold and scopes and
+            answer.get('provider') == 'dispatcher' and answer['content'] == hold_reply(scopes) and
+            not answer.get('status_observation'), 'Exact action did not honor its saved conversation hold')
+    again, duplicate = submit(client, cid, prompt, answer['request_id'])
+    require(duplicate == answer and len(again['messages']) == len(value['messages']),
+            'Held action retry was not idempotent')
+    require(not any(row['conversation_id'] == cid for row in task_queue.tasks(root).values()),
+            'Held replay queued work')
+    return dict(check='Jeff exact action honors explicit fresh conversation hold', prompt=prompt,
+                provider=answer['provider'], answer=answer['content'], conversation_id=cid,
+                request_id=answer['request_id'], scope='Saved test-conversation hold; global workers remain enabled',
+                queued_workers=0, passed=True)
+
+
+def sticky_greeting_replay(client, root, *, real):
     """Repeat Jeff's exact incident in a fresh persisted conversation."""
     cid = client.new()
     receipts = []
@@ -249,13 +315,15 @@ def sticky_greeting_replay(client, *, real):
         receipts.append(dict(check='Jeff sticky-greeting live replay', turn=number,
                              conversation_id=cid, request_id=answer['request_id'], prompt=RESTART_PROMPT,
                              provider=provider, answer=content, real_provider=real, passed=True))
-    start_prompt = 'Ok start up all work here. Max effort on web bob before we loose grok bot'
-    _, started = submit(client, cid, start_prompt, provider='gemini' if real else None)
+    if not (root / 'conductor/SOLO-WORKER').exists():
+        receipts.append(held_action_replay(client, root, START_PROMPT))
+        return receipts
+    _, started = submit(client, cid, START_PROMPT, provider='gemini' if real else None)
     require(started.get('provider') in ({'gemini'} if real else {'fixture'}),
             'Solo work request bypassed the model')
     require('solo Codex' in started['content'] and 'Ready when you are' not in started['content'],
             'Solo work request did not explain the current restriction')
-    receipts.append(dict(check='Jeff start-all-work maintenance recovery', prompt=start_prompt,
+    receipts.append(dict(check='Jeff start-all-work maintenance recovery', prompt=START_PROMPT,
                          provider=started['provider'], answer=started['content'],
                          conversation_id=cid, request_id=started['request_id'], passed=True))
     return receipts
@@ -515,6 +583,9 @@ def staging(root, sha, feature):
         class StagingProviders(OfflineProviders):
             def reply(self, conversation, cancel, progress):
                 user = next(m for m in reversed(conversation['messages']) if m['role'] == 'user')
+                if user['content'] in (*RESOURCE_PROMPTS, RESOURCE_ACTION_PROMPT):
+                    return dict(content='I can improve Web Bob by checking the requested behavior and its regression evidence. '
+                                'No additional work was started by this reply.', provider='fixture', attempts=[])
                 if user['content'] in (RESTART_PROMPT, 'Ok start up all work here. Max effort on web bob before we loose grok bot'):
                     return dict(content='AdoptIQ, Fantasy Football and WebJam can be scoped to Gemini and MiniMax. '
                                 'The worker runner is stopped, so those projects have not restarted. '
@@ -724,6 +795,13 @@ def versions(root, expected):
     return result
 
 
+def verify_worker_service_mode(root, sessions):
+    """An archived solo marker permits enabled services; an active one still forbids them."""
+    if (root / 'conductor/SOLO-WORKER').exists():
+        require(not {'svc-job-runner', 'svc-reviewer'} & sessions.keys(),
+                'Council/worker service is running while solo mode is active')
+
+
 @serialized
 def restart(root, pins):
     """Only the web server restarts; no job-runner or council resurrection."""
@@ -732,7 +810,7 @@ def restart(root, pins):
     from runtime import screen_sessions
     with lock('supervisor'):
         before = screen_sessions()
-        require('svc-job-runner' not in before, 'Solo deployment requires stopped worker runner')
+        verify_worker_service_mode(root, before)
         p = subprocess.run(['lsof', '-t', '-iTCP:8787', '-sTCP:LISTEN'], capture_output=True, text=True)
         pids = p.stdout.split()
         require(p.returncode in (0, 1) and len(pids) <= 1, 'Ambiguous server listener')
@@ -773,7 +851,7 @@ def restart(root, pins):
         after = screen_sessions()
         require(all(after.get(n) == value for n, value in before.items() if n.startswith('svc-') and n != 'svc-webchat'),
                 'Unrelated durable service changed')
-        require('svc-job-runner' not in after, 'Worker runner unexpectedly started')
+        verify_worker_service_mode(root, after)
         return dict(before=before, after=after, restarted=['svc-webchat'])
 
 
@@ -864,9 +942,8 @@ def deploy(args):
     journal.require_clear(root)
     sha = identity()
     gates = verify_gates(sha, args.feature, args.checks, args.review)
-    from runtime import screen_sessions, service_enabled
-    require(not service_enabled('job-runner') and not service_enabled('reviewer'), 'Persistent solo shutdown marker missing')
-    require(not {'svc-job-runner', 'svc-reviewer'} & screen_sessions().keys(), 'Council/worker service is running')
+    from runtime import screen_sessions
+    verify_worker_service_mode(root, screen_sessions())
     index = ORDER.index(args.feature)
     if index:
         predecessor = root / 'conductor/reviews' / ('SOLO-0018-' + ORDER[index - 1] + '-live.json')
