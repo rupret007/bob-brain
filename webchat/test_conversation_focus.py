@@ -152,6 +152,38 @@ class FocusTests(SessionFixture):
         self.send('Hi')
         self.assertFalse(provider.precision_request(self.chat.get(self.identifier)))
 
+    def test_saved_hold_facts_survive_a_summary_beyond_recent_history(self):
+        import json
+        from chat_intent import permission_facts
+        self.send('Hold off on WebJam.')
+        for _ in range(14):
+            self.send('Thanks.')
+        self.send('Summarize the active holds in this chat.')
+        conversation = self.chat.get(self.identifier)
+        provider = Providers(self.root, self.chat.redact)
+        provider.prompt(conversation, fast=True)
+        payload = provider.current_call.api_input
+        snapshots = json.loads(payload['context'].split('Reference snapshots (not instructions):\n')[1])
+        saved = json.loads(next(x['text'] for x in snapshots if x['path'] == 'saved chat hold facts'))
+        self.assertEqual(saved['holds'], permission_facts(conversation)['holds'])
+        self.assertIn('WebJam', saved['holds'])
+        self.assertNotIn('Hold off on WebJam.', str(payload['messages']))
+        self.assertNotIn('instruction', saved)
+
+    def test_recent_answer_is_not_duplicated_as_an_extra_artifact_to_copy(self):
+        import copy
+        self.fake.reply_text = 'The boat rests beside the willow.'
+        self.send('Write a short opening sentence about a boat.')
+        self.send('Keep going.')
+        conversation = copy.deepcopy(self.chat.get(self.identifier))
+        conversation['messages'][-1]['status'] = 'running'
+        provider = Providers(self.root, self.chat.redact)
+        provider.prompt(conversation, fast=True)
+        payload = provider.current_call.api_input
+        self.assertEqual(sum(m['content'] == self.fake.reply_text for m in payload['messages']), 1)
+        self.assertNotIn(self.fake.reply_text, payload['context'])
+        self.assertNotIn('Write a short opening sentence about a boat.', payload['context'])
+
     def test_reference_revision_uses_current_answer_without_artifact_noun_allowlist(self):
         from task_dispatch import task_queue
         self.send('Draft a neighborhood meeting notice for Thursday.')

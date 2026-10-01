@@ -602,6 +602,7 @@ class Providers:
                           bool(suspended and not OPERATIONAL.search(last_user))) and not needs_handoff_context(last_user)
         self.current_call.answer_context = answer_context
         history, remaining = [], 24000 if not fast else 12000
+        represented = set()
         messages = conversation['messages']
         if suspended and answer_context:
             # The durable transcript remains intact. Only this model context
@@ -614,6 +615,8 @@ class Providers:
         for message in reversed(messages):
             cap = 3000 if fast else 6000
             content = message["content"][:min(cap, remaining)]
+            if len(content) == len(message['content']):
+                represented.add((message['role'], message.get('request_id')))
             if message.get("attachments"):
                 names = ", ".join(
                     f"{a.get('filename') or 'file'} [media_id={a.get('media_id')}]" for a in message["attachments"][:6]
@@ -626,6 +629,17 @@ class Providers:
         from reply_authority import dispatch_block
         blocked = dispatch_block(conversation)
         retained = focus(conversation)
+        if retained:
+            # Durable focus fills gaps in bounded history. Duplicating a recent
+            # completed artifact as the saved answer can encourage copying it
+            # on a continuation instead of advancing the current request.
+            retained = dict(retained)
+            retained['user_excerpts'] = [m for m in retained['user_excerpts']
+                                         if ('user', m['request_id']) not in represented]
+            if retained.get('latest_answer') and ('assistant', retained['latest_answer']['request_id']) in represented:
+                retained['latest_answer'] = None
+            if not retained['user_excerpts'] and not retained.get('latest_answer'):
+                retained = None
         # A poem or supplied calculation needs its conversation, not unrelated
         # project handoffs, operational logs, or the owner's entire profile.
         # The operational snapshot is cached across conversations. Never append
@@ -634,6 +648,15 @@ class Providers:
         if retained:
             snapshots += [dict(path='conversation user-source index', modified='saved', truncated=False,
                                text=self.redact(json.dumps(retained, ensure_ascii=False)))]
+        saved_permissions = permission_facts(conversation)
+        if answer_context and not blocked:
+            # Preserve authoritative state for questions about saved holds even
+            # after their originating messages leave the history window. Facts
+            # are reference data; operational permission instructions are not
+            # needed to write or explain something in chat.
+            facts = {key: saved_permissions[key] for key in ('holds', 'last_permission')}
+            snapshots += [dict(path='saved chat hold facts', modified='saved', truncated=False,
+                               text=self.redact(json.dumps(facts, ensure_ascii=False)))]
         if blocked:
             snapshots = snapshots + [{
                 "path": "SERVER DISPATCH RESULT FOR THIS TURN", "modified": "live", "truncated": False,
@@ -650,10 +673,12 @@ class Providers:
             }]
         # The last user message is already durable in the history; never duplicate it.
         scope = ('\nSERVER CONVERSATION FOCUS: An earlier improvement goal was superseded. '
-                 'It is not the current task. The newer conversation and user-source index '
+                 'It is not the current task. The newer conversation and any saved user-source index '
                  'contain the active answer topic. Interpret a follow-up about effort, depth, '
                  'or resources as a refinement of that answer task. Give the next useful '
-                 'explanation or apply its latest correction. Do not restart the old goal '
+                 'explanation or apply its latest correction. A request for more effort or '
+                 'continuation needs new useful detail, an example, a next step, or a focused '
+                 'question; repeating the completed answer is not progress. Do not restart the old goal '
                  'or ask for a topic that is already present. If a material choice is still '
                  'missing, ask one specific question about the current topic.\n') if suspended else ''
         from answer_intent import conceptual
@@ -673,7 +698,7 @@ class Providers:
         # irrelevant action framing here; actual dispatch/holds remain enforced
         # by the server. Blocked work and operational turns still need the facts.
         permissions = ("\nSERVER SAVED CHAT PERMISSIONS (override older history and snapshots):\n" +
-                       json.dumps(permission_facts(conversation), ensure_ascii=False)) if not answer_context or blocked else ''
+                       json.dumps(saved_permissions, ensure_ascii=False)) if not answer_context or blocked else ''
         flat = self.current_call.instructions + context + "\nRecent conversation, oldest first. Answer the final user message:\n" + json.dumps(history, ensure_ascii=False) + permissions
         # Retain the plain prompt for CLI and existing callers. API transport
         # uses the separately constructed parts, never delimiter-parses user text.
