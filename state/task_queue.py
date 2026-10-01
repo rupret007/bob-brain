@@ -42,7 +42,7 @@ def file_task_kind(prompt):
     task = re.sub(r"```.*?```", "", task, flags=re.S)
     task = re.split(r"\n\s*(?:SUPPLIED EVIDENCE|EVIDENCE|SOURCE|CODE)\s*:", task, maxsplit=1, flags=re.I)[0]
     read = r"(?:read|open|inspect|review|audit|summari[sz]e|analy[sz]e|check|list|search)"
-    write = r"(?:write|save|create|edit|modify|update|delete|remove|append)"
+    write = r"(?:write|save|create|make|build|prepare|produce|put together|edit|modify|update|delete|remove|append)"
     # A path is an instruction target only after a task verb. 'Explain how to
     # read a file' and pasted source mentioning paths remain answer-only work.
     start = r"(?:^|[\n.;]\s*|\band\s+|\bthen\s+)\s*(?:please\s+)?"
@@ -52,8 +52,12 @@ def file_task_kind(prompt):
               r"(?:services|webchat|conductor|state|src|lib|tests|docs|config|reviews)/[\w./-]*|"
               r"[\w-]+\.(?:py|md|txt|json|js|ts|tsx|jsx|sh|yaml|yml|toml|csv|log)\b|"
               r"(?:git\s+)?(?:worktree|checkout|repository|repo|directory|folder|files?)\b)")
+    # Quoted commands are examples, not action clauses. Preserve literal path
+    # arguments, including backticked filenames, without adopting other text.
+    task = re.sub(r'"[^"\n]*"|“[^”\n]*”|`[^`\n]*`|\x27[^\x27\n]*\x27',
+                  lambda m: m[0][1:-1] if re.fullmatch(target, m[0][1:-1], re.I) else '', task)
     if (re.search(start + write + r"\s+" + qualifiers + target, task, re.I) or
-            re.search(start + r"(?:write|save|create|append)\b[^\n]{0,120}\b(?:to|in|under|at)\s+" +
+            re.search(start + write + r"\b[^\n]{0,120}\b(?:to|in|under|at)\s+" +
                       qualifiers + target, task, re.I)):
         return "coding"
     if re.search(start + read + r"\s+" + qualifiers + target, task, re.I):

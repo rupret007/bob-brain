@@ -25,7 +25,7 @@ ROUTED = re.compile(r"^" + POLITE + r"(?:have|get|ask|use|assign(?:\s+to)?|deleg
                     r"(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\b\s*(?:to\b|[:,])?\s*(.*)$", re.I | re.S)
 PREFIX = re.compile(r"^(?:worker\s*[:=]\s*)?(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\s*:\s*(.+)$", re.I | re.S)
 CODING = re.compile(r"\b(?:fix|repair|improve|implement|refactor|debug|build|run|execute|install|edit|change|modify)\b|"
-                    r"\b(?:write|add|create|update|remove)\b.{0,60}\b(?:code|file|test|function|service|script|app|feature)\b", re.I | re.S)
+                    r"\b(?:write|add|create|update|remove)\b.{0,60}\b(?:code|file|test|function|service|script|app|feature|database|schema)\b", re.I | re.S)
 PROJECT_LIST = PROJECT.pattern + r"(?:\s*(?:,|&|\band\b|\bthen\b)\s*(?:and\s+)?" + PROJECT.pattern + r")*"
 FOLLOW_UP = re.compile(r"^" + POLITE + r"(?:go(?: ahead)?|resume|do it|handle it|yes(?: please)?|let['’]s do it|"
                        r"(?:go(?: ahead)?|resume)\s+(?:(?:with|on)\s+)?" + PROJECT_LIST + r")[.!?]*$", re.I)
@@ -100,6 +100,11 @@ def parse_work(text, *, conversation=None):
                        r"((?:plan|grade|score|evaluate|review|audit|inspect|fix|build|write|research)\b.+)$", text.strip(), re.I | re.S))
     if routed:
         return routed.group(2).strip(), routed.group(1).lower()
+    from answer_intent import implementation_deliverable
+    request = re.sub(r"^" + POLITE, "", text.strip(), flags=re.I)
+    target_request = WORK.match(request) or re.match(r'^(?:prepare|produce|put together)\b', request, re.I)
+    if target_request and (task_queue.file_task_kind(request) or implementation_deliverable(request)):
+        return text.strip(), 'auto'
     if conversation and conversation.get('answer_focus', {}).get('origin'):
         from conversation_focus import CORRECTION
         from answer_intent import requires_execution, requires_research
@@ -143,8 +148,8 @@ def task_kind(prompt):
     file_kind = task_queue.file_task_kind(prompt)
     if file_kind:
         return file_kind
-    from answer_intent import requires_execution, requires_research
-    if requires_execution(prompt):
+    from answer_intent import requires_execution, requires_research, implementation_deliverable
+    if requires_execution(prompt) or implementation_deliverable(prompt):
         return 'coding'
     if requires_research(prompt):
         return 'research'

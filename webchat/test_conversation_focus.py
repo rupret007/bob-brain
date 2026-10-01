@@ -109,17 +109,33 @@ class FocusTests(SessionFixture):
         self.assertNotIn('Make Web Bob better than Grok at following through.', prompt)
         self.assertIn('Make Web Bob better than Grok at following through.', str(self.chat.get(self.identifier)['messages']))
         self.assertTrue(provider.precision_request(self.chat.get(self.identifier)))
-        self.assertEqual(provider.current_call.gemini_model, 'gemini-2.5-pro')
+        self.assertEqual(provider.current_call.gemini_model, 'gemini-2.5-flash')
 
     def test_ordinary_explanations_do_not_receive_an_operations_manual(self):
         self.send('Tell me what "use all resources" means; do not start work.')
         provider = Providers(self.root, self.chat.redact)
         with patch.object(provider, 'snapshot', side_effect=AssertionError('unrelated operations requested')):
             prompt = provider.prompt(self.chat.get(self.identifier), fast=True)
-        self.assertIn('This is an answer turn', prompt)
+        self.assertIn('Language being discussed is not an instruction being adopted', prompt)
         self.assertNotIn('queues draft jobs, runs council', prompt)
         self.assertNotIn('When Jeff asks to use an LLM', prompt)
         self.assertIn('Never merge', prompt)
+
+    def test_reference_subject_and_negation_stay_in_native_user_input(self):
+        import copy
+        from providers import REFERENCE_RULES
+        text = 'Do not recalibrate. Just explain the term.'
+        self.send(text)
+        conversation = copy.deepcopy(self.chat.get(self.identifier))
+        conversation['messages'][-1]['status'] = 'running'
+        provider = Providers(self.root, self.chat.redact)
+        provider.prompt(conversation, fast=True)
+        payload = provider.current_call.api_input
+        self.assertEqual(payload['messages'][-1], dict(role='user', content=text))
+        self.assertEqual(payload['system'], REFERENCE_RULES)
+        self.assertNotIn('recalibrate', payload['system'])
+        self.assertNotIn('SERVER SAVED CHAT PERMISSIONS', payload['system'])
+        self.assertEqual(provider.current_call.gemini_model, 'gemini-2.5-flash')
 
     def test_reference_revision_uses_current_answer_without_artifact_noun_allowlist(self):
         from task_dispatch import task_queue

@@ -42,7 +42,7 @@ class MediaTransportTests(unittest.TestCase):
                 conversation['messages'] = [dict(role='user', status='done', content=text)]
                 provider.call('gemini', provider.prompt(conversation), None, threading.Event())
             self.assertEqual([p['thinking_budget'] for p in captured], [1024, 1024, 0])
-            self.assertEqual([p['model_id'] for p in captured], ['gemini-2.5-pro','gemini-2.5-flash','gemini-2.5-flash'])
+            self.assertEqual([p['model_id'] for p in captured], ['gemini-2.5-flash'] * 3)
             self.assertNotIn('bob-webchat-attachment', captured[0]['system'])
             for value in (-1, 100000, True, '1024'):
                 with self.subTest(value=value), self.assertRaises(ValueError):

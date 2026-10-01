@@ -15,8 +15,11 @@ REVISION = re.compile(r'^(?:make|keep|rewrite|revise|shorten|expand|rephrase)\b.
 TEXT_DELIVERABLE = re.compile(r'^(?:make|create|prepare|put together|produce|build)\s+(?:(?:me|us)\s+)?'
                               r'(?:(?:a|an|the|some)\s+)?(?:[a-z]+[ -]){0,3}'
                               r'(?:checklist|outline|list|table|draft|message|note|paragraph|poem|story|'
-                              r'lyrics|email|explanation|summary|comparison|plan|invitation|guide)\b'
-                              r'(?!\s+(?:app|tool|script|service|file)\b)', re.I)
+                              r'lyrics|email|explanation|summary|comparison|plan|invitation|guide)\b', re.I)
+IMPLEMENTATION_SUFFIX = re.compile(r'\s+(?:(?!(?:for|about|of|on|to|in|with|and|or)\b)[\w+#.-]+\s+){0,3}'
+                                    r'(?:app|application|tool|script|service|file)\b|'
+                                    r'\s+(?:in|inside|within)\s+(?:(?:a|an|the|our|my)\s+)?'
+                                    r'(?:database|schema|repository|repo)\b', re.I)
 ARTIFACT_OPERATION = re.compile(r'\b(?:create|open|submit|publish|commit|merge)\b.{0,35}\b'
                                 r'(?:pull request|PR|branch|commit)\b', re.I)
 RETRIEVAL_TARGET = re.compile(r'\b(?:PR|pull request|issue)\s*#?\d+\b|'
@@ -68,10 +71,24 @@ def wants_answer(text):
     """An in-chat deliverable, after explicit tools/targets were checked."""
     from chat_intent import command
     request = re.sub(r'^help me (?:to )?', '', instructions(command(text)), flags=re.I)
-    return bool((ANSWER.match(request) or REVISION.match(request) or TEXT_DELIVERABLE.match(request))
+    deliverable = TEXT_DELIVERABLE.match(request)
+    if implementation_deliverable(request):
+        return False
+    return bool((ANSWER.match(request) or REVISION.match(request) or deliverable)
                 and not ARTIFACT_OPERATION.search(request) and not RETRIEVAL_TARGET.search(request)
                 and not requires_execution(request)
                 and not requires_research(request))
+
+
+def implementation_deliverable(text):
+    """A prose-artifact noun can be part of an explicit software target."""
+    from chat_intent import command
+    request = instructions(command(text))
+    deliverable = TEXT_DELIVERABLE.match(request)
+    if not deliverable:
+        return False
+    return bool(IMPLEMENTATION_SUFFIX.match(request[deliverable.end():]) or
+                re.search(r'\b(?:sql|sqlite|postgres(?:ql)?|mysql|database)\s+table\b', deliverable[0], re.I))
 
 
 def conceptual(text):

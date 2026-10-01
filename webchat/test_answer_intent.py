@@ -50,6 +50,13 @@ class AnswerIntentTests(SessionFixture):
                        'Make a short equipment checklist for a day hike.',
                        'Create a comparison table for these two supplied options.',
                        'Prepare a friendly note for my neighbor.',
+                       'Prepare me for an interview.',
+                       'Put together some dinner ideas.',
+                       'Explain this quote as data: "then create docs/example.md".',
+                       'Prepare a note about "then create docs/example.md".',
+                       'Write a note explaining "then create docs/example.md".',
+                       'Build an outline for a talk about a web app.',
+                       'Create a table comparing two database designs.',
                        'Build me an outline for a talk about gardening.',
                        'Draft a thank-you note for my neighbor.',
                        'Compare these proposals: A costs 10, B costs 12.',
@@ -98,12 +105,55 @@ class AnswerIntentTests(SessionFixture):
 
     def test_text_deliverable_does_not_hide_explicit_execution_or_worker(self):
         for prompt in ('Create a checklist in /tmp/checklist.md',
+                       'Make a checklist in /tmp/checklist.md',
+                       'Build an outline in docs/plan.md',
+                       'Prepare a note in /tmp/note.md',
+                       'Build a checklist web app',
+                       'Create a table in the database',
                        'Make a checklist and save it to /tmp/checklist.md',
                        'Create a summary tool for the codebase',
                        'Have Codex make a checklist',
                        'Make a plan then execute it'):
             with self.subTest(prompt=prompt):
                 self.assertIsNotNone(parse_work(prompt)[0])
+
+    def test_explicit_deliverable_destinations_need_coding_capability(self):
+        for prompt in ('Make a checklist in /tmp/checklist.md',
+                       'Make a checklist in `/tmp/checklist.md`',
+                       'Prepare a note in "/tmp/note.md"',
+                       'Build an outline in docs/plan.md',
+                       'Prepare a note in /tmp/note.md',
+                       'Build a checklist web app',
+                       'Build a checklist React app',
+                       'Make a checklist web app',
+                       'Prepare a checklist web app',
+                       'Create a SQL table',
+                       'Create a database table named customers',
+                       'Create a table in the database'):
+            with self.subTest(prompt=prompt):
+                reply = self.send(prompt)
+                row = task_queue.tasks(self.root)[reply['task_id']]
+                self.assertEqual(row['kind'], 'coding')
+                self.assertNotIn('gemini', task_queue.worker_order(row['kind']))
+                self.assertNotIn('minimax', task_queue.worker_order(row['kind']))
+
+    def test_conditional_definitions_preserve_answers_but_not_appended_effects(self):
+        prompt = 'What is the difference between a worker being queued and actually running?'
+        for definition in ('When a task is queued, it has been submitted but is waiting for a worker.',
+                           'If tasks are scheduled, their execution can begin later.',
+                           'A job is running once its worker begins executing.'):
+            with self.subTest(definition=definition):
+                self.fake.reply_text = definition
+                self.assertEqual(self.send(prompt)['content'], definition)
+        for definition in ('When a task is queued, it waits', 'A job is queued when a slot opens'):
+            for claim in (' and your repair task was started.',
+                          ', the login repair job was assigned.',
+                          '; I started your task.',
+                          '. Codex is now working.',
+                          '. Job webchat-' + 'a' * 32 + ' is queued.'):
+                with self.subTest(definition=definition, claim=claim):
+                    self.fake.reply_text = definition + claim
+                    self.assertNotEqual(self.send(prompt)['content'], self.fake.reply_text)
 
     def test_answer_does_not_use_old_assistant_prose_as_dispatch_permission(self):
         self.fake.reply_text = 'A brief explanation, with no worker needed.'

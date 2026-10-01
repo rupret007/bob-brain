@@ -36,10 +36,15 @@ DIRECT_CLAIM = re.compile(
 def dispatch_prose(text, *, reference=''):
     # Code examples and quoted user input are not action acknowledgements.
     prose = re.sub(r"```.*?```", "", text, flags=re.S)
-    # Only the generic conditional clause is exempt. A following claim or ID
-    # cannot disappear along with an otherwise valid definition.
-    definition = r"(?:^|(?<=[.!?])\s+)(?:A job|Jobs|A task|Tasks)\b[^.;!?\n]*\b(?:when|if|until|once)\b[^.;!?\n]*[.!?]?"
-    prose = re.sub(definition, lambda m: m[0] if DIRECT_CLAIM.search(m[0]) or JOB_ID.search(m[0]) else "", prose, flags=re.I)
+    # Mask only a generic conditional's state predicate, in either order.
+    # Never erase its following clauses: they may assert a real owned/named
+    # effect even without an explicit actor or job ID.
+    predicate = r'(?:a (?:job|task)|jobs|tasks)\s+(?:is|are|has|have)\s+(?:been\s+)?(?:queued|running|started|assigned|scheduled)\b'
+    conditional = r'(?:when|if|until|once)'
+    prose = re.sub(r'\b' + conditional + r'\s+' + predicate,
+                   'the described condition', prose, flags=re.I)
+    prose = re.sub(r'(?:^|(?<=[.!?])\s+)' + predicate + r'(?=\s+' + conditional + r'\b)',
+                   'The described state', prose, flags=re.I)
     # A conditional offer is not a claim that work was done.
     prose = re.sub(r"(?:^|(?<=[.!?])\s+)I (?:can|could)\b(?:(?!\b(?:and|but)\s+(?:I|we|Bob)\b(?![’\x27]ll|\s+(?:will|can|could)\b))[^.;!?\n])*[.!?]?", "", prose, flags=re.I)
     prose = re.sub(r"\bI (?:can(?:not|['’]t)|could(?: not|n['’]t)|did(?: not|n['’]t)|have(?: not|n['’]t))\b"
