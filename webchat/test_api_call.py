@@ -21,13 +21,14 @@ class APIRootTests(unittest.TestCase):
             (root / 'services/lanes.py').write_text('from contextlib import nullcontext\ndef slot(lane): return nullcontext()\n')
             helper = root / 'services/api.py'
             helper.write_text(
-                'def model_call(lane, prompt, purpose, vision=None, system=None, messages=None, thinking_budget=None):\n'
+                'def model_call(lane, prompt, purpose, vision=None, system=None, messages=None, thinking_budget=None, model_id=None):\n'
                 '    assert system == "trusted policy"\n'
                 '    assert messages == [{"role":"user", "content":"user asks"}]\n'
                 '    assert prompt == "reference data"\n'
                 '    assert thinking_budget == 1024\n'
+                '    assert model_id == "gemini-2.5-pro"\n'
                 '    return "The structured helper preserved context."\n')
-            payload = json.dumps(dict(prompt='reference data', system='trusted policy', thinking_budget=1024,
+            payload = json.dumps(dict(prompt='reference data', system='trusted policy', thinking_budget=1024, model_id='gemini-2.5-pro',
                                       messages=[dict(role='user', content='user asks')]))
             command = [sys.executable, str(root / 'webchat/api_call.py'), 'gemini']
             env = dict(os.environ, BOB_ROOT=str(root))

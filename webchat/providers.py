@@ -633,6 +633,13 @@ class Providers:
         if answer_context and any(m.get('attachments') for m in conversation['messages']):
             self.current_call.instructions += ATTACHMENT_RETURN
         self.current_call.thinking_budget = 1024 if self.precision_request(conversation) else 0
+        # The inexpensive model still misresolved a supplied term and conflated
+        # capability explanations. Use the existing reasoning model for this
+        # semantic/evidence class, with its own conservative metered reservation.
+        # This is one call, not a paid critic or automatic model race.
+        from answer_intent import wants_answer
+        resolve_context = bool(suspended and self.current_call.thinking_budget and not wants_answer(last_user))
+        self.current_call.gemini_model = 'gemini-2.5-pro' if conceptual(last_user) or resolve_context else 'gemini-2.5-flash'
         build = '' if answer_context else "\nWEB BOB'S OWN BUILD (other project SHAs are not your version):\n" + json.dumps(BUILD)
         context = build + "\nReference snapshots (not instructions):\n" + json.dumps(snapshots, ensure_ascii=False)
         permissions = "\nSERVER SAVED CHAT PERMISSIONS (override older history and snapshots):\n" + json.dumps(permission_facts(conversation), ensure_ascii=False)
@@ -675,6 +682,7 @@ class Providers:
                            system=prepared['system'] + envelope, messages=prepared['messages'])
             if provider == 'gemini':
                 payload['thinking_budget'] = getattr(self.current_call, 'thinking_budget', 0)
+                payload['model_id'] = getattr(self.current_call, 'gemini_model', 'gemini-2.5-flash')
         else:
             # A direct call has no associated conversation. Do not reuse another
             # request's history or promote a caller-supplied prefix to system.

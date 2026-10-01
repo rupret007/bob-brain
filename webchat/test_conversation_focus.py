@@ -109,6 +109,7 @@ class FocusTests(SessionFixture):
         self.assertNotIn('Make Web Bob better than Grok at following through.', prompt)
         self.assertIn('Make Web Bob better than Grok at following through.', str(self.chat.get(self.identifier)['messages']))
         self.assertTrue(provider.precision_request(self.chat.get(self.identifier)))
+        self.assertEqual(provider.current_call.gemini_model, 'gemini-2.5-pro')
 
     def test_ordinary_explanations_do_not_receive_an_operations_manual(self):
         self.send('Tell me what "use all resources" means; do not start work.')
