@@ -7,6 +7,15 @@ from conversation_focus import focus
 
 
 class FocusTests(SessionFixture):
+    def test_provider_context_marks_superseded_improvement_goal_as_inactive(self):
+        self.send('Make Web Bob better than Grok at following through.')
+        self.send('Explain rainbows')
+        self.send('top priority use any and all resources')
+        provider = Providers(self.root, self.chat.redact)
+        prompt = provider.prompt(self.chat.get(self.identifier), fast=True)
+        self.assertIn('It is not the current task', prompt)
+        self.assertIn('Explain rainbows', prompt)
+
     def test_reference_revision_uses_current_answer_without_artifact_noun_allowlist(self):
         from task_dispatch import task_queue
         self.send('Draft a neighborhood meeting notice for Thursday.')

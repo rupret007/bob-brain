@@ -4,7 +4,7 @@ import re
 
 NO_DISPATCH = "I did not start, assign, or queue any work in this turn."
 WORKERS = r"(?:Codex|Claude|Cursor|Gemini|MiniMax|the (?:system|dispatcher|workers?)|all (?:LLMs|workers))"
-EFFECT = r"(?:start(?:ed|ing)?|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|add(?:ed|ing)? work|put .{0,40} to work|kick(?:ed|ing)? off)"
+EFFECT = r"(?:start(?:ed|ing)?|creat(?:e|ed|ing)\b[^.!?\n]{0,60}\b(?:jobs?|tasks?)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|add(?:ed|ing)? work|put .{0,40} to work|kick(?:ed|ing)? off)"
 CLAIM = re.compile(
     r"\b(?:I|we|Bob|" + WORKERS + r")\b[^.!?\n]{0,90}\b" + EFFECT + r"\b|"
     r"(?:^|[.!?\n]\s*)(?:queued|assigned|started|dispatched|launched|scheduled)\b|"
@@ -28,9 +28,12 @@ DIRECT_CLAIM = re.compile(
 def dispatch_prose(text, *, reference=''):
     # Code examples and quoted user input are not action acknowledgements.
     prose = re.sub(r"```.*?```", "", text, flags=re.S)
-    prose = re.sub(r"(?:^|(?<=[.!?])\s+)(?:A job|Jobs|A task|Tasks)\b[^.!?]*\b(?:when|if|until)\b[^.!?]*[.!?]?", "", prose, flags=re.I)
+    # Only the generic conditional clause is exempt. A following claim or ID
+    # cannot disappear along with an otherwise valid definition.
+    definition = r"(?:^|(?<=[.!?])\s+)(?:A job|Jobs|A task|Tasks)\b[^.;!?\n]*\b(?:when|if|until|once)\b[^.;!?\n]*[.!?]?"
+    prose = re.sub(definition, lambda m: m[0] if DIRECT_CLAIM.search(m[0]) or JOB_ID.search(m[0]) else "", prose, flags=re.I)
     # A conditional offer is not a claim that work was done.
-    prose = re.sub(r"(?:^|(?<=[.!?])\s+)I (?:can|could)\b[^\n]*", "", prose, flags=re.I)
+    prose = re.sub(r"(?:^|(?<=[.!?])\s+)I (?:can|could)\b(?:(?!\b(?:and|but)\s+(?:I|we|Bob)\b(?![’\x27]ll|\s+(?:will|can|could)\b))[^.;!?\n])*[.!?]?", "", prose, flags=re.I)
     if reference:
         # Exempt only a definition's subject, never the rest of its sentence.
         # "Queued means accepted; I started it" must still fail the guard.

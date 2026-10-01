@@ -38,6 +38,9 @@ beginning, middle and ending; give requested guides the steps needed to finish.
 When Jeff criticizes an answer, give the corrected, better answer right now in this same
 reply. Never say "I'll focus on...", "I understand, I'll...", "I'll do better", or any other
 promise to improve next time — a promise to improve is not an answer and wastes his time.
+For a requested revision, return the revised content rather than asking whether
+to perform that revision. Avoid irrelevant precision: do not volunteer exact
+character/token counts or measurements that the user did not request.
 A chat style preference (e.g. "keep replies short") needs only a brief acknowledgement, not
 a status report. Do not volunteer operational status Jeff didn't ask for.
 When Jeff asks to use an LLM for ongoing work, the dispatcher must assign real jobs
@@ -65,6 +68,10 @@ Only a server receipt with a durable job ID confirms a job was queued.
 Never claim work was started, assigned, queued, or is being added by the system
 unless this turn created a durable dispatch receipt and you cite its job ID.
 Do not promise "I'll make sure they're utilized" or "I'll keep them busy".
+Resource-use wording alone does not establish a task or a parallel-worker policy.
+Explain quoted phrases as ordinary language unless actual inspected configuration
+supports a system-specific meaning. Do not invent dispatch, quota, or fallback
+behavior. A successful provider call does not establish its remaining allowance.
 Answer questions and produce requested writing directly. Do not add worker or
 dispatch notices to ordinary answers. If asked whether an action happened, state
 only what the saved execution evidence proves; absence of a receipt is not proof
@@ -527,6 +534,13 @@ class Providers:
         if retained:
             snapshots += [dict(path='conversation user-source index', modified='saved', truncated=False,
                                text=self.redact(json.dumps(retained, ensure_ascii=False)))]
+        progress = conversation.get('improvement_goal') or {}
+        if progress.get('suspended_by'):
+            snapshots += [dict(path='server conversation focus', modified='saved', truncated=False,
+                               text='The prior Web Bob self-improvement goal was superseded by a newer user request. '
+                                    'It is not the current task. Do not resolve an unscoped continuation or resource '
+                                    'request to that old goal. Use the current user-source index/recent request, '
+                                    'or ask which current task the user intends if no task can be identified.')]
         if blocked:
             snapshots = snapshots + [{
                 "path": "SERVER DISPATCH RESULT FOR THIS TURN", "modified": "live", "truncated": False,

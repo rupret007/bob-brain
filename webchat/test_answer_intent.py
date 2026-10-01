@@ -8,6 +8,32 @@ from providers import Providers, ProviderError
 
 
 class AnswerIntentTests(SessionFixture):
+    def test_actual_generic_execution_definition_survives_receipt_guard(self):
+        self.fake.reply_text = ('A queued worker is sitting in line waiting its turn — the job is stored and waiting for an available slot. '
+                                'Once it picks up a task and starts doing actual work (processing code, generating text, whatever), that\'s "running."')
+        answer = self.send('What is the difference between a worker being queued and actually running?')
+        self.assertEqual(answer['content'], self.fake.reply_text)
+        self.assertFalse(task_queue.tasks(self.root))
+        for claim in ('Your repair job is now running.', 'The parser repair task has already been picked up.',
+                      'Your task: running now.', 'Your job already running.', 'Codex has your repair task.',
+                      'The repair job you requested is running.',
+                      'I created the repair task.', 'Gemini’s working on your repair.',
+                      'A job is running when its worker begins executing; I queued your repair.',
+                      'A job is running when its worker begins executing and I queued your repair.',
+                      'I can explain the difference; I queued your repair.',
+                      'I can explain the difference. I queued your repair.',
+                      'I can explain the difference and I queued your repair.'):
+            self.fake.reply_text = claim
+            guarded = self.send('What is the difference between queued and running?')
+            self.assertNotEqual(guarded['content'], claim)
+
+    def test_generic_conditional_definitions_do_not_claim_an_actual_start(self):
+        for text in ('A job is running once its worker begins executing.',
+                     'A job is running when its worker begins executing.',
+                     'Running means execution has begun; queued means it is waiting.'):
+            self.fake.reply_text = text
+            self.assertEqual(self.send('What is the difference between queued and running?')['content'], text)
+
     def test_requested_deliverables_are_answered_in_chat(self):
         self.fake.reply_text = 'Here is the requested answer from the supplied evidence.'
         for prompt in ('Write a four-line poem about the lake.',
