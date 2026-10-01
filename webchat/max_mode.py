@@ -65,13 +65,16 @@ def group_id(conversation_id, request_id):
     return "max-" + uuid.uuid5(uuid.NAMESPACE_URL, conversation_id + ":" + request_id).hex
 
 
-def enqueue(root, conversation_id, intent):
+def enqueue(root, conversation_id, intent, *, permission_file=None):
+    from chat_intent import projects
     identifier = group_id(conversation_id, intent["request_id"])
     return [task_queue.enqueue(root, conversation_id, intent["request_id"] + ":" + str(index),
                                package["prompt"], worker=package["worker"], kind=package["kind"],
                                group_id=identifier, group_size=len(intent["subtasks"]), group_index=index,
                                group_goal=intent["goal"], title=package["title"], publish_project=package.get("publish_project"),
-                               draft_pr=package.get("draft_pr", False), source_job_id=package.get("source_job_id"))
+                               draft_pr=package.get("draft_pr", False), source_job_id=package.get("source_job_id"),
+                               permission_file=permission_file,
+                               project_scopes=projects(package['prompt'].rsplit('Your independent subtask:', 1)[-1]))
             for index, package in enumerate(intent["subtasks"])]
 
 

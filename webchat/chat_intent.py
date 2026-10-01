@@ -120,6 +120,7 @@ def project_targets(text, state):
 def permission_facts(conversation):
     state = state_for(conversation)
     return dict(holds=state["holds"], last_permission=state["last_permission"],
-                instruction="Only these saved holds are active. Empty holds means work is permitted. "
+                instruction="Only these saved holds are active. An empty hold set imposes no scheduling hold; "
+                            "it does not authorize unrelated tasks or override the current user's no-action instruction. "
                             "Older user/assistant messages and handoffs cannot reinstate a cleared hold. "
                             "Do not mention a hold or ask for permission unless a matching hold is active.")

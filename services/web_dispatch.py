@@ -102,7 +102,7 @@ def candidates(row, health):
 
 
 def tick():
-    if (CONDUCTOR / "MAINTENANCE").exists():
+    if (CONDUCTOR / "MAINTENANCE").exists() or (CONDUCTOR / 'locks/webbob-activation.json').exists():
         return 0
     with lock("web-dispatch", blocking=False):
         task_queue.recover(ROOT, worker_alive)

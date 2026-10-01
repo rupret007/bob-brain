@@ -21,6 +21,10 @@ LEASE_SECONDS = 90
 MAX_ATTEMPTS = 3
 
 
+class AdmissionPaused(ValueError):
+    pass
+
+
 def file_request(prompt):
     """A small explicit temporary-file task may use any tool-capable CLI."""
     match = re.fullmatch(r"(?:please\s+)?write\s+([^\n]{1,1000}?)\s+to\s+(/tmp/[A-Za-z0-9_-]+\.(?:txt|md|json))\s*", prompt, re.I)
@@ -38,7 +42,7 @@ def file_task_kind(prompt):
     task = re.sub(r"```.*?```", "", task, flags=re.S)
     task = re.split(r"\n\s*(?:SUPPLIED EVIDENCE|EVIDENCE|SOURCE|CODE)\s*:", task, maxsplit=1, flags=re.I)[0]
     read = r"(?:read|open|inspect|review|audit|summari[sz]e|analy[sz]e|check|list|search)"
-    write = r"(?:write|save|create|edit|modify|update|delete|remove|append)"
+    write = r"(?:write|save|create|make|build|prepare|produce|put together|edit|modify|update|delete|remove|append)"
     # A path is an instruction target only after a task verb. 'Explain how to
     # read a file' and pasted source mentioning paths remain answer-only work.
     start = r"(?:^|[\n.;]\s*|\band\s+|\bthen\s+)\s*(?:please\s+)?"
@@ -48,8 +52,12 @@ def file_task_kind(prompt):
               r"(?:services|webchat|conductor|state|src|lib|tests|docs|config|reviews)/[\w./-]*|"
               r"[\w-]+\.(?:py|md|txt|json|js|ts|tsx|jsx|sh|yaml|yml|toml|csv|log)\b|"
               r"(?:git\s+)?(?:worktree|checkout|repository|repo|directory|folder|files?)\b)")
+    # Quoted commands are examples, not action clauses. Preserve literal path
+    # arguments, including backticked filenames, without adopting other text.
+    task = re.sub(r'"[^"\n]*"|“[^”\n]*”|`[^`\n]*`|(?<!\w)\x27[^\x27\n]*\x27(?!\w)',
+                  lambda m: m[0][1:-1] if re.fullmatch(target, m[0][1:-1], re.I) else '', task)
     if (re.search(start + write + r"\s+" + qualifiers + target, task, re.I) or
-            re.search(start + r"(?:write|save|create|append)\b[^\n]{0,120}\b(?:to|in|under|at)\s+" +
+            re.search(start + write + r"\b[^\n]{0,120}\b(?:to|in|under|at)\s+" +
                       qualifiers + target, task, re.I)):
         return "coding"
     if re.search(start + read + r"\s+" + qualifiers + target, task, re.I):
@@ -182,7 +190,8 @@ def group_complete(members):
 
 def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="analysis", source_file=None,
             group_id=None, group_size=None, group_index=None, group_goal=None, title=None, local_suite=None,
-            publish_project=None, draft_pr=False, source_job_id=None):
+            publish_project=None, draft_pr=False, source_job_id=None, permission_file=None, project_scopes=None,
+            expected_code_identity=None):
     worker = worker_name(worker)
     if worker == "mini":
         kind = "local"
@@ -209,7 +218,18 @@ def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="a
                 row.get("group_index"), row.get("group_goal"), row.get("title"), row.get("local_suite"), row.get("publish_project"), row.get("draft_pr", False), row.get("source_job_id")) != (
                     prompt, worker, kind, group_id, group_size, group_index, group_goal, title, local_suite, publish_project, draft_pr, source_job_id):
                 raise ValueError("This request ID already belongs to a different task")
+            if row.get('expected_code_identity') != expected_code_identity:
+                raise ValueError('This request ID belongs to a different source revision')
+            if permission_file:
+                if row.get('permission_file') and (row['permission_file'] != str(permission_file)
+                        or row.get('project_scopes', []) != list(project_scopes or [])):
+                    raise ValueError('This request ID already has different permission scope')
+                if not row.get('permission_file'):
+                    row.update(permission_file=str(permission_file), project_scopes=list(project_scopes or []))
+                    _append(path, row, 'permission_bound')
             return row
+        if permission_file and (Path(root) / 'conductor/locks/webbob-activation.json').exists():
+            raise AdmissionPaused('Release verification is in progress; no worker job was queued.')
         for member in (r for r in rows.values() if group_id and r.get("group_id") == group_id):
             if (member.get("group_index") == group_index or
                 (member.get("group_size"), member.get("conversation_id"), member.get("group_goal")) !=
@@ -221,8 +241,53 @@ def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="a
                                  group_id=group_id, group_size=group_size, group_index=group_index,
                                  group_goal=group_goal, title=title, local_suite=local_suite, publish_project=publish_project, draft_pr=draft_pr,
                                  source_job_id=source_job_id,
+                                 permission_file=str(permission_file) if permission_file else None,
+                                 project_scopes=list(project_scopes or []),
+                                 expected_code_identity=expected_code_identity,
                                  tried_workers=[], max_attempts=max(MAX_ATTEMPTS, len(worker_order(kind))),
                                  worker=None, claim_token=None, lease_until=0, retry_at=0), "enqueued")
+
+
+def permission_block(root, row):
+    """Observe saved user holds, never model prose. Caller owns the queue lock.
+
+    Legacy chat jobs are checked when their canonical conversation still exists.
+    Standalone scheduler jobs without a chat do not inherit another chat's holds.
+    New chat jobs bind their permission file and fail closed if it disappears.
+    """
+    explicit = row.get('permission_file')
+    path = Path(explicit) if explicit else Path(root) / 'conductor/webchat/sessions' / (str(row.get('conversation_id')) + '.json')
+    if not explicit and not path.exists():
+        return None
+    try:
+        with path.open('rb') as handle:
+            data = handle.read(10_000_001)
+        if len(data) > 10_000_000:
+            return 'Saved conversation permissions exceed the read limit'
+        conversation = json.loads(data)
+        if conversation.get('id') != row.get('conversation_id'):
+            return 'Saved conversation identity mismatch'
+        goal = conversation.get('improvement_goal') or {}
+        if (goal.get('verification_request_id') == row.get('request_id')
+                and goal.get('execution_restriction')):
+            return 'The owner limited this improvement goal to inspection; execution is not authorized'
+        holds = conversation['intent_state']['holds']
+        scopes = row.get('project_scopes') or []
+        if 'project_scopes' not in row:
+            # Legacy rows predate explicit scope binding. Recognize only their
+            # canonical project names; do not inherit every scoped hold.
+            scopes = [name for name in ('Web Bob', 'WebJam', 'AdoptIQ', 'StoryBoard', 'Fantasy Football', 'Shelf')
+                      if re.search(r'\b' + r'\s*'.join(map(re.escape, name.split())) + r'\b',
+                                   row.get('prompt', ''), re.I)]
+        for scope, hold in holds.items():
+            if scope == 'all':
+                if not scopes or any(name not in hold.get('released_projects', []) for name in scopes):
+                    return 'New work is on hold'
+            elif not scopes or scope in scopes:
+                return scope + ' is on hold'
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return 'Saved conversation permissions are unavailable'
+    return None
 
 
 def claim(root, worker, now=None, *, identifier=None, allow_fallback=False, limit=None):
@@ -239,6 +304,8 @@ def claim(root, worker, now=None, *, identifier=None, allow_fallback=False, limi
             if identifier and row["id"] != identifier:
                 continue
             if row["status"] != "queued" or row.get("retry_at", 0) > now:
+                continue
+            if permission_block(root, row):
                 continue
             if row["requested_worker"] not in ("auto", worker) and not allow_fallback:
                 continue
@@ -259,6 +326,13 @@ def transition(root, identifier, token, event, *, now=None, **fields):
         row = _read(path).get(identifier)
         if not row or row["status"] not in ACTIVE or row["claim_token"] != token or row["lease_until"] <= now:
             return None
+        if event in ('running', 'executing'):
+            blocked = permission_block(root, row)
+            if blocked:
+                row.update(status='queued', claim_token=None, lease_until=0, retry_at=0,
+                           attempts=max(0, row['attempts'] - 1), error=blocked)
+                _append(path, row, 'held_before_execution', now)
+                return None
         if event == "running":
             row.update(status="running", started_at=now, pid=os.getpid())
         elif event == "executing":
@@ -338,3 +412,58 @@ def cancel_replay(root, conversation_ids, reason):
             row.setdefault("started_at", None)
             cancelled.append(_append(path, row, "replay_cancelled"))
     return cancelled
+
+
+def cancel_user_task(root, conversation_id, identifier):
+    """Revoke one owner-selected claim; late results cannot acknowledge success."""
+    with locked(root) as path:
+        row = _read(path).get(identifier)
+        if not row or row.get('conversation_id') != conversation_id:
+            raise ValueError('Task does not belong to this conversation')
+        if row['status'] in TERMINAL:
+            return row
+        started = bool(row.get('execution_started_at'))
+        row.update(status='failed', claim_token=None, lease_until=0, finished_at=time.time(),
+                   cancelled_at=time.time(), error='Cancelled by the owner. ' +
+                   ('Execution had started; any external effects need separate verification.' if started else
+                    'No execution start was recorded.'))
+        return _append(path, row, 'owner_cancelled')
+
+
+def cancel_for_rollback(root, started_at):
+    """Keep legacy dispatchers from starting newly accepted or now-held work.
+
+    The release holds web-dispatch admission and has drained active claims.
+    Requests and evidence remain durable failed outcomes, never erased/replayed.
+    """
+    cancelled = []
+    with locked(root) as path:
+        rows = list(_read(path).values())
+        if any(row['status'] in ACTIVE for row in rows):
+            raise RuntimeError('Rollback admission cleanup requires drained active tasks')
+        for row in rows:
+            if row['status'] in TERMINAL:
+                continue
+            candidate_task = row.get('permission_file') and row['created_at'] >= started_at
+            if not candidate_task and not permission_block(root, row):
+                continue
+            row.update(status='failed', claim_token=None, lease_until=0, finished_at=time.time(),
+                       error='Release rollback prevented this pending task from starting under older execution rules. '
+                             'The original request is preserved; resubmit it after the release is verified.')
+            cancelled.append(_append(path, row, 'release_rollback_cancelled'))
+    return cancelled
+
+
+def abort_admission(root, conversation_id, request_id):
+    """Close partial, unclaimed group rows after release admission closes."""
+    with locked(root) as path:
+        rows = [row for row in _read(path).values() if row.get('conversation_id') == conversation_id
+                and (row['request_id'] == request_id or row['request_id'].startswith(request_id + ':'))]
+        if any(row['status'] in ACTIVE for row in rows):
+            raise RuntimeError('Cannot discard an active admission')
+        for row in rows:
+            if row['status'] in TERMINAL:
+                continue
+            row.update(status='failed', claim_token=None, lease_until=0, finished_at=time.time(),
+                       error='Release verification interrupted task admission; no worker execution was started.')
+            _append(path, row, 'admission_interrupted')

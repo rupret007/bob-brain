@@ -7,18 +7,24 @@ from chat_intent import PROJECT, blocked_scopes, hold_reply, projects, state_for
 from worker_activity import WORKER_NAMES, task_label
 from worker_evidence import clean
 
-QUEUE_CLAIM = re.compile(
+DIRECT_QUEUE_CLAIM = re.compile(
     r"\b(?:i|we)(?:['’]ve| have)?\s+(?:(?:just|already|now)\s+)?(?:queued|scheduled|launched|started|created|dispatched|added|submitted|assigned|delegated|asked|kicked off)\b"
     r".{0,160}\b(?:job|task|work|review|fix|council|inbox|queue|it|this|that|codex|claude|cursor|gemini|minimax)\b|"
     r"^\s*(?:queued|scheduled|launched|started|submitted|assigned)\b|"
-    r"\b(?:job|task|council|work)\b.{0,120}\b(?:created|queued|scheduled|launched|started|assigned|builder inbox|picked up|in progress|running)\b"
-    r"(?!\s+(?:when|if|until)\b)|"
     r"\b(?:codex|claude|cursor|gemini|minimax)(?:['’]s|\s+(?:is|has started))\s+(?:working|running|reviewing|fixing|on it)\b|"
-    r"\b(?:codex|claude|cursor|gemini|minimax)\s+has\s+(?:your|the|this)\s+(?:job|task|work|review)\b", re.I)
+    r"\b(?:codex|claude|cursor|gemini|minimax)\s+has\s+(?:your|the|this)\s+(?:[\w-]+\s+){0,6}(?:job|task|work|review)\b", re.I)
+QUEUE_CLAIM = re.compile(DIRECT_QUEUE_CLAIM.pattern + r"|"
+    r"\b(?:job|task|council|work)\b.{0,120}\b(?:created|queued|scheduled|launched|started|assigned|builder inbox|picked up|in progress|running)\b"
+    r"(?!\s+(?:when|if|until)\b)", re.I)
 NO_JOB_NOTICE = re.compile(
     r"\bno (?:server[- ]confirmed )?(?:jobs?|tasks?)\s+(?:(?:was|were|has been|are)\s+)?(?:created|queued|started|running)\b|"
     r"\b(?:nothing|no work) (?:was |is |has been )?(?:queued|started|running)\b|"
     r"\bstart a job\s*:", re.I)
+REFERENCE_PROGRESS_CLAIM = re.compile(
+    DIRECT_QUEUE_CLAIM.pattern + r"|"
+    r"\b(?:jobs?|tasks?|work|council)(?:\s+(?:you|that|which)\b[^.;!?\n]{0,60})?"
+    r"(?:['’]s|\s+(?:is|are|was|were|has|have)|\s*[:–—-]|\s+(?=now|already|currently))\s*"
+    r"(?:(?:now|already|currently|been)\s+)*(?:running|in progress|picked up)\b", re.I)
 STATUS_QUESTION = re.compile(
     # Resource-use instructions must reach dispatch/model handling. Only an
     # explicit resource observation belongs in the server-owned status route.
@@ -387,6 +393,8 @@ def unperformed_restart(root, text):
 
 def enforce(root, text, answer, conversation=None, *, observation=None, redact=lambda value: value):
     content = answer["content"]
+    from answer_intent import conceptual
+    reference = conceptual(text)
     from worker_assignment import requested_workers
     blocked = dispatch_block(conversation)
     if requested_workers(text, conversation) and not blocked:
@@ -403,13 +411,19 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         return "Got it."
     if PURE_GREETING.fullmatch(text.strip()):
         content = greeting_content(content)
-    if STATUS_QUESTION.search(text) or correcting_status(text, conversation):
+    if not reference and (STATUS_QUESTION.search(text) or correcting_status(text, conversation)):
         return operational_reply(root, answer["provider"], text, observation=observation, redact=redact)
     else:
-        from dispatch_receipts import claims_dispatch, NO_DISPATCH
+        from dispatch_receipts import claims_dispatch, dispatch_prose, NO_DISPATCH
         sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
         content = "".join(part for part in sentences if not NO_JOB_NOTICE.search(part)).strip() or NO_DISPATCH
-        if claims_dispatch(content) or QUEUE_CLAIM.search(content):
+        supplied = text if reference else ''
+        # The broad legacy proximity pattern mistakes explanations such as
+        # "once it picks up a task ... that's running" for an actual receipt.
+        # Reference answers still reject direct effects, concrete IDs and
+        # asserted progress; they do not need the proximity-only heuristic.
+        progress_claim = REFERENCE_PROGRESS_CLAIM if reference else QUEUE_CLAIM
+        if claims_dispatch(content, reference=supplied) or progress_claim.search(dispatch_prose(content, reference=supplied)):
             return blocked or unperformed_restart(root, text)
         # Keep the useful answer; remove unsupported effects and boilerplate
         # without adding a system notice to ordinary chat.

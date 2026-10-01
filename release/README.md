@@ -49,8 +49,10 @@ and spoken response after earlier writing tools; old tool activity cannot pass.
 After a normal draft PR/clean-branch merge with the same tree, `deploy --root ROOT
 --feature FEATURE --previous FULL_SHA --pr URL --checks PATH --review PATH`
 checks the predecessor, saves fresh rollback snapshots, freezes the candidate,
-and restarts only `svc-webchat`. It does not restart the job runner or other
-services. Every production round checks both authenticated local and public
+and restarts `svc-webchat`. An already enabled job runner is drained and
+refreshed under supervisor/dispatch coordination; its process source and build
+identity must match the dispatch candidate. An absent runner is not enabled.
+Other services retain their identities. Every production round checks both authenticated local and public
 endpoints. Two consecutive rounds must pass. Any post-activation failure restores
 and authenticates the immediate predecessor before publishing failure evidence.
 `rollback --root ROOT --feature FEATURE --record RELEASE_JSON` provides recovery.
@@ -60,11 +62,16 @@ and reviewer services. They never recreate that marker. Live action checks use
 an explicit conversation hold in fresh replay sessions and verify the truthful
 hold receipt without queueing work. The isolated suite verifies actual dispatch.
 An unscoped resource-use request must reach the real model without a status
-observation. Web Bob self-improvement goals and their resource/enable follow-ups
-must instead complete a saved local transcript/scheduling audit with exact-prompt
-regression cases and a concrete next patch plan. Both live rounds verify the
-receipt against the pre-request history and current markers, with no worker
-queue writes. Ordinary status questions still use server observations.
+observation. A Web Bob self-improvement goal must complete a source-backed
+local routing investigation, with saved source hashes and actual probe outcomes.
+Both live rounds independently verify that evidence and the transcript/marker
+receipt. Subsequent exact resource/enable prompts use an explicit conversation
+hold and must preserve evidence without queue writes. A separate fresh chat
+checks unheld standalone enable/configuration behavior. The user's one bounded
+unheld executor proof belongs in a dedicated conversation after LIVE_PASS; it
+must verify actual execution and result/source integrity, not just acceptance.
+Ordinary status questions still use server observations. Passing routing probes
+or a local suite does not establish model-answer quality or Grok superiority.
 
 The current controller holds `conductor/locks/webbob-release.lock` through
 preflight, snapshots, activation, both live rounds, recovery and publication.
@@ -101,12 +108,23 @@ rolled back if it did not durably finish the transaction. Never delete a pending
 journal to bypass recovery. Legacy rollback records must contain their original
 snapshot hashes; missing provenance requires investigation.
 
-This covers cooperating release controllers. Historical frozen scripts,
-supervisor restarts and runtime work do not participate. Recovery is explicit,
-not a supervisor/startup hook, and does not drain calls or replies. Shared work
-admission, supervisor recovery and a compatible first-release procedure remain
-necessary for atomic deployment drain. Neither current production nor this
-candidate declares that compatibility.
+The journal records the obligation to preserve an enabled runner. A runner
+observed after journal creation has a separate durable preservation receipt.
+Drain recovers inactive claims but never kills live work to deploy. New code
+fences runner admission while activation is pending; bound chat enqueue checks
+the journal again under the queue lock. Recovery drains and cancels pending
+candidate/held tasks before returning them to older execution rules, including
+when pins already match the predecessor and no restart is needed. Original
+requests and failed outcomes remain saved for explicit retry.
+
+These guarantees cover the new runtime and cooperating release controllers.
+The first predecessor's runner/watchdog do not honor the new pending journal.
+Normal rollback holds supervisor/dispatch coordination through publication and
+journal completion. A hard kill after starting that legacy predecessor releases
+those process locks; historical code can then admit newly queued work before
+explicit recovery. This is a migration limitation, not universal crash-safe
+admission fencing. Frozen historical bytes are never patched. Recovery remains
+explicit; it is not a supervisor/startup hook or a drain of model chat replies.
 
 Always maintain at least 5 GiB free; recovery reserves and bounded atomic
 evidence writes are retained from the existing release tooling. Authentication
@@ -114,5 +132,5 @@ secrets never appear in arguments, evidence or source control.
 
 Live replay is strictly no-send and starts no workers. Synthetic messaging, dispatch tests,
 and historical fixture evals are labeled as such. They do not prove real delivery
-or execution by stopped worker services. Real delivery is permitted only for the
-final Jeff notification through Andrea after all readiness criteria are met.
+or execution by stopped worker services. The primary-assistant goal prohibits
+texts, emails, posts, and an Andrea notification; report completion in chat.

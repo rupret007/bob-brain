@@ -1,5 +1,6 @@
 """Jobs rendering contract: real journals and deterministic host observations."""
 import json
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,22 @@ from worker_activity import parse_processes
 
 
 class JobsViewTests(unittest.TestCase):
+    def test_changed_report_cannot_replace_verified_recorded_result(self):
+        result = 'The supplied evidence supports option A.'
+        digest = hashlib.sha256(result.encode()).hexdigest()
+        path = self.write('job/RESULT.md', result + '\n')
+        row = dict(id='verified', status='succeeded', result=result, result_path=str(path),
+                   result_sha256=digest, acceptance={'result_sha256':digest})
+        self.queue(row)
+        self.assertEqual(result_text(self.root, 'verified')['integrity'], 'record_and_file_verified')
+        path.write_text('Unverified replacement: option B.')
+        observed = result_text(self.root, 'verified')
+        self.assertEqual(observed['integrity'], 'file_mismatch')
+        self.assertIn(result, observed['text'])
+        self.assertNotIn('option B', observed['text'])
+        self.queue(dict(row, result='Forged completed result'))
+        self.assertEqual(result_text(self.root, 'verified')['integrity'], 'record_mismatch')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -137,6 +154,17 @@ class JobsViewTests(unittest.TestCase):
             link.symlink_to(secret)
             self.queue(dict(id="bad", status="succeeded", result_path=str(link)))
             self.assertIsNone(result_text(self.root, "bad"))
+
+    def test_malformed_acceptance_cannot_show_a_verified_result(self):
+        import hashlib
+        text = 'Original accepted task result'
+        for acceptance in (None, [], 'accepted', {'result_sha256': 'changed'}):
+            with self.subTest(acceptance=acceptance):
+                self.queue(dict(id='malformed', status='succeeded', result=text,
+                                result_sha256=hashlib.sha256(text.encode()).hexdigest(), acceptance=acceptance))
+                result = result_text(self.root, 'malformed')
+                self.assertEqual(result['integrity'], 'record_mismatch')
+                self.assertNotIn(text, result['text'])
 
     def test_stale_claims_do_not_turn_into_live_cards_and_missing_checks_are_honest(self):
         self.queue(dict(id="old", status="running", pid=999, worker="codex", claimed_at=1))

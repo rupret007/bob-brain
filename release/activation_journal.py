@@ -16,7 +16,7 @@ from release_ownership import controller
 NAME = 'webbob-activation.json'
 LIMIT = 1024 * 1024
 IDENTITY = ('sha', 'previous', 'rollback', 'snapshots', 'snapshot_hashes',
-            'original_pins', 'recovery_reserve', 'emergency_marker')
+            'original_pins', 'recovery_reserve', 'emergency_marker', 'runner_refresh')
 
 
 def private_json(path, *, directory=None):
@@ -71,6 +71,14 @@ def validate(root, value):
             raise RuntimeError('Invalid activation recovery snapshot hash')
     for path in record.get('original_pins', {}).values():
         local_path(root, path)
+    runner = record.get('runner_refresh')
+    if runner is not None:
+        if not isinstance(runner, dict) or type(runner.get('required')) is not bool:
+            raise RuntimeError('Invalid runner refresh obligation')
+        if runner['required']:
+            local_path(root, runner['prior']['code_root'])
+            if not re.fullmatch(r'[0-9a-f]{40}', runner['prior'].get('sha', '')):
+                raise RuntimeError('Invalid prior runner source identity')
     path = local_path(root, value['path'])
     for name, suffix in (('recovery_reserve', '.recovery-reserve'), ('emergency_marker', '.emergency.md')):
         if record.get(name) and Path(record[name]) != Path(str(path) + suffix):

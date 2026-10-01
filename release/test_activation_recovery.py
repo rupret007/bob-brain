@@ -14,6 +14,36 @@ import activation_journal as journal
 
 
 class ActivationRecoveryTests(unittest.TestCase):
+    def test_unchanged_predecessor_without_runner_still_cancels_held_queued_work(self):
+        import task_queue
+        permission = self.root / 'conductor/webchat/sessions/held.json'
+        permission.parent.mkdir(parents=True)
+        permission.write_text(json.dumps(dict(id='held', intent_state=dict(holds={'Web Bob': {}}))))
+        row = task_queue.enqueue(self.root, 'held', 'one', 'Review Web Bob',
+                                 permission_file=permission, project_scopes=['Web Bob'])
+        self.record.update(runner_refresh=dict(required=False, prior=None), at=row['created_at'] + 1)
+        journal.begin(self.root, self.record, self.path)
+        with patch.object(solo, 'versions', side_effect=self.synthetic_versions), \
+                patch.object(solo, 'restart') as restart, patch.object(solo, 'release_recovery'):
+            solo.recover(self.root, self.record)
+        restart.assert_not_called()
+        self.assertEqual(task_queue.tasks(self.root)[row['id']]['status'], 'failed')
+        self.assertEqual(self.record['rollback_cancelled_tasks'], [row['id']])
+        self.assertTrue(self.record['rolled_back'])
+
+    def test_unchanged_web_versions_cannot_hide_missing_required_runner(self):
+        import runner_activation
+        self.record['runner_refresh'] = dict(required=True, prior=dict(
+            code_root=self.record['original_pins']['dispatch'], sha=self.record['previous']))
+        journal.begin(self.root, self.record, self.path)
+        with patch.object(solo, 'versions', side_effect=self.synthetic_versions), \
+                patch.object(solo, 'restart', side_effect=self.synthetic_restart) as restart, \
+                patch.object(solo, 'release_recovery'), \
+                patch.object(runner_activation, 'matches', side_effect=[False, True]):
+            solo.recover(self.root, self.record)
+        restart.assert_called_once_with(self.root, self.record['snapshots'])
+        self.assertTrue(self.record['rolled_back'])
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

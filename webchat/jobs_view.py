@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import re
 import time
@@ -102,15 +103,32 @@ def result_text(root, identifier):
         return None
     text = record.get("result") or (record.get("error") or record.get("recovery") if _job_bucket(record) == "failed" else None)
     path = result_file(root, record)
+    digest = record.get('result_sha256')
+    integrity = 'legacy_unverified'
+    if digest:
+        acceptance = record.get('acceptance', {})
+        if (not isinstance(text, str) or hashlib.sha256(text.encode()).hexdigest() != digest
+                or not isinstance(acceptance, dict) or acceptance.get('result_sha256', digest) != digest):
+            return dict(**labels(record), text='The recorded result failed its integrity check. Completion evidence is unavailable.',
+                        integrity='record_mismatch')
+        integrity = 'record_verified'
     if path:
         try:
-            with path.open(errors="replace") as handle:
-                text = handle.read(160000)
+            with path.open('rb') as handle:
+                data = handle.read(640001)
+            if digest:
+                if data == (text + '\n').encode():
+                    integrity = 'record_and_file_verified'
+                else:
+                    text = 'The report file changed after completion; below is the verified original recorded result.\n\n' + text
+                    integrity = 'file_mismatch'
+            else:
+                text = data[:640000].decode('utf-8', 'replace')
         except OSError:
             pass
     if not text:
         return None
-    return dict(**labels(record), text=str(text)[:160000])
+    return dict(**labels(record), text=str(text)[:160000], integrity=integrity)
 
 
 def age(root, relative, now):

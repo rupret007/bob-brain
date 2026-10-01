@@ -216,6 +216,10 @@ def schedule_pass():
 def runner_cycle():
     if not service_enabled("job-runner"):
         return
+    # Keep the enabled loop healthy during validation, without starting chat or
+    # legacy project work. Existence is deliberately fail-closed on torn intent.
+    if (CONDUCTOR / 'locks/webbob-activation.json').exists():
+        return
     from web_dispatch import tick as dispatch_tick
     dispatch_tick()
     # Chat work is polled every five seconds; the project scheduler keeps its

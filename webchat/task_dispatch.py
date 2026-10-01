@@ -25,7 +25,7 @@ ROUTED = re.compile(r"^" + POLITE + r"(?:have|get|ask|use|assign(?:\s+to)?|deleg
                     r"(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\b\s*(?:to\b|[:,])?\s*(.*)$", re.I | re.S)
 PREFIX = re.compile(r"^(?:worker\s*[:=]\s*)?(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\s*:\s*(.+)$", re.I | re.S)
 CODING = re.compile(r"\b(?:fix|repair|improve|implement|refactor|debug|build|run|execute|install|edit|change|modify)\b|"
-                    r"\b(?:write|add|create|update|remove)\b.{0,60}\b(?:code|file|test|function|service|script|app|feature)\b", re.I | re.S)
+                    r"\b(?:write|add|create|update|remove)\b.{0,60}\b(?:code|file|test|function|service|script|app|feature|database|schema)\b", re.I | re.S)
 PROJECT_LIST = PROJECT.pattern + r"(?:\s*(?:,|&|\band\b|\bthen\b)\s*(?:and\s+)?" + PROJECT.pattern + r")*"
 FOLLOW_UP = re.compile(r"^" + POLITE + r"(?:go(?: ahead)?|resume|do it|handle it|yes(?: please)?|let['’]s do it|"
                        r"(?:go(?: ahead)?|resume)\s+(?:(?:with|on)\s+)?" + PROJECT_LIST + r")[.!?]*$", re.I)
@@ -82,7 +82,7 @@ def followup_work(conversation):
     return parse_work(prompt) if matches_scope(prompt) else (None, "auto")
 
 
-def parse_work(text):
+def parse_work(text, *, conversation=None):
     text = PREAMBLE.sub("", text.strip())
     if CHAT_STYLE.match(text):
         return None, "auto"
@@ -100,7 +100,28 @@ def parse_work(text):
                        r"((?:plan|grade|score|evaluate|review|audit|inspect|fix|build|write|research)\b.+)$", text.strip(), re.I | re.S))
     if routed:
         return routed.group(2).strip(), routed.group(1).lower()
+    from answer_intent import implementation_deliverable
+    request = re.sub(r"^" + POLITE, "", text.strip(), flags=re.I)
+    target_request = WORK.match(request) or re.match(r'^(?:prepare|produce|put together)\b', request, re.I)
+    if target_request and (task_queue.file_task_kind(request) or implementation_deliverable(request)):
+        return text.strip(), 'auto'
+    if conversation and conversation.get('answer_focus', {}).get('origin'):
+        from conversation_focus import CORRECTION
+        from answer_intent import requires_execution, requires_research
+        request = command(text)
+        if (CORRECTION.match(request) and not task_queue.file_task_kind(request)
+                and not requires_execution(request) and not requires_research(request)):
+            # A reference to the current answer stays an answer regardless of
+            # its artifact noun (notice, invitation, note, paragraph, etc.).
+            return None, 'auto'
     if WORK.match(text.strip()):
+        from answer_intent import wants_answer
+        # Worker choice, max mode, project controls, and explicit file targets
+        # retain their existing execution paths. A requested poem, comparison,
+        # explanation, or plan is otherwise the answer itself, not a job.
+        request = re.sub(r"^" + POLITE, "", text.strip(), flags=re.I)
+        if wants_answer(request) and not task_queue.file_task_kind(request):
+            return None, "auto"
         return text.strip(), "auto"
     return None, "auto"
 
@@ -127,6 +148,11 @@ def task_kind(prompt):
     file_kind = task_queue.file_task_kind(prompt)
     if file_kind:
         return file_kind
+    from answer_intent import requires_execution, requires_research, implementation_deliverable
+    if requires_execution(prompt) or implementation_deliverable(prompt):
+        return 'coding'
+    if requires_research(prompt):
+        return 'research'
     # An analysis of code is still analysis; actual edits/execution need a CLI.
     if re.search(r"\bread[- ]only\b", prompt, re.I) and re.search(r"\b(?:review|audit|analysis|inspection)\b", prompt, re.I):
         return "analysis"
@@ -244,6 +270,8 @@ class TaskDispatch:
 
     def submit_worker_assignment(self, conversation, description, request_id, workers):
         from worker_assignment import plan
+        if conversation.get('answer_focus'):
+            conversation['answer_focus'].update(origin=None, corrections=[])
         message = conversation["messages"][-1]
         try:
             if self.ledger_root(conversation["id"]) != self.root:
@@ -271,11 +299,34 @@ class TaskDispatch:
         self.reconcile_tasks()
         return self.public(self.conversations[conversation["id"]])
 
+    def cancel_task_turn(self, conversation, text):
+        directive = command(text)
+        match = re.fullmatch(r'(?:cancel|stop)\s+(?:(?:that|this|the|current|last)\s+)?(?:task|job|work)'
+                             r'(?:\s+(webchat-[a-f0-9]{32}))?[.!]*', directive, re.I)
+        if not match:
+            return None
+        rows = [row for row in task_queue.tasks(self.root).values()
+                if row.get('conversation_id') == conversation['id']]
+        selected = next((row for row in rows if row['id'] == match[1]), None) if match[1] else max(rows, key=lambda row:row['created_at'], default=None)
+        if selected is None:
+            return self.intent_reply(conversation, 'There is no matching task in this conversation to cancel.')
+        row = task_queue.cancel_user_task(self.root, conversation['id'], selected['id'])
+        if row.get('cancelled_at'):
+            content = ('Cancellation recorded for `' + row['id'] + '`. No further start or successful result '
+                       'will be accepted for this task. ' +
+                       ('Execution had begun; existing effects are not undone.' if row.get('execution_started_at') else
+                        'No execution start was recorded.'))
+        else:
+            content = 'That task already finished with state ' + row['status'] + '; cancellation cannot undo its effects.'
+        return self.intent_reply(conversation, content)
+
     def submit_max_task(self, conversation, description, request_id):
         return self.submit_task(conversation, description, request_id, worker="max")
 
-    def submit_task(self, conversation, description, request_id, worker="auto"):
+    def submit_task(self, conversation, description, request_id, worker="auto", *, expected_code_identity=None):
         from app import hard_rule_refusal
+        if conversation.get('answer_focus'):
+            conversation['answer_focus'].update(origin=None, corrections=[])
         identifier = conversation["id"]
         message = conversation["messages"][-1]
         # parse_start's normalized lane description preserves routing across
@@ -310,6 +361,8 @@ class TaskDispatch:
                 raise ValueError(refusal)
             if self.ledger_root(identifier) != self.root:
                 raise ValueError("Worker dispatch is disabled in a drill overlay. Use a normal conversation.")
+            if (self.root / 'conductor/locks/webbob-activation.json').exists():
+                raise ValueError('Release verification is in progress. No task was queued; your request remains saved in this conversation.')
             paused = self.paused_dispatch_reply(conversation)
             if paused is not None:
                 return paused
@@ -333,6 +386,8 @@ class TaskDispatch:
         # Save the originating message AND intent before the queue side effect.
         # Startup/reconciliation retries this idempotently after either write fails.
         intent = dict(prompt=description, worker=worker, kind=kind, request_id=request_id, publish_project=publish_project, draft_pr=draft_pr)
+        if expected_code_identity:
+            intent['expected_code_identity'] = expected_code_identity
         if maximum or project_batch:
             intent.update(goal=goal, subtasks=subtasks)
         if project_batch:
@@ -365,28 +420,40 @@ class TaskDispatch:
                             message["content"] = content
                             changed = True
                         continue
-                    if intent.get("subtasks"):
-                        rows = max_mode.enqueue(self.root, identifier, intent)
-                        group = rows[0]["group_id"]
-                        message.update(group_id=group, task_ids=[row["id"] for row in rows], status="done", provider="dispatcher",
-                                       content=project_receipt(rows),
+                    try:
+                        if intent.get("subtasks"):
+                            rows = max_mode.enqueue(self.root, identifier, intent,
+                                                    permission_file=self.state / (identifier + '.json'))
+                            group = rows[0]["group_id"]
+                            message.update(group_id=group, task_ids=[row["id"] for row in rows], status="done", provider="dispatcher",
+                                           content=project_receipt(rows),
+                                           action_card={"id": message["request_id"], "state": "queued", "executable": False,
+                                                        "group_id": group, "queue_id": group, "goal_text": intent["goal"][:160]})
+                            from dispatch_receipts import verify_saved_receipt
+                            verify_saved_receipt(self.root, value, message)
+                            changed = True
+                            continue
+                        row = task_queue.enqueue(self.root, identifier, intent["request_id"], intent["prompt"],
+                                                 worker=intent["worker"], kind=intent["kind"], publish_project=intent.get("publish_project"),
+                                                 draft_pr=intent.get("draft_pr", False), title=intent.get("title"),
+                                                 source_job_id=intent.get("source_job_id"),
+                                                 permission_file=self.state / (identifier + '.json'),
+                                                 project_scopes=intent.get('assignment_projects') or project_targets(intent['prompt'], state),
+                                                 expected_code_identity=intent.get('expected_code_identity'))
+                        message.update(task_id=row["id"], status="done", provider="dispatcher",
+                                       content=task_receipt(row),
                                        action_card={"id": message["request_id"], "state": "queued", "executable": False,
-                                                    "group_id": group, "queue_id": group, "goal_text": intent["goal"][:160]})
+                                                    "queue_id": row["id"], "task_id": row["id"], "goal_text": row["prompt"][:160]})
                         from dispatch_receipts import verify_saved_receipt
                         verify_saved_receipt(self.root, value, message)
                         changed = True
-                        continue
-                    row = task_queue.enqueue(self.root, identifier, intent["request_id"], intent["prompt"],
-                                             worker=intent["worker"], kind=intent["kind"], publish_project=intent.get("publish_project"),
-                                             draft_pr=intent.get("draft_pr", False), title=intent.get("title"),
-                                             source_job_id=intent.get("source_job_id"))
-                    message.update(task_id=row["id"], status="done", provider="dispatcher",
-                                   content=task_receipt(row),
-                                   action_card={"id": message["request_id"], "state": "queued", "executable": False,
-                                                "queue_id": row["id"], "task_id": row["id"], "goal_text": row["prompt"][:160]})
-                    from dispatch_receipts import verify_saved_receipt
-                    verify_saved_receipt(self.root, value, message)
-                    changed = True
+                    except task_queue.AdmissionPaused as exc:
+                        task_queue.abort_admission(self.root, identifier, intent['request_id'])
+                        message['blocked_dispatch_intent'] = message.pop('dispatch_intent')
+                        message.update(status='done', provider='dispatcher', content=str(exc) +
+                                       ' The original task remains saved; retry it when release verification finishes.',
+                                       action_card={'state':'refused', 'executable':False})
+                        changed = True
                 if changed:
                     self.save(value)
                     self.conversations[identifier] = value
@@ -455,6 +522,13 @@ class TaskDispatch:
                             message["action_card"].update(state="done" if success else "blocked", worker=row["worker"])
                     self.save(value)  # Commit the answer BEFORE acknowledging outbox delivery.
                     self.conversations[identifier] = value
+                import alignment_events
+                try:
+                    alignment_events.record_task_result(self.root, row, self.redact)
+                except OSError:
+                    # The conversation result is already durable. Leave this
+                    # outbox item pending so recovery retries only publication.
+                    continue
                 task_queue.delivered(self.root, row["id"], message_id)
 
     def reconcile_groups(self, rows):
@@ -488,6 +562,11 @@ class TaskDispatch:
                 self.save(value)
                 self.conversations[identifier] = value
             for row in members:
+                import alignment_events
+                try:
+                    alignment_events.record_task_result(self.root, row, self.redact)
+                except OSError:
+                    continue
                 task_queue.delivered(self.root, row["id"], message_id)
 
     def migrate_legacy_tasks(self):

@@ -278,7 +278,7 @@ class ServicesTest(unittest.TestCase):
         self.assertGreaterEqual(seq, 1)
         rows = alignment_events.read_events(self.root, since_seq=seq - 1)
         self.assertTrue(any(r.get("summary") == "hello alignment" for r in rows))
-        self.assertTrue((self.root / "conductor/state/events.jsonl").exists())
+        self.assertTrue((self.root / "conductor/state" / alignment_events.EVENTS_FILE).exists())
 
     def test_state_ledger_catchup_and_now(self):
         ledger_dir = str(HERE.parent / "state")

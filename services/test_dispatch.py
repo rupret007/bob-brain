@@ -29,6 +29,19 @@ from web_dispatch import task_queue as queue
 
 
 class DispatchTests(unittest.TestCase):
+    def test_pending_activation_fences_both_chat_and_legacy_runner_admission(self):
+        self.enqueue()
+        marker = self.core / 'locks/webbob-activation.json'
+        marker.parent.mkdir(exist_ok=True)
+        marker.write_text('{pending')
+        with patch.object(web_dispatch, 'launch') as launch, patch.object(lanes, 'refresh') as refresh, \
+                patch.object(runtime, 'schedule_pass') as legacy:
+            self.assertEqual(web_dispatch.tick(), 0)
+            runtime.runner_cycle()
+            launch.assert_not_called()
+            refresh.assert_not_called()
+            legacy.assert_not_called()
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="webbob-dispatch-test-")
         self.root = Path(self.tmp.name)
@@ -64,6 +77,74 @@ class DispatchTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             queue.enqueue(self.root, "conversation", "one", "Different request")
         self.assertEqual(len(queue.tasks(self.root)), 1)
+
+    def permission(self, cid='conversation', holds=None):
+        path = self.core / 'webchat/sessions' / (cid + '.json')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(dict(id=cid, intent_state=dict(holds=holds or {}))))
+        return path
+
+    def test_activation_admission_preserves_existing_request_but_refuses_new_bound_rows(self):
+        permission = self.permission()
+        old = queue.enqueue(self.root, 'conversation', 'one', 'Explain queues', permission_file=permission)
+        marker = self.core / 'locks/webbob-activation.json'
+        marker.parent.mkdir(exist_ok=True)
+        marker.write_text('{}')
+        self.assertEqual(queue.enqueue(self.root, 'conversation', 'one', 'Explain queues',
+                                       permission_file=permission)['id'], old['id'])
+        with self.assertRaises(queue.AdmissionPaused):
+            queue.enqueue(self.root, 'conversation', 'two', 'Explain queues', permission_file=permission)
+        self.assertEqual(list(queue.tasks(self.root)), [old['id']])
+
+    def test_rollback_refuses_active_rows_before_changing_any_pending_task(self):
+        permission = self.permission()
+        queued = queue.enqueue(self.root, 'conversation', 'pending', 'Explain queues', permission_file=permission)
+        active = self.enqueue('active')
+        queue.claim(self.root, 'codex', identifier=active['id'])
+        path = self.core / 'state/queue.jsonl'
+        before = path.read_bytes()
+        with self.assertRaisesRegex(RuntimeError, 'drained'):
+            queue.cancel_for_rollback(self.root, queued['created_at'])
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_rollback_cancels_new_and_held_pending_rows_but_preserves_unrelated_old_work(self):
+        permission = self.permission()
+        old = queue.enqueue(self.root, 'conversation', 'old', 'Explain queues', permission_file=permission)
+        start = time.time()
+        new = queue.enqueue(self.root, 'conversation', 'new', 'Explain queues', permission_file=permission)
+        held_permission = self.permission('held', {'Web Bob': {}})
+        held = queue.enqueue(self.root, 'held', 'old-held', 'Review Web Bob', permission_file=held_permission,
+                             project_scopes=['Web Bob'])
+        with queue.locked(self.root) as path:
+            held['created_at'] = start - 1
+            queue._append(path, held, 'fixture_old')
+        legacy = queue.enqueue(self.root, 'standalone', 'legacy', 'Explain queues')
+        changed = queue.cancel_for_rollback(self.root, start)
+        self.assertEqual({r['id'] for r in changed}, {new['id'], held['id']})
+        rows = queue.tasks(self.root)
+        for row in (old, legacy):
+            self.assertEqual(rows[row['id']]['status'], 'queued')
+        for row in changed:
+            self.assertEqual(row['status'], 'failed')
+            self.assertIn('original request is preserved', row['error'])
+        self.assertEqual(queue.cancel_for_rollback(self.root, start), [])
+
+    def test_partial_admission_cleanup_is_scoped_and_refuses_active_group_atomically(self):
+        first = self.enqueue('group:0')
+        second = self.enqueue('group:1')
+        unrelated = self.enqueue('group-other')
+        queue.claim(self.root, 'codex', identifier=second['id'])
+        path = self.core / 'state/queue.jsonl'
+        before = path.read_bytes()
+        with self.assertRaisesRegex(RuntimeError, 'active admission'):
+            queue.abort_admission(self.root, 'conversation', 'group')
+        self.assertEqual(path.read_bytes(), before)
+        queue.cancel_user_task(self.root, 'conversation', second['id'])
+        queue.abort_admission(self.root, 'conversation', 'group')
+        rows = queue.tasks(self.root)
+        self.assertEqual(rows[first['id']]['status'], 'failed')
+        self.assertEqual(rows[unrelated['id']]['status'], 'queued')
+        self.assertTrue(rows[second['id']]['cancelled_at'])
 
     def test_project_workers_persist_separate_repositories_and_draft_branches_before_execution(self):
         catalog = {}
@@ -648,8 +729,15 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(queue.tasks(self.root)[row["id"]]["worker"], "cursor")
 
     def test_mini_worker_runs_local_test_suite_and_reports_result(self):
+        import shutil
+        from source_identity import PATHS
+        source = mini_worker.CODE_ROOT
+        for relative in PATHS:
+            target = self.root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source / relative, target)
         suite = self.root / "services"
-        suite.mkdir()
+        suite.mkdir(exist_ok=True)
         (suite / "test_cpu.py").write_text("import unittest\nclass CPU(unittest.TestCase):\n def test_sum(self):\n  self.assertEqual(sum(range(100)),4950)\n")
         row = queue.enqueue(self.root, "conversation", "mini", "Run services/test_cpu.py", worker="mini")
         claim = queue.claim(self.root, "mini")
@@ -660,3 +748,7 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(result["status"], "succeeded")
         self.assertIn("Ran 1 test", result["result"])
         self.assertIn("OK", result["result"])
+        identity = result['acceptance']['execution_identity']
+        self.assertEqual(identity['suite'], 'services/test_cpu.py')
+        self.assertEqual(identity['source_hashes']['services/test_cpu.py'],
+                         __import__('hashlib').sha256((suite / 'test_cpu.py').read_bytes()).hexdigest())
