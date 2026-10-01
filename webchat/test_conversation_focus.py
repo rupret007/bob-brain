@@ -136,7 +136,18 @@ class FocusTests(SessionFixture):
         self.assertNotIn('recalibrate', payload['system'])
         self.assertNotIn('SERVER SAVED CHAT PERMISSIONS', payload['system'])
         self.assertNotIn('SERVER SAVED CHAT PERMISSIONS', payload['context'])
+        self.assertNotIn('saved chat hold facts', payload['context'])
         self.assertEqual(provider.current_call.gemini_model, 'gemini-2.5-flash')
+
+    def test_generic_hold_definition_does_not_receive_saved_operational_state(self):
+        provider = Providers(self.root, self.chat.redact)
+        for text in ('Explain what a hold means in ordinary language.',
+                     'Explain permissions in plain English.', 'Explain holds in ordinary language.',
+                     'Explain what authorization means for my medical records.',
+                     'Explain my permissions in Linux.'):
+            self.send(text)
+            provider.prompt(self.chat.get(self.identifier), fast=True)
+            self.assertNotIn('saved chat hold facts', provider.current_call.api_input['context'])
 
     def test_targeted_revision_gets_precision_without_inheriting_it_into_greetings(self):
         self.fake.reply_text = 'Nora watched morning rain from the kitchen.'
@@ -169,6 +180,15 @@ class FocusTests(SessionFixture):
         self.assertIn('WebJam', saved['holds'])
         self.assertNotIn('Hold off on WebJam.', str(payload['messages']))
         self.assertNotIn('instruction', saved)
+        for text in ('Summarize which projects are paused in this chat.',
+                     'Summarize the work I asked you not to start.',
+                     'Summarize the holds on WebJam.',
+                     'Summarize my active holds on all projects.',
+                     'Summarize the holds on all projects.'):
+            self.send(text)
+            provider.prompt(self.chat.get(self.identifier), fast=True)
+            self.assertIn('saved chat hold facts', provider.current_call.api_input['context'])
+            self.assertIn('WebJam', provider.current_call.api_input['context'])
 
     def test_recent_answer_is_not_duplicated_as_an_extra_artifact_to_copy(self):
         import copy

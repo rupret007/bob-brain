@@ -16,6 +16,29 @@ OPERATIONAL = re.compile(r'\b(?:our|my|live|current) (?:workers?|jobs?|services?
                          r'\b(?:disk|storage|handoff|handback|bob-state|memory|remember|profile)\b', re.I)
 
 
+def needs_permission_facts(text):
+    """Saved hold state belongs to state questions, not unrelated definitions."""
+    from answer_intent import instructions
+    request = instructions(text)
+    state = r'(?:holds?|permissions?|authori[sz]ations?|restrictions?|paus(?:ed|es?)|on hold)'
+    chat_scope = re.search(r'\b(?:this chat|this conversation|(?:all|our|my|current) (?:projects|work|tasks|jobs))\b', request, re.I)
+    project_scope = projects(request)
+    external_scope = re.search(r'\b' + state + r'\b\s+(?:in|on|for)\s+', request, re.I)
+    if external_scope and not chat_scope and not project_scope:
+        # A specified external scope, such as permissions in an operating
+        # system, must not be answered from this chat's scheduling holds.
+        return False
+    # Ownership must describe the state, not an unrelated subject such as
+    # "what authorization means for my medical records". Definitions alone do
+    # not need a snapshot. Saved user prohibitions may be described without
+    # the implementation's noun "hold".
+    return bool(((project_scope or chat_scope) and re.search(r'\b' + state + r'\b', request, re.I))
+                or re.search(r'\b(?:my|our|saved|active|current)\s+(?:(?:saved|active|current)\s+)?' + state + r'\b', request, re.I)
+                or (re.search(r'\b' + state + r'\b', request, re.I) and
+                    re.search(r'\b(?:this chat|this conversation|I (?:gave|granted|lifted|cleared|set)|you (?:have|saved|recorded))\b', request, re.I))
+                or re.search(r'\b(?:work|projects?|tasks?)\b.{0,60}\bI (?:asked|told) you\b.{0,35}\b(?:not to|pause|hold|stop)\b', request, re.I))
+
+
 def update(conversation, message):
     if message.get('role') != 'user':
         return

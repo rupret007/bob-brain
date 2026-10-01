@@ -595,7 +595,7 @@ class Providers:
                 self.current_call.media_warnings = ["One or more attachments could not be loaded. Please reattach them."]
         if fast and needs_handoff_context(last_user):
             fast = False
-        from conversation_focus import focus, answer_only, OPERATIONAL
+        from conversation_focus import focus, answer_only, OPERATIONAL, needs_permission_facts
         progress = conversation.get('improvement_goal') or {}
         suspended = progress.get('suspended_by') or {}
         answer_context = (answer_only(conversation, last_user) or
@@ -649,7 +649,7 @@ class Providers:
             snapshots += [dict(path='conversation user-source index', modified='saved', truncated=False,
                                text=self.redact(json.dumps(retained, ensure_ascii=False)))]
         saved_permissions = permission_facts(conversation)
-        if answer_context and not blocked:
+        if answer_context and not blocked and needs_permission_facts(last_user):
             # Preserve authoritative state for questions about saved holds even
             # after their originating messages leave the history window. Facts
             # are reference data; operational permission instructions are not
@@ -657,6 +657,11 @@ class Providers:
             facts = {key: saved_permissions[key] for key in ('holds', 'last_permission')}
             snapshots += [dict(path='saved chat hold facts', modified='saved', truncated=False,
                                text=self.redact(json.dumps(facts, ensure_ascii=False)))]
+        import draft_revision
+        self.current_call.draft_revision = draft_revision.source(conversation, self.redact) if answer_context and not blocked else None
+        if self.current_call.draft_revision:
+            snapshots += [dict(path='bound source draft for this edit', modified='saved', truncated=False,
+                               text=json.dumps(self.current_call.draft_revision, ensure_ascii=False))]
         if blocked:
             snapshots = snapshots + [{
                 "path": "SERVER DISPATCH RESULT FOR THIS TURN", "modified": "live", "truncated": False,
@@ -685,6 +690,8 @@ class Providers:
         reference = conceptual(last_user)
         policy = REFERENCE_RULES if answer_context and reference else ANSWER_RULES if answer_context else RULES
         self.current_call.instructions = policy + scope
+        if self.current_call.draft_revision:
+            self.current_call.instructions += '\n' + draft_revision.RULES
         if answer_context and any(m.get('attachments') for m in conversation['messages']):
             self.current_call.instructions += ATTACHMENT_RETURN
         self.current_call.thinking_budget = 1024 if self.precision_request(conversation) else 0
@@ -924,6 +931,14 @@ class Providers:
                     attempt_prompt = prompt
                 answer, thread_id = self._call_timed(provider, attempt_prompt, conversation.get("codex_thread_id"), cancel, timeout)
                 answer = usable(answer)
+                if self.current_call.draft_revision:
+                    from draft_revision import apply
+                    try:
+                        answer = usable(apply(answer, self.current_call.draft_revision))
+                    except (ValueError, TypeError):
+                        # Invalid edit proposals use the existing bounded and
+                        # accounted fallback. Never show JSON or claim a change.
+                        raise ProviderError(kind='invalid_output') from None
                 from chat_media import strip_assistant_attachment_markers, validate_attachment_ids
                 visible, outbound = strip_assistant_attachment_markers(answer)
                 if outbound and not visible:
