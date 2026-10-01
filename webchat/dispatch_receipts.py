@@ -38,12 +38,31 @@ REFERENCE_TARGET = (r"\b(?:your|our|my)\s+(?:" + TARGET_MODIFIER + r"){0,4}(?:jo
                     # named work such as "the scheduled parser repair job".
                     r"\bthe\s+(?!(?:(?:queued|running|started|scheduled|assigned|waiting)\s+){1,4}(?:job|task)\b)"
                     r"(?:" + TARGET_MODIFIER + r"){1,4}(?:job|task)\b")
+ASSERTION_AUX = r"(?:is|are|was|were|has|have|had|be|been|being|will|would|shall|should|can|could|may|might|must|get|gets|got)"
+ASSERTION_ADVERB = r"(?:now|just|already|still|also|then|[a-z]+ly)"
+QUEUE_STATE = (r"in\s+(?:(?:a|an|the|my|your|our|this|that|[\w]+['’]s)\s+)?"
+               r"(?:" + TARGET_MODIFIER + r"){0,3}queue\b")
+# Recognize a predicate associated with the target, not any effect word later
+# in its sentence. A new imperative or noun phrase does not inherit ownership:
+# "review your tasks, note that a queued receipt..." is a guide, not dispatch.
+# Keep modifiers and shared-subject coordination such as "the task you requested
+# was inspected and queued", including a closed parenthetical or relative.
+TARGET_PREDICATE = (
+    r"[*_]*\s*(?:[,(:]\s*[^,;.!?\n]{1,60}[,)]+\s*)?"
+    r"(?:(?:,\s*)?(?:that|which)\s+)?"
+    r"(?:(?:I|you|we|they|he|she)\s+[a-z]+\s+)?"
+    r"(?::\s*)?"
+    # Negation normalization removes one predicate only. Its positive
+    # continuation still belongs to this subject, including after a comma.
+    r"(?:has no established action\s*,?\s*(?:and|but|yet|then)\s+|"
+    r"(?:" + ASSERTION_AUX + r")\s+[a-z]+\s+(?:and|then|but)\s+|"
+    r"(?:" + ASSERTION_AUX + r"|" + ASSERTION_ADVERB + r")\s+|"
+    r"[a-z]+(?:ed|en)\s+(?:" + ASSERTION_ADVERB + r"\s+){0,2}(?:and|then|but)\s+|"
+    r"(?:and|then|but)\s+){0,10}"
+    r"(?:" + EFFECT + r"|" + QUEUE_STATE + r")\b")
 REFERENCE_EFFECT = re.compile(
     r"(?:^|[.!?\n]\s*)(?:queued|assigned|started|dispatched|launched|scheduled)\b|"
-    # Preserve existing coverage of coordinated, relative and future claims
-    # once a concrete subject is found. An immediate-verb-only contract misses
-    # "your task was inspected and queued" and "your task will be queued".
-    r"(?:" + REFERENCE_TARGET + r")[^.;!?\n]{0,80}\b" + EFFECT + r"\b|"
+    r"(?:" + REFERENCE_TARGET + r")" + TARGET_PREDICATE + r"|"
     r"\b(?:the|a) (?:job|task) (?:is|was|has|had)\s+(?:(?:just|now|already|been)\s+)*" + EFFECT + r"\b", re.I)
 DIRECT_CLAIM = re.compile(
     r"\b(?:I|we|Bob|" + WORKERS + r")\b[^.!?\n]{0,90}\b" + EFFECT + r"\b|"
@@ -89,8 +108,9 @@ def unasserted_prose(prose):
                  r'(?:(?:has|have|had|is|are|was|were)\s+)?(?:been\s+)?' + verb)
     prose = re.sub(r'(?:' + denial + ')' + predicate, 'unproven assertion', prose, flags=re.I)
     # Auxiliary negation belongs to this predicate only, not the sentence.
-    prose = re.sub(r"\b(?:is|are|was|were|has|have|had)(?: not|n['’]t)\s+"
-                   r"(?:(?:yet|ever|actually|already|currently|been|being)\s+){0,3}" + verb,
+    prose = re.sub(r"\b(?:(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|should)"
+                   r"(?: not|n['’]t)|cannot|won['’]t|can['’]t|shan['’]t)\s+"
+                   r"(?:(?:yet|ever|actually|already|currently|be|have|been|being)\s+){0,3}" + verb,
                    'has no established action', prose, flags=re.I)
     # A future offer explicitly contingent on the owner's confirmation is not
     # a current effect. Mask just its predicate, keeping any following claim.

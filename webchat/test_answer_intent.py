@@ -274,6 +274,42 @@ class AnswerIntentTests(SessionFixture):
             self.assertNotEqual(self.send(prompt)['content'], self.fake.reply_text)
         self.assertFalse(task_queue.tasks(self.root))
 
+    def test_reference_targets_require_their_own_action_predicate(self):
+        from dispatch_receipts import claims_dispatch
+        prompt = ('Write a practical guide using only these facts: a queued receipt does not prove '
+                  'work finished; saved project holds govern execution; this candidate is still being validated.')
+        neutral = (
+            'When reviewing your pending tasks, note that a queued receipt does not prove work finished.',
+            'Before reviewing our repair jobs, remember that a scheduled label does not establish completion.',
+            'For this task, consider the difference between queued and finished.',
+            'Your task descriptions explain what a queued receipt means.',
+            'Your task will not be queued.', 'Your task cannot be started.',
+        )
+        for reply in neutral:
+            with self.subTest(reply=reply):
+                self.fake.reply_text = reply
+                self.assertEqual(self.send(prompt)['content'], reply)
+                self.assertTrue(claims_dispatch(reply + ' Your repair task was queued.', reference=prompt))
+                self.assertTrue(claims_dispatch(reply + ' I put it in the queue.', reference=prompt))
+        for claim in ('Your task, after inspection, was queued.',
+                      'Your task, which was queued, is pending.',
+                      'Your task which was inspected and queued is pending.',
+                      'Your task you requested was launched.',
+                      'Your task was inspected carefully and then queued.',
+                      'Your task was not queued but was dispatched.',
+                      'Your task has not been started, but has been queued.',
+                      'Your task will not be queued but was dispatched.',
+                      "Your task won't be queued but has been assigned.",
+                      'Your task cannot be started but is queued.',
+                      'Your task is in our queue.', 'Your task is in your queue.',
+                      "Your task is in Jeff's pending queue.",
+                      'Your task is ready and will be queued.',
+                      'Your task was held and then queued.',
+                      '**Your task** will be queued.', 'Your task: queued.'):
+            with self.subTest(claim=claim):
+                self.assertTrue(claims_dispatch(claim, reference=prompt))
+        self.assertFalse(task_queue.tasks(self.root))
+
     def test_reference_followup_uses_adjacent_user_facts_not_old_topic_or_assistant(self):
         self.fake.reply_text = 'The job is queued. Completion is unproven.'
         self.send('Using only supplied evidence: a job is marked queued. Explain what that establishes.')
