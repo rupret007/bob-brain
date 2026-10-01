@@ -32,6 +32,15 @@ The native receiver return procedure is `state/GROK-RECEIVER.md`. Install its
 reference in Bob's existing local startup handoff, preserving older instructions.
 Only native Grok may consume/checkpoint/ACK its batch. A compatibility-reader
 bootstrap receipt does not prove current live publication or automatic return.
+The private `receiver-evidence.json` binding described in `state/COORDINATION.md`
+lets replies recognize independently checked historical native evidence while
+keeping new batches unconsumed and current availability unknown.
+
+Remaining-feature browser checks include clipboard fidelity, dictation draft
+preservation/error recovery, and read-aloud lifecycle in Chromium and WebKit.
+Clipboard/speech APIs are synthetic; physical audio is not claimed. Fenced code
+keeps literal text and line breaks, while whole-message copy uses the original
+message rather than rendered control labels.
 
 Jeff's 2026-09-29 instruction replaces the old Gemini/MiniMax BOTH_PASS and
 worker-preflight release gates. Use `release/solo.py`; the old scripts and failed

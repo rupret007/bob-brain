@@ -40,6 +40,18 @@ test("chat result links are escaped and limited to exact local job IDs", () => {
   assert.match(context.renderMarkdown("[PR](https://example.org/pr)"), /<a href="https:\/\/example.org\/pr"/);
 });
 
+test("fenced code preserves whitespace and literal Markdown without a language label", () => {
+  const {context} = fixture();
+  const code = '  if ready:\n    print("<tag> **literal** `tick`")\n\n    # keep this';
+  const result = context.renderMarkdown('Before\n```python\n' + code + '\n```\n**After**');
+  const body = result.match(/<pre[^>]*>.*?<code>([\s\S]*?)<\/code><\/pre>/)[1];
+  assert.equal(body, code.replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'));
+  assert.match(result, /<strong>After<\/strong>/);
+  assert.doesNotMatch(body, /<br>|<strong>|<button>|python/);
+  assert.match(context.renderMarkdown('```\n  plain\n```'), /<code>  plain<\/code>/);
+  assert.match(context.renderMarkdown('```inline```'), /<code>inline<\/code>/);
+});
+
 test("saved report stays literal, opens immediately and finishes its loading state", async () => {
   const f = fixture(), pending = f.open("/api/jobs/result?id=one", "Initial title");
   assert.equal(f.elements.report.open, true);

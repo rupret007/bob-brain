@@ -45,6 +45,14 @@ def main():
             assert ('POST', '/web-bob/v1/confirm') not in fixture.mock.calls
             assert not fixture.providers.calls and not task_queue.tasks(fixture.root)
             assert not any(c.get('_texting', {}).get('audit') for c in fixture.chat.conversations.values())
+            utility = subprocess.run(['node', str(Path(__file__).with_name('browser_utility_controls.cjs'))],
+                input=json.dumps(dict(url=f'http://127.0.0.1:{server.server_port}', password=fixture.chat.password)),
+                text=True, capture_output=True, timeout=100)
+            if utility.returncode:
+                raise RuntimeError(utility.stderr)
+            evidence['utility_controls'] = json.loads(utility.stdout)
+            assert evidence['utility_controls']['all_pass'] and len(evidence['utility_controls']['browsers']) == 2
+            assert not fixture.mock.sends and not fixture.providers.calls and not task_queue.tasks(fixture.root)
             fixture.mock.drop_send_response = True
             delivery = subprocess.run(['node', str(Path(__file__).with_name('browser_delivery.cjs'))],
                 input=json.dumps(dict(url=f'http://127.0.0.1:{server.server_port}', password=fixture.chat.password,

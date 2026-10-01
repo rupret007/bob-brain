@@ -216,7 +216,7 @@ class ProductCoordinationTests(SessionFixture):
         self.assertTrue(answer['coordination_receipt']['has_more'])
         self.assertFalse(answer['coordination_receipt']['acknowledged'])
         self.assertIn('earlier recorded updates', answer['content'])
-        self.assertIn('receiver is still unverified', answer['content'])
+        self.assertIn('not verified by the currently available evidence', answer['content'])
         self.assertEqual(self.chat.get(self.identifier)['_coordination_prepared_batches'][request], before)
         self.assertNotIn('_coordination_prepared_batches', public)
         self.assertNotIn('Other conversation private source', json.dumps(public))
@@ -242,6 +242,26 @@ class ProductCoordinationTests(SessionFixture):
         self.assertNotIn('coordination_receipt', answer)
         self.assertIn('could not prepare', answer['content'])
         self.assertEqual(path.read_bytes(), b'broken journal\n')
+
+    def test_verified_historical_receiver_is_distinct_from_new_unconsumed_batch(self):
+        from capabilities import grounding
+        from test_receiver_evidence import install_receiver_evidence
+        paths = install_receiver_evidence(self.root)
+        before = paths['state'].read_bytes()
+        answer = self.send(self.REQUEST)
+        receipt = answer['coordination_receipt']
+        self.assertTrue(receipt['historical_receiver']['historical_checkpoint_ack_verified'])
+        self.assertEqual(receipt['historical_receiver']['through_seq'], 1)
+        self.assertEqual(receipt['since_seq'], 1)
+        self.assertFalse(receipt['receiver_verified'])
+        self.assertFalse(receipt['acknowledged'])
+        self.assertIn('acknowledgment through record 1', answer['content'])
+        self.assertIn('has not contacted Grok', answer['content'])
+        observation = grounding(self.root, [], self.identifier)['coordination']
+        self.assertTrue(observation['historical_receiver']['historical_checkpoint_ack_verified'])
+        self.assertNotIn('private earlier work', json.dumps(observation))
+        self.assertEqual(paths['state'].read_bytes(), before)
+        self.assertFalse(__import__('task_queue').tasks(self.root))
 
     def test_failed_preparation_save_does_not_publish_success_or_consume_retry(self):
         import uuid
