@@ -842,6 +842,13 @@ class Providers:
         health = self.circuit_for(conversation.get('id')).snapshot()
         ranks = {'normal': 0, 'warn': 1, 'slow': 2, 'stop': 3}
         precise = self.precision_request(conversation)
+        last_user = next((m for m in reversed(conversation.get('messages', [])) if m.get('role') == 'user'), {})
+        # Speech waits for the completed answer before native audio can resume.
+        # A live Auto story stalled on MiniMax despite passing the isolated
+        # Gemini proof. Prefer the measured responsive route for current voice
+        # turns; old voice history must not change later typed routing or add
+        # a reasoning budget to an otherwise ordinary answer.
+        voice = bool(last_user.get('voice_call_id') and last_user.get('voice_turn_id'))
         def priority(name):
             usage = self.spend(name)
             tier = usage.get('tier')
@@ -850,7 +857,7 @@ class Providers:
                 fraction = used / limit
                 tier = 'stop' if fraction >= .95 else 'slow' if fraction >= .85 else 'warn' if fraction >= .70 else 'normal'
             unavailable = health.get(name, {}).get('state') in ('cooldown', 'open', 'busy')
-            if precise:
+            if precise or voice:
                 # Matched product samples exposed arithmetic/constraint errors
                 # on the cheap route. Prefer Gemini for this class when healthy
                 # and admitted; headroom alone is not a measure of adequacy.

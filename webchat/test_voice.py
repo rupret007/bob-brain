@@ -227,6 +227,22 @@ class VoiceTests(fixtures.Fixture):
             gate.set(); self.wait()
         users = [m["content"] for m in self.fake.calls[-1]["messages"] if m["role"] == "user"]
         self.assertEqual(users[-1], first["content"])
+        source = next(m for m in reversed(self.fake.calls[-1]['messages']) if m['role'] == 'user')
+        self.assertEqual(source['voice_call_id'], self.call)
+        self.assertEqual(source['voice_turn_id'], first['turn_id'])
+
+    def test_saved_spoken_answer_uses_auto_voice_route_and_typed_turn_does_not(self):
+        spoken = self.entry('Tell me a very long story about a sailor. Start right away and keep going for several paragraphs.')
+        self.save_entries(spoken)
+        self.chat.voice.tool(self.call, self.owner, spoken['turn_id']); self.wait()
+        provider = Providers(self.root, self.chat.redact)
+        usage = {'gemini':dict(cap_usd=50, committed_usd=46), 'minimax':dict(cap_usd=48, committed_usd=8)}
+        with patch.object(provider, 'spend', side_effect=lambda name:usage.get(name, {})), \
+                patch.object(provider.circuit_for(self.identifier), 'snapshot', return_value={}):
+            self.assertEqual(provider.route_order(self.fake.calls[-1])[0], 'gemini')
+            self.chat.voice.end(self.call, self.owner)
+            self.chat.submit(self.identifier, spoken['content'], str(uuid.uuid4())); self.wait()
+            self.assertEqual(provider.route_order(self.fake.calls[-1])[0], 'minimax')
 
     def test_key_file_is_parsed_without_shell_and_never_returned(self):
         path = self.root / "conductor/keys.env"

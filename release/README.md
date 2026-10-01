@@ -45,6 +45,11 @@ Gemini writing API and spoken playback, while retaining a brief-answer check.
 The isolated server uses private fixture history and permits only the Gemini API
 for writing, with no CLI fallback. Version checks require a new tool invocation
 and spoken response after earlier writing tools; old tool activity cannot pass.
+Production Auto voice answers prefer healthy, admitted Gemini within the existing
+compatible API route to reduce the wait before speech. Explicit provider choice,
+capability routing, budget admission and fallback still apply. Deterministic
+voice/route controls cover this preference and later typed turns; the isolated
+Gemini-only audio proof does not itself verify production Auto selection.
 
 After a normal draft PR/clean-branch merge with the same tree, `deploy --root ROOT
 --feature FEATURE --previous FULL_SHA --pr URL --checks PATH --review PATH`

@@ -204,6 +204,53 @@ class AnswerIntentTests(SessionFixture):
 
 
 class BudgetAwareRoutingTests(SessionFixture):
+    def test_current_voice_answer_prefers_responsive_api_without_extra_reasoning(self):
+        provider = Providers(self.root, self.chat.redact)
+        conversation = self.chat.get(self.identifier)
+        usage = {'gemini':dict(cap_usd=50, committed_usd=46), 'minimax':dict(cap_usd=48, committed_usd=8)}
+        with patch.object(provider, 'spend', side_effect=lambda name:usage.get(name, {})), \
+                patch.object(provider.circuit_for(self.identifier), 'snapshot', return_value={}):
+            for text in ('Tell me a 150-word story about a compass.',
+                         'Tell me a very long story about a sailor. Start right away and keep going for several paragraphs.'):
+                conversation['messages'] = [dict(role='user', content=text, status='done',
+                    voice_call_id='owned-call', voice_turn_id='owned-turn')]
+                self.assertEqual(provider.route_order(conversation)[0], 'gemini')
+            provider.prompt(conversation, fast=True)
+            self.assertEqual(provider.current_call.thinking_budget, 0)
+            # A typed follow-up after a voice call retains ordinary Auto costs.
+            conversation['messages'].append(dict(role='user', content=text, status='done'))
+            self.assertEqual(provider.route_order(conversation)[0], 'minimax')
+
+    def test_voice_preference_preserves_explicit_choice_health_cap_and_fallback(self):
+        provider = Providers(self.root, self.chat.redact)
+        conversation = self.chat.get(self.identifier)
+        conversation['messages'] = [dict(role='user', content='Tell me a long story about a sailor.',
+            status='done', voice_call_id='owned-call', voice_turn_id='owned-turn')]
+        usage = {'gemini':dict(cap_usd=50, committed_usd=46), 'minimax':dict(cap_usd=48, committed_usd=8)}
+        circuit = provider.circuit_for(self.identifier)
+        with patch.object(provider, 'spend', side_effect=lambda name:usage.get(name, {})):
+            with patch.object(circuit, 'snapshot', return_value={}) as health:
+                conversation['preferred_provider'] = 'minimax'
+                self.assertEqual(provider.route_order(conversation)[0], 'minimax')
+                conversation['preferred_provider'] = 'auto'
+                for state in ('cooldown', 'open', 'busy'):
+                    health.return_value = {'gemini':{'state':state}}
+                    self.assertEqual(provider.route_order(conversation)[0], 'minimax')
+                health.return_value = {}
+                usage['gemini']['committed_usd'] = 47.5
+                self.assertEqual(provider.route_order(conversation)[0], 'minimax')
+                usage['gemini']['committed_usd'] = 46
+            attempted = []
+            def call(name, *_args):
+                attempted.append(name)
+                if name == 'gemini':
+                    raise ProviderError('temporarily unavailable', kind='network')
+                return 'A sailor discovered a hidden island.', None
+            with patch.object(provider, 'call', side_effect=call):
+                result = provider.reply(conversation, threading.Event(), lambda *_:None)
+            self.assertEqual(attempted, ['gemini', 'minimax'])
+            self.assertEqual(result['provider'], 'minimax')
+
     def test_cooldown_is_not_preferred_for_its_lower_cost(self):
         provider = Providers(self.root, self.chat.redact)
         circuit = provider.circuit_for(self.identifier)

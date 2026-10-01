@@ -11,6 +11,11 @@ class BobVoice {
   }
   get active() { return !!this.session; }
   state(text, phase = "listening") {
+    // Earlier speech can finish while a newer ask_bob request is still running.
+    // Save/resume and audio callbacks must not describe that wait as idle.
+    if (phase === "listening" && this.session?.pendingTools.size) {
+      text = "Bob is checking… you can keep speaking."; phase = "thinking";
+    }
     // Incoming captions, tool results and save retries must not hide Safari's
     // resume action while capture/output are still suspended.
     const audio = this.session?.audio;
@@ -28,7 +33,7 @@ class BobVoice {
       this.state("Live calls need a browser with streaming audio support. Try current Safari or Chrome.", "error"); return;
     }
     const s = { conversationId, entries: new Map(), turns: [], sources: new Set(), nextAudio: 0,
-      tools: new Map(), cancelledTools: new Set(), closed: false, ready: false };
+      tools: new Map(), pendingTools: new Set(), cancelledTools: new Set(), closed: false, ready: false };
     this.session = s;
     this.state("Connecting… allow the microphone when asked.", "connecting");
     try {
@@ -137,7 +142,10 @@ class BobVoice {
     }
     if (event.error) { this.fail(s, "The voice service could not continue this call. Please try again."); return; }
     if (event.goAway) { this.fail(s, "The voice session has ended. Tap the waveform to continue."); return; }
-    for (const id of event.toolCallCancellation?.ids || []) s.cancelledTools.add(id);
+    for (const id of event.toolCallCancellation?.ids || []) {
+      s.cancelledTools.add(id); s.pendingTools.delete(id);
+    }
+    if (event.toolCallCancellation && !s.sources.size) this.state("Listening… speak whenever you’re ready.");
     const content = event.serverContent || {};
     if (content.interrupted) {
       this.clearAudio(s);
@@ -215,6 +223,8 @@ class BobVoice {
     s.sources.clear(); s.nextAudio = 0;
   }
   async tool(s, tool) {
+    if (this.session !== s || s.cancelledTools.has(tool.id)) return;
+    s.pendingTools.add(tool.id);
     try {
       if (tool.name !== "ask_bob") throw new Error("This tool is not available.");
       const turn = s.inputTurn || this.newTurn(s);
@@ -246,6 +256,8 @@ class BobVoice {
       if (this.session === s && !s.cancelledTools.has(tool.id)) this.send(s, {
         toolResponse: { functionResponses: [{ id: tool.id, name: tool.name, response: { error: error.message } }] },
       });
+    } finally {
+      s.pendingTools.delete(tool.id);
     }
   }
   async save(s, required = false) {
@@ -304,6 +316,7 @@ class BobVoice {
     const s = this.session;
     if (!s) return;
     this.session = null; s.closed = true;
+    s.pendingTools.clear();
     clearTimeout(s.connectTimeout); clearTimeout(s.expiry); clearInterval(s.flushTimer); clearInterval(s.pulseTimer);
     s.stream?.getTracks().forEach(track => track.stop());
     if (s.socket) { s.socket.onclose = s.socket.onerror = s.socket.onmessage = null; s.socket.close(); }
