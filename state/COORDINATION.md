@@ -10,6 +10,11 @@ This is a local file handoff. There is no verified native Grok chat transport,
 automatic wake-up, or installed Grok receiver in this change. Do not infer Grok
 availability or quota from a recent acknowledgment. Its local file/command tools
 must actually read and checkpoint a batch before catch-up can be claimed.
+Bob's existing incoming `conductor/handback/BOB-STATE.md` remains available as
+handoff context through `webchat/handback.py`. A native chat API is not required
+for this file-based exchange when Bob has local tools. Actual receiver reads and
+acknowledgments remain necessary evidence; these files do not create an automatic
+reconnect trigger or confer execution authority.
 
 ## Receiver contract
 

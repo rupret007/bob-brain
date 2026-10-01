@@ -37,6 +37,11 @@ choose between building a skeleton and writing a protocol that already exist.
 Use saved record receipts as evidence only for what they actually recorded.
 Name the remaining receiver binding or availability gap precisely; do not
 promise contact, monitoring or wake-up that this version cannot perform.
+Direct native chat transport is optional for file-based coordination, not a
+prerequisite for using the implemented local handoff. Explain the next use of
+that path and the evidence still needed from the receiver. Do not leave the user
+at a speculative API/webhook design. Keep raw implementation labels out of normal
+product explanations unless the user needs a command or file location.
 '''
 
 
@@ -53,6 +58,15 @@ def grounding(root, reply_providers, conversation_id=None):
                         saved_conversation_receipts=[],
                         consumer_last_acknowledged_through=None,
                         consumer_availability='unverified', native_grok_automatic_delivery_implemented=False)
+    observations['file_coordination'] = dict(
+        outbound='Web Bob saves delivered answers, scope changes and completed task outcomes for Bob to read.',
+        inbound='Existing conductor/handback/BOB-STATE.md supplies Bob-authored handoff context through webchat/handback.py.',
+        use='Keep working in Web Bob. A returning Bob with local tools can read the saved batch, '
+            'checkpoint it and acknowledge exactly that batch, then leave its own handoff in BOB-STATE.md.',
+        next_verification='Have the native Bob receiver actually read/checkpoint/acknowledge one batch. '
+                          'No such receiver contact or acknowledgment is claimed by this reply.',
+        direct_chat_api_required=False,
+        authority='Shared evidence and context only; no work is authorized or executed by exchanging records.')
     try:
         import alignment_events
         observations['saved_conversation_receipts'] = [
