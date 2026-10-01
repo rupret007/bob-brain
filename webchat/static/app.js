@@ -916,7 +916,10 @@ if ($("login-form")) {
       $("live-call").classList.toggle("call-active", voice.active);
       $("live-call").setAttribute("aria-pressed", String(voice.active));
       $("live-call").setAttribute("aria-label", voice.active ? "Hang up voice call" : "Start live voice call");
-      $("end-call").textContent = voice.active ? "Hang up" : "Back to chat";
+      // WebKit can drop a pending click if its text node is replaced between
+      // press and release. Streaming state updates must keep this label stable.
+      const endLabel = voice.active ? "Hang up" : "Back to chat";
+      if ($("end-call").textContent !== endLabel) $("end-call").textContent = endLabel;
       $("resume-call").hidden = phase !== "paused";
       $("retry-voice-save").hidden = phase !== "unsaved";
       $("call-hint").textContent = voice.active ? "Your transcript saves to this chat." : "Choose Back to chat, then use the waveform button to call again.";
