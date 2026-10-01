@@ -102,6 +102,19 @@ ADVANCE = re.compile(r"^(?:keep going|continue|do it|make it happen|use what we 
                      r"you already audited it[.!]? do the next useful step|finish that(?:,? and tell me what actually changed)?)[.!]*$", re.I)
 
 
+def continuation(text):
+    """A continuation references existing work; it cannot name a new assignment."""
+    value = command(text)
+    if any(name != 'Web Bob' for name in projects(value)):
+        return False
+    if ADVANCE.fullmatch(value):
+        return True
+    return bool(re.match(r'^(?:continue|finish|resume|carry on|keep working)\s+(?:(?:with|on)\s+)?'
+                         r'(?:the|this|that|our|your|what|where)\b', value, re.I)
+                and re.search(r'\b(?:work|task|goal|step|plan|investigation|agreed|started|left off)\b', value, re.I)
+                and not execution_limit(value))
+
+
 def execution_limit(text):
     from answer_intent import instructions
     value = instructions(text)
@@ -120,7 +133,7 @@ def observe_turn(conversation, text, request_id):
     if execution_limit(value):
         saved['execution_restriction'] = dict(request_id=request_id, text=text[:600])
         saved['authorized_steps'] = ['local routing investigation']
-    if direct_goal(text) or ADVANCE.fullmatch(value) or ENABLE.fullmatch(value) or RESOURCES.fullmatch(value):
+    if direct_goal(text) or continuation(value) or ENABLE.fullmatch(value) or RESOURCES.fullmatch(value):
         return
     from reply_authority import STATUS_QUESTION, HOLD_QUESTION
     from answer_intent import conceptual
@@ -141,7 +154,7 @@ def handle(chat, conversation, text, request_id):
     goal = resolve(text, previous)
     if saved and saved['outcome'] == 'Check worker scheduling prerequisites' and direct_goal(text):
         saved = None
-    followup = bool(ADVANCE.fullmatch(value) or ENABLE.fullmatch(value) or RESOURCES.fullmatch(value))
+    followup = bool(continuation(value) or ENABLE.fullmatch(value) or RESOURCES.fullmatch(value))
     if saved and followup and not saved.get('suspended_by'):
         # An intervening project directive supersedes an unscoped continuation.
         intervening = [m for m in previous if m.get('role') == 'user'

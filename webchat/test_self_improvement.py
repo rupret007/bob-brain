@@ -17,6 +17,19 @@ RESOURCES = 'top priority use any and all resources'
 
 
 class ImprovementTests(SessionFixture):
+    def test_continuation_references_saved_work_after_restart_without_new_assignment(self):
+        self.send(GOAL)
+        self.chat.close()
+        self.chat = Chat(self.folder, self.root, self.fake)
+        self.send('Continue the useful work we just agreed on.')
+        self.send('Please finish that investigation.')
+        rows = task_queue.tasks(self.root)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(next(iter(rows.values()))['requested_worker'], 'mini')
+        self.send('Continue the WebJam work.')
+        self.send('keep going')
+        self.assertEqual(sum(row['requested_worker'] == 'mini' for row in task_queue.tasks(self.root).values()), 1)
+
     def test_inspection_only_goal_does_not_expand_into_execution_after_restart(self):
         self.send('Self-improve, but do not run tests or start workers; only inspect locally.')
         self.chat.close()
