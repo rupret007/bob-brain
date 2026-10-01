@@ -94,7 +94,7 @@ API slots per provider. MiniMax has a **$59 chat ceiling** even if background cr
 is increased elsewhere; the child process applies the lower of the chat and shared caps.
 Reservations and uncertain calls count toward the cap. Lane health shows that
 committed amount, not just settled charges.
-Both API lanes default to a $48 shared ceiling, warn at 70%, reduce concurrency
+The shared ceilings are $50 for Gemini and $48 for MiniMax. Both warn at 70%, reduce concurrency
 to one at 85%, and reject reservations that would cross 95%. Configure lower
 ceilings with `BOB_GEMINI_CAP_USD` and `BOB_MINIMAX_CAP_USD`. CLI plan percentages
 are unknown unless observed quota data is supplied in the private
@@ -102,6 +102,11 @@ are unknown unless observed quota data is supplied in the private
 Observed 95% usage stops that CLI until its reset; provider rate-limit responses
 also impose cooldowns. Token counts and estimated dollars do not stand in for
 subscription quota measurements.
+Chat routing reads these ceilings as literal metadata from its checked release's
+`services/budget.py`, with the same runtime tightening, and reads ledger bytes
+under the shared lock. A legacy dashboard's cached Python modules cannot select
+the budget policy. Missing metadata or a malformed ledger remains an unknown
+observation; the API child's existing reservation checks still enforce admission.
 
 ## Max-mode tasks
 
