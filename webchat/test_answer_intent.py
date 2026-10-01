@@ -47,6 +47,10 @@ class AnswerIntentTests(SessionFixture):
                        'Help me write a four-line poem about the lake.',
                        'Could you help me to draft a neighborhood notice?',
                        'Give me three chapter titles about a mountain.',
+                       'Make a short equipment checklist for a day hike.',
+                       'Create a comparison table for these two supplied options.',
+                       'Prepare a friendly note for my neighbor.',
+                       'Build me an outline for a talk about gardening.',
                        'Draft a thank-you note for my neighbor.',
                        'Compare these proposals: A costs 10, B costs 12.',
                        'Analyze the bug in this supplied code: def add(a,b): return a-b',
@@ -89,6 +93,15 @@ class AnswerIntentTests(SessionFixture):
                        'Have Gemini research Web Bob browser support',
                        'Codex: write a parser with regression tests',
                        'Create a pull request for the parser fix'):
+            with self.subTest(prompt=prompt):
+                self.assertIsNotNone(parse_work(prompt)[0])
+
+    def test_text_deliverable_does_not_hide_explicit_execution_or_worker(self):
+        for prompt in ('Create a checklist in /tmp/checklist.md',
+                       'Make a checklist and save it to /tmp/checklist.md',
+                       'Create a summary tool for the codebase',
+                       'Have Codex make a checklist',
+                       'Make a plan then execute it'):
             with self.subTest(prompt=prompt):
                 self.assertIsNotNone(parse_work(prompt)[0])
 
