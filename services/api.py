@@ -111,7 +111,7 @@ def http_json(url, method="GET", payload=None, headers=None, validate=None, allo
     raise RuntimeError(last)
 
 
-def extract(model, data, *, google_search=False):
+def extract(model, data, *, google_search=False, native_chat=False):
     if model == "minimax":
         base = data.get("base_resp", {})
         if base.get("status_code", 0) != 0:
@@ -130,7 +130,7 @@ def extract(model, data, *, google_search=False):
             raise RuntimeError("Gemini missing, blocked, or truncated final answer")
         text = "\n".join(p.get("text", "") for p in candidates[0].get("content", {}).get("parts", [])
                          if not p.get("thought")).strip()
-        if len(text) < 20:
+        if len(text) < (1 if native_chat else 20):
             raise RuntimeError("empty or unusably short final answer")
         sources = []
         for chunk in candidates[0].get("groundingMetadata", {}).get("groundingChunks", []):
@@ -141,19 +141,25 @@ def extract(model, data, *, google_search=False):
             text += "\n\nSearch sources:\n" + "\n".join("- " + url for url in sources)
         elif google_search:
             raise ResultRejected('The research response supplied no consulted search sources. Current-source claims are unverified.')
-    if len(text) < 20:
+    if len(text) < (1 if native_chat else 20):
         raise RuntimeError("empty or unusably short final answer")
     return text
 
 
 
 def model_call(model, prompt, max_tokens=8192, purpose="api", *, model_id=None, google_search=False,
-               vision=None, system=None, messages=None, thinking_budget=None):
+               vision=None, system=None, messages=None, thinking_budget=None, thinking_level=None):
     if model not in MODELS:
         raise ValueError("Unsupported API worker; Grok/xAI is never allowed")
     model_id = model_id or MODELS[model]
-    if model_id not in ({"gemini-2.5-flash", "gemini-2.5-pro"} if model == "gemini" else {"MiniMax-M2.7"}):
+    if model_id not in ({"gemini-2.5-flash", "gemini-2.5-pro", "gemini-3.8-flash"} if model == "gemini" else {"MiniMax-M2.7"}):
         raise ValueError("Unsupported API model")
+    modern = model_id == 'gemini-3.8-flash'
+    if modern and (google_search or vision):
+        raise ValueError('This configured Gemini 3.8 route is text-only without provider tools')
+    if (thinking_level is not None and (not modern or thinking_level not in ('low', 'medium', 'high'))
+            or modern and thinking_budget is not None):
+        raise ValueError('Unsupported model thinking configuration')
     if google_search and model != "gemini":
         raise ValueError("Google Search requires Gemini")
     if thinking_budget is not None and (model != 'gemini' or type(thinking_budget) is not int
@@ -201,12 +207,19 @@ def model_call(model, prompt, max_tokens=8192, purpose="api", *, model_id=None, 
                    "generationConfig": {"maxOutputTokens": max_tokens if pro else min(max_tokens, 4096), "temperature": 0.2,
                                         "thinkingConfig": {"thinkingBudget": (1024 if pro else 0)
                                                            if thinking_budget is None else thinking_budget}}}
+        if modern:
+            # Native generateContent supports thinkingLevel. Keep the model's
+            # recommended temperature and reserve the combined thought/output
+            # ceiling, not just visible answer tokens. No new tool is enabled.
+            payload['generationConfig'] = dict(maxOutputTokens=max_tokens, temperature=1.0,
+                thinkingConfig=dict(thinkingLevel=(thinking_level or 'medium').upper()))
         if system:
             payload['systemInstruction'] = {'parts': [{'text': system}]}
         if google_search:
             payload["tools"] = [{"google_search": {}}]
         headers = {"x-goog-api-key": key}
-    return http_json(url, "POST", payload, headers, lambda data: extract(model, data, google_search=google_search),
+    return http_json(url, "POST", payload, headers, lambda data: extract(model, data, google_search=google_search,
+                     native_chat=system is not None and messages is not None),
                      lane=model, prompt=metered_prompt, max_tokens=max_tokens, purpose=purpose,
                      model_id=model_id, google_search=google_search)
 

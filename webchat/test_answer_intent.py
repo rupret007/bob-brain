@@ -225,6 +225,7 @@ class AnswerIntentTests(SessionFixture):
             'This evidence shows the task label, but does not prove execution.',
             'The supplied report shows that tasks were queued.',
             'The queued job is waiting to be assigned to a worker.',
+            'The supplied record describes submission to the system and waiting in a queue. Completion is unverified.',
             'No. Completion is not established. Those records describe the task label; '
             'missing evidence alone does not prove that work never happened.',
         )
@@ -232,6 +233,23 @@ class AnswerIntentTests(SessionFixture):
             with self.subTest(reply=reply):
                 self.fake.reply_text = reply
                 self.assertEqual(self.send(prompt)['content'], reply)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_queue_nouns_do_not_hide_actor_placement_claims(self):
+        from dispatch_receipts import claims_dispatch, verbal_effects
+        prompt = 'Explain what a queued label proves using only supplied evidence.'
+        neutral = 'The supplied record describes submission to the system and waiting in a queue.'
+        self.assertFalse(claims_dispatch(neutral, reference=prompt))
+        self.assertEqual(len(verbal_effects(neutral)), len(neutral))
+        for claim in ('I put it in the queue.', 'The dispatcher moved the task into a queue.',
+                      'I added the task to the queue.', 'We sent it to the queue.',
+                      'Bob transferred it into the queue.', 'Your task was placed in the queue.'):
+            with self.subTest(claim=claim):
+                self.fake.reply_text = neutral + ' ' + claim
+                self.assertNotEqual(self.send(prompt)['content'], self.fake.reply_text)
+        for denial in ('I did not put it in the queue.', 'The task was not moved into the queue.'):
+            self.assertFalse(claims_dispatch(denial, reference=prompt))
+            self.assertTrue(claims_dispatch(denial + ' I put it in the queue.', reference=prompt))
         self.assertFalse(task_queue.tasks(self.root))
 
     def test_bounded_subjects_still_reject_owned_and_named_effects(self):
@@ -248,6 +266,11 @@ class AnswerIntentTests(SessionFixture):
                     self.assertNotEqual(self.send(prompt)['content'], self.fake.reply_text)
         for negative in ('The task has not yet been started', 'The task is not currently running'):
             self.fake.reply_text = negative + '; I queued your repair.'
+            self.assertNotEqual(self.send(prompt)['content'], self.fake.reply_text)
+        for claim in ('I queue your task.', 'The system will queue your task.',
+                      'Your task is in a queue.', 'Your task was queued.',
+                      'The system is queuing your task.'):
+            self.fake.reply_text = 'The report mentions the system and waiting in a queue; ' + claim
             self.assertNotEqual(self.send(prompt)['content'], self.fake.reply_text)
         self.assertFalse(task_queue.tasks(self.root))
 

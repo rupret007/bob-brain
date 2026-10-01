@@ -4,7 +4,10 @@ import re
 
 NO_DISPATCH = "I did not start, assign, or queue any work in this turn."
 WORKERS = r"(?:Codex|Claude|Cursor|Gemini|MiniMax|the (?:system|dispatcher|workers?)|all (?:LLMs|workers))"
-EFFECT = r"(?:start(?:ed|ing)?|creat(?:e|ed|ing)\b[^.!?\n]{0,60}\b(?:jobs?|tasks?)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|add(?:ed|ing)? work|put .{0,40} to work|kick(?:ed|ing)? off)"
+PLACEMENT_VERB = r"(?:put(?:ting)?|plac(?:e|ed|ing)|add(?:ed|ing)?|mov(?:e|ed|ing)|send(?:ing)?|sent|transfer(?:red|ring)?|submit(?:ted|ting)?)"
+QUEUE_PLACEMENT = (PLACEMENT_VERB + r"\b[^.;!?\n]{0,70}\b(?:in(?:to)?|to)\s+"
+                   r"(?:(?:a|an|the|my|your|our|this|that)\s+)?queue\b")
+EFFECT = r"(?:start(?:ed|ing)?|creat(?:e|ed|ing)\b[^.!?\n]{0,60}\b(?:jobs?|tasks?)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|add(?:ed|ing)? work|put .{0,40} to work|kick(?:ed|ing)? off|" + QUEUE_PLACEMENT + r")"
 CLAIM = re.compile(
     r"\b(?:I|we|Bob|" + WORKERS + r")\b[^.!?\n]{0,90}\b" + EFFECT + r"\b|"
     r"(?:^|[.!?\n]\s*)(?:queued|assigned|started|dispatched|launched|scheduled)\b|"
@@ -50,6 +53,19 @@ DIRECT_CLAIM = re.compile(
 )
 
 
+def verbal_effects(prose):
+    """Disambiguate the bare verb 'queue' from a determined/locative noun.
+
+    Used only for actor claims. A concrete job's queue state remains a claim
+    under REFERENCE_EFFECT. Placement into a queue is an effect, too. Mask
+    only other noun mentions and preserve offsets for bounded actor scans.
+    """
+    placements = {m.end() - len('queue') for m in re.finditer(QUEUE_PLACEMENT, prose, re.I)}
+    return re.sub(r"(\b(?:a|an|the|my|your|our|this|that|in|into|on|from|of|[\w]+['’]s)\s+)queue\b",
+                  lambda m: m[0] if m.end() - len('queue') in placements else m[1] + ' ' * len('queue'),
+                  prose, flags=re.I)
+
+
 def unasserted_prose(prose):
     """Mask a negative predicate, never a later positive effect assertion.
 
@@ -62,7 +78,7 @@ def unasserted_prose(prose):
     # that must not be used to erase the scope of a negation.
     verb = (r'(?:start(?:ed|ing)?|creat(?:e|ed|ing)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|'
             r'dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|'
-            r'add(?:ed|ing)?|put|kick(?:ed|ing)? off|running|working|in progress|picked up)\b')
+            + PLACEMENT_VERB + r'|kick(?:ed|ing)? off|running|working|in progress|picked up)\b')
     denial = (r"\b(?:(?:does|do|did|would|could)(?: not|n['’]t)|cannot|can['’]t)\s+"
               r"(?:prove|establish|show|confirm|mean|demonstrate|indicate)\b|"
               r"\bno (?:evidence|proof|record)\s+(?:shows?|proves?|establishes?|confirms?|that)\b|"
@@ -139,7 +155,7 @@ def dispatch_prose(text, *, reference=''):
         # Preserve owner/named-job, actor and deictic claims for the guard.
         def definition_subjects(match):
             part = match[0]
-            if (DIRECT_CLAIM.search(part) or JOB_ID.search(part) or re.search(REFERENCE_TARGET, part, re.I)
+            if (DIRECT_CLAIM.search(verbal_effects(part)) or JOB_ID.search(part) or re.search(REFERENCE_TARGET, part, re.I)
                     or re.search(r'\b(?:now|just|already|currently|today|here|this|that)\b', part, re.I)):
                 return part
             return re.sub(r'\b(?:the|a) (?:job|task)\b', 'the described state', part, flags=re.I)
@@ -173,7 +189,7 @@ def claims_dispatch(text, *, reference=''):
     # Do not use the passive proximity heuristic for a conceptual answer: a
     # definition can describe assignment without asserting a particular job.
     claim = REFERENCE_EFFECT if reference else CLAIM
-    return bool(DIRECT_CLAIM.search(original) or JOB_ID.search(original)
+    return bool(DIRECT_CLAIM.search(verbal_effects(original)) or JOB_ID.search(original)
                 or claim.search(dispatch_prose(text, reference=reference)))
 
 

@@ -7,6 +7,36 @@ import api
 
 
 class MediaAPITests(unittest.TestCase):
+    def test_modern_text_model_uses_native_reasoning_and_full_cost_ceiling(self):
+        with patch.object(api, 'load_worker_keys'), patch.dict(os.environ, {'GEMINI_API_KEY': 'offline-fixture-key'}), \
+                patch.object(api, 'http_json', return_value='fixture') as http:
+            api.model_call('gemini', 'Supplied reference', model_id='gemini-3.8-flash', thinking_level='high',
+                           system='Application rules', messages=[dict(role='user', content='Reason from these facts.')])
+            url, _, body = http.call_args.args[:3]
+            self.assertIn('gemini-3.8-flash:generateContent', url)
+            self.assertEqual(body['generationConfig'], dict(maxOutputTokens=8192, temperature=1.0,
+                             thinkingConfig=dict(thinkingLevel='HIGH')))
+            self.assertEqual(http.call_args.kwargs['max_tokens'], 8192)
+            self.assertEqual(http.call_args.kwargs['model_id'], 'gemini-3.8-flash')
+            for extra in (dict(thinking_budget=1024), dict(thinking_level='minimal'),
+                          dict(google_search=True), dict(vision=[dict(mime='image/jpeg', data_base64='YQ==')])):
+                http.reset_mock()
+                with self.assertRaises(ValueError):
+                    api.model_call('gemini', 'unsupported route', model_id='gemini-3.8-flash', **extra)
+                http.assert_not_called()
+
+    def test_native_final_text_requires_completion_but_not_artificial_padding(self):
+        def data(text, reason='STOP', thought=False):
+            return dict(candidates=[dict(finishReason=reason, content=dict(parts=[dict(text=text, thought=thought)]))])
+        self.assertEqual(api.extract('gemini', data('4'), native_chat=True), '4')
+        self.assertEqual(api.extract('gemini', data('A literal <bob-webchat-reply> tag.'), native_chat=True),
+                         'A literal <bob-webchat-reply> tag.')
+        for value in (data('partial', 'MAX_TOKENS'), data('hidden', thought=True), data('   ')):
+            with self.assertRaises(RuntimeError):
+                api.extract('gemini', value, native_chat=True)
+        with self.assertRaises(RuntimeError):
+            api.extract('gemini', data('4'))  # Legacy worker minimum unchanged.
+
     def test_bounded_chat_reasoning_preserves_total_output_reservation(self):
         with patch.object(api, 'load_worker_keys'), patch.dict(os.environ, {'GEMINI_API_KEY': 'offline-fixture-key'}), \
                 patch.object(api, 'http_json', return_value='fixture') as http:

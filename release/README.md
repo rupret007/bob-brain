@@ -1,5 +1,18 @@
 # Solo Web Bob releases
 
+Typed answer turns requiring reasoning or precise output use Gemini 3.8 Flash
+with high thinking through the existing metered generateContent path. Ordinary,
+voice and image turns retain their checked Gemini 2.5 profile; this adds no tools.
+The API uses native completed final text instead of asking the model to write
+XML transport tags. Short native answers are valid; empty, thought-only and
+truncated responses still fail. Legacy worker extraction is unchanged.
+Gemini 3.8 reservations use the published post-promotion $1.50/$7.50 rates per
+million input/output tokens; settlement uses $0.75/$3.75 through 2026 and the
+higher rates from 2027. Output includes thinking. Pricing checked 2026-10-01 at
+https://ai.google.dev/gemini-api/docs/pricing; cached input is conservatively
+counted at the full input rate. A model upgrade is not evidence of answer quality:
+the frozen candidate still needs the affected real sample and all release gates.
+
 Jeff authorized Gemini on 2026-10-01 until its prepaid allowance needs refill.
 The checked default local Gemini dollar ceiling is now absent; cost reservations
 and settlements remain metered, and a finite runtime override can still tighten

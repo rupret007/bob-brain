@@ -109,7 +109,7 @@ class FocusTests(SessionFixture):
         self.assertNotIn('Make Web Bob better than Grok at following through.', prompt)
         self.assertIn('Make Web Bob better than Grok at following through.', str(self.chat.get(self.identifier)['messages']))
         self.assertTrue(provider.precision_request(self.chat.get(self.identifier)))
-        self.assertEqual(provider.current_call.gemini_model, 'gemini-2.5-flash')
+        self.assertEqual(provider.current_call.gemini_model, 'gemini-3.8-flash')
         self.assertEqual(provider.route_order(self.chat.get(self.identifier))[0], 'codex')
 
     def test_ordinary_explanations_do_not_receive_an_operations_manual(self):
@@ -138,7 +138,7 @@ class FocusTests(SessionFixture):
         self.assertNotIn('SERVER SAVED CHAT PERMISSIONS', payload['system'])
         self.assertNotIn('SERVER SAVED CHAT PERMISSIONS', payload['context'])
         self.assertNotIn('saved chat hold facts', payload['context'])
-        self.assertEqual(provider.current_call.gemini_model, 'gemini-2.5-flash')
+        self.assertEqual(provider.current_call.gemini_model, 'gemini-3.8-flash')
 
     def test_context_resolution_uses_existing_reasoning_route_and_respects_explicit_choice(self):
         self.send('Do not recalibrate. Just explain the term.')

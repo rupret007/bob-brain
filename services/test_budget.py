@@ -19,6 +19,16 @@ class BudgetTests(unittest.TestCase):
         with state.lock("ledger-" + lane):
             state._append(budget.path(lane), dict(call_id="seed", cost_usd=spent))
 
+    def test_modern_gemini_reserves_future_rates_and_meters_thoughts_across_promotion_end(self):
+        for at, expected in ((1798761599, .002175), (1798761600, .00435)):
+            with self.subTest(at=at), patch.object(budget.time, 'time', return_value=at):
+                row = budget.reserve('gemini', 'text', 8192, model_id='gemini-3.8-flash')
+                self.assertAlmostEqual(row['reserved_usd'], (4100 * 1.5 + 8192 * 7.5) / 1_000_000)
+                before = budget.totals('gemini')['spent_usd']
+                budget.settle('gemini', row, dict(usageMetadata=dict(promptTokenCount=400,
+                              candidatesTokenCount=200, thoughtsTokenCount=300)))
+                self.assertAlmostEqual(budget.totals('gemini')['spent_usd'] - before, expected)
+
     def test_lane_state_warns_at_70_and_stops_at_95_percent_of_cap(self):
         with patch.object(budget, "CAP_USD", 10), patch.object(budget, "GEMINI_CAP_USD", 10), patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "MINIMAX_API_KEY": "test-key"}), patch.object(lanes, "CURSOR") as cursor:
             cursor.is_file.return_value = False

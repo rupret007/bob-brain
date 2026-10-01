@@ -123,7 +123,10 @@ def reserve(lane, prompt, max_tokens, purpose="model", *, model_id=None, google_
     if lane == "minimax":
         import_ux_ledger()
     # Reserve the Pro long-context tier conservatively; settle at the actual tier.
-    rate = (2.50, 15.0, .25, 2.50) if model_id == "gemini-2.5-pro" else RATES[lane]
+    # Gemini3.8 has promotional rates through2026. Reserve the published
+    # post-promotion rates even now so the bound also covers a date transition.
+    rate = ((1.50, 7.50, .15, 1.50) if model_id == 'gemini-3.8-flash' else
+            (2.50, 15.0, .25, 2.50) if model_id == "gemini-2.5-pro" else RATES[lane])
     search_cost = .035 if google_search else 0
     bound = ((len(prompt.encode("utf-8")) + 4096) * max(rate[0], rate[3]) + max_tokens * rate[1]) / 1_000_000 + search_cost
     with lock("ledger-" + lane):
@@ -154,6 +157,12 @@ def settle(lane, reservation, data):
         cost = (max(0, inp - cached) * .30 + out * 1.20 + cached * .06 + written * .375) / 1_000_000
     elif lane == "gemini" and "promptTokenCount" in usage:
         inp, out = ((2.50, 15.0) if usage["promptTokenCount"] > 200000 else (1.25, 10.0)) if reservation.get("model") == "gemini-2.5-pro" else (.30, 2.50)
+        if reservation.get('model') == 'gemini-3.8-flash':
+            # Pricing: ai.google.dev/gemini-api/docs/pricing, checked2026-10-01.
+            # Settlement at/after2027 uses the higher published rates, including
+            # calls begun before midnight. Cached input is conservatively billed
+            # as uncached, matching the existing local estimate convention.
+            inp, out = (.75, 3.75) if time.time() < 1798761600 else (1.50, 7.50)
         cost = (usage["promptTokenCount"] * inp +
                 (usage.get("candidatesTokenCount", 0) + usage.get("thoughtsTokenCount", 0)) * out) / 1_000_000
         # Do not assume this account has any free grounding allowance left.

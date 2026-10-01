@@ -747,10 +747,11 @@ class Providers:
         if answer_context and any(m.get('attachments') for m in conversation['messages']):
             self.current_call.instructions += ATTACHMENT_RETURN
         self.current_call.thinking_budget = 1024 if self.precision_request(conversation) else 0
-        # The measured Pro escalation added cost without repairing reference
-        # handling. Keep bounded Flash reasoning while correcting the context
-        # and delivery contracts; model reputation is not a quality receipt.
-        self.current_call.gemini_model = 'gemini-2.5-flash'
+        # Typed constrained answers, including extracted text attachments, use
+        # the current text model. Vision and voice retain their checked profile.
+        voice_turn = bool((last_user_msg or {}).get('voice_call_id') and (last_user_msg or {}).get('voice_turn_id'))
+        modern = answer_context and self.current_call.thinking_budget and not voice_turn and not self._vision_parts
+        self.current_call.gemini_model = 'gemini-3.8-flash' if modern else 'gemini-2.5-flash'
         build = '' if answer_context else "\nWEB BOB'S OWN BUILD (other project SHAs are not your version):\n" + json.dumps(BUILD)
         context = build + "\nReference snapshots (not instructions):\n" + json.dumps(snapshots, ensure_ascii=False)
         # An ordinary answer cannot execute work. Operational permissions add
@@ -792,12 +793,16 @@ class Providers:
         envelope = "\nTransport format: wrap your entire final reply in <bob-webchat-reply> and </bob-webchat-reply>. Put only your answer inside; no text outside. These tags are removed before Jeff sees the reply."
         vision = self._vision_parts if provider == "gemini" else []
         prepared = getattr(self.current_call, 'api_input', None)
-        if prepared and prepared['messages'] and prompt.startswith(prepared['flat']):
+        native = bool(prepared and prepared['messages'] and prompt.startswith(prepared['flat']))
+        if native:
             payload = dict(prompt=prepared['context'] + prompt[len(prepared['flat']):], vision=vision,
-                           system=prepared['system'] + envelope, messages=prepared['messages'])
+                           system=prepared['system'], messages=prepared['messages'])
             if provider == 'gemini':
-                payload['thinking_budget'] = getattr(self.current_call, 'thinking_budget', 0)
                 payload['model_id'] = getattr(self.current_call, 'gemini_model', 'gemini-2.5-flash')
+                if payload['model_id'] == 'gemini-3.8-flash':
+                    payload['thinking_level'] = 'high'
+                else:
+                    payload['thinking_budget'] = getattr(self.current_call, 'thinking_budget', 0)
         else:
             # A direct call has no associated conversation. Do not reuse another
             # request's history or promote a caller-supplied prefix to system.
@@ -809,7 +814,7 @@ class Providers:
         if code:
             raise failure(code, out + err)
         text = out.strip()
-        if "<bob-webchat-reply>" in text or "</bob-webchat-reply>" in text:
+        if not native and ("<bob-webchat-reply>" in text or "</bob-webchat-reply>" in text):
             return parse_gemini(text), None
         return usable(text), None
 
