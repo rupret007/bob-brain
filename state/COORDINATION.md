@@ -7,7 +7,7 @@ and result hash; inspect the original artifact before relying on its effects.
 Private texting and drill conversations are excluded from this projection.
 
 This is a local file handoff. There is no verified native Grok chat transport,
-automatic wake-up, or installed Grok receiver in this change. Do not infer Grok
+automatic wake-up, or automatic Grok receiver in this change. Do not infer Grok
 availability or quota from a recent acknowledgment. Its local file/command tools
 must actually read and checkpoint a batch before catch-up can be claimed.
 Bob's existing incoming `conductor/handback/BOB-STATE.md` remains available as
@@ -84,3 +84,25 @@ and overlay isolation. They do not prove that native Grok received anything.
 That requires a real receiver read/checkpoint/ACK and its independently observed
 result. No model call, worker dispatch, message send, or replay is performed by
 this CLI.
+
+## Historical receiver evidence in replies
+
+The private server configuration `conductor/webchat/receiver-evidence.json` can
+bind an independently reviewed native receiver proof. Its schema is
+`schema_version: 1`, `provenance: owner_supplied_native_registered_computer_response`,
+`proof_path: conductor/reviews/<proof>.json`, and the exact `proof_sha256`.
+Only an administrator reviewing the owner's actual native-tool response may
+install this binding. Model prose, uploads, checkpoint filenames and a cursor
+alone cannot establish native provenance. No HTTP route installs it.
+
+The pure observer requires private regular files, bounded contained paths, the
+unchanged proof and checkpoint hashes, an exact receipt matching the retained
+journal, and the historical ACK still covered by current state. A later ACK or
+an idempotent repeat cannot expand or erase the historical observation. Only
+bounded metadata enters model context or a public conversation receipt.
+
+Replies distinguish that historical evidence from a newly prepared unconsumed
+batch, current receiver availability, full catch-up and automatic wake-up.
+Existing comparison worksheets keep their original bytes/hash; current evidence
+is reported separately on continuation. Missing or invalid evidence remains
+unverified without repairing records, moving a cursor, or executing any task.

@@ -35,6 +35,8 @@ collapse missing automatic delivery into missing shared records. Reuse the
 implemented mechanism; do not propose replacement folders or ask the user to
 choose between building a skeleton and writing a protocol that already exist.
 Use saved record receipts as evidence only for what they actually recorded.
+Recognize a verified historical receiver checkpoint when supplied. Distinguish
+that evidence from consumption of a newly prepared batch and present availability.
 Name the remaining receiver binding or availability gap precisely; do not
 promise contact, monitoring or wake-up that this version cannot perform.
 Direct native chat transport is optional for file-based coordination, not a
@@ -82,7 +84,10 @@ def prepare_coordination(chat, conversation, text, request_id):
     count = len(batch['events'])
     receipt = {key: batch[key] for key in ('journal_id', 'since_seq', 'through_seq',
                                           'receipt_sha256', 'has_more', 'history_gap')}
+    from receiver_evidence import observe, describe
+    historical = observe(chat.root)
     receipt.update(record_count=count, receiver_verified=False, acknowledged=False,
+                   historical_receiver=historical,
                    execution_started=False, completed_step='prepared_local_catchup_batch')
     conversation['messages'][-1]['coordination_receipt'] = receipt
     prepared = (f'I prepared and saved a catch-up batch of {count} earlier recorded updates with this conversation '
@@ -92,8 +97,7 @@ def prepare_coordination(chat, conversation, text, request_id):
     gaps = ('More recorded updates remain after this batch. ' if batch['has_more'] else '')
     gaps += ('Some earlier history is missing from the retained record. ' if batch['history_gap'] else '')
     return chat.intent_reply(conversation, prepared + coverage + gaps +
-        'Grok’s receiver is still unverified: its next step is to read the batch, save its own checkpoint, '
-        'and acknowledge that exact batch. Preparing it has not contacted Grok or marked anything as read.',
+        describe(historical) + ' Preparing this batch has not contacted Grok or marked anything as read.',
         provider='coordination')
 
 
@@ -119,6 +123,9 @@ def grounding(root, reply_providers, conversation_id=None):
                           'No such receiver contact or acknowledgment is claimed by this reply.',
         direct_chat_api_required=False,
         authority='Shared evidence and context only; no work is authorized or executed by exchanging records.')
+    from receiver_evidence import observe, describe
+    observations['historical_receiver'] = observe(root)
+    observations['file_coordination']['next_verification'] = describe(observations['historical_receiver'])
     try:
         import alignment_events
         observations['saved_conversation_receipts'] = [

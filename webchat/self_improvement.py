@@ -202,6 +202,8 @@ def completed_followup(chat, conversation, root, saved, row, text, request_id):
     from pathlib import Path
     value = command(text).rstrip(' .!?')
     comparison = bool(GOAL.search(saved['outcome']) or re.search(r'\bgrok\b', saved['outcome'], re.I))
+    from receiver_evidence import observe, describe
+    receiver = observe(root) if comparison else None
     result_link = '/api/jobs/result?id=' + row['id']
     completed = ('Completed: the source-backed routing investigation and the local regression suite. '
                  'The executor returned a verified result; no code was changed. '
@@ -210,7 +212,7 @@ def completed_followup(chat, conversation, root, saved, row, text, request_id):
         return (completed + '\n\nThe local execution path already completed this task. '
                 'This configuration check changed no setting and enabled no new worker. '
                 'Enabling a model is not the remaining step: matched workflow evidence is still needed.' +
-                (' The native Grok receiver also needs separate verification.' if comparison else '')), (
+                (' ' + describe(receiver) if comparison else '')), (
                     saved.get('current_step') if saved.get('comparison_plan') else 'verification_complete')
 
     code = Path(__file__).resolve().parents[1]
@@ -224,8 +226,12 @@ def completed_followup(chat, conversation, root, saved, row, text, request_id):
                     sources=[dict(path=p, sha256=hashlib.sha256((code / p).read_bytes()).hexdigest()) for p in paths],
                     missing_evidence=['Matched task/context answers and independently verified effects.'] +
                     (['Current first-party information for the actual Grok Bot environment.',
-                      'A native receiver-owned read, checkpoint and exact batch acknowledgment.'] if comparison else
+                      ('Receiver checkpoint and acknowledgment for newer unconsumed batches; current availability remains unknown.'
+                       if receiver['historical_checkpoint_ack_verified'] else
+                       'A native receiver-owned read, checkpoint and exact batch acknowledgment.')] if comparison else
                      ['A saved baseline for the requested workflow.']))
+        if comparison:
+            plan['historical_receiver'] = receiver
         plan['sha256'] = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
         saved['comparison_plan'] = plan
         preparation = 'I inspected the implemented capability sources and saved a comparison worksheet in this conversation.'
@@ -238,6 +244,8 @@ def completed_followup(chat, conversation, root, saved, row, text, request_id):
     content = (completed + '\n\n' + preparation + ' It covers writing/reasoning, research, local project work, '
                'and durable coordination. The worksheet identifies implemented local paths; it does not score Grok '
                'or claim its receiver consumed anything.')
+    if comparison:
+        content += ' Current receiver evidence: ' + describe(receiver)
     saved['completed_effects'].append('local capability comparison worksheet')
     step = ('comparison_needs_primary_evidence' if hashlib.sha256(saved['outcome'].encode()).hexdigest()
             in saved.get('comparison_research', {}) else 'comparison_prepared')

@@ -182,6 +182,35 @@ class ImprovementTests(SessionFixture):
             self.assertEqual(search.call_count, 1)
         self.assertEqual(len(task_queue.tasks(self.root)), 1)
 
+    def test_completed_comparison_uses_historical_receiver_evidence_without_claiming_new_consumption(self):
+        from test_receiver_evidence import install_receiver_evidence
+        row, _, _ = self.completed_fixture()
+        install_receiver_evidence(self.root)
+        answer = self.send('Finish that, and tell me what actually changed.')
+        self.assertIn('owner-reported Grok checkpoint', answer['content'])
+        plan = self.chat.get(self.identifier)['improvement_goal']['comparison_plan']
+        self.assertTrue(plan['historical_receiver']['historical_checkpoint_ack_verified'])
+        self.assertIn('newer unconsumed batches', ' '.join(plan['missing_evidence']))
+        original = json.dumps(plan, sort_keys=True)
+        self.chat.close(); self.chat = Chat(self.folder, self.root, self.fake)
+        enabled = self.send(ENABLE)
+        self.assertIn('owner-reported Grok checkpoint', enabled['content'])
+        self.assertIn('/api/jobs/result?id=' + row['id'], enabled['content'])
+        self.assertIn('Newer batches still need', enabled['content'])
+        self.assertEqual(json.dumps(self.chat.get(self.identifier)['improvement_goal']['comparison_plan'], sort_keys=True), original)
+        self.assertEqual(len(task_queue.tasks(self.root)), 1)
+
+    def test_receiver_evidence_arriving_later_is_reported_without_rewriting_existing_worksheet(self):
+        from test_receiver_evidence import install_receiver_evidence
+        self.completed_fixture()
+        self.send('Finish that, and tell me what actually changed.')
+        original = json.dumps(self.chat.get(self.identifier)['improvement_goal']['comparison_plan'], sort_keys=True)
+        install_receiver_evidence(self.root)
+        answer = self.send('keep going')
+        self.assertIn('Current receiver evidence: The owner-reported Grok checkpoint', answer['content'])
+        self.assertEqual(json.dumps(self.chat.get(self.identifier)['improvement_goal']['comparison_plan'], sort_keys=True), original)
+        self.assertEqual(len(task_queue.tasks(self.root)), 1)
+
     def test_research_requires_a_positive_user_instruction_and_preserves_restrictions(self):
         denied = ('Self-improve to match Grok, but do not research it.',
                   'Self-improve to match Grok using only supplied evidence.',

@@ -42,30 +42,36 @@ if ($("login-form")) {
       .replace(/[#>*_-]/g, " ").replace(/\s+/g, " ").trim();
   }
   function renderMarkdown(text) {
-    let html = escapeHtml(text);
-    html = html.replace(/```([\s\S]*?)```/g, (_, code) => {
-      const inner = code.trim();
-      return `<pre class="code-block" tabindex="0"><button type="button" class="copy-code" aria-label="Copy code">Copy</button><code>${inner}</code></pre>`;
-    });
-    html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-    html = html.replace(/\[([^\]\n]+)\]\(\/api\/jobs\/result\?id=(webchat-[a-f0-9]{32})\)/g,
-      '<button type="button" class="job-result-link" data-job-id="$2">$1</button>');
-    html = html.replace(/!\[([^\]]*)\]\((\/api\/captures\/[0-9a-f]+)\)/g,
-      '<img class="chat-capture" src="$2" alt="$1" loading="lazy" />');
-    html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" rel="noopener noreferrer" target="_blank">$1</a>');
-    html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    html = html.replace(/^### (.+)$/gm, "<h4 class=\"md-h\">$1</h4>");
-    html = html.replace(/^## (.+)$/gm, "<h3 class=\"md-h\">$1</h3>");
-    html = html.replace(/(?:^|\n)(\d+\. .+(?:\n\d+\. .+)*)/g, (block) => {
-      const items = block.trim().split("\n").map((line) => `<li>${line.replace(/^\d+\.\s+/, "")}</li>`).join("");
-      return `<ol>${items}</ol>`;
-    });
-    html = html.replace(/(?:^|\n)([-*] .+(?:\n[-*] .+)*)/g, (block) => {
-      const items = block.trim().split("\n").map((line) => `<li>${line.replace(/^[-*]\s+/, "")}</li>`).join("");
-      return `<ul>${items}</ul>`;
-    });
-    html = html.replace(/\n/g, "<br>");
-    return html;
+    // Keep fenced code out of prose formatting: <br> loses newlines when
+    // copied as textContent, and inline Markdown must remain literal code.
+    return text.split(/(```[\s\S]*?```)/g).map((part, index) => {
+      if (index % 2) {
+        let code = part.slice(3, -3);
+        const firstLine = code.indexOf("\n");
+        if (firstLine >= 0) code = code.slice(firstLine + 1).replace(/\r?\n$/, "");
+        return `<pre class="code-block" tabindex="0"><button type="button" class="copy-code" aria-label="Copy code">Copy</button><code>${escapeHtml(code)}</code></pre>`;
+      }
+      let html = escapeHtml(part);
+      html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+      html = html.replace(/\[([^\]\n]+)\]\(\/api\/jobs\/result\?id=(webchat-[a-f0-9]{32})\)/g,
+        '<button type="button" class="job-result-link" data-job-id="$2">$1</button>');
+      html = html.replace(/!\[([^\]]*)\]\((\/api\/captures\/[0-9a-f]+)\)/g,
+        '<img class="chat-capture" src="$2" alt="$1" loading="lazy" />');
+      html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" rel="noopener noreferrer" target="_blank">$1</a>');
+      html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      html = html.replace(/^### (.+)$/gm, "<h4 class=\"md-h\">$1</h4>");
+      html = html.replace(/^## (.+)$/gm, "<h3 class=\"md-h\">$1</h3>");
+      html = html.replace(/(?:^|\n)(\d+\. .+(?:\n\d+\. .+)*)/g, (block) => {
+        const items = block.trim().split("\n").map((line) => `<li>${line.replace(/^\d+\.\s+/, "")}</li>`).join("");
+        return `<ol>${items}</ol>`;
+      });
+      html = html.replace(/(?:^|\n)([-*] .+(?:\n[-*] .+)*)/g, (block) => {
+        const items = block.trim().split("\n").map((line) => `<li>${line.replace(/^[-*]\s+/, "")}</li>`).join("");
+        return `<ul>${items}</ul>`;
+      });
+      html = html.replace(/\n/g, "<br>");
+      return html;
+    }).join("");
   }
   const stored = (key) => { try { return localStorage.getItem(key); } catch (_) { return null; } };
   const remember = (key, value) => { try { localStorage.setItem(key, value); } catch (_) {} };
@@ -397,6 +403,7 @@ if ($("login-form")) {
     setBottomTab("chat");
     submitChatText("show my saved memories");
   });
+  const messageText = new WeakMap();
   function render(conversation) {
     if (conversation.id !== current) return;
     const nextRevision = JSON.stringify(conversation);
@@ -452,6 +459,7 @@ if ($("login-form")) {
       if (message.text_draft) article.append(textDraftCard(message.text_draft));
       {
         const raw = (message.private_memory && message.memory_action_label || message.content || "").trim();
+        messageText.set(article, raw);
         const copyBtn = document.createElement("button");
         copyBtn.type = "button";
         copyBtn.className = "msg-copy quiet";
@@ -656,8 +664,7 @@ if ($("login-form")) {
     const article = event.target.closest(".message");
     if (!article || article.classList.contains("pending")) return;
     event.preventDefault();
-    const body = article.querySelector(".body");
-    const text = body?.innerText?.trim();
+    const text = messageText.get(article);
     if (!text) return;
     const menu = document.createElement("div");
     menu.className = "msg-menu";
