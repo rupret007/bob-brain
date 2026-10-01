@@ -121,6 +121,8 @@ class AnswerIntentTests(SessionFixture):
         for prompt in ('Make a checklist in /tmp/checklist.md',
                        'Make a checklist in `/tmp/checklist.md`',
                        'Prepare a note in "/tmp/note.md"',
+                       "Prepare a note in '/tmp/note.md'",
+                       "Prepare a note for Jeff's trip in /tmp/note.md; don't add a date.",
                        'Build an outline in docs/plan.md',
                        'Prepare a note in /tmp/note.md',
                        'Build a checklist web app',

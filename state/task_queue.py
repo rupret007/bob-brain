@@ -54,7 +54,7 @@ def file_task_kind(prompt):
               r"(?:git\s+)?(?:worktree|checkout|repository|repo|directory|folder|files?)\b)")
     # Quoted commands are examples, not action clauses. Preserve literal path
     # arguments, including backticked filenames, without adopting other text.
-    task = re.sub(r'"[^"\n]*"|“[^”\n]*”|`[^`\n]*`|\x27[^\x27\n]*\x27',
+    task = re.sub(r'"[^"\n]*"|“[^”\n]*”|`[^`\n]*`|(?<!\w)\x27[^\x27\n]*\x27(?!\w)',
                   lambda m: m[0][1:-1] if re.fullmatch(target, m[0][1:-1], re.I) else '', task)
     if (re.search(start + write + r"\s+" + qualifiers + target, task, re.I) or
             re.search(start + write + r"\b[^\n]{0,120}\b(?:to|in|under|at)\s+" +
