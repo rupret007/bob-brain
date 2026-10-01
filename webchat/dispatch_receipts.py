@@ -17,6 +17,14 @@ CLAIM = re.compile(
     re.I,
 )
 JOB_ID = re.compile(r"\bwebchat-[a-f0-9]{32}\b")
+# In an explanation, generic jobs are examples. Owner references and named
+# jobs still make concrete claims; they need the same real receipts as actions.
+REFERENCE_TARGET = (r"\b(?:your|our|my|this|that|these|those)\b[^.;!?\n]{0,60}\b(?:jobs?|tasks?|work|council)\b|"
+                    r"\bthe\s+(?:(?!(?:a|an|the|is|are|was|were|has|have|means|when|once|if|until|job|task|work|queue|state|queued|running|scheduled|assigned|waiting)\b)[\w'-]+\s+){1,4}(?:job|task)\b")
+REFERENCE_EFFECT = re.compile(
+    r"(?:^|[.!?\n]\s*)(?:queued|assigned|started|dispatched|launched|scheduled)\b|"
+    r"(?:" + REFERENCE_TARGET + r")[^.;!?\n]{0,80}\b" + EFFECT + r"\b|"
+    r"\b(?:the|a) (?:job|task) (?:is|was|has|had)\s+(?:(?:just|now|already|been)\s+)*" + EFFECT + r"\b", re.I)
 DIRECT_CLAIM = re.compile(
     r"\b(?:I|we|Bob|" + WORKERS + r")\b[^.!?\n]{0,90}\b" + EFFECT + r"\b|"
     r"\b" + WORKERS + r"\b.{0,45}\b(?:is|are) (?:now )?(?:working|running|busy|on it)\b|"
@@ -34,7 +42,19 @@ def dispatch_prose(text, *, reference=''):
     prose = re.sub(definition, lambda m: m[0] if DIRECT_CLAIM.search(m[0]) or JOB_ID.search(m[0]) else "", prose, flags=re.I)
     # A conditional offer is not a claim that work was done.
     prose = re.sub(r"(?:^|(?<=[.!?])\s+)I (?:can|could)\b(?:(?!\b(?:and|but)\s+(?:I|we|Bob)\b(?![’\x27]ll|\s+(?:will|can|could)\b))[^.;!?\n])*[.!?]?", "", prose, flags=re.I)
+    prose = re.sub(r"\bI (?:can(?:not|['’]t)|could(?: not|n['’]t)|did(?: not|n['’]t)|have(?: not|n['’]t))\b"
+                   r"(?:(?!\b(?:and|but)\s+(?:I|we|Bob)\b)[^.;!?\n])*", "", prose, flags=re.I)
     if reference:
+        # In a definition, generic subjects describe the term, not a live job.
+        # Preserve owner/named-job, actor and deictic claims for the guard.
+        def definition_subjects(match):
+            part = match[0]
+            if (DIRECT_CLAIM.search(part) or JOB_ID.search(part) or re.search(REFERENCE_TARGET, part, re.I)
+                    or re.search(r'\b(?:now|just|already|currently|today|here|this|that)\b', part, re.I)):
+                return part
+            return re.sub(r'\b(?:the|a) (?:job|task)\b', 'the described state', part, flags=re.I)
+        prose = re.sub(r'(?:^|(?<=[.;!?])\s+)(?:queued|running|assigned|scheduled)\s+means\b[^.;!?\n]*',
+                       definition_subjects, prose, flags=re.I)
         # Exempt only a definition's subject, never the rest of its sentence.
         # "Queued means accepted; I started it" must still fail the guard.
         prose = re.sub(r'(?im)(^|[.!?]\s+)(queued)(?=\s+(?:means|does not prove|is a state)\b)',
@@ -51,8 +71,11 @@ def dispatch_prose(text, *, reference=''):
 def claims_dispatch(text, *, reference=''):
     # Direct actors and concrete IDs never receive a reference exemption.
     original = dispatch_prose(text)
+    # Do not use the passive proximity heuristic for a conceptual answer: a
+    # definition can describe assignment without asserting a particular job.
+    claim = REFERENCE_EFFECT if reference else CLAIM
     return bool(DIRECT_CLAIM.search(original) or JOB_ID.search(original)
-                or CLAIM.search(dispatch_prose(text, reference=reference)))
+                or claim.search(dispatch_prose(text, reference=reference)))
 
 
 def receipt_errors(answer, records, conversation_id, request_id, turn_started_at):

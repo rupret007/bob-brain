@@ -7,14 +7,52 @@ from conversation_focus import focus
 
 
 class FocusTests(SessionFixture):
+    def test_scope_boundary_preserves_the_intervening_question_and_answer(self):
+        self.send('Make Web Bob better than Grok at following through.')
+        self.fake.reply_text = 'Ice floats because it is less dense than liquid water.'
+        self.send('Why does ice float?')
+        self.send('Explain that to a child.')
+        prompt = Providers(self.root, self.chat.redact).prompt(self.chat.get(self.identifier), fast=True)
+        self.assertIn('Why does ice float?', prompt)
+        self.assertIn('less dense than liquid water', prompt)
+        self.assertNotIn('Make Web Bob better than Grok at following through.', prompt)
+
+    def test_cached_operational_snapshot_cannot_leak_another_chats_draft(self):
+        self.send('Draft a notice about private-lighthouse-7612.')
+        self.send('What is our current worker status?')
+        provider = Providers(self.root, self.chat.redact)
+        other = self.chat.new_conversation()
+        other['messages'] = [dict(role='user', content='What is our current worker status?', status='done')]
+        # Isolate the shared-list contract from the separate installation-wide
+        # handback log, which intentionally records requests across chats.
+        cached = [dict(path='live status', text='No active jobs.')]
+        with patch.object(provider, 'snapshot', return_value=cached):
+            first = provider.prompt(self.chat.get(self.identifier), fast=True)
+            self.assertIn('private-lighthouse-7612', first)
+            self.assertNotIn('private-lighthouse-7612', provider.prompt(other, fast=True))
+        self.assertEqual(cached, [dict(path='live status', text='No active jobs.')])
+
     def test_provider_context_marks_superseded_improvement_goal_as_inactive(self):
         self.send('Make Web Bob better than Grok at following through.')
         self.send('Explain rainbows')
         self.send('top priority use any and all resources')
         provider = Providers(self.root, self.chat.redact)
-        prompt = provider.prompt(self.chat.get(self.identifier), fast=True)
+        with patch.object(provider, 'snapshot', side_effect=AssertionError('obsolete operations context requested')):
+            prompt = provider.prompt(self.chat.get(self.identifier), fast=True)
         self.assertIn('It is not the current task', prompt)
         self.assertIn('Explain rainbows', prompt)
+        self.assertNotIn('Make Web Bob better than Grok at following through.', prompt)
+        self.assertIn('Make Web Bob better than Grok at following through.', str(self.chat.get(self.identifier)['messages']))
+
+    def test_ordinary_explanations_do_not_receive_an_operations_manual(self):
+        self.send('Tell me what "use all resources" means; do not start work.')
+        provider = Providers(self.root, self.chat.redact)
+        with patch.object(provider, 'snapshot', side_effect=AssertionError('unrelated operations requested')):
+            prompt = provider.prompt(self.chat.get(self.identifier), fast=True)
+        self.assertIn('This is an answer turn', prompt)
+        self.assertNotIn('queues draft jobs, runs council', prompt)
+        self.assertNotIn('When Jeff asks to use an LLM', prompt)
+        self.assertIn('Never merge', prompt)
 
     def test_reference_revision_uses_current_answer_without_artifact_noun_allowlist(self):
         from task_dispatch import task_queue

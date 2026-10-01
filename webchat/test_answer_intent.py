@@ -17,6 +17,8 @@ class AnswerIntentTests(SessionFixture):
         for claim in ('Your repair job is now running.', 'The parser repair task has already been picked up.',
                       'Your task: running now.', 'Your job already running.', 'Codex has your repair task.',
                       'The repair job you requested is running.',
+                      'The task was queued on this machine just now.',
+                      'Queued means accepted; the task was assigned just now.',
                       'I created the repair task.', 'Gemini’s working on your repair.',
                       'A job is running when its worker begins executing; I queued your repair.',
                       'A job is running when its worker begins executing and I queued your repair.',
@@ -30,6 +32,8 @@ class AnswerIntentTests(SessionFixture):
     def test_generic_conditional_definitions_do_not_claim_an_actual_start(self):
         for text in ('A job is running once its worker begins executing.',
                      'A job is running when its worker begins executing.',
+                     'Queued means a job has been assigned to a worker but has not started.',
+                     "Queued means the job is waiting in line for a worker to pick it up — it's been assigned but not started yet. Running means a worker has grabbed it and is actively doing the work.",
                      'Running means execution has begun; queued means it is waiting.'):
             self.fake.reply_text = text
             self.assertEqual(self.send('What is the difference between queued and running?')['content'], text)
@@ -82,7 +86,7 @@ class AnswerIntentTests(SessionFixture):
 
     def test_reference_question_cannot_authorize_a_model_action_receipt(self):
         for false_claim in ('I queued the repair for you.', 'Gemini is now working on the repair.',
-                            'Your repair job is now queued.', 'Queued your repair.',
+                            'Your repair job is now queued.', 'The parser task was queued.', 'Queued your repair.',
                             'Queued means accepted; I started the repair.',
                             'The job is webchat-' + 'f' * 32 + '.'):
             self.fake.reply_text = false_claim

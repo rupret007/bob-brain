@@ -142,7 +142,9 @@ def observe_turn(conversation, text, request_id):
             or STATUS_QUESTION.search(value) and not conceptual(value)
             or re.fullmatch(r'(?:thanks|thank you|ok|okay)[.!]*', value, re.I)):
         return
-    saved['suspended_by'] = dict(request_id=request_id, reason='A newer user request changed the focus.')
+    # Keep the first focus-change boundary. Later questions and revisions must
+    # not erase the relevant conversation that followed that boundary.
+    saved.setdefault('suspended_by', dict(request_id=request_id, reason='A newer user request changed the focus.'))
 
 
 def handle(chat, conversation, text, request_id):
