@@ -78,6 +78,23 @@ must verify actual execution and result/source integrity, not just acceptance.
 Ordinary status questions still use server observations. Passing routing probes
 or a local suite does not establish model-answer quality or Grok superiority.
 
+Once that suite has a verified result, improvement continuations retain its
+receipt and source identity, link the full result, and prepare a saved local
+capability worksheet. They must not repeat a test-log dump as if it answered a
+new research goal. An explicit, unquoted Grok research instruction may advance
+one bounded existing web-search attempt for that saved outcome. Inspection-only
+and offline restrictions persist across turns and restarts. Search admission is
+saved before network I/O; interrupted outcomes remain unknown and are not
+automatically repeated. Search leads are not verified first-party evidence or
+proof of Grok parity. Enable follow-ups report what is already configured;
+they do not change settings or launch another worker.
+
+Explanations may discuss supplied generic job states and negative evidence
+without being replaced by an operational disclaimer. Such data can carry into
+one adjacent explicit evidence follow-up, never from assistant claims or across
+a corrected state. Direct, owned, named, current-effect and receipt-ID claims
+still require real execution evidence, including when appended to a denial.
+
 The current controller holds `conductor/locks/webbob-release.lock` through
 preflight, snapshots, activation, both live rounds, recovery and publication.
 A competing deployment or rollback fails before changing pins or evidence.

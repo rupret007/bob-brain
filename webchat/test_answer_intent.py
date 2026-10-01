@@ -173,6 +173,81 @@ class AnswerIntentTests(SessionFixture):
         self.assertNotIn('status_observation', answer)
         self.assertFalse(task_queue.tasks(self.root))
 
+    def test_supplied_state_paraphrases_and_negative_evidence_survive_delivery(self):
+        answer = ('The job is queued. That proves acceptance, not completion. '
+                  'No evidence shows the task started; no output proves completion.')
+        for state in ('is queued', 'is marked queued', 'was listed as queued', 'has been labelled queued'):
+            self.fake.reply_text = answer
+            prompt = ('Using only this supplied evidence, explain what is proven and what is not: '
+                      f'a job {state}, no worker claim exists, and no output file exists.')
+            self.assertEqual(self.send(prompt)['content'], answer)
+        for denial in ('The facts do not establish that work has started or finished.',
+                       "That doesn't prove the task started.",
+                       'There is no evidence that the task started.',
+                       'There is no evidence that the task is running.',
+                       'There is no evidence that Codex is working on your task.',
+                       'The task is not in progress.',
+                       'The task has not been picked up.',
+                       'The task has not been started.'):
+            self.fake.reply_text = denial
+            reply = self.send('Someone says that means the work is finished. Are they right? '
+                              'Give a direct answer supported by the supplied evidence.')
+            self.assertEqual(reply['content'], denial)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_practical_guide_preserves_operational_explanations(self):
+        self.fake.reply_text = ('Ask ordinary questions or request writing in chat. '
+                               'A queued receipt means a job was queued, not that work has started. '
+                               'Saved project holds govern execution. Models have separate limits; '
+                               'Auto chooses an existing route. This candidate is still being validated.')
+        prompt = ('Write a 120-word quick-start note for me to use Web Bob. Use only these facts: '
+                  'ordinary questions and writing requests can be answered in chat; a queued receipt '
+                  'does not prove work finished; saved project holds govern execution; available models '
+                  'have separate limits; Auto chooses an existing route. This candidate is being validated, '
+                  'so do not claim release readiness or superiority over Grok. Keep it practical and friendly.')
+        answer = self.send(prompt)
+        self.assertEqual(answer['content'], self.fake.reply_text)
+        self.assertNotIn('task_id', answer)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_reference_followup_uses_adjacent_user_facts_not_old_topic_or_assistant(self):
+        self.fake.reply_text = 'The job is queued. Completion is unproven.'
+        self.send('Using only supplied evidence: a job is marked queued. Explain what that establishes.')
+        followup = 'Give a direct answer supported by the same supplied evidence.'
+        self.assertEqual(self.send(followup)['content'], self.fake.reply_text)
+        self.send('Write a note about gardening.')
+        self.assertNotEqual(self.send(followup)['content'], self.fake.reply_text)
+        for corrected in ('Correction to the supplied evidence: the job is not queued.',
+                          'Using the same evidence, the job is no longer queued; explain what follows.',
+                          'Using the supplied facts, actually the queue record was removed. Explain that.',
+                          'Using the same evidence: the job is now running; explain the difference.'):
+            self.send('Using only supplied evidence: a job is marked queued. Explain what that establishes.')
+            self.assertNotEqual(self.send(corrected)['content'], self.fake.reply_text, corrected)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_reference_and_negation_cannot_shelter_later_effects(self):
+        prefixes = ('The evidence does not prove work started',
+                    'That does not prove completion',
+                    'Bob has not created a report',
+                    'I cannot create a report',
+                    'I can explain the difference',
+                    "I can offer help; just say go and I'll queue it",
+                    'There is no evidence that Codex is working on your task',
+                    'No evidence shows the task started',
+                    'A queued receipt means a job was queued',
+                    'The task has not been started')
+        claims = ('I queued your repair.', 'your repair job was assigned.',
+                  'the parser repair task was started.', 'Codex is now working.',
+                  'the task was queued here just now.', 'job webchat-' + 'e' * 32 + ' is queued.')
+        for prefix in prefixes:
+            for claim in claims:
+                for boundary in ('; ', ', ', ': ', ' — ', ' but ', ' and ', ' even though ', ' although '):
+                    self.fake.reply_text = prefix + boundary + claim
+                    prompt = 'Write a practical guide explaining queued receipts using only these facts: a job is marked queued.'
+                    with self.subTest(prefix=prefix, claim=claim, boundary=boundary):
+                        self.assertNotEqual(self.send(prompt)['content'], self.fake.reply_text)
+        self.assertFalse(task_queue.tasks(self.root))
+
     def test_reference_question_cannot_authorize_a_model_action_receipt(self):
         for false_claim in ('I queued the repair for you.', 'Gemini is now working on the repair.',
                             'Your repair job is now queued.', 'The parser task was queued.', 'Queued your repair.',

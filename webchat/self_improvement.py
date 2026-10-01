@@ -3,6 +3,7 @@
 Inspect current source, then verify one named regression suite through the
 existing executor. Saved progress distinguishes evidence from broader quality.
 """
+import copy
 import hashlib
 import json
 import re
@@ -124,16 +125,60 @@ def execution_limit(text):
                           r"\b(?:inspection|read)[ -]only\b", value, re.I))
 
 
+def network_scope(text):
+    """Explicit user scope only; quoted instructions cannot change it."""
+    from answer_intent import instructions
+    value = instructions(text)
+    operation = r'(?:browse|research|look up|search(?: (?:the )?web)?|use (?:the )?(?:web|network)|go online)'
+    # Conditional/deferred permission is not present permission. Retain that
+    # limit across continuations until an unconditional user grant replaces it.
+    deferred = r'\b(?:later|eventually|not yet|wait|await|only if|only after|(?:after|once|when|if|until) (?:I|we|you))\b'
+    if re.search(r'\b' + operation + r'\b', value, re.I) and re.search(deferred, value, re.I):
+        return False
+    if re.search(r"\b(?:do not|don['’]t|never|without|no)\s+" + operation + r'\b|'
+                 r'\b(?:stay|work|keep it|only)\s+(?:offline|local[- ]only)\b|'
+                 r'\b(?:use|using)\s+only\s+(?:(?:the|this)\s+)?(?:local|supplied|provided)\s+(?:sources|evidence|facts|data)\b', value, re.I):
+        return False
+    if re.search(r'\b(?:you (?:can|may)|I (?:allow|permit))\s+(?:now\s+)?' + operation + r'\b', value, re.I):
+        return True
+    return None
+
+
+def research_directive(text):
+    """An unquoted imperative authorizes research; a mention does not."""
+    from answer_intent import instructions
+    value = instructions(command(text))
+    return bool(re.search(
+        r'(?:^|[.!?;]\s*|\b(?:and|then|also)\s+)(?:please\s+)?research\b'
+        r'(?!\s+(?:is|was|means|has|should|would|could|must|may|can)\b)', value, re.I))
+
+
+def recover_research(conversation):
+    """An admitted attempt has an unknown effect after interruption, not a retry."""
+    attempts = conversation.get('improvement_goal', {}).get('comparison_research', {})
+    pending = {a['request_id'] for a in attempts.values() if a.get('status') == 'admitted'}
+    for message in conversation.get('messages', []):
+        if message.get('role') == 'assistant' and message.get('request_id') in pending and message.get('status') == 'error':
+            message['content'] = ('Research was admitted before the interruption, but no completed result was saved. '
+                                  'Its outcome is unknown. I will not repeat the search automatically; '
+                                  'the local investigation and verified task result remain saved.')
+
+
 def observe_turn(conversation, text, request_id):
     """Bind unscoped continuation to user focus before any handler returns."""
     saved = conversation.get('improvement_goal')
     if not saved:
         return
     value = command(text).rstrip(' .!?')
+    network = network_scope(text)
+    if network is False:
+        saved['network_restriction'] = dict(request_id=request_id, text=text[:600])
+    elif network is True:
+        saved.pop('network_restriction', None)
     if execution_limit(value):
         saved['execution_restriction'] = dict(request_id=request_id, text=text[:600])
         saved['authorized_steps'] = ['local routing investigation']
-    if direct_goal(text) or continuation(value) or ENABLE.fullmatch(value) or RESOURCES.fullmatch(value):
+    if network is not None or direct_goal(text) or continuation(value) or ENABLE.fullmatch(value) or RESOURCES.fullmatch(value):
         return
     from reply_authority import STATUS_QUESTION, HOLD_QUESTION
     from answer_intent import conceptual
@@ -145,6 +190,100 @@ def observe_turn(conversation, text, request_id):
     # Keep the first focus-change boundary. Later questions and revisions must
     # not erase the relevant conversation that followed that boundary.
     saved.setdefault('suspended_by', dict(request_id=request_id, reason='A newer user request changed the focus.'))
+
+
+def completed_followup(chat, conversation, root, saved, row, text, request_id):
+    """Keep a verified step while advancing or explaining the current request.
+
+    The finite next step is a local comparison worksheet and, only on an
+    explicit research request, one bounded existing web search. Neither can
+    mark the broader goal complete, authorize a second worker or edit code.
+    """
+    from pathlib import Path
+    value = command(text).rstrip(' .!?')
+    comparison = bool(GOAL.search(saved['outcome']) or re.search(r'\bgrok\b', saved['outcome'], re.I))
+    result_link = '/api/jobs/result?id=' + row['id']
+    completed = ('Completed: the source-backed routing investigation and the local regression suite. '
+                 'The executor returned a verified result; no code was changed. '
+                 '[Read the verified result](' + result_link + ').')
+    if ENABLE.fullmatch(value):
+        return (completed + '\n\nThe local execution path already completed this task. '
+                'This configuration check changed no setting and enabled no new worker. '
+                'Enabling a model is not the remaining step: matched workflow evidence is still needed.' +
+                (' The native Grok receiver also needs separate verification.' if comparison else '')), (
+                    saved.get('current_step') if saved.get('comparison_plan') else 'verification_complete')
+
+    code = Path(__file__).resolve().parents[1]
+    if 'comparison_plan' not in saved:
+        from capabilities import grounding
+        capabilities = grounding(root, [])['capabilities']
+        paths = sorted({p.strip() for item in capabilities for p in item['source'].split(';')})
+        plan = dict(request_id=request_id, prepared_at=time.time(),
+                    scope='Current local capability inventory; no Grok comparison or external search implied.',
+                    capabilities=capabilities,
+                    sources=[dict(path=p, sha256=hashlib.sha256((code / p).read_bytes()).hexdigest()) for p in paths],
+                    missing_evidence=['Matched task/context answers and independently verified effects.'] +
+                    (['Current first-party information for the actual Grok Bot environment.',
+                      'A native receiver-owned read, checkpoint and exact batch acknowledgment.'] if comparison else
+                     ['A saved baseline for the requested workflow.']))
+        plan['sha256'] = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
+        saved['comparison_plan'] = plan
+        preparation = 'I inspected the implemented capability sources and saved a comparison worksheet in this conversation.'
+    else:
+        preparation = 'The saved comparison worksheet preserves the local capability sources and remaining evidence gaps.'
+    saved['next_decision'] = (('Verify first-party information for the actual Grok Bot environment, then compare matched '
+                              'writing, research, execution and continuity tasks. Local test success is not that comparison.')
+                             if comparison else 'Establish the saved workflow baseline and evaluate matched answer quality. '
+                             'Local test success does not establish answer quality.')
+    content = (completed + '\n\n' + preparation + ' It covers writing/reasoning, research, local project work, '
+               'and durable coordination. The worksheet identifies implemented local paths; it does not score Grok '
+               'or claim its receiver consumed anything.')
+    saved['completed_effects'].append('local capability comparison worksheet')
+    step = ('comparison_needs_primary_evidence' if hashlib.sha256(saved['outcome'].encode()).hexdigest()
+            in saved.get('comparison_research', {}) else 'comparison_prepared')
+    # The saved goal preserves an earlier explicit user instruction across a
+    # regression step/restart. New words such as "research" cannot grant scope.
+    if comparison and research_directive(saved['outcome']):
+        if saved.get('execution_restriction') or saved.get('network_restriction') or network_scope(text) is False:
+            content += '\n\nYour saved or current restriction keeps this step local; no web search was made.'
+            step = 'comparison_scope_limited'
+        else:
+            # The goal is an explicit Bob/Grok comparison. Send only that public
+            # topic to the existing bounded search, never the private transcript.
+            query = 'Grok Bot capabilities official documentation'
+            attempts = saved.setdefault('comparison_research', {})
+            key = hashlib.sha256(saved['outcome'].encode()).hexdigest()
+            if key not in attempts:
+                from bob_gaps import web_search
+                from urllib.error import URLError
+                attempts[key] = dict(request_id=request_id, query=query, admitted_at=time.time(), status='admitted')
+                saved['current_step'] = 'comparison_research_admitted'
+                # Commit before network I/O. A crash or failed final save keeps
+                # an unknown attempt instead of silently repeating the request.
+                chat.save(conversation)
+                chat.conversations[conversation['id']] = copy.deepcopy(conversation)
+                try:
+                    result = web_search(query)
+                    attempts[key].update(status='completed', observed_at=time.time(),
+                                         result=result, scope='Search summary only; linked page not retrieved or verified.')
+                except (OSError, URLError, ValueError, TimeoutError):
+                    attempts[key].update(status='failed', observed_at=time.time(),
+                                         error='The bounded search did not return usable evidence.')
+                retrieval = 'I attempted the next research step and saved its result.'
+            else:
+                retrieval = 'The earlier search attempt is saved; this turn did not repeat it.'
+            evidence = attempts[key]
+            content += '\n\n' + retrieval
+            if evidence.get('status') == 'admitted':
+                content += ' Its outcome is unknown because completion was not saved; no automatic retry was made.'
+            elif evidence.get('result', {}).get('source'):
+                from bob_gaps import format_web_search_reply
+                content += '\n\nSearch lead (the linked page has not been verified):\n' + format_web_search_reply(evidence['result'])
+            else:
+                content += ' It provided no source-backed comparison, so Grok capabilities remain unverified.'
+            step = 'comparison_needs_primary_evidence'
+    content += '\n\nNext: ' + saved['next_decision']
+    return content, step
 
 
 def handle(chat, conversation, text, request_id):
@@ -195,6 +334,8 @@ def handle(chat, conversation, text, request_id):
             saved['execution_restriction'] = dict(request_id=request_id, text=text[:600])
             saved['authorized_steps'] = ['local routing investigation']
             saved['next_decision'] = 'Report the local investigation within the user\'s inspection-only scope.'
+        if network_scope(text) is False:
+            saved['network_restriction'] = dict(request_id=request_id, text=text[:600])
         conversation['messages'][-1]['improvement_receipt'] = receipt
         content = ('I completed a source-backed routing investigation and saved the cases, actual outcomes, '
                    'source locations, and hashes with this conversation.\n\n' + render(investigation) +
@@ -218,6 +359,7 @@ def handle(chat, conversation, text, request_id):
             saved.pop('verification_request_id', None)
             saved.pop('verification_job_id', None)
             saved.pop('result_sha256', None)
+            saved.pop('comparison_plan', None)
             return chat.intent_reply(conversation, 'The running source changed. I refreshed the local investigation; '
                                      'previous tests cannot verify this revision.\n\n' + render(current), provider='planner')
         request = saved.get('verification_request_id')
@@ -237,14 +379,9 @@ def handle(chat, conversation, text, request_id):
                     content = 'The regression result failed its integrity check. I cannot count it as completed.'
                     saved['current_step'] = 'blocked_result_integrity'
                 else:
-                    saved['current_step'] = 'bounded_steps_complete'
                     saved['completed_effects'] = ['local routing investigation', 'local regression verification']
                     saved['result_sha256'] = row['result_sha256']
-                    saved['next_decision'] = ('A broader superiority claim needs matched, grounded workflow results. '
-                                              'These routing checks cannot establish model-answer quality or Grok parity.')
-                    content = ('Completed: the source-backed routing investigation and the local regression suite. '
-                               'The executor returned a verified result; no code was changed.\n\n' + result[-2200:] +
-                               '\n\n' + saved['next_decision'])
+                    content, saved['current_step'] = completed_followup(chat, conversation, root, saved, row, text, request_id)
             elif row['status'] == 'failed':
                 saved['current_step'] = 'blocked_regression'
                 content = 'The local regression step did not complete: ' + str(row.get('error') or 'No accepted result.')
