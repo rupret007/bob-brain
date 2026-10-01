@@ -211,6 +211,46 @@ class AnswerIntentTests(SessionFixture):
         self.assertNotIn('task_id', answer)
         self.assertFalse(task_queue.tasks(self.root))
 
+    def test_evidence_reporting_clauses_are_not_owned_task_subjects(self):
+        prompt = ('Using only this supplied evidence, explain what is proven and what is not: '
+                  'a job is marked queued, no worker claim exists, and no output file exists.')
+        # Captured d269f76 provider wording exposed a false dispatch guard.
+        # This verifies delivery only; fixture prose is not semantic proof.
+        replies = (
+            'Based on the supplied evidence, it is proven that the job is currently in a queue, '
+            'awaiting processing, and no worker has presently claimed it.',
+            'The evidence states that "a job is marked queued, no worker claim exists, and no output file exists."',
+            'These conditions indicate the work has not yet started.',
+            'That observation describes the job label; it does not establish completion.',
+            'This evidence shows the task label, but does not prove execution.',
+            'The supplied report shows that tasks were queued.',
+            'The queued job is waiting to be assigned to a worker.',
+            'No. Completion is not established. Those records describe the task label; '
+            'missing evidence alone does not prove that work never happened.',
+        )
+        for reply in replies:
+            with self.subTest(reply=reply):
+                self.fake.reply_text = reply
+                self.assertEqual(self.send(prompt)['content'], reply)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_bounded_subjects_still_reject_owned_and_named_effects(self):
+        prompt = 'Using only supplied evidence, explain the meaning of a queued label.'
+        for subject in ('Your repair job', 'Our parser repair task', 'This task',
+                        'That job', 'These jobs', 'Those tasks', 'The parser repair task',
+                        'Your queued task', 'The scheduled repair job'):
+            for effect in ('was queued', 'has already been assigned', 'got scheduled',
+                           'was automatically started', 'was inspected and queued',
+                           'will be queued', 'you requested was launched'):
+                with self.subTest(subject=subject, effect=effect):
+                    claim = subject + ' ' + effect + '.'
+                    self.fake.reply_text = 'These conditions do not prove completion; ' + claim
+                    self.assertNotEqual(self.send(prompt)['content'], self.fake.reply_text)
+        for negative in ('The task has not yet been started', 'The task is not currently running'):
+            self.fake.reply_text = negative + '; I queued your repair.'
+            self.assertNotEqual(self.send(prompt)['content'], self.fake.reply_text)
+        self.assertFalse(task_queue.tasks(self.root))
+
     def test_reference_followup_uses_adjacent_user_facts_not_old_topic_or_assistant(self):
         self.fake.reply_text = 'The job is queued. Completion is unproven.'
         self.send('Using only supplied evidence: a job is marked queued. Explain what that establishes.')

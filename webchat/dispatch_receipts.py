@@ -19,10 +19,27 @@ CLAIM = re.compile(
 JOB_ID = re.compile(r"\bwebchat-[a-f0-9]{32}\b")
 # In an explanation, generic jobs are examples. Owner references and named
 # jobs still make concrete claims; they need the same real receipts as actions.
-REFERENCE_TARGET = (r"\b(?:your|our|my|this|that|these|those)\b[^.;!?\n]{0,60}\b(?:jobs?|tasks?|work|council)\b|"
-                    r"\bthe\s+(?:(?!(?:a|an|the|is|are|was|were|has|have|means|when|once|if|until|job|task|work|queue|state|queued|running|scheduled|assigned|waiting)\b)[\w'-]+\s+){1,4}(?:job|task)\b")
+# A determiner belongs to its noun phrase, not to any later job in a clause.
+# "proven that the job..." and "these conditions indicate the work..." are
+# reports about evidence, not ownership of a task. Do not cross another
+# determiner, a predicate, or a clause boundary when looking for the subject.
+TARGET_MODIFIER = (r"(?!(?:a|an|the|your|our|my|this|that|these|those|is|are|was|were|has|have|had|"
+                   r"does|do|did|can|could|will|would|means|mean|shows?|proves?|indicates?|establishes?|"
+                   r"and|or|but|which|when|once|if|until|job|jobs|task|tasks|work|council|"
+                   r"queue|state)\b)[\w'-]+\s+")
+REFERENCE_TARGET = (r"\b(?:your|our|my)\s+(?:" + TARGET_MODIFIER + r"){0,4}(?:jobs?|tasks?|work|council)\b|"
+                    r"\b(?:this|that)\s+(?:" + TARGET_MODIFIER + r"){0,4}(?:job|task|work|council)\b|"
+                    r"\b(?:these|those)\s+(?:" + TARGET_MODIFIER + r"){0,4}(?:jobs|tasks)\b|"
+                    # A state label alone is not a job name. Ownership still
+                    # binds "your queued task"; another modifier identifies
+                    # named work such as "the scheduled parser repair job".
+                    r"\bthe\s+(?!(?:(?:queued|running|started|scheduled|assigned|waiting)\s+){1,4}(?:job|task)\b)"
+                    r"(?:" + TARGET_MODIFIER + r"){1,4}(?:job|task)\b")
 REFERENCE_EFFECT = re.compile(
     r"(?:^|[.!?\n]\s*)(?:queued|assigned|started|dispatched|launched|scheduled)\b|"
+    # Preserve existing coverage of coordinated, relative and future claims
+    # once a concrete subject is found. An immediate-verb-only contract misses
+    # "your task was inspected and queued" and "your task will be queued".
     r"(?:" + REFERENCE_TARGET + r")[^.;!?\n]{0,80}\b" + EFFECT + r"\b|"
     r"\b(?:the|a) (?:job|task) (?:is|was|has|had)\s+(?:(?:just|now|already|been)\s+)*" + EFFECT + r"\b", re.I)
 DIRECT_CLAIM = re.compile(
@@ -56,7 +73,8 @@ def unasserted_prose(prose):
                  r'(?:(?:has|have|had|is|are|was|were)\s+)?(?:been\s+)?' + verb)
     prose = re.sub(r'(?:' + denial + ')' + predicate, 'unproven assertion', prose, flags=re.I)
     # Auxiliary negation belongs to this predicate only, not the sentence.
-    prose = re.sub(r"\b(?:is|are|was|were|has|have|had)(?: not|n['’]t)\s+(?:been\s+)?" + verb,
+    prose = re.sub(r"\b(?:is|are|was|were|has|have|had)(?: not|n['’]t)\s+"
+                   r"(?:(?:yet|ever|actually|already|currently|been|being)\s+){0,3}" + verb,
                    'has no established action', prose, flags=re.I)
     # A future offer explicitly contingent on the owner's confirmation is not
     # a current effect. Mask just its predicate, keeping any following claim.
