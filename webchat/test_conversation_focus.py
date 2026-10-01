@@ -7,6 +7,15 @@ from conversation_focus import focus
 
 
 class FocusTests(SessionFixture):
+    def test_conductor_work_summary_retains_actual_operational_evidence(self):
+        self.send('Please summarize the overnight conductor work in detail.')
+        provider = Providers(self.root, self.chat.redact)
+        with patch.object(provider, 'snapshot', return_value=[dict(path='saved handoff', text='Observed report marker')]) as snap:
+            prompt = provider.prompt(self.chat.get(self.identifier), fast=True)
+        snap.assert_called_once()
+        self.assertIn('Observed report marker', prompt)
+        self.assertIn('OWN BUILD', prompt)
+
     def test_requested_options_establish_focus_for_a_later_revision(self):
         self.fake.reply_text = '1. Along the Ridge\n2. Alpine Sunrise\n3. The High Road'
         self.send('Give me three chapter titles about a mountain.')

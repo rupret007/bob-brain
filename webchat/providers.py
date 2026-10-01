@@ -184,6 +184,7 @@ FAST_BUDGET_SECONDS = 60
 FAST_MAX_CHARS = 400
 HANDOFF_CONTEXT_RE = re.compile(
     r"\b(?:bob[- ]?state|handback|handoff|hand[\s-]?back|what(?:'s| is) running|"
+    r"(?:overnight(?: conductor)?|conductor) (?:work|status|progress|report)|"
     r"from bob-state|handback drill|quote the running|open (?:asks|items)|"
     r"waiting on jeff|takeover|pick up where)\b",
     re.I,
@@ -752,7 +753,8 @@ class Providers:
         if any(a.get("kind") in ("image", "video") for a in last_user.get("attachments", []) if isinstance(a, dict)):
             return ("gemini", *(name for name in ORDER if name != "gemini"))
         from conversation_focus import answer_only
-        if self.short_request(conversation) or answer_only(conversation, last_user.get('content', '')):
+        if self.short_request(conversation) or (answer_only(conversation, last_user.get('content', ''))
+                                               and not needs_handoff_context(last_user.get('content', ''))):
             return self.available_fast_order(conversation)
         return ORDER
 
