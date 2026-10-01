@@ -9,7 +9,8 @@ from chat_intent import command, projects
 
 CORRECTION = re.compile(r'^(?:actually|correction|no|instead|i meant|that is the wrong|'
                         r'(?:make|keep) (?:it|that|this|these|those|the (?:first|second|third|fourth|fifth|last))|rewrite|revise|shorten|expand|'
-                        r'rephrase|use .{0,40} instead|change .{0,40} to)\b', re.I)
+                        r'rephrase|use .{0,40} instead|change .{0,40} to|'
+                        r'the (?:first|second|third|fourth|fifth|last)\b.{0,60}\b(?:too|try|instead|change|make|needs?|should))\b', re.I)
 CONTINUE = re.compile(r'^(?:continue|keep going|finish that|do it|go ahead|what did you finish)\b', re.I)
 OPERATIONAL = re.compile(r'\b(?:our|my|live|current) (?:workers?|jobs?|services?|resources?)\b|'
                          r'\b(?:disk|storage|handoff|handback|bob-state|memory|remember|profile)\b', re.I)

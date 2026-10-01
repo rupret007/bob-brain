@@ -39,6 +39,9 @@ def decode_transport(raw):
         if not isinstance(prompt, str) or not isinstance(vision, list) or len(vision) > 24:
             raise ValueError()
         system, messages = payload.get('system'), payload.get('messages')
+        thinking_budget = payload.get('thinking_budget')
+        if thinking_budget is not None and (type(thinking_budget) is not int or thinking_budget not in (0, 1024)):
+            raise ValueError()
         if system is not None and not isinstance(system, str):
             raise ValueError()
         if messages is not None and (not isinstance(messages, list) or not messages or len(messages) > 20
@@ -59,7 +62,7 @@ def decode_transport(raw):
                 base64.b64decode(raw_b64, validate=True)
             except ValueError:
                 raise ValueError() from None
-        return dict(prompt=prompt, vision=vision, system=system, messages=messages)
+        return dict(prompt=prompt, vision=vision, system=system, messages=messages, thinking_budget=thinking_budget)
     except (ValueError, KeyError, TypeError, AttributeError):
         raise ValueError("Invalid chat transport payload.") from None
 
@@ -99,7 +102,7 @@ def main():
         kwargs = {"purpose": "webchat"}
         if supports_vision:
             kwargs["vision"] = vision or None
-        for name in ('system', 'messages'):
+        for name in ('system', 'messages', 'thinking_budget'):
             if payload[name] is not None:
                 if name not in parameters:
                     raise RuntimeError('model_call does not support structured chat input. Upgrade services/api.py.')

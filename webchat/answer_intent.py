@@ -29,10 +29,11 @@ CURRENT_RESEARCH = re.compile(r'\b(?:latest|current|up[- ]to[- ]date|today|brows
 LIVE_REQUEST = re.compile(r'\b(?:check|show) (?:me )?(?:our|the|current|live)\b|'
                          r'\b(?:are|is|what are) (?:our|my|the current|the live)\b|'
                          r'\b(?:our|my|live|current) (?:workers?|jobs?|tasks?|status)\b', re.I)
-PRECISION = re.compile(r'\b(?:explain|compare|analy[sz]e|calculate|evaluate|why|how|'
+PRECISION = re.compile(r'\b(?:explain|compare|comparison|analy[sz]e|calculate|evaluate|research|review|why|how|which|whether|'
                        r'prove|proof|quota|percent(?:age)?|arithmetic)\b|'
                        r'\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)[ -]'
-                       r'(?:sentences?|lines?|words?)\b', re.I)
+                       r'(?:[a-z]+[ -]){0,2}'
+                       r'(?:sentences?|lines?|words?|titles?|options?|items?|examples?)\b', re.I)
 
 
 def instructions(text):

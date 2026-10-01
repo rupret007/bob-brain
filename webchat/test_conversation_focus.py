@@ -7,6 +7,22 @@ from conversation_focus import focus
 
 
 class FocusTests(SessionFixture):
+    def test_option_feedback_retains_answer_policy_and_original_constraints(self):
+        self.fake.reply_text = '1. First Snow\n2. Arrival at the Chalet\n3. The White Ridge'
+        self.send('Give me three chapter titles about a mountain.')
+        self.send('The second one is too formal. Try a warmer version.')
+        conversation = self.chat.get(self.identifier)
+        retained = focus(conversation)
+        self.assertEqual(len(retained['user_excerpts']), 2)
+        provider = Providers(self.root, self.chat.redact)
+        with patch.object(provider, 'snapshot', side_effect=AssertionError('unrelated operational context')):
+            prompt = provider.prompt(conversation, fast=True)
+        self.assertIn('This is an answer turn', prompt)
+        self.assertNotIn('bob-webchat-attachment', provider.current_call.api_input['system'])
+        with patch.object(provider, 'spend', side_effect=lambda name:
+                         dict(cap_usd=50, committed_usd=46 if name == 'gemini' else 8)):
+            self.assertEqual(provider.route_order(conversation)[0], 'gemini')
+
     def test_conductor_work_summary_retains_actual_operational_evidence(self):
         self.send('Please summarize the overnight conductor work in detail.')
         provider = Providers(self.root, self.chat.redact)
@@ -92,6 +108,7 @@ class FocusTests(SessionFixture):
         self.assertIn('Explain rainbows', prompt)
         self.assertNotIn('Make Web Bob better than Grok at following through.', prompt)
         self.assertIn('Make Web Bob better than Grok at following through.', str(self.chat.get(self.identifier)['messages']))
+        self.assertTrue(provider.precision_request(self.chat.get(self.identifier)))
 
     def test_ordinary_explanations_do_not_receive_an_operations_manual(self):
         self.send('Tell me what "use all resources" means; do not start work.')

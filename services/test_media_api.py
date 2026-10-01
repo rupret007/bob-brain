@@ -7,6 +7,24 @@ import api
 
 
 class MediaAPITests(unittest.TestCase):
+    def test_bounded_chat_reasoning_preserves_total_output_reservation(self):
+        with patch.object(api, 'load_worker_keys'), patch.dict(os.environ, {'GEMINI_API_KEY': 'offline-fixture-key'}), \
+                patch.object(api, 'http_json', return_value='fixture') as http:
+            api.model_call('gemini', 'Compare these supplied facts.', thinking_budget=1024)
+            body = http.call_args.args[2]
+            self.assertEqual(body['generationConfig']['thinkingConfig'], {'thinkingBudget': 1024})
+            self.assertGreaterEqual(http.call_args.kwargs['max_tokens'], body['generationConfig']['maxOutputTokens'])
+            api.model_call('gemini', 'Legacy simple call')
+            self.assertEqual(http.call_args.args[2]['generationConfig']['thinkingConfig']['thinkingBudget'], 0)
+            for lane, value in [('gemini', -1), ('gemini', True), ('gemini', 8192), ('minimax', 1024)]:
+                http.reset_mock()
+                with self.subTest(lane=lane, value=value), self.assertRaises(ValueError):
+                    api.model_call(lane, 'invalid reasoning option', thinking_budget=value)
+                http.assert_not_called()
+            with self.assertRaises(ValueError):
+                api.model_call('gemini', 'invalid Pro configuration', model_id='gemini-2.5-pro', thinking_budget=0)
+            http.assert_not_called()
+
     def test_chat_roles_and_all_text_are_preserved_and_metered(self):
         history = [{'role': 'user', 'content': 'Write a scene.'},
                    {'role': 'assistant', 'content': 'Nora stood by the kitchen window.'},

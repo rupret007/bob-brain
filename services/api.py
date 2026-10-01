@@ -113,7 +113,7 @@ def extract(model, data, *, google_search=False):
 
 
 def model_call(model, prompt, max_tokens=8192, purpose="api", *, model_id=None, google_search=False,
-               vision=None, system=None, messages=None):
+               vision=None, system=None, messages=None, thinking_budget=None):
     if model not in MODELS:
         raise ValueError("Unsupported API worker; Grok/xAI is never allowed")
     model_id = model_id or MODELS[model]
@@ -121,6 +121,10 @@ def model_call(model, prompt, max_tokens=8192, purpose="api", *, model_id=None, 
         raise ValueError("Unsupported API model")
     if google_search and model != "gemini":
         raise ValueError("Google Search requires Gemini")
+    if thinking_budget is not None and (model != 'gemini' or type(thinking_budget) is not int
+                                        or thinking_budget not in (0, 1024)
+                                        or (model_id == 'gemini-2.5-pro' and thinking_budget == 0)):
+        raise ValueError('Unsupported bounded thinking budget')
     if not isinstance(prompt, str) or (system is not None and not isinstance(system, str)):
         raise ValueError("Invalid model input")
     if messages is not None and (not isinstance(messages, list) or not messages or len(messages) > 20
@@ -160,7 +164,8 @@ def model_call(model, prompt, max_tokens=8192, purpose="api", *, model_id=None, 
         pro = model_id == "gemini-2.5-pro"
         payload = {"contents": contents,
                    "generationConfig": {"maxOutputTokens": max_tokens if pro else min(max_tokens, 4096), "temperature": 0.2,
-                                        "thinkingConfig": {"thinkingBudget": 1024 if pro else 0}}}
+                                        "thinkingConfig": {"thinkingBudget": (1024 if pro else 0)
+                                                           if thinking_budget is None else thinking_budget}}}
         if system:
             payload['systemInstruction'] = {'parts': [{'text': system}]}
         if google_search:
