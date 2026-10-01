@@ -252,6 +252,26 @@ class BudgetAwareRoutingTests(SessionFixture):
         with patch.object(provider, 'available_fast_order', return_value=('gemini','minimax','cursor','codex')):
             self.assertEqual(provider.route_order(conversation)[0], 'gemini')
 
+    def test_capability_roles_use_precision_without_overriding_choice_or_admission(self):
+        provider = Providers(self.root, self.chat.redact)
+        conversation = self.chat.get(self.identifier)
+        usage = {'gemini':dict(cap_usd=50, committed_usd=46), 'minimax':dict(cap_usd=48, committed_usd=8)}
+        with patch.object(provider, 'spend', side_effect=lambda name:usage.get(name, {})), \
+                patch.object(provider.circuit_for(self.identifier), 'snapshot', return_value={}):
+            for text in ('Can you interface with Grok Bot?', 'I want it to be able to coordinate with Grok.'):
+                conversation['messages'] = [dict(role='user', content=text, status='done')]
+                self.assertEqual(provider.route_order(conversation)[0], 'gemini')
+                provider.prompt(conversation, fast=True)
+                self.assertEqual(provider.current_call.thinking_budget, 1024)
+            conversation['preferred_provider'] = 'minimax'
+            self.assertEqual(provider.route_order(conversation)[0], 'minimax')
+            conversation['preferred_provider'] = 'auto'
+            usage['gemini']['committed_usd'] = 47.5
+            self.assertEqual(provider.route_order(conversation)[0], 'minimax')
+            usage['gemini']['committed_usd'] = 46
+            conversation['messages'][0]['content'] = 'I want a fictional story about Grok connecting two islands.'
+            self.assertEqual(provider.route_order(conversation)[0], 'minimax')
+
     def test_explicit_choice_and_vision_capability_precede_cost_preference(self):
         provider = Providers(self.root, self.chat.redact)
         conversation = self.chat.get(self.identifier)

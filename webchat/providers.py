@@ -811,6 +811,7 @@ class Providers:
 
     def precision_request(self, conversation):
         from answer_intent import needs_precision
+        from capabilities import needs_grounding
         from conversation_focus import focus, CORRECTION, CONTINUE
         from chat_intent import command
         from self_improvement import continuation, RESOURCES, ENABLE
@@ -825,7 +826,11 @@ class Providers:
         # Revising an existing artifact requires constraint preservation even
         # when its original request contained no count or reasoning keyword.
         revision = bool(retained and CORRECTION.match(value))
-        return revision or needs_precision(text) or any(needs_precision(m['content']) for m in retained.get('user_excerpts', []))
+        # Actual capability replies on the cheaper route reversed handoff
+        # direction and invented prerequisites despite correct source facts.
+        # These small questions still require careful role/evidence reasoning.
+        return (revision or needs_grounding(text) or needs_precision(text)
+                or any(needs_precision(m['content']) for m in retained.get('user_excerpts', [])))
 
     def available_fast_order(self, conversation):
         """Budget/health observations guide order; actual admission remains authoritative.
