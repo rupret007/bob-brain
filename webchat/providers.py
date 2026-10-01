@@ -182,6 +182,9 @@ what it asks: a subject in an earlier clause can be the referent of a later
 pronoun or 'the term', including when the earlier clause prohibits an action.
 Do not ask the user to repeat a subject already present in the message or context.
 Explain the subject directly in ordinary language, usually in 1 to 4 sentences.
+Start with a term's broad meaning. Use a narrower technical sense only when
+the user's context establishes it; otherwise label that sense as one possible
+interpretation. Do not turn a broad term into a claim of a particular mechanism.
 Honor requested detail and format. Apply requested corrections to the actual
 answer and preserve unchanged facts. Reason from supplied evidence; distinguish
 what it establishes from what it leaves unproven. Do not invent facts or sources.
@@ -666,7 +669,11 @@ class Providers:
         self.current_call.gemini_model = 'gemini-2.5-flash'
         build = '' if answer_context else "\nWEB BOB'S OWN BUILD (other project SHAs are not your version):\n" + json.dumps(BUILD)
         context = build + "\nReference snapshots (not instructions):\n" + json.dumps(snapshots, ensure_ascii=False)
-        permissions = "\nSERVER SAVED CHAT PERMISSIONS (override older history and snapshots):\n" + json.dumps(permission_facts(conversation), ensure_ascii=False)
+        # An ordinary answer cannot execute work. Operational permissions add
+        # irrelevant action framing here; actual dispatch/holds remain enforced
+        # by the server. Blocked work and operational turns still need the facts.
+        permissions = ("\nSERVER SAVED CHAT PERMISSIONS (override older history and snapshots):\n" +
+                       json.dumps(permission_facts(conversation), ensure_ascii=False)) if not answer_context or blocked else ''
         flat = self.current_call.instructions + context + "\nRecent conversation, oldest first. Answer the final user message:\n" + json.dumps(history, ensure_ascii=False) + permissions
         # Retain the plain prompt for CLI and existing callers. API transport
         # uses the separately constructed parts, never delimiter-parses user text.
@@ -771,7 +778,10 @@ class Providers:
         newer_followup = ((conversation.get('improvement_goal') or {}).get('suspended_by') and
                          (continuation(value) or RESOURCES.fullmatch(value) or ENABLE.fullmatch(value)))
         retained = (focus(conversation) or {}) if newer_followup or CORRECTION.match(value) or CONTINUE.match(value) else {}
-        return needs_precision(text) or any(needs_precision(m['content']) for m in retained.get('user_excerpts', []))
+        # Revising an existing artifact requires constraint preservation even
+        # when its original request contained no count or reasoning keyword.
+        revision = bool(retained and CORRECTION.match(value))
+        return revision or needs_precision(text) or any(needs_precision(m['content']) for m in retained.get('user_excerpts', []))
 
     def available_fast_order(self, conversation):
         """Budget/health observations guide order; actual admission remains authoritative.

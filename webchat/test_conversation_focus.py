@@ -135,7 +135,22 @@ class FocusTests(SessionFixture):
         self.assertEqual(payload['system'], REFERENCE_RULES)
         self.assertNotIn('recalibrate', payload['system'])
         self.assertNotIn('SERVER SAVED CHAT PERMISSIONS', payload['system'])
+        self.assertNotIn('SERVER SAVED CHAT PERMISSIONS', payload['context'])
         self.assertEqual(provider.current_call.gemini_model, 'gemini-2.5-flash')
+
+    def test_targeted_revision_gets_precision_without_inheriting_it_into_greetings(self):
+        self.fake.reply_text = 'Nora watched morning rain from the kitchen.'
+        self.send('Help me write an opening paragraph about rain.')
+        provider = Providers(self.root, self.chat.redact)
+        self.assertFalse(provider.precision_request(self.chat.get(self.identifier)))
+        self.send('Actually set it in the late afternoon.')
+        conversation = self.chat.get(self.identifier)
+        self.assertTrue(provider.precision_request(conversation))
+        with patch.object(provider, 'spend', side_effect=lambda name:
+                         dict(cap_usd=50, committed_usd=46 if name == 'gemini' else 8)):
+            self.assertEqual(provider.route_order(conversation)[0], 'gemini')
+        self.send('Hi')
+        self.assertFalse(provider.precision_request(self.chat.get(self.identifier)))
 
     def test_reference_revision_uses_current_answer_without_artifact_noun_allowlist(self):
         from task_dispatch import task_queue
