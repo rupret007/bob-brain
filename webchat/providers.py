@@ -848,11 +848,35 @@ class Providers:
         last_user = next((m for m in reversed(conversation["messages"]) if m["role"] == "user"), {})
         if any(a.get("kind") in ("image", "video") for a in last_user.get("attachments", []) if isinstance(a, dict)):
             return ("gemini", *(name for name in ORDER if name != "gemini"))
+        if self.context_reasoning_request(conversation):
+            order = self.available_fast_order(conversation)
+            health = self.circuit_for(conversation.get('id')).snapshot().get('codex', {})
+            usage = self.spend('codex')
+            if health.get('state') not in ('cooldown', 'open', 'busy') and usage.get('tier') != 'stop':
+                # Matched functional replies resolved these context conflicts
+                # on the existing read-only route. Short text is not evidence
+                # that resolving it is simple. Unknown quota is still enforced
+                # by the existing lane/admission checks and bounded fallback.
+                return ('codex', *(name for name in order if name != 'codex'))
+            return order
         from conversation_focus import answer_only
         if self.short_request(conversation) or (answer_only(conversation, last_user.get('content', ''))
                                                and not needs_handoff_context(last_user.get('content', ''))):
             return self.available_fast_order(conversation)
         return ORDER
+
+    def context_reasoning_request(self, conversation):
+        from answer_intent import conceptual, instructions
+        from chat_intent import command
+        from self_improvement import continuation, RESOURCES, ENABLE
+        text = next((m.get('content', '') for m in reversed(conversation.get('messages', [])) if m['role'] == 'user'), '')
+        request = instructions(command(text)).rstrip(' .!?')
+        # Mixed action prohibition + reference question needs speech-act
+        # separation. A resource follow-up after a topic change must resolve
+        # the newer answer rather than assent or resurrect the suspended goal.
+        return bool((conceptual(text) and re.search(r"\b(?:do not|don't|never|not to)\b", request, re.I)) or
+                    ((conversation.get('improvement_goal') or {}).get('suspended_by') and
+                     (continuation(request) or RESOURCES.fullmatch(request) or ENABLE.fullmatch(request))))
 
     def reply(self, conversation, cancel, progress):
         self.current_call.cancel = cancel
@@ -860,7 +884,7 @@ class Providers:
         last_user = next((m for m in reversed(conversation['messages']) if m['role'] == 'user'), {})
         visual = any(a.get('kind') in ('image', 'video') for a in last_user.get('attachments', []) if isinstance(a, dict))
         fast = (conversation.get('preferred_provider', 'auto') == 'auto' and self.short_request(conversation)
-                and not visual and set(order) == set(FAST_ORDER))
+                and not visual and not self.context_reasoning_request(conversation) and set(order) == set(FAST_ORDER))
         # Rebuild retries too: saved prompts can contain obsolete provider outages.
         prompt, attempts = self.prompt(conversation, fast=fast), []
         circuit = self.circuit_for(conversation.get("id"))
@@ -929,7 +953,11 @@ class Providers:
                     # toward Web Bob's configuration instead of the user's text.
                     # Existing server guards still verify every effect claim.
                     attempt_prompt = prompt
-                answer, thread_id = self._call_timed(provider, attempt_prompt, conversation.get("codex_thread_id"), cancel, timeout)
+                # Answer prompts already contain bounded authoritative history.
+                # Resuming a CLI thread would silently add older, superseded
+                # context that this turn's source selection deliberately omitted.
+                resume = None if self.current_call.answer_context else conversation.get('codex_thread_id')
+                answer, thread_id = self._call_timed(provider, attempt_prompt, resume, cancel, timeout)
                 answer = usable(answer)
                 if self.current_call.draft_revision:
                     from draft_revision import apply

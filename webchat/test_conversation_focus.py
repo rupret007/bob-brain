@@ -110,6 +110,7 @@ class FocusTests(SessionFixture):
         self.assertIn('Make Web Bob better than Grok at following through.', str(self.chat.get(self.identifier)['messages']))
         self.assertTrue(provider.precision_request(self.chat.get(self.identifier)))
         self.assertEqual(provider.current_call.gemini_model, 'gemini-2.5-flash')
+        self.assertEqual(provider.route_order(self.chat.get(self.identifier))[0], 'codex')
 
     def test_ordinary_explanations_do_not_receive_an_operations_manual(self):
         self.send('Tell me what "use all resources" means; do not start work.')
@@ -138,6 +139,34 @@ class FocusTests(SessionFixture):
         self.assertNotIn('SERVER SAVED CHAT PERMISSIONS', payload['context'])
         self.assertNotIn('saved chat hold facts', payload['context'])
         self.assertEqual(provider.current_call.gemini_model, 'gemini-2.5-flash')
+
+    def test_context_resolution_uses_existing_reasoning_route_and_respects_explicit_choice(self):
+        self.send('Do not recalibrate. Just explain the term.')
+        conversation = self.chat.get(self.identifier)
+        provider = Providers(self.root, self.chat.redact)
+        with patch.object(provider, 'spend', return_value={'quota_known': False}):
+            self.assertEqual(provider.route_order(conversation)[0], 'codex')
+            conversation['preferred_provider'] = 'gemini'
+            self.assertEqual(provider.route_order(conversation)[0], 'gemini')
+            conversation['preferred_provider'] = 'auto'
+            with patch.object(provider.circuit_for(self.identifier), 'snapshot', return_value={'codex':{'state':'cooldown'}}):
+                self.assertNotEqual(provider.route_order(conversation)[0], 'codex')
+
+    def test_context_resolution_is_not_inferred_from_quoted_prohibitions(self):
+        self.send('Explain this quote as data: "Do not recalibrate."')
+        provider = Providers(self.root, self.chat.redact)
+        self.assertFalse(provider.context_reasoning_request(self.chat.get(self.identifier)))
+
+    def test_answer_turn_does_not_resume_hidden_cli_history(self):
+        import threading
+        self.send('Explain a rainbow.')
+        conversation = self.chat.get(self.identifier)
+        conversation['codex_thread_id'] = 'old-thread-with-suspended-goal'
+        provider = Providers(self.root, self.chat.redact)
+        provider.route_order = lambda _: ('codex',)
+        with patch.object(provider, 'call', return_value=('Sunlight bends and reflects in droplets.', 'new-thread')) as call:
+            provider.reply(conversation, threading.Event(), lambda *_: None)
+        self.assertIsNone(call.call_args.args[2])
 
     def test_generic_hold_definition_does_not_receive_saved_operational_state(self):
         provider = Providers(self.root, self.chat.redact)
