@@ -1,14 +1,61 @@
 """Routing observes the checked budget without loading the legacy dashboard API."""
 import json
+import os
 import sys
 import types
 from unittest.mock import patch
 
 from providers import Providers
+from failover import classify
+from voice import create_token, VoiceError
 from test_webbob_replyq_1856 import SessionFixture
 
 
 class BudgetObservationTests(SessionFixture):
+    def test_known_refill_stops_new_voice_credentials_without_provider_contact(self):
+        self.ledger('gemini', 20)
+        (self.root / 'conductor/gemini-funding.json').write_text(json.dumps({'refill_required': True}))
+        with patch('voice.urlopen') as transport, patch('voice.api_key') as key:
+            with self.assertRaises(VoiceError) as error:
+                create_token(self.root, {}, 1)
+            self.assertIn('refill', error.exception.message)
+            transport.assert_not_called()
+            key.assert_not_called()
+
+    def test_known_refill_skips_gemini_and_preserves_ordinary_fallback(self):
+        self.ledger('gemini', 20)
+        self.ledger('minimax', 8)
+        (self.root / 'conductor/gemini-funding.json').write_text(json.dumps({'refill_required': True}))
+        provider = Providers(self.root, self.chat.redact)
+        self.addCleanup(provider.close)
+        self.chat.providers = provider
+        with patch.object(provider, 'route_order', return_value=('gemini', 'minimax')), \
+                patch.object(provider, 'snapshot', return_value=[]), \
+                patch.object(provider, 'call', return_value=('A snow-covered lighthouse guards the shore.', None)) as call:
+            answer = self.send('Write one sentence about a lighthouse in snow.')
+        self.assertEqual(answer['provider'], 'minimax')
+        self.assertEqual(call.call_count, 1)
+        self.assertEqual(call.call_args.args[0], 'minimax')
+        self.assertEqual(answer['attempts'][0]['kind'], 'refill_required')
+
+    def test_refill_remains_visible_after_restart_and_successful_configuration_probe(self):
+        self.ledger('gemini', 20)
+        funding = self.root / 'conductor/gemini-funding.json'
+        funding.write_text(json.dumps({'refill_required': True}))
+        for _ in range(2):
+            provider = Providers(self.root, self.chat.redact)
+            self.addCleanup(provider.close)
+            with patch.object(provider, 'run', return_value=(0, 'configured', '')):
+                provider.probe_once()
+            health = provider.health()['providers']['gemini']
+            self.assertEqual(health['reason'], 'refill_required')
+            self.assertEqual(health['state'], 'open')
+            self.assertIsNone(health['retry_at'])
+            self.assertEqual(health['spend']['committed_usd'], 20)
+            self.assertEqual(health['spend']['tier'], 'stop')
+        self.assertEqual(classify(1, 'RefillRequired: Gemini prepaid credits require refill'), 'refill_required')
+        self.assertEqual(classify(1, 'HTTP 429 RESOURCE_EXHAUSTED'), 'rate_limit')
+
     def ledger(self, name, committed):
         path = self.root / ('conductor/ledger/' + name + '.jsonl')
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -37,10 +84,13 @@ class BudgetObservationTests(SessionFixture):
             paths = list(sys.path)
             usage = provider.spend('gemini')
             self.assertEqual(sys.path, paths)
-            self.assertEqual((usage['cap_usd'], usage['committed_usd'], usage['reserved_usd']), (50, 46, 1))
+            self.assertEqual((usage['cap_usd'], usage['committed_usd'], usage['reserved_usd']), (None, 46, 1))
+            self.assertFalse(usage['provider_balance_known'])
             answer = self.send('top priority use any and all resources')
             self.assertEqual(answer['status'], 'done')
-            self.assertEqual(answer['provider'], 'minimax')
+            # With Gemini's former local ceiling removed, both lanes are
+            # normal tier; the ordinary fast route prefers Gemini.
+            self.assertEqual(answer['provider'], 'gemini')
             self.assertEqual(answer['content'], answer_text)
             self.assertEqual(call.call_count, 1)
             self.assertIs(sys.modules['budget'], legacy)
@@ -51,7 +101,7 @@ class BudgetObservationTests(SessionFixture):
         path = self.ledger('gemini', 47.5)
         provider = Providers(self.root, self.chat.redact)
         legacy = types.ModuleType('budget')
-        with patch.dict(sys.modules, {'budget': legacy}):
+        with patch.dict(sys.modules, {'budget': legacy}), patch.dict(os.environ, {'BOB_GEMINI_CAP_USD': '50'}):
             self.assertEqual(provider.spend('gemini')['tier'], 'stop')
             path.write_bytes(path.read_bytes() + b'{torn')
             before = path.read_bytes()

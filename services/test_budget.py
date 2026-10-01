@@ -62,3 +62,53 @@ class BudgetTests(unittest.TestCase):
             budget.check("codex")
         state.write_json(self.core / "plan-usage.json", {"codex": {"used_percent": 96, "reset_at": time.time() - 60}})
         self.assertEqual(budget.check("codex")["tier"], "normal")
+
+    def test_prepaid_policy_preserves_costs_and_unknown_balance(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.seed('gemini', 60)
+            state.write_json(self.core / 'plan-usage.json', {'gemini': {'used_percent': 100}})
+            reservation = budget.reserve('gemini', 'meter this prompt', 100)
+            self.assertGreater(budget.totals('gemini')['committed_usd'], 60)
+            budget.settle('gemini', reservation, {'usageMetadata': {'promptTokenCount': 12, 'candidatesTokenCount': 20}})
+            usage = budget.check('gemini')
+            self.assertIsNone(usage['cap_usd'])
+            self.assertFalse(usage['quota_known'])
+            self.assertFalse(usage['provider_balance_known'])
+            self.assertEqual(usage['calls'], 2)
+            self.assertGreater(usage['spent_usd'], 60)
+            self.assertEqual(budget.cap('minimax'), 48)
+            with patch.dict(os.environ, {'BOB_GEMINI_CAP_USD': '50'}):
+                with self.assertRaises(budget.BudgetExceeded):
+                    budget.reserve('gemini', 'cannot fit', 1)
+            with patch.dict(os.environ, {'BOB_GEMINI_CAP_USD': '0'}):
+                with self.assertRaises(budget.BudgetExceeded):
+                    budget.check('gemini')
+
+    def test_refill_latch_blocks_admission_without_hiding_or_erasing_costs(self):
+        self.seed('gemini', 20)
+        budget.reserve('gemini', 'uncertain transport', 100)
+        before = budget.path('gemini').read_bytes()
+        totals = budget.totals('gemini')
+        budget.mark_refill_required()
+        observed = (self.core / 'gemini-funding.json').read_bytes()
+        budget.mark_refill_required()
+        self.assertEqual((self.core / 'gemini-funding.json').read_bytes(), observed)
+        self.assertEqual(budget.totals('gemini'), totals)
+        self.assertEqual(budget.status('gemini')['reason'], 'refill_required')
+        for action in (lambda: budget.check('gemini'), lambda: budget.reserve('gemini', 'blocked', 100)):
+            with self.assertRaises(budget.RefillRequired):
+                action()
+        with self.assertRaises(ValueError):
+            budget.authorize_refill_retry('')
+        budget.authorize_refill_retry('Owner confirmed a refill; retry permitted')
+        self.assertFalse(budget.status('gemini')['refill_required'])
+        self.assertFalse(budget.funding('gemini')['balance_verified'])
+        self.assertIn('observed_at', budget.funding('gemini')['previous_observation'])
+        self.assertEqual(budget.path('gemini').read_bytes(), before)
+        self.assertEqual(budget.check('gemini')['tier'], 'normal')
+
+    def test_corrupt_funding_state_fails_closed_before_reservation(self):
+        state.write_json(self.core / 'gemini-funding.json', {'refill_required': 'false'})
+        with self.assertRaises(ValueError):
+            budget.reserve('gemini', 'blocked', 100)
+        self.assertFalse(budget.path('gemini').exists())

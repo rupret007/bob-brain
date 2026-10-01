@@ -1000,7 +1000,7 @@ if ($("login-form")) {
   function modelReason(reason) {
     return ({ not_logged_in: "Sign-in needed", rate_limit: "Usage limit reached", timeout: "Reply took too long",
       network: "Connection problem", invalid_output: "No usable reply", nonzero_exit: "Could not reply",
-      budget: "Spending limit reached", not_installed: "Not set up", session_unavailable: "Could not reopen the conversation",
+      budget: "Spending limit reached", refill_required: "Gemini funding needs attention", not_installed: "Not set up", session_unavailable: "Could not reopen the conversation",
       busy: "Already in use", cooldown: "Waiting before trying again" })[reason] || "Could not reply";
   }
   let overviewFetchedAt = 0, overviewLoading = false;
@@ -1191,7 +1191,7 @@ if ($("login-form")) {
     replaceCards($("lanes"), entries.map(([name, model]) => {
       const work = (data.work || []).filter((job) => job.worker === name && job.state === "running");
       const busy = model.state === "busy" || work.length > 0;
-      const needsAction = ["not_logged_in", "not_installed", "budget"].includes(model.reason) && model.state !== "ready";
+      const needsAction = ["not_logged_in", "not_installed", "budget", "refill_required"].includes(model.reason) && model.state !== "ready";
       const state = busy ? "In use" : needsAction ? modelReason(model.reason) : ({ ready: "Available to try", cooldown: "Waiting to retry", half_open: "Ready to retry", unchecked: "No reply checked yet" })[model.state] || "Status unavailable";
       const card = element("article", null, "lane-card");
       const heading = element("header", null, "card-heading");

@@ -1,5 +1,25 @@
 # Solo Web Bob releases
 
+Jeff authorized Gemini on 2026-10-01 until its prepaid allowance needs refill.
+The checked default local Gemini dollar ceiling is now absent; cost reservations
+and settlements remain metered, and a finite runtime override can still tighten
+admission (zero stops it). MiniMax remains $48 with95% admission. Recorded
+spend is not an observed prepaid account balance. An explicit payment-required
+or depleted-prepayment response stops text/worker attempts durably, including
+new voice credential requests after that observation. Ordinary429rate limits
+remain distinct. Existing voice calls and browser-only voice errors do not
+write this funding marker. A failure to persist the marker stops the current
+attempt and requires operator repair; durable future suppression is unverified
+if the filesystem cannot save it. After Jeff confirms the funding problem is
+resolved, the operator may use the checked `budget.authorize_refill_retry(note)`;
+no background probe clears it or claims a verified balance. No purchase or
+auto-reload is authorized by this policy.
+
+The native receiver return procedure is `state/GROK-RECEIVER.md`. Install its
+reference in Bob's existing local startup handoff, preserving older instructions.
+Only native Grok may consume/checkpoint/ACK its batch. A compatibility-reader
+bootstrap receipt does not prove current live publication or automatic return.
+
 Jeff's 2026-09-29 instruction replaces the old Gemini/MiniMax BOTH_PASS and
 worker-preflight release gates. Use `release/solo.py`; the old scripts and failed
 receipts are historical evidence, not the active deployment path. Do not run the

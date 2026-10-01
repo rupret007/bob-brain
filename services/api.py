@@ -34,6 +34,34 @@ def load_worker_keys():
             os.environ[name.strip()] = parts[0] if len(parts) == 1 else ""
 
 
+def depleted_gemini_credit(code, response):
+    """Classify only explicit funding evidence, without exposing provider text."""
+    if code == 402:
+        return True
+    if code not in (400, 403, 429):
+        return False
+    try:
+        with response.open('rb') as handle:
+            raw = handle.read(32769)
+        if len(raw) > 32768:
+            return False
+        data = json.loads(raw)
+        error = data.get('error') if isinstance(data, dict) else None
+        if not isinstance(error, dict):
+            return False
+        if any(error.get(key) == 'payment_required' for key in ('code', 'type')):
+            return True
+        message = error.get('message', '')
+        if not isinstance(message, str):
+            return False
+        return bool(re.search(
+            r'\b(?:prepaid|prepayment) (?:credits?|balance)(?: balance)? (?:is |are |has been |have been )?'
+            r'(?:depleted|exhausted|empty|zero)\b|\binsufficient (?:prepaid|prepayment) (?:credits?|balance)\b',
+            message, re.I))
+    except (OSError, ValueError):
+        return False
+
+
 def http_json(url, method="GET", payload=None, headers=None, validate=None, allowed=(200, 201),
               lane=None, prompt="", max_tokens=0, purpose="api", attempts=3, model_id=None, google_search=False):
     last = "request did not run"
@@ -59,12 +87,19 @@ def http_json(url, method="GET", payload=None, headers=None, validate=None, allo
                 result = run(cmd, text=True, capture_output=True, timeout=seconds + 5)
                 code = int(result.stdout.strip()) if result.stdout.strip().isdigit() else 0
                 if result.returncode or code not in allowed:
+                    if lane == 'gemini' and not result.returncode and depleted_gemini_credit(code, response):
+                        try:
+                            budget.mark_refill_required()
+                        except (OSError, ValueError):
+                            raise budget.BudgetExceeded('Gemini funding needs attention; funding stop could not be saved. '
+                                                        'Operator repair is required before retry.') from None
+                        raise budget.RefillRequired()
                     raise RuntimeError("HTTP %s curl_rc=%s" % (code, result.returncode))
                 data = json.loads(response.read_text())
                 if reservation:
                     budget.settle(lane, reservation, data)
                 return validate(data) if validate else data
-        except ResultRejected:
+        except (ResultRejected, budget.BudgetExceeded):
             # A successful transport with unusable evidence is a terminal
             # quality failure, not a reason to buy the same answer repeatedly.
             raise

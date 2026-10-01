@@ -96,7 +96,8 @@ def refresh():
         usage = budget.status(lane)
         limit = 1 if usage["tier"] == "slow" else task_queue.capacity(lane)
         if state == "ready" and usage["tier"] == "stop":
-            state, detail = "budget_exhausted", "95% usage stop reached"
+            state, detail = "budget_exhausted", ('Gemini funding needs attention (payment or credit refill)' if usage.get('refill_required')
+                                                 else '95% usage stop reached')
         cooldown = cooldowns.get(lane, {})
         if state == "ready" and cooldown.get("retry_at", 0) > time.time():
             state, detail = "cooldown", cooldown.get("detail", "previous model error")
@@ -106,6 +107,8 @@ def refresh():
                     pass
             except BlockingIOError:
                 state, detail = "busy", "lane lease held"
+            except budget.RefillRequired:
+                state, detail = 'budget_exhausted', 'Gemini funding needs attention (payment or credit refill)'
             except budget.BudgetExceeded:
                 state, detail = "budget_exhausted", "95% usage stop reached"
         if state == "ready" and reserved.count(lane) >= limit:

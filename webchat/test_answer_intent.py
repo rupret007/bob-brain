@@ -3,6 +3,7 @@ from test_webbob_replyq_1856 import SessionFixture
 from task_dispatch import task_queue, parse_work, task_kind
 import threading
 import json
+import os
 from unittest.mock import patch
 from providers import Providers, ProviderError
 
@@ -418,7 +419,10 @@ class BudgetAwareRoutingTests(SessionFixture):
             dict(call_id='unsettled', cost_usd=None, reserved_usd=6)))+'\n'
         ledger.write_text(data)
         (self.root/'conductor/lanes.json').write_text(json.dumps({'gemini':{'budget':{'committed_usd':0,'cap_usd':50,'tier':'normal'}}}))
-        observed = provider.spend('gemini')
+        # Exercise a finite optional ceiling; prepaid default has no known
+        # local percentage and must not inherit the stale board's old cap.
+        with patch.dict(os.environ, {'BOB_GEMINI_CAP_USD': '50'}):
+            observed = provider.spend('gemini')
         self.assertEqual(observed['committed_usd'],46)
         self.assertEqual(observed['reserved_usd'],6)
         self.assertEqual(observed['tier'],'slow')

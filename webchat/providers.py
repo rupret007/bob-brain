@@ -253,9 +253,17 @@ def observed_api_cap(name):
                  and isinstance(node.targets[0], ast.Name)
                  and node.targets[0].id in ('CAP_USD', 'GEMINI_CAP_USD')}
     default = constants[{'gemini': 'GEMINI_CAP_USD', 'minimax': 'CAP_USD'}[name]]
-    if type(default) not in (int, float) or not 0 < default < float('inf'):
+    if default is None and name != 'gemini':
         raise ValueError('Invalid release budget ceiling')
-    return max(0, min(default, float(os.environ.get('BOB_' + name.upper() + '_CAP_USD', default))))
+    if default is not None and (type(default) not in (int, float) or not 0 < default < float('inf')):
+        raise ValueError('Invalid release budget ceiling')
+    value = os.environ.get('BOB_' + name.upper() + '_CAP_USD')
+    if value is None:
+        return default
+    configured = float(value)
+    if not -float('inf') < configured < float('inf'):
+        raise ValueError('Local budget ceiling must be finite')
+    return max(0, configured if default is None else min(default, configured))
 
 
 class Redactor:
@@ -465,7 +473,8 @@ class Providers:
     def lane(self, provider):
         # Interactive slots are separate from every background lane lock.
         quota_path = self.root / "conductor/plan-usage.json"
-        quota = json.loads(quota_path.read_text()).get(provider, {}) if quota_path.exists() else {}
+        quota = (json.loads(quota_path.read_text()).get(provider, {})
+                 if provider not in ('gemini', 'minimax') and quota_path.exists() else {})
         if quota.get("reset_at", float("inf")) > time.time() and quota.get("used_percent", 0) >= 95:
             raise ProviderError(kind="budget")
         folder = self.root / "conductor/locks"
@@ -967,6 +976,8 @@ class Providers:
             if fast_deadline is not None:
                 timeout = max(.05, min(timeout, fast_deadline - time.monotonic()))
             try:
+                if provider == 'gemini' and self.spend(provider).get('refill_required'):
+                    raise ProviderError(kind='refill_required')
                 progress(provider, list(attempts))
                 drill = self.drill(conversation.get("id"))
                 circuit.log("attempt", provider=provider, request_id=request_id, half_open=health["state"] == "half_open")
@@ -1072,6 +1083,8 @@ class Providers:
         for name, row in rows.items():
             row["timeout_seconds"] = self.timeouts[name]
             row["spend"] = self.spend(name)
+            if row['spend'].get('refill_required'):
+                row.update(state='open', reason='refill_required', retry_at=None)
         return {"providers": rows, "order": list(ORDER), "fast_order": list(FAST_ORDER), "probe_interval_seconds": self.probe_interval}
 
     def spend(self, name):
@@ -1090,10 +1103,19 @@ class Providers:
                 spent = sum(r.get('cost_usd') or 0 for r in records.values())
                 reserved = sum(r.get('reserved_usd', 0) for r in records.values() if r.get('cost_usd') is None)
                 committed = spent + reserved
-                fraction = committed / limit if limit else 1
-                tier = 'stop' if fraction >= .95 else 'slow' if fraction >= .85 else 'warn' if fraction >= .70 else 'normal'
+                funding_path = self.root / 'conductor/gemini-funding.json'
+                funding = json.loads(funding_path.read_text()) if name == 'gemini' and funding_path.exists() else {}
+                if not isinstance(funding, dict) or type(funding.get('refill_required', False)) is not bool:
+                    raise ValueError('Invalid provider funding observation')
+                refill = bool(funding.get('refill_required'))
+                fraction = committed / limit if limit else (1 if limit == 0 else None)
+                tier = ('stop' if refill or fraction is not None and fraction >= .95 else
+                        'slow' if fraction is not None and fraction >= .85 else
+                        'warn' if fraction is not None and fraction >= .70 else 'normal')
                 return dict(spent_usd=round(spent,8),reserved_usd=round(reserved,8),committed_usd=round(committed,8),
-                            cap_usd=limit,tier=tier,quota_known=True,billing='metered API')
+                            cap_usd=limit,tier=tier,quota_known=limit is not None, provider_balance_known=False,
+                            refill_required=refill, reason='refill_required' if refill else None,
+                            billing='metered API; prepaid balance not observed' if name == 'gemini' else 'metered API')
             except (OSError, ValueError, KeyError, TypeError, SyntaxError):
                 return dict(cap_usd=limit,quota_known=False,billing='metered API; budget observation unavailable')
         # The lane board reports the enforced ceiling/tier, including Gemini.

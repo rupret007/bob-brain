@@ -23,6 +23,15 @@ for lane in ('gemini', 'minimax'):
         else:
             os.environ[key] = value
         assert observed_api_cap(lane) == budget.cap(lane), (lane, value)
+    for value in ('nan', 'inf', '-inf', 'invalid'):
+        os.environ[key] = value
+        for method in (observed_api_cap, budget.cap):
+            try:
+                method(lane)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError((lane, value, method.__name__))
 print('checked admission policy matches')
 """
         with tempfile.TemporaryDirectory() as temporary:
