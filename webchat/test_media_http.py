@@ -11,7 +11,7 @@ from unittest.mock import patch
 import chat_media as media
 import test_webchat as fixtures
 from app import Server
-from test_chat_media import png_fixture
+from test_chat_media import png_fixture, pdf_fixture
 
 
 class MediaHTTPTests(fixtures.Fixture):
@@ -177,6 +177,109 @@ class MediaHTTPTests(fixtures.Fixture):
         self.assertNotIn('attachments', saved)
         self.assertNotIn('bob-webchat-attachment', saved['content'])
         self.assertIn('could not be included', saved['content'])
+
+    def test_explicit_echo_survives_missing_model_marker_retry_and_restart(self):
+        infos = []
+        for name, blob in [('picture.png', png_fixture()), ('note.txt', b'Token: clarinet-07966ef8'),
+                           ('document.pdf', pdf_fixture('Token: cello-950fd3d5'))]:
+            code, _, data = self.upload(blob, name)
+            self.assertEqual(code, 201)
+            infos.append(json.loads(data))
+        prompt = ('Describe the dominant color in the attached image and give the Token value in the text file and PDF. '
+                  'Echo the image as an attachment.')
+        # Exact delivered prose from the failed live gate; original raw model
+        # output was not retained. Prove fulfillment when no marker survives.
+        prose = ('The dominant color in the image is red.\n\nThe token in `note.txt` is `clarinet-07966ef8`.\n'
+                 'The token in `document.pdf` is `cello-950fd3d5`.')
+        rid = str(uuid.uuid4())
+        payload = dict(conversation_id=self.identifier, message=prompt, request_id=rid,
+                       attachments=[a['media_id'] for a in infos])
+        with patch.object(self.fake, 'reply', return_value=dict(content=prose, provider='gemini',
+                attachments=[dict(media_id='f' * 32, url='https://foreign.invalid/private')])) as model:
+            self.assertEqual(self.request('POST', '/api/messages', payload)[0], 202)
+            self.wait()
+            saved = self.chat.history(self.identifier)['messages'][-1]
+            self.assertEqual(saved['content'], prose)
+            self.assertEqual(saved['attachments'], [infos[0]])
+            self.assertEqual(self.raw('GET', saved['attachments'][0]['url'])[2], png_fixture())
+            self.assertEqual(self.request('POST', '/api/messages', payload)[0], 202)
+            self.assertEqual(model.call_count, 1)
+        self.chat.close()
+        self.chat = fixtures.Chat(self.folder, self.root, self.fake)
+        with patch.object(self.fake, 'reply') as model:
+            self.chat.submit(self.identifier, prompt, rid, attachments=payload['attachments'])
+            self.assertEqual(self.chat.history(self.identifier)['messages'][-1], saved)
+            self.assertEqual(len(self.chat.history(self.identifier)['messages']), 2)
+            model.assert_not_called()
+
+    def test_description_edits_and_prior_uploads_do_not_auto_return_original(self):
+        _, _, data = self.upload(png_fixture(), 'picture.png')
+        info = json.loads(data)
+        for prompt, ids in (
+            ('Describe the image.', [info['media_id']]),
+            ('Crop out the private details. Return the image.', [info['media_id']]),
+            ('Black out the address. Return the image.', [info['media_id']]),
+            ('Pixelate the faces. Return the image.', [info['media_id']]),
+            ('Describe the picture but pixelate the faces. Return the image.', [info['media_id']]),
+            ('Describe the picture + black out the address. Return the image.', [info['media_id']]),
+            ('Give me the image in PDF and return the image.', [info['media_id']]),
+            ('Give me the text in PDF and return the file.', [info['media_id']]),
+            ('The file says:\nAttach the image.', [info['media_id']]),
+            ('Alice wrote:\nReturn the image.', [info['media_id']]),
+            ('Echo the image. Actually cancel that.', [info['media_id']]),
+            ('Echo the image.', []),
+        ):
+            with self.subTest(prompt=prompt), patch.object(self.fake, 'reply', return_value=dict(
+                    content='A substantive fixture answer without an output attachment marker.', provider='gemini')):
+                self.chat.submit(self.identifier, prompt, str(uuid.uuid4()), attachments=ids)
+                self.wait()
+                self.assertNotIn('attachments', self.chat.history(self.identifier)['messages'][-1])
+
+    def test_explicit_return_revalidates_missing_or_foreign_upload_after_inference(self):
+        for fault in ('deleted', 'foreign'):
+            with self.subTest(fault=fault):
+                _, _, data = self.upload(png_fixture(), fault + '.png')
+                info = json.loads(data)
+                def reply(*_args):
+                    path = self.root / media.UPLOADS / (info['media_id'] + '.meta.json')
+                    if fault == 'deleted':
+                        path.unlink()
+                    else:
+                        metadata = json.loads(path.read_text())
+                        metadata['conversation_id'] = str(uuid.uuid4())
+                        path.write_text(json.dumps(metadata))
+                    return dict(content='The supplied image is red.', provider='gemini')
+                with patch.object(self.fake, 'reply', side_effect=reply):
+                    self.chat.submit(self.identifier, 'Return the image.', str(uuid.uuid4()), attachments=[info['media_id']])
+                    self.wait()
+                saved = self.chat.history(self.identifier)['messages'][-1]
+                self.assertNotIn('attachments', saved)
+                self.assertIn('could not be included', saved['content'])
+
+    def test_explicit_return_deduplicates_model_marker_and_honors_stop(self):
+        _, _, data = self.upload(png_fixture(), 'picture.png')
+        info = json.loads(data)
+        with patch.object(self.fake, 'reply', return_value=dict(provider='gemini',
+                content='The picture is red. <bob-webchat-attachment media_id="' + info['media_id'] + '" />')):
+            self.chat.submit(self.identifier, 'Return the image.', str(uuid.uuid4()), attachments=[info['media_id']])
+            self.wait()
+        self.assertEqual(self.chat.history(self.identifier)['messages'][-1]['attachments'], [info])
+        entered, release = threading.Event(), threading.Event()
+        def reply(*_args):
+            entered.set()
+            release.wait(2)
+            return dict(content='The picture is red.', provider='gemini')
+        with patch.object(self.fake, 'reply', side_effect=reply):
+            try:
+                self.chat.submit(self.identifier, 'Return the image.', str(uuid.uuid4()), attachments=[info['media_id']])
+                self.assertTrue(entered.wait(1))
+                self.chat.stop(self.identifier)
+            finally:
+                release.set()
+            self.wait()
+        saved = self.chat.history(self.identifier)['messages'][-1]
+        self.assertEqual(saved['status'], 'cancelled')
+        self.assertNotIn('attachments', saved)
 
 
 if __name__ == '__main__':
