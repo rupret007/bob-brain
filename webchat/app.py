@@ -333,7 +333,7 @@ class Chat(TaskDispatch):
             return self.public(value)
 
     def public(self, value):
-        excluded = {"_coordination_outbox", "_coordination_excluded", "codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job",
+        excluded = {"_coordination_outbox", "_coordination_excluded", "_coordination_prepared_batches", "codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job",
                     "pending_memory", "pending_memory_id", "pending_memory_removal"}
         # Extensions never see core-private state or mutable conversation objects.
         filtered = {k: copy.deepcopy(v) for k, v in value.items() if k not in excluded}
@@ -707,6 +707,10 @@ class Chat(TaskDispatch):
                 conversation["pending_job_id"] = request_id
                 return self.intent_reply(conversation, "Priority order: " + ", ".join(intent_state["project_order"]) + ".")
             if not public_attachments and worker is None:
+                from capabilities import prepare_coordination
+                prepared = prepare_coordination(self, conversation, text, request_id)
+                if prepared is not None:
+                    return prepared
                 cancelled_task = self.cancel_task_turn(conversation, text)
                 if cancelled_task is not None:
                     return cancelled_task

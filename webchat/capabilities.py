@@ -45,6 +45,58 @@ product explanations unless the user needs a command or file location.
 '''
 
 
+def prepare_coordination(chat, conversation, text, request_id):
+    """Turn an explicit coordination need into a saved, unconsumed local batch.
+
+    Questions remain model answers. This operation reads the existing protocol;
+    it neither contacts a receiver nor changes any acknowledgment or work scope.
+    The private payload stays out of model context and public conversation exports.
+    """
+    from answer_intent import instructions
+    value = instructions(text).strip()
+    if (not needs_grounding(text) or not re.match(r'^(?:i|we)\s+(?:want|need|would like)\b', value, re.I)
+            or not re.search(r'\bGrok\b', value, re.I)
+            or re.search(r"\b(?:do not|don't|don’t|not yet|just explain|only explain)\b", value, re.I)
+            or re.search(r'\b(?:eventually|for now|later|wait|await|only if|not until|'
+                         r'(?:after|once|if) (?:I|we)|(?:just|only) (?:describe|outline|discuss|plan))\b', value, re.I)
+            or re.search(r'\b(?:and|then|also)\s+(?:please\s+)?(?:write|draft|create|build|modify|edit)\b', value, re.I)):
+        return None
+    if chat.ledger_root(conversation['id']) != chat.root or conversation.get('_coordination_excluded'):
+        return None
+    chat.texting.invalidate(conversation)
+    for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
+        conversation.pop(key, None)
+    from app import state_ledger
+    try:
+        batch = state_ledger.bob_catchup(chat.root, limit=12)
+        if len(json.dumps(batch, ensure_ascii=False).encode()) > 256 * 1024:
+            raise ValueError('Batch exceeds the bounded handoff size')
+    except (OSError, ValueError, TypeError):
+        return chat.intent_reply(conversation,
+            'I could not prepare a catch-up batch because the saved coordination record could not be read safely. '
+            'The existing record and acknowledgment are unchanged; repairing that record is the next step.',
+            provider='coordination')
+    # Chat.submit has already deduplicated the request. Commit the exact batch
+    # with the delivered receipt using Chat's existing atomic private save.
+    conversation.setdefault('_coordination_prepared_batches', {})[request_id] = batch
+    count = len(batch['events'])
+    receipt = {key: batch[key] for key in ('journal_id', 'since_seq', 'through_seq',
+                                          'receipt_sha256', 'has_more', 'history_gap')}
+    receipt.update(record_count=count, receiver_verified=False, acknowledged=False,
+                   execution_started=False, completed_step='prepared_local_catchup_batch')
+    conversation['messages'][-1]['coordination_receipt'] = receipt
+    prepared = (f'I prepared and saved a catch-up batch of {count} earlier recorded updates with this conversation '
+                f"(records {batch['events'][0]['seq']}–{batch['through_seq']}). " if count else
+                'I checked the saved work record and saved an empty catch-up batch with this conversation; no unacknowledged updates were available. ')
+    coverage = ('Web Bob records delivered replies, scope changes, and task outcomes; this does not include every external action or private message. ')
+    gaps = ('More recorded updates remain after this batch. ' if batch['has_more'] else '')
+    gaps += ('Some earlier history is missing from the retained record. ' if batch['history_gap'] else '')
+    return chat.intent_reply(conversation, prepared + coverage + gaps +
+        'Grok’s receiver is still unverified: its next step is to read the batch, save its own checkpoint, '
+        'and acknowledge that exact batch. Preparing it has not contacted Grok or marked anything as read.',
+        provider='coordination')
+
+
 def grounding(root, reply_providers, conversation_id=None):
     """Project implemented metadata, following StoryOps' tool-metadata pattern.
 

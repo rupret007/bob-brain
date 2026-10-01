@@ -68,6 +68,16 @@ patch frozen candidates or unrelated service checkouts to force migration.
 
 ## Evidence limits
 
+An explicit owner request for Grok coordination prepares one bounded oldest-first
+batch through the same reader. Web Bob atomically saves its exact payload with
+the completed reply in the private conversation; the public receipt exposes only
+identity, range, count and gap indicators. The snapshot is not a receiver
+checkpoint and never advances the ACK. It may contain earlier work from other
+conversations, and cannot contain the preparation reply published afterward.
+Duplicate request IDs return the same saved receipt across restart. A new request
+may still see the same unread records; preparing again does not consume them.
+Raw prepared batches are excluded from public conversations and model prompts.
+
 Offline protocol tests cover backlog retention, retained legacy identities,
 exact receipts, stale retries, corruption, failed publication, restart, privacy,
 and overlay isolation. They do not prove that native Grok received anything.

@@ -199,6 +199,78 @@ class CoordinationTests(unittest.TestCase):
 
 
 class ProductCoordinationTests(SessionFixture):
+    REQUEST = 'I want it to be able to coordinate with Grok when Grok Bot is available and when it’s not have a record of what was done so when it comes back up it can catch up.'
+
+    def test_owner_need_prepares_exact_batch_without_receiver_effect_and_survives_retry(self):
+        import uuid
+        from app import Chat
+        for i in range(14):
+            events.append_event(self.root, actor='web-bob', kind='answer-delivered',
+                                summary=f'Other conversation private source {i}')
+        before = ledger.bob_catchup(self.root)
+        request = str(uuid.uuid4())
+        public = self.chat.submit(self.identifier, self.REQUEST, request)
+        answer = public['messages'][-1]
+        self.assertEqual(answer['provider'], 'coordination')
+        self.assertEqual(answer['coordination_receipt']['record_count'], 12)
+        self.assertTrue(answer['coordination_receipt']['has_more'])
+        self.assertFalse(answer['coordination_receipt']['acknowledged'])
+        self.assertIn('earlier recorded updates', answer['content'])
+        self.assertIn('receiver is still unverified', answer['content'])
+        self.assertEqual(self.chat.get(self.identifier)['_coordination_prepared_batches'][request], before)
+        self.assertNotIn('_coordination_prepared_batches', public)
+        self.assertNotIn('Other conversation private source', json.dumps(public))
+        provider = Providers(self.root, self.chat.redact)
+        self.assertNotIn('Other conversation private source', provider.prompt(self.chat.get(self.identifier), fast=True))
+        self.assertEqual(ledger.bob_catchup(self.root)['since_seq'], 0)
+        self.assertFalse(self.fake.calls)
+        self.assertFalse(__import__('task_queue').tasks(self.root))
+        ledger.ack_events_for_bob(self.root, receipt=before)
+        self.chat.close()
+        self.chat = Chat(self.folder, self.root, self.fake)
+        retried = self.chat.submit(self.identifier, self.REQUEST, request)
+        self.assertEqual(retried['messages'], public['messages'])
+        self.assertEqual(self.chat.get(self.identifier)['_coordination_prepared_batches'][request], before)
+
+    def test_preparation_handles_empty_and_corrupt_records_without_claiming_ack(self):
+        answer = self.send(self.REQUEST)
+        self.assertEqual(answer['coordination_receipt']['record_count'], 0)
+        self.assertIn('empty catch-up batch', answer['content'])
+        path = self.root / 'conductor/state' / events.EVENTS_FILE
+        path.write_bytes(b'broken journal\n')
+        answer = self.send(self.REQUEST)
+        self.assertNotIn('coordination_receipt', answer)
+        self.assertIn('could not prepare', answer['content'])
+        self.assertEqual(path.read_bytes(), b'broken journal\n')
+
+    def test_failed_preparation_save_does_not_publish_success_or_consume_retry(self):
+        import uuid
+        request = str(uuid.uuid4())
+        with patch('app.private_write', side_effect=OSError('storage unavailable')):
+            with self.assertRaises(OSError):
+                self.chat.submit(self.identifier, self.REQUEST, request)
+        self.assertFalse(any(m.get('request_id') == request for m in self.chat.get(self.identifier)['messages']))
+        result = self.chat.submit(self.identifier, self.REQUEST, request)
+        self.assertEqual(result['messages'][-1]['coordination_receipt']['completed_step'], 'prepared_local_catchup_batch')
+        self.assertFalse((self.root / ledger.LAST_SEEN).exists())
+
+    def test_preparation_does_not_intercept_negative_quoted_or_mixed_execution(self):
+        from capabilities import prepare_coordination
+        value = self.chat.get(self.identifier)
+        for text in ('Can you interface with Grok Bot?',
+                     'I want no Grok integration; write a poem.',
+                     'Explain this quote: "I want Web Bob to coordinate with Grok."',
+                     'I want it to coordinate with Grok, but do not start anything; just explain.',
+                     'I want Web Bob to coordinate with Grok eventually; for now, just describe how it would work.',
+                     'I want Web Bob to coordinate with Grok only after I approve it.',
+                     'I want Web Bob to coordinate with Grok and write a poem.',
+                     'I want Web Bob to coordinate with Grok and delete old files.'):
+            with self.subTest(text=text):
+                self.assertIsNone(prepare_coordination(self.chat, value, text, 'unused'))
+        value['_coordination_excluded'] = True
+        self.assertIsNone(prepare_coordination(self.chat, value, self.REQUEST, 'unused'))
+        self.assertFalse(events.read_events(self.root))
+
     def test_legacy_or_unbound_voice_entries_do_not_create_scope_or_answer_receipts(self):
         value = self.chat.get(self.identifier)
         value.pop('intent_state')
