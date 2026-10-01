@@ -8,7 +8,7 @@ from answer_intent import conceptual, wants_answer
 from chat_intent import command, projects
 
 CORRECTION = re.compile(r'^(?:actually|correction|no|instead|i meant|that is the wrong|'
-                        r'make (?:it|that)|keep (?:it|that)|rewrite|revise|shorten|expand|'
+                        r'make (?:it|that|this)|keep (?:it|that|this)|rewrite|revise|shorten|expand|'
                         r'rephrase|use .{0,40} instead|change .{0,40} to)\b', re.I)
 CONTINUE = re.compile(r'^(?:continue|keep going|finish that|do it|go ahead|what did you finish)\b', re.I)
 OPERATIONAL = re.compile(r'\b(?:our|my|live|current) (?:workers?|jobs?|services?|resources?)\b|'

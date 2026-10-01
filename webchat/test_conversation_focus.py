@@ -7,6 +7,21 @@ from conversation_focus import focus
 
 
 class FocusTests(SessionFixture):
+    def test_reference_revision_uses_current_answer_without_artifact_noun_allowlist(self):
+        from task_dispatch import task_queue
+        self.send('Draft a neighborhood meeting notice for Thursday.')
+        self.send('Correction: Friday at 7 p.m.')
+        self.chat.close()
+        self.chat = Chat(self.folder, self.root, self.fake)
+        for text in ('Make that notice shorter without changing the corrected details.',
+                     'Make that note sound warmer.', 'Make this wording more welcoming.'):
+            reply = self.send(text)
+            self.assertEqual(reply['provider'], 'gemini')
+        self.assertFalse(task_queue.tasks(self.root))
+        # Context must not erase a separately requested operation.
+        self.send('Make that note warmer and save it to /tmp/notice-proof.txt')
+        self.assertEqual(len(task_queue.tasks(self.root)), 1)
+
     def test_first_correction_on_legacy_conversation_indexes_older_user_constraints(self):
         first = self.send('Draft an invitation for Saturday under 80 words.')
         self.send('Actually move it to Sunday and do not mention food.')
@@ -47,6 +62,11 @@ class FocusTests(SessionFixture):
     def test_new_project_does_not_inherit_other_project_draft(self):
         self.send('Draft a WebJam launch note.')
         self.send('Fix AdoptIQ login tests')
+        self.assertIsNone(focus(self.chat.get(self.identifier)))
+
+    def test_concrete_task_supersedes_answer_even_in_same_project(self):
+        self.send('Draft a Web Bob release note.')
+        self.send('Fix Web Bob login tests')
         self.assertIsNone(focus(self.chat.get(self.identifier)))
 
     def test_assistant_suggestions_are_not_indexed_as_user_instructions(self):

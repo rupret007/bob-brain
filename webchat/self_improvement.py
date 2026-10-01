@@ -24,7 +24,7 @@ ASSENT = re.compile(r"\b(?:ready|on board|always (?:learning|working)|I (?:can|w
 
 
 def direct_goal(text):
-    value = command(text)
+    value = command(text).rstrip(' .!?')
     if any(name != 'Web Bob' for name in projects(value)):
         return False
     if re.search(r"\b(?:do not|don['’]t|never|not to|stop)\b.{0,50}\b(?:self[ -]improv|improve|better)", value, re.I):
@@ -43,7 +43,7 @@ def resolve(text, previous):
     Assistant claims cannot grant permission or invent a goal. An unrelated
     user turn ends the chain, so old project requests cannot be resurrected.
     """
-    value = command(text)
+    value = command(text).rstrip(' .!?')
     if direct_goal(text):
         return text
     enable = bool(ENABLE.fullmatch(value))
@@ -55,7 +55,7 @@ def resolve(text, previous):
         prior = message.get('content', '')
         if direct_goal(prior):
             return prior
-        if ENABLE.fullmatch(command(prior)) or RESOURCES.fullmatch(command(prior)):
+        if ENABLE.fullmatch(command(prior).rstrip(' .!?')) or RESOURCES.fullmatch(command(prior).rstrip(' .!?')):
             continue
         break
     # A standalone enable request still warrants a real configuration check;
@@ -104,7 +104,7 @@ ADVANCE = re.compile(r"^(?:keep going|continue|do it|make it happen|use what we 
 
 def continuation(text):
     """A continuation references existing work; it cannot name a new assignment."""
-    value = command(text)
+    value = command(text).rstrip(' .!?')
     if any(name != 'Web Bob' for name in projects(value)):
         return False
     if ADVANCE.fullmatch(value):
@@ -129,7 +129,7 @@ def observe_turn(conversation, text, request_id):
     saved = conversation.get('improvement_goal')
     if not saved:
         return
-    value = command(text)
+    value = command(text).rstrip(' .!?')
     if execution_limit(value):
         saved['execution_restriction'] = dict(request_id=request_id, text=text[:600])
         saved['authorized_steps'] = ['local routing investigation']
@@ -150,7 +150,7 @@ def handle(chat, conversation, text, request_id):
     from task_dispatch import task_queue
     previous = conversation['messages'][:-2]
     saved = conversation.get('improvement_goal')
-    value = command(text)
+    value = command(text).rstrip(' .!?')
     goal = resolve(text, previous)
     if saved and saved['outcome'] == 'Check worker scheduling prerequisites' and direct_goal(text):
         saved = None

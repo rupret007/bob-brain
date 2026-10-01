@@ -646,7 +646,7 @@ class Chat(TaskDispatch):
             fix = issue_followup(self.root, conversation, text)
             if fix:
                 return self.submit_task(conversation, fix, request_id)
-            work, route = parse_work(text)
+            work, route = parse_work(text, conversation=conversation)
             if transition == "resume" and not work:
                 work_text = re.sub(r"^(?:go(?:\s+ahead)?|resume)(?:\s+and)?[\s,:!]+", "", chat_intent.command(text), flags=re.I)
                 work, route = parse_work(work_text)

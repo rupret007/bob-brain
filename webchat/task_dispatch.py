@@ -82,7 +82,7 @@ def followup_work(conversation):
     return parse_work(prompt) if matches_scope(prompt) else (None, "auto")
 
 
-def parse_work(text):
+def parse_work(text, *, conversation=None):
     text = PREAMBLE.sub("", text.strip())
     if CHAT_STYLE.match(text):
         return None, "auto"
@@ -100,6 +100,15 @@ def parse_work(text):
                        r"((?:plan|grade|score|evaluate|review|audit|inspect|fix|build|write|research)\b.+)$", text.strip(), re.I | re.S))
     if routed:
         return routed.group(2).strip(), routed.group(1).lower()
+    if conversation and conversation.get('answer_focus', {}).get('origin'):
+        from conversation_focus import CORRECTION
+        from answer_intent import requires_execution, requires_research
+        request = command(text)
+        if (CORRECTION.match(request) and not task_queue.file_task_kind(request)
+                and not requires_execution(request) and not requires_research(request)):
+            # A reference to the current answer stays an answer regardless of
+            # its artifact noun (notice, invitation, note, paragraph, etc.).
+            return None, 'auto'
     if WORK.match(text.strip()):
         from answer_intent import wants_answer
         # Worker choice, max mode, project controls, and explicit file targets
@@ -256,6 +265,8 @@ class TaskDispatch:
 
     def submit_worker_assignment(self, conversation, description, request_id, workers):
         from worker_assignment import plan
+        if conversation.get('answer_focus'):
+            conversation['answer_focus'].update(origin=None, corrections=[])
         message = conversation["messages"][-1]
         try:
             if self.ledger_root(conversation["id"]) != self.root:
@@ -309,6 +320,8 @@ class TaskDispatch:
 
     def submit_task(self, conversation, description, request_id, worker="auto", *, expected_code_identity=None):
         from app import hard_rule_refusal
+        if conversation.get('answer_focus'):
+            conversation['answer_focus'].update(origin=None, corrections=[])
         identifier = conversation["id"]
         message = conversation["messages"][-1]
         # parse_start's normalized lane description preserves routing across

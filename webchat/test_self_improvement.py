@@ -17,6 +17,12 @@ RESOURCES = 'top priority use any and all resources'
 
 
 class ImprovementTests(SessionFixture):
+    def test_polite_enable_question_keeps_configuration_semantics(self):
+        reply = self.send('Could you enable what we need to enable?')
+        self.assertIn('No global scheduling block', reply['content'])
+        self.assertIn('improvement_receipt', reply)
+        self.assertFalse(task_queue.tasks(self.root))
+
     def test_continuation_references_saved_work_after_restart_without_new_assignment(self):
         self.send(GOAL)
         self.chat.close()
