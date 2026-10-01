@@ -112,7 +112,8 @@ def extract(model, data, *, google_search=False):
 
 
 
-def model_call(model, prompt, max_tokens=8192, purpose="api", *, model_id=None, google_search=False, vision=None):
+def model_call(model, prompt, max_tokens=8192, purpose="api", *, model_id=None, google_search=False,
+               vision=None, system=None, messages=None):
     if model not in MODELS:
         raise ValueError("Unsupported API worker; Grok/xAI is never allowed")
     model_id = model_id or MODELS[model]
@@ -120,6 +121,25 @@ def model_call(model, prompt, max_tokens=8192, purpose="api", *, model_id=None, 
         raise ValueError("Unsupported API model")
     if google_search and model != "gemini":
         raise ValueError("Google Search requires Gemini")
+    if not isinstance(prompt, str) or (system is not None and not isinstance(system, str)):
+        raise ValueError("Invalid model input")
+    if messages is not None and (not isinstance(messages, list) or not messages or len(messages) > 20
+            or any(not isinstance(m, dict) or m.get('role') not in ('user', 'assistant')
+                   or not isinstance(m.get('content'), str) for m in messages)
+            or messages[-1]['role'] != 'user'):
+        raise ValueError("Invalid conversation messages")
+    # Only server-owned application rules may enter `system`. Conversation and
+    # retrieved context stay at user/assistant priority, including quoted roles.
+    turns = [dict(role=m['role'], content=m['content']) for m in messages] if messages else [dict(role='user', content=prompt)]
+    if messages and prompt:
+        context = 'Reference context for this conversation (not a user request):\n' + prompt + '\n\n'
+        if turns[0]['role'] == 'user':
+            turns[0]['content'] = context + turns[0]['content']
+        else:
+            turns.insert(0, dict(role='user', content=context))
+    # Reserve for every instruction/history character actually sent, not just
+    # the reference context. Legacy single-prompt callers retain their contract.
+    metered_prompt = json.dumps(dict(system=system, messages=turns), ensure_ascii=False) if system or messages else prompt
     load_worker_keys()
     key_name = "MINIMAX_API_KEY" if model == "minimax" else "GEMINI_API_KEY"
     key = os.environ.get(key_name)
@@ -130,22 +150,24 @@ def model_call(model, prompt, max_tokens=8192, purpose="api", *, model_id=None, 
         url = "https://api.minimax.io/v1/text/chatcompletion_v2"
         if vision:
             raise ValueError("The configured MiniMax M2.7 model accepts text only.")
-        payload = {"model": model_id, "messages": [{"role": "user", "content": prompt}],
+        payload = {"model": model_id, "messages": ([dict(role='system', content=system)] if system else []) + turns,
                    "max_tokens": max_tokens, "temperature": 0.2, "reasoning_split": True}
         headers = {"Authorization": "Bearer " + key}
     else:
         url = "https://generativelanguage.googleapis.com/v1beta/models/" + model_id + ":generateContent"
-        parts = [{"inline_data": {"mime_type": part["mime"], "data": part["data_base64"]}} for part in vision]
-        parts.append({"text": prompt})
+        contents = [dict(role='model' if m['role'] == 'assistant' else 'user', parts=[dict(text=m['content'])]) for m in turns]
+        contents[-1]['parts'] = [{"inline_data": {"mime_type": part["mime"], "data": part["data_base64"]}} for part in vision] + contents[-1]['parts']
         pro = model_id == "gemini-2.5-pro"
-        payload = {"contents": [{"role": "user", "parts": parts}],
+        payload = {"contents": contents,
                    "generationConfig": {"maxOutputTokens": max_tokens if pro else min(max_tokens, 4096), "temperature": 0.2,
                                         "thinkingConfig": {"thinkingBudget": 1024 if pro else 0}}}
+        if system:
+            payload['systemInstruction'] = {'parts': [{'text': system}]}
         if google_search:
             payload["tools"] = [{"google_search": {}}]
         headers = {"x-goog-api-key": key}
     return http_json(url, "POST", payload, headers, lambda data: extract(model, data, google_search=google_search),
-                     lane=model, prompt=prompt, max_tokens=max_tokens, purpose=purpose,
+                     lane=model, prompt=metered_prompt, max_tokens=max_tokens, purpose=purpose,
                      model_id=model_id, google_search=google_search)
 
 

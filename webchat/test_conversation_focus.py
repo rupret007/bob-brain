@@ -7,6 +7,24 @@ from conversation_focus import focus
 
 
 class FocusTests(SessionFixture):
+    def test_help_with_writing_establishes_durable_draft_and_answer_policy(self):
+        self.fake.reply_text = 'Nora watched the morning light from her kitchen window.'
+        self.send('Could you help me write the opening of a story?')
+        self.chat.close()
+        self.chat = Chat(self.folder, self.root, self.fake)
+        self.send('Actually set it in the evening.')
+        conversation = self.chat.get(self.identifier)
+        retained = focus(conversation)
+        self.assertIsNotNone(retained)
+        self.assertIn('Nora', retained['latest_answer']['content'])
+        self.assertIn('evening', retained['user_excerpts'][-1]['content'])
+        provider = Providers(self.root, self.chat.redact)
+        with patch.object(provider, 'snapshot', side_effect=AssertionError('irrelevant operational context')):
+            prompt = provider.prompt(conversation, fast=True)
+        self.assertIn('This is an answer turn', prompt)
+        self.assertIn('Nora', str(provider.current_call.api_input['messages']))
+        self.assertNotIn('Nora', provider.current_call.api_input['system'])
+
     def test_scope_boundary_preserves_the_intervening_question_and_answer(self):
         self.send('Make Web Bob better than Grok at following through.')
         self.fake.reply_text = 'Ice floats because it is less dense than liquid water.'

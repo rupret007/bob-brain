@@ -53,7 +53,8 @@ def requires_research(text):
 
 def wants_answer(text):
     """An in-chat deliverable, after explicit tools/targets were checked."""
-    request = instructions(text)
+    from chat_intent import command
+    request = re.sub(r'^help me (?:to )?', '', instructions(command(text)), flags=re.I)
     return bool((ANSWER.match(request) or REVISION.match(request))
                 and not ARTIFACT_OPERATION.search(request) and not RETRIEVAL_TARGET.search(request)
                 and not requires_execution(request)

@@ -44,6 +44,8 @@ class AnswerIntentTests(SessionFixture):
         self.fake.reply_text = 'Here is the requested answer from the supplied evidence.'
         for prompt in ('Write a four-line poem about the lake.',
                        'Please write a four-line poem about the lake.',
+                       'Help me write a four-line poem about the lake.',
+                       'Could you help me to draft a neighborhood notice?',
                        'Draft a thank-you note for my neighbor.',
                        'Compare these proposals: A costs 10, B costs 12.',
                        'Analyze the bug in this supplied code: def add(a,b): return a-b',
@@ -58,6 +60,13 @@ class AnswerIntentTests(SessionFixture):
                 self.assertEqual(answer['provider'], 'gemini')
                 self.assertNotIn('task_id', answer)
         self.assertFalse(task_queue.tasks(self.root))
+
+    def test_help_prefix_does_not_hide_tool_requirements(self):
+        from answer_intent import wants_answer
+        for text in ('Help me write this and save it to /tmp/notice.txt',
+                     'Help me research the latest release using official sources',
+                     'Help me create a pull request', 'Help me review PR #161'):
+            self.assertFalse(wants_answer(text), text)
 
 
     def test_explicit_execution_targets_and_worker_choices_remain_tasks(self):

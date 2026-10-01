@@ -10,6 +10,35 @@ from pathlib import Path
 
 
 class APIRootTests(unittest.TestCase):
+    def test_child_preserves_structured_context_and_refuses_old_helper(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'webchat').mkdir()
+            (root / 'services').mkdir()
+            for name in ('api_call.py', 'billing.py'):
+                shutil.copyfile(Path(__file__).with_name(name), root / 'webchat' / name)
+            (root / 'services/budget.py').write_text('CAP_USD = 48.0\ndef check(lane): pass\n')
+            (root / 'services/lanes.py').write_text('from contextlib import nullcontext\ndef slot(lane): return nullcontext()\n')
+            helper = root / 'services/api.py'
+            helper.write_text(
+                'def model_call(lane, prompt, purpose, vision=None, system=None, messages=None):\n'
+                '    assert system == "trusted policy"\n'
+                '    assert messages == [{"role":"user", "content":"user asks"}]\n'
+                '    assert prompt == "reference data"\n'
+                '    return "The structured helper preserved context."\n')
+            payload = json.dumps(dict(prompt='reference data', system='trusted policy',
+                                      messages=[dict(role='user', content='user asks')]))
+            command = [sys.executable, str(root / 'webchat/api_call.py'), 'minimax']
+            env = dict(os.environ, BOB_ROOT=str(root))
+            result = subprocess.run(command, env=env, input=payload, text=True, capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('preserved context', result.stdout)
+            helper.write_text('def model_call(lane, prompt, purpose):\n    raise AssertionError("must not be called")\n')
+            result = subprocess.run(command, env=env, input=payload, text=True, capture_output=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('does not support structured chat input', result.stderr)
+            self.assertNotIn('must not be called', result.stderr)
+
     def test_pinned_checkout_imports_own_services_and_loads_live_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)

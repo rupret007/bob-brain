@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Metered Gemini/MiniMax calls for web chat without conductor lane locks."""
 import base64
+import inspect
 import json
 import os
 import re
@@ -31,11 +32,19 @@ def strip_reply_tags(text):
     return text.strip()
 
 
-def split_transport(raw):
+def decode_transport(raw):
     try:
         payload = json.loads(raw)
         prompt, vision = payload["prompt"], payload.get("vision", [])
         if not isinstance(prompt, str) or not isinstance(vision, list) or len(vision) > 24:
+            raise ValueError()
+        system, messages = payload.get('system'), payload.get('messages')
+        if system is not None and not isinstance(system, str):
+            raise ValueError()
+        if messages is not None and (not isinstance(messages, list) or not messages or len(messages) > 20
+                or any(not isinstance(m, dict) or m.get('role') not in ('user', 'assistant')
+                       or not isinstance(m.get('content'), str) for m in messages)
+                or messages[-1]['role'] != 'user'):
             raise ValueError()
         for part in vision:
             if not isinstance(part, dict):
@@ -50,9 +59,14 @@ def split_transport(raw):
                 base64.b64decode(raw_b64, validate=True)
             except ValueError:
                 raise ValueError() from None
-        return prompt, vision
+        return dict(prompt=prompt, vision=vision, system=system, messages=messages)
     except (ValueError, KeyError, TypeError, AttributeError):
         raise ValueError("Invalid chat transport payload.") from None
+
+
+def split_transport(raw):
+    payload = decode_transport(raw)
+    return payload['prompt'], payload['vision']
 
 
 def main():
@@ -60,7 +74,8 @@ def main():
     if lane not in ("gemini", "minimax"):
         return 2
     try:
-        prompt, vision = split_transport(sys.stdin.read())
+        payload = decode_transport(sys.stdin.read())
+        prompt, vision = payload['prompt'], payload['vision']
     except ValueError:
         print("invalid transport payload", file=sys.stderr)
         return 1
@@ -74,8 +89,8 @@ def main():
     from api import model_call
     from lanes import slot
 
-    vision_params = getattr(model_call, "__code__", None)
-    supports_vision = vision_params is not None and "vision" in vision_params.co_varnames
+    parameters = inspect.signature(model_call).parameters
+    supports_vision = 'vision' in parameters
     if vision and not supports_vision:
         raise RuntimeError("model_call does not support vision parameter. Upgrade services/api.py.")
 
@@ -84,6 +99,11 @@ def main():
         kwargs = {"purpose": "webchat"}
         if supports_vision:
             kwargs["vision"] = vision or None
+        for name in ('system', 'messages'):
+            if payload[name] is not None:
+                if name not in parameters:
+                    raise RuntimeError('model_call does not support structured chat input. Upgrade services/api.py.')
+                kwargs[name] = payload[name]
         answer = strip_reply_tags(model_call(lane, prompt, **kwargs))
     print(answer)
     return 0
