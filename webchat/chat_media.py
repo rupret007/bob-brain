@@ -392,6 +392,121 @@ def strip_assistant_attachment_markers(content: str) -> tuple[str, list[dict]]:
     return cleaned.strip(), attachments
 
 
+def requested_attachment_ids(message: dict) -> list[str]:
+    """Resolve explicit local returns of unchanged uploads on this user turn.
+
+    This conservative selector is not a file-editing or sending capability.
+    It handles standalone directives with a unique target or an explicit set;
+    other wording still uses the normal model marker path. Only current upload
+    metadata supplies candidates. The caller must revalidate ownership.
+    """
+    from answer_intent import instructions, requires_execution
+    text = message.get('content') or ''
+    attachments = message.get('attachments') or []
+    if (message.get('role') != 'user' or not isinstance(text, str) or len(text) > 12000 or
+            not isinstance(attachments, list) or len(attachments) > MAX_ATTACHMENTS_PER_MESSAGE or
+            text.count('```') % 2 or re.search(r'uploadselection\d+asset', text, re.I)):
+        return []
+    owned = [a for a in attachments if isinstance(a, dict) and
+             isinstance(a.get('media_id'), str) and MEDIA_ID_RE.fullmatch(a['media_id'])]
+    if not owned:
+        return []
+    # Protect exact uploaded filenames, including quoted names, while removing
+    # quoted instructions. A quoted whole command remains quoted and is removed.
+    named = {}
+    for item in owned:
+        name = item.get('filename')
+        if isinstance(name, str) and name:
+            named.setdefault(name.casefold(), []).append(item)
+    selectors = {}
+    for index, (name, items) in enumerate(sorted(named.items(), key=lambda pair: -len(pair[0]))):
+        token = 'uploadselection' + str(index) + 'asset'
+        for left, right in (('"', '"'), ("'", "'"), ('`', '`'), ('“', '”'), ('‘', '’')):
+            text = re.sub(re.escape(left + name + right), token, text, flags=re.I)
+        # Bare names must look like filenames, not arbitrary instruction text.
+        # Names with spaces or no extension remain selectable when quoted.
+        if re.fullmatch(r'[\w-]+(?:[.][\w-]+)+', name):
+            text = re.sub(r'(?<!\w)' + re.escape(name) + r'(?!\w)', token, text, flags=re.I)
+        selectors[token] = items
+    unquoted = instructions(text)
+    # Apart from protected filenames, quoted material can qualify the request
+    # as well as contain examples. Do not silently drop it to grant a return.
+    if unquoted != text:
+        return []
+    text = unquoted.lower()
+    if text.count('"') % 2 or text.count('“') != text.count('”') or text.count('‘') != text.count('’'):
+        return []
+    # Never substitute the original for an edited result, infer a condition's
+    # truth, adopt reported/example instructions, or satisfy an external send.
+    excluded = (r"\b(?:not|never|no|without|don['’]?t|can['’]?t|cannot|cancel|stop|ignore|disregard|instead|"
+                r"nevermind|leave|if|unless|until|before|after|when|once|pending|while|with|by|"
+                r"example|hypothetical\w*|suppose|imagine|instructions?|tutorial|meaning)\b|\bhow to\b")
+    if re.search(excluded, text) or requires_execution(text) or re.search(r'\bnever\s+mind\b', text):
+        return []
+    pattern = (r'(?:(?:can|could|would|will) you\s+)?(?:please\s+)?'
+               r'(?P<verb>echo|return|attach|re-?attach|send back|send|show)\s+'
+               r'(?P<me>me\s+)?(?:(?P<count>all(?: of)?|both)\s+)?'
+               r'(?:(?:the|this|these|that|those|my|our|attached|uploaded|original|existing|same)\s+)*'
+               r'(?P<target>images?|photos?|pictures?|videos?|files?|attachments?|uploadselection\d+asset)'
+               r'(?P<suffix>(?:\s+(?:back|again|here|to me|in (?:this|your) (?:chat|reply)|as (?:an? )?attachments?))*)')
+    # Every companion clause must be classified. Skipping unknown clauses
+    # would turn reported text or an unfamiliar edit verb into permission to
+    # return the unmodified original. The limited read context permits the
+    # ordinary image + text/PDF question without granting transformation scope.
+    # Deliberately a noun vocabulary, not an arbitrary tail after a read verb:
+    # new edit verbs and unparsed conjunctions cannot hide inside read context.
+    noun = (r'(?:the|this|these|that|those|my|our|its|their|it|them|all|both|each|'
+            r'attached|uploaded|existing|original|dominant|main|primary|'
+            r'colou?rs?|contents?|texts?|tokens?|values?|images?|photos?|pictures?|'
+            r'videos?|files?|attachments?|documents?|pdfs?|dimensions?|sizes?|'
+            r'uploadselection\d+asset)')
+    nominal = noun + r'(?:\s+' + noun + r')*'
+    # "In PDF" may specify an output format. Read context accepts only an
+    # explicit input relation; "in" additionally needs a definite reference.
+    source = (r'\s+(?:(?:of|from|on)\s+|in\s+(?:the|this|these|that|those|my|our|attached|uploaded)\s+)'
+              + nominal)
+    read_prefix = r'(?:(?:can|could|would|will) you\s+)?(?:please\s+)?'
+    analysis = (read_prefix + r'(?:describe|identify|read|summari[sz]e|compare|analy[sz]e|explain)\s+'
+                + nominal + r'(?:' + source + r')*')
+    # "Give the token value" requests a readout; "give the image in PDF"
+    # requests a deliverable and must not silently return the original PNG.
+    readout = (read_prefix + r'give(?: me)?\s+(?:(?:the|this|these|that|those|its|their|dominant|main|primary)\s+)*'
+               r'(?:colou?rs?|tokens?(?:\s+values?)?|values?|dimensions?|sizes?)(?:' + source + r')*')
+    noun_continuation = r'(?:the\s+)?(?:attached\s+|uploaded\s+)?(?:pdf|text file|image|photo|picture|video|document|uploadselection\d+asset)s?'
+    def current_sources(clause):
+        for words, kind in ((r'images?|photos?|pictures?', 'image'), (r'videos?', 'video')):
+            if re.search(r'\b(?:' + words + r')\b', clause) and not any(a.get('kind') == kind for a in owned):
+                return False
+        if re.search(r'\bpdfs?\b', clause) and not any(
+                str(a.get('filename', '')).lower().endswith('.pdf') for a in owned):
+            return False
+        return True
+    selected, read_context = [], False
+    for clause in re.split(r'[.!?;,\n&]+|\b(?:and|then|also|plus|as well as)\b', text):
+        clause = clause.strip()
+        if not clause:
+            continue
+        match = re.fullmatch(pattern, clause.strip())
+        if not match:
+            if (re.fullmatch(analysis, clause) or re.fullmatch(readout, clause)) and current_sources(clause):
+                read_context = True
+                continue
+            if read_context and re.fullmatch(noun_continuation, clause) and current_sources(clause):
+                continue
+            return []
+        read_context = False
+        if match['verb'] in ('send', 'show') and not (match['me'] or match['suffix']):
+            return []
+        target = match['target']
+        kind = 'image' if target.rstrip('s') in ('image', 'photo', 'picture') else 'video' if target.rstrip('s') == 'video' else None
+        options = selectors.get(target, [a for a in owned if kind is None or a.get('kind') == kind])
+        plural = target.endswith('s') or match['count'] is not None
+        if not options or (match['count'] == 'both' and len(options) != 2) or (not plural and len(options) != 1):
+            return []
+        selected.extend(a['media_id'] for a in options)
+    return list(dict.fromkeys(selected))
+
+
 def public_attachment(meta: dict) -> dict:
     from urllib.parse import quote
     url = f"/api/media/{meta['media_id']}?conversation_id={quote(meta['conversation_id'], safe='')}"

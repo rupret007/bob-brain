@@ -1028,7 +1028,11 @@ class Chat(TaskDispatch):
                 else:
                     answer["content"] = repair_hollow_progress(answer["content"])
                 cleaned, outbound = strip_assistant_attachment_markers(answer["content"])
-                answer.pop("attachments", None)  # Only server-validated markers can attach media.
+                answer.pop("attachments", None)  # Provider metadata cannot bypass ownership checks.
+                from chat_media import requested_attachment_ids
+                # An explicit return of this turn's unchanged upload is an
+                # owned-file operation, not a model formatting obligation.
+                outbound = ([dict(media_id=mid) for mid in requested_attachment_ids(user_msg)] + outbound)
                 if outbound:
                     seen = set()
                     resolved = []

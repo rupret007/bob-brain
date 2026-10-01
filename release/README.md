@@ -211,3 +211,15 @@ Live replay is strictly no-send and starts no workers. Synthetic messaging, disp
 and historical fixture evals are labeled as such. They do not prove real delivery
 or execution by stopped worker services. The primary-assistant goal prohibits
 texts, emails, posts, and an Andrea notification; report completion in chat.
+
+An explicit request to return an unchanged upload on the current user turn can
+now attach that owned file even if the model omits its attachment marker. The
+selector requires a unique target or explicit set, rechecks conversation
+ownership at completion, and uses the existing cancellation and retry handling.
+Ambiguous targets, edited or converted deliverables, conditions, quoted
+instructions and unclassified companion clauses do not trigger automatic
+returns; they retain the existing model-marker path. This does not add file
+editing, external sending or selection from previous turns. The failed live
+media check retained the delivered answer but not raw provider output, so the
+original cause of the missing marker remains uncertain. Release gates remain
+unchanged; regression coverage now includes a substantive marker-free answer.
