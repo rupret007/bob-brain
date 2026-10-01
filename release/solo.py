@@ -863,6 +863,46 @@ def verify_worker_service_mode(root, sessions):
                 'Council/worker service is running while solo mode is active')
 
 
+def unchanged_services(before, after, changed=()):
+    differences = {name: dict(before=value, after=after.get(name)) for name, value in before.items()
+                   if name.startswith('svc-') and name not in changed and after.get(name) != value}
+    require(not differences, 'Unrelated durable service changed: ' + json.dumps(
+        dict(differences=differences, before=before, after=after), sort_keys=True))
+
+
+def settle_transient_services(before, *, timeout=30):
+    """Observe finite scheduler screens ending before the restart baseline.
+
+    Run under release coordination, after stopping a runner when required. Do
+    not kill a tick/pass or infer that it succeeded. Persistent service identity
+    remains strict during the wait; unknown services are never excluded.
+    """
+    from runtime import screen_sessions
+    finite = {'svc-project-tick', 'svc-conductor-pass'}
+    deadline = time.monotonic() + timeout
+    after = dict(before)
+    observed = set()
+    while finite & after.keys():
+        observed.update(after[name] for name in finite & after.keys())
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, 'Finite scheduler still active before restart: ' + json.dumps(
+            dict(before=before, after=after, observed=sorted(observed)), sort_keys=True))
+        time.sleep(min(.1, remaining))
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, 'Finite scheduler wait expired: ' + json.dumps(
+            dict(before=before, after=after, observed=sorted(observed)), sort_keys=True))
+        try:
+            after = screen_sessions(timeout=min(15, remaining))
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            raise RuntimeError('Finite scheduler inventory unavailable: ' + json.dumps(
+                dict(before=before, after=after, observed=sorted(observed),
+                     probe_failure=type(exc).__name__ + ': ' + str(exc)), sort_keys=True)) from exc
+        unchanged_services(before, after, finite)
+        require(time.monotonic() < deadline, 'Finite scheduler inventory exceeded restart wait: ' + json.dumps(
+            dict(before=before, after=after, observed=sorted(observed)), sort_keys=True))
+    return dict(before=before, after=after, observed=sorted(observed))
+
+
 @serialized
 def restart(root, pins):
     """Refresh the web server and any already enabled runner under recovery intent."""
@@ -871,53 +911,73 @@ def restart(root, pins):
     from runtime import screen_sessions
     import runner_activation
     pending = journal.pending(root)
-    with runner_activation.coordinated(root), runner_activation.refresh(root, pins, pending) as runner:
-        before = screen_sessions()
-        verify_worker_service_mode(root, before)
-        p = subprocess.run(['lsof', '-t', '-iTCP:8787', '-sTCP:LISTEN'], capture_output=True, text=True)
-        pids = p.stdout.split()
-        require(p.returncode in (0, 1) and len(pids) <= 1, 'Ambiguous server listener')
-        pid = int(pids[0]) if pids else None
-        if pid:
-            command = run(['ps', '-p', pid, '-o', 'command='])
-            require(str(root) in command and '/webchat/app.py' in command, 'Listener ownership mismatch')
-        for name, code in pins.items():
-            atomic_text(root / 'conductor/state' / (name + '-code-root'), str(code) + '\n')
-        if 'svc-webchat' in before:
-            run(['screen', '-S', before['svc-webchat'], '-X', 'quit'])
-        if pid:
+    with runner_activation.coordinated(root):
+        with runner_activation.refresh(root, pins, pending) as runner:
+            pin_paths = {name: root / 'conductor/state' / (name + '-code-root') for name in ('webchat', 'dispatch')}
+            original_pins = {name: path.read_text() for name, path in pin_paths.items()}
             try:
-                os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            for _ in range(60):
+                settled = settle_transient_services(screen_sessions())
+            except BaseException as failure:
+                # The finite pass can legitimately outlive the bounded wait. No
+                # pins or web process have changed yet: restore only the stopped
+                # required runner so transaction recovery can use its unchanged
+                # predecessor path, rather than timing out on the same pass again.
                 try:
-                    os.kill(pid, 0)
+                    require(all(path.read_text() == original_pins[name] for name, path in pin_paths.items()),
+                            'Pins changed during pre-restart wait')
+                    if runner['required']:
+                        runner_activation.start(root, Path(original_pins['dispatch'].strip()))
+                except BaseException as recovery:
+                    raise RuntimeError(str(failure) + '; pre-pin runner restoration failed: ' + str(recovery)) from failure
+                raise
+            before = settled['after']
+            verify_worker_service_mode(root, before)
+            p = subprocess.run(['lsof', '-t', '-iTCP:8787', '-sTCP:LISTEN'], capture_output=True, text=True)
+            pids = p.stdout.split()
+            require(p.returncode in (0, 1) and len(pids) <= 1, 'Ambiguous server listener')
+            pid = int(pids[0]) if pids else None
+            if pid:
+                command = run(['ps', '-p', pid, '-o', 'command='])
+                require(str(root) in command and '/webchat/app.py' in command, 'Listener ownership mismatch')
+            for name, code in pins.items():
+                atomic_text(root / 'conductor/state' / (name + '-code-root'), str(code) + '\n')
+            if 'svc-webchat' in before:
+                run(['screen', '-S', before['svc-webchat'], '-X', 'quit'])
+            if pid:
+                try:
+                    os.kill(pid, signal.SIGTERM)
                 except ProcessLookupError:
-                    break
+                    pass
+                for _ in range(60):
+                    try:
+                        os.kill(pid, 0)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(.25)
+                else:
+                    raise RuntimeError('Old web server did not exit')
+            env = dict(os.environ, BOB_ROOT=str(root), BOB_WEBCHAT_DRILLS='0')
+            run(['screen', '-dmS', 'svc-webchat', '/bin/bash', root / 'conductor/webchat/run.sh'], env=env)
+            import urllib.request
+            for _ in range(80):
+                try:
+                    with urllib.request.urlopen('http://127.0.0.1:8787/login', timeout=1) as response:
+                        if response.status == 200 and response.headers.get('X-Bob-Webchat') == '1':
+                            break
+                except OSError:
+                    pass
                 time.sleep(.25)
             else:
-                raise RuntimeError('Old web server did not exit')
-        env = dict(os.environ, BOB_ROOT=str(root), BOB_WEBCHAT_DRILLS='0')
-        run(['screen', '-dmS', 'svc-webchat', '/bin/bash', root / 'conductor/webchat/run.sh'], env=env)
-        import urllib.request
-        for _ in range(80):
-            try:
-                with urllib.request.urlopen('http://127.0.0.1:8787/login', timeout=1) as response:
-                    if response.status == 200 and response.headers.get('X-Bob-Webchat') == '1':
-                        break
-            except OSError:
-                pass
-            time.sleep(.25)
-        else:
-            raise RuntimeError('New web server did not become healthy')
-        after = screen_sessions()
-        changed = {'svc-webchat', 'svc-job-runner'} if runner['required'] else {'svc-webchat'}
-        require(all(after.get(n) == value for n, value in before.items() if n.startswith('svc-') and n not in changed),
-                'Unrelated durable service changed')
-        verify_worker_service_mode(root, after)
-        result = dict(before=before, after=after, restarted=sorted(changed))
-    result.update(after=screen_sessions(), runner=runner)
+                raise RuntimeError('New web server did not become healthy')
+            after = screen_sessions()
+            changed = {'svc-webchat', 'svc-job-runner'} if runner['required'] else {'svc-webchat'}
+            unchanged_services(before, after, changed)
+            verify_worker_service_mode(root, after)
+            result = dict(before=before, after=after, restarted=sorted(changed), transient_wait=settled)
+        final = screen_sessions()
+        unchanged_services(before, final, changed)
+        verify_worker_service_mode(root, final)
+        result.update(after=final, runner=runner)
     return result
 
 

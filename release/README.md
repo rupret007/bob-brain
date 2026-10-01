@@ -174,6 +174,18 @@ accepting activation. A runner that exceeds this window leaves a failed release
 and a recovery obligation, never a second launch or permission to kill an
 unidentified process. Explicit recovery can resume after identity is verifiable.
 
+After stopping an enabled runner under release coordination, restart waits up
+to 30 seconds for the known finite project tick and conductor pass to leave
+the screen inventory before taking its restart baseline. It never kills those
+tasks or claims that disappearance proves successful work. Every other service
+identity remains strict during the wait and restart; failures retain exact
+before/after inventories. If the wait fails before any pins or web process
+change, the required stopped runner is restored from the unchanged dispatch
+pin before the original failure propagates. Failed restoration retains both
+errors and the recovery obligation. A disabled runner is never enabled here.
+The final inventory is checked again after runner startup while coordination
+is still held, so a persistent service lost during bootstrap cannot pass.
+
 Recovery verifies receipt identity, both current pins and both snapshot hashes
 before any restart. It accepts mixed pins after a partial activation/rollback.
 A missing progress receipt can be rebuilt from the journal, while changed or
