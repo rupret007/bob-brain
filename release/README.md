@@ -159,6 +159,20 @@ finishes; they never treat an interrupted round as a green. Run
 `release/solo.py` to restore the recorded immediate predecessor. This command
 does not activate the candidate or rerun its live rounds. The matching manual
 `rollback` command also completes the journal and updates its saved live receipt.
+After a completed deployment has cleared that journal, a manual rollback binds
+the feature's existing latest summary only when its complete release identity
+matches the canonical receipt. Both publications must succeed before recovery
+is complete; an unrelated release summary is left intact.
+An unsafe or malformed optional summary cannot block recovery from the verified
+canonical receipt: it remains untouched and a publication warning is recorded.
+
+Runner startup launches one screen and gives bootstrap a 30-second monotonic
+readiness window before declaring failure. Inventory probes use the remaining
+deadline; a screen without its lifetime lock is not ready. The controller still
+verifies the actual runner PID, locked script and exact dispatch source before
+accepting activation. A runner that exceeds this window leaves a failed release
+and a recovery obligation, never a second launch or permission to kill an
+unidentified process. Explicit recovery can resume after identity is verifiable.
 
 Recovery verifies receipt identity, both current pins and both snapshot hashes
 before any restart. It accepts mixed pins after a partial activation/rollback.

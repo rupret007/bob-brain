@@ -311,6 +311,75 @@ solo.transaction(root, record, path, activate, live, publish=publish, final_path
             solo.rollback(self.root, self.path)
         self.assertIsNone(journal.pending(self.root))
 
+    def published_release(self):
+        self.record.update(feature='improve', status='LIVE_PASS', all_pass=True)
+        solo.atomic_json(self.path, self.record)
+        self.final = self.root / 'conductor/reviews/SOLO-0018-improve-live.json'
+        self.final.parent.mkdir(parents=True, exist_ok=True)
+        solo.atomic_json(self.final, self.record)
+        self.synthetic_restart(self.root, {n: self.folder / 'candidate' for n in ('webchat', 'dispatch')})
+
+    def manual_rollback(self):
+        with patch.object(solo, 'restart', side_effect=self.synthetic_restart), \
+                patch.object(solo, 'versions', side_effect=self.synthetic_versions), \
+                patch.object(solo, 'release_recovery'):
+            solo.rollback(self.root, self.path)
+
+    def test_manual_rollback_updates_matching_latest_summary(self):
+        self.published_release()
+        self.manual_rollback()
+        self.assertEqual(self.path.read_bytes(), self.final.read_bytes())
+        self.assertEqual(json.loads(self.final.read_text())['status'], 'ROLLED_BACK')
+        self.assertIsNone(journal.pending(self.root))
+
+    def test_manual_rollback_never_overwrites_another_release_summary(self):
+        self.published_release()
+        other = dict(self.record, rollback=str(self.root / 'rollbacks/another-release'))
+        solo.atomic_json(self.final, other)
+        original = self.final.read_bytes()
+        self.manual_rollback()
+        self.assertEqual(self.final.read_bytes(), original)
+        self.assertTrue(json.loads(self.path.read_text())['rolled_back'])
+        self.assertIsNone(journal.pending(self.root))
+
+    def test_manual_rollback_alias_failure_keeps_recoverable_publication_obligation(self):
+        self.published_release()
+        original = solo.atomic_json
+        def publish(path, value):
+            if Path(path) == self.final:
+                raise OSError('manual rollback alias failed')
+            original(path, value)
+        with patch.object(solo, 'atomic_json', side_effect=publish):
+            with self.assertRaisesRegex(OSError, 'manual rollback alias failed'):
+                self.manual_rollback()
+        self.assertEqual(journal.pending(self.root)['final_path'], str(self.final))
+        self.assertEqual(json.loads(self.path.read_text())['status'], 'ROLLED_BACK')
+        self.assertEqual(json.loads(self.final.read_text())['status'], 'LIVE_PASS')
+        self.recovery().assert_not_called()
+        self.assertEqual(self.path.read_bytes(), self.final.read_bytes())
+        self.assertIsNone(journal.pending(self.root))
+
+    def test_unsafe_or_malformed_summary_cannot_block_canonical_rollback(self):
+        for fault in ('symlink', 'public', 'malformed', 'not-object'):
+            with self.subTest(fault=fault):
+                self.final.unlink(missing_ok=True)
+                self.published_release()
+                if fault == 'symlink':
+                    self.final.unlink()
+                    self.final.symlink_to(self.path)
+                elif fault == 'public':
+                    self.final.chmod(0o644)
+                else:
+                    self.final.write_text('{' if fault == 'malformed' else '[]')
+                before = self.final.lstat()
+                self.manual_rollback()
+                after = self.final.lstat()
+                self.assertEqual((before.st_ino, before.st_mtime_ns), (after.st_ino, after.st_mtime_ns))
+                outcome = json.loads(self.path.read_text())
+                self.assertTrue(outcome['rolled_back'])
+                self.assertIn('left unchanged', outcome['rollback_publication_warning'])
+                self.assertIsNone(journal.pending(self.root))
+
     def test_failed_journal_removal_durability_restores_obligation_before_rollback(self):
         original = journal.os.fsync
         failed = []

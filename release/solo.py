@@ -1132,6 +1132,35 @@ def deploy(args):
     print('LIVE_PASS ' + sha + ' rollback=' + str(folder), flush=True)
 
 
+def rollback_publication(root, record):
+    """Bind only this release's existing latest alias to manual recovery.
+
+    The activation journal is gone after a successful deployment. A later
+    manual rollback must publish its outcome to the same derived summary, but
+    must never overwrite a summary belonging to a different release.
+    """
+    feature = record.get('feature')
+    if feature not in ORDER:
+        return None
+    path = root / 'conductor/reviews' / ('SOLO-0018-' + feature + '-live.json')
+    try:
+        published = journal.private_json(path)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, RuntimeError):
+        # A derived summary cannot prevent recovery from a verified canonical
+        # receipt. Do not follow or replace an unsafe/unreadable publication.
+        record['rollback_publication_warning'] = 'Latest release summary was not safely readable; left unchanged.'
+        return None
+    if not isinstance(published, dict):
+        record['rollback_publication_warning'] = 'Latest release summary was malformed; left unchanged.'
+        return None
+    if published.get('feature') == feature and journal.identity(published) == journal.identity(record):
+        return path
+    record['rollback_publication_warning'] = 'Latest release summary belongs to another release; left unchanged.'
+    return None
+
+
 @serialized
 def rollback(root, path):
     import runner_activation
@@ -1145,7 +1174,7 @@ def rollback(root, path):
             record = journal.private_json(path)
             # Validate before creating a recovery obligation for a stale receipt.
             verify_recovery_pins(root, record)
-            intent = journal.begin(root, record, path)
+            intent = journal.begin(root, record, path, rollback_publication(root, record))
         recover(root, record)
         atomic_json(path, record)
         if intent['final_path']:

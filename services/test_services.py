@@ -35,6 +35,63 @@ class ServicesTest(unittest.TestCase):
         self.tmp.cleanup()
     def folder(self):
         p=self.root/'job';p.mkdir();return p
+    def test_start_waits_for_slow_bootstrap_after_one_launch(self):
+        elapsed = [0.0]
+        def sleep(seconds):
+            elapsed[0] += seconds
+        with patch.object(runtime, 'run', return_value=NS(returncode=0)) as launch, \
+                patch.object(runtime, 'screen_sessions', return_value={'svc-job-runner': '123.svc-job-runner'}), \
+                patch.object(runtime, 'service_lock_held', side_effect=lambda name: elapsed[0] >= 12), \
+                patch.object(runtime.time, 'monotonic', side_effect=lambda: elapsed[0]), \
+                patch.object(runtime.time, 'sleep', side_effect=sleep):
+            self.assertTrue(runtime.start_screen('job-runner'))
+        self.assertGreaterEqual(elapsed[0], 12)
+        self.assertLess(elapsed[0], 30)
+        launch.assert_called_once()
+
+    def test_start_times_out_without_both_screen_and_lifetime_lock(self):
+        for screen, locked in ((True, False), (False, True)):
+            with self.subTest(screen=screen, locked=locked):
+                elapsed = [0.0]
+                def sleep(seconds):
+                    elapsed[0] += seconds
+                with patch.object(runtime, 'run', return_value=NS(returncode=0)) as launch, \
+                        patch.object(runtime, 'screen_sessions', return_value={'svc-job-runner': '123.svc-job-runner'} if screen else {}), \
+                        patch.object(runtime, 'service_lock_held', return_value=locked), \
+                        patch.object(runtime.time, 'monotonic', side_effect=lambda: elapsed[0]), \
+                        patch.object(runtime.time, 'sleep', side_effect=sleep):
+                    self.assertFalse(runtime.start_screen('job-runner'))
+                self.assertEqual(elapsed[0], 30)
+                launch.assert_called_once()
+
+    def test_failed_screen_launch_does_not_poll_or_retry(self):
+        with patch.object(runtime, 'run', return_value=NS(returncode=1)) as launch, \
+                patch.object(runtime, 'screen_sessions') as sessions, patch.object(runtime.time, 'sleep') as sleep:
+            self.assertFalse(runtime.start_screen('job-runner'))
+        launch.assert_called_once()
+        sessions.assert_not_called()
+        sleep.assert_not_called()
+
+    def test_readiness_probe_receives_remaining_deadline_and_timeout_is_failure(self):
+        elapsed = [0.0]
+        limits = []
+        def sessions(*, timeout):
+            limits.append(timeout)
+            elapsed[0] += timeout
+            if len(limits) == 2:
+                raise subprocess.TimeoutExpired(['screen', '-ls'], timeout)
+            return {}
+        def sleep(seconds):
+            elapsed[0] += seconds
+        with patch.object(runtime, 'run', return_value=NS(returncode=0)) as launch, \
+                patch.object(runtime, 'screen_sessions', side_effect=sessions), \
+                patch.object(runtime.time, 'monotonic', side_effect=lambda: elapsed[0]), \
+                patch.object(runtime.time, 'sleep', side_effect=sleep):
+            self.assertFalse(runtime.start_screen('job-runner'))
+        self.assertEqual(limits, [15, 14.8])
+        self.assertEqual(elapsed[0], 30)
+        launch.assert_called_once()
+
     def recover(self):
         with patch.object(runtime,'screen_sessions',return_value={}):jobs.recover()
     def test_journal_tail_repair_preserves_blocked_job(self):
