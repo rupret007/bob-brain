@@ -164,6 +164,16 @@ Help with songs in chat; do not invent a Songs panel, music controls or integrat
 Logic Pro changes need explicit yes; read-only project information is fine.
 """
 
+CONTENT_REQUIREMENTS = """For practical drafts such as invitations and notices, use
+only supplied dates, locations, arrangements and promises. If details are missing,
+write usable neutral wording that omits them; use a placeholder only if essential.
+Fiction and poetry may invent their fictional setting. Respect exact sentence or
+line counts: greetings, preambles and closing offers count too. Return just the
+requested content when a precise format is requested.
+"""
+RULES += CONTENT_REQUIREMENTS
+ANSWER_RULES += CONTENT_REQUIREMENTS
+
 UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 KEY = re.compile(r"\b(?:sk-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{25,}|gh[pousr]_[A-Za-z0-9_]{25,}|github_pat_[A-Za-z0-9_]{25,})\b")
 FAST_ORDER = ("gemini", "minimax", "cursor", "codex")
