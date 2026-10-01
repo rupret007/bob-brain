@@ -4,6 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
+const installVoiceDiagnostics = require('./voice_proof_diagnostics.cjs');
 const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
 const root = process.env.BOB_VOICE_PROOF_ROOT;
 if (!root) throw new Error('Set BOB_VOICE_PROOF_ROOT to an isolated proof-server data folder.');
@@ -17,6 +18,7 @@ if (!fixtures) throw new Error('Set BOB_VOICE_FIXTURES to the folder with questi
 fs.mkdirSync(evidence, {recursive:true});
 
 async function instrument(page) {
+  await page.addInitScript(installVoiceDiagnostics);
   await page.addInitScript(() => {
     const NativeAudio = window.AudioContext;
     const NativeSocket = window.WebSocket;
@@ -99,6 +101,7 @@ async function instrument(page) {
     throw new Error('Timed out waiting for browser condition: ' + predicate.toString());
   };
   const errors = [], results = {engine,url,synthetic_microphone:true,real_provider:true,checks:[]};
+  let stage = 'startup', proofConversationId = null;
   page.on('pageerror', e => errors.push(e.message));
   await instrument(page);
   const screenshot = name => page.screenshot({path:path.join(evidence,`${engine}-${name}.png`)});
@@ -108,16 +111,18 @@ async function instrument(page) {
     await page.locator('#password').fill(fs.readFileSync(server.password_file,'utf8').trim());
     await page.locator('#login-form button').click();await page.waitForURL(url+'/');
     await page.waitForFunction(()=>!document.querySelector('#message').disabled);
-    await page.evaluate(async()=>{
+    proofConversationId=await page.evaluate(async()=>{
       const session=await (await fetch('/api/session')).json();
       const c=await (await fetch('/api/conversations',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrf},body:'{}'})).json();
       localStorage.setItem('bob.conversation',c.id);
+      return c.id;
     });
     await page.reload();await page.waitForFunction(()=>!document.querySelector('#message').disabled);
     errors.length = 0; // Initial navigation may abort the previous page's fetches.
     // Record only allowlisted playback diagnostics, never provider payloads or credentials.
     await page.evaluate(()=>{
       voiceProof.playbackErrors=[];voiceProof.maxQueuedAudioSeconds=0;
+      window.voiceEvents.wrapFailure(window.BobVoice.prototype,state=>{voiceProof.beforeFailure=state;});
       const play=window.BobVoice.prototype.play;
       window.BobVoice.prototype.play=function(s,data){
         try{return play.call(this,s,data);}
@@ -136,7 +141,7 @@ async function instrument(page) {
     await page.waitForFunction(()=>document.querySelector('#call-dialog').dataset.phase==='listening',null,{timeout:40000});
     await screenshot('iphone-listening');
     const firstTurn=await page.evaluate(()=>voiceProof.turns);
-    await feed('question-short');
+    stage='question-short';await feed('question-short');
     await page.waitForFunction(n=>voiceProof.turns>n,firstTurn,{timeout:45000});
     assert.match(await page.locator('.call-bob').last().textContent(),/send/i);
     assert.ok((await page.locator('.call-bob').last().textContent()).trim().split(/\s+/).length <= 45,
@@ -146,7 +151,7 @@ async function instrument(page) {
     {
       const before=await page.evaluate(()=>({turns:voiceProof.turns,toolResponses:voiceProof.toolResponses,replies:document.querySelectorAll('.call-bob').length,
         outputPackets:voiceProof.outputPackets}));
-      await feed('story-complete');
+      stage='story-complete';await feed('story-complete');
       await page.waitForFunction(before=>voiceProof.toolResponses>before.toolResponses
         && voiceProof.outputPackets>voiceProof.outputAtToolResponse
         && voiceProof.turns>voiceProof.turnsAtToolResponse,before,{timeout:90000});
@@ -176,9 +181,9 @@ async function instrument(page) {
     }
     {
       const before=await page.evaluate(()=>({interruptions:voiceProof.interruptions,stops:voiceProof.stops,starts:voiceProof.starts}));
-      await feed('story');
+      stage='story';await feed('story');
       await page.waitForFunction(n=>voiceProof.starts>n,before.starts,{timeout:45000});
-      await feed('interrupt');
+      stage='interrupt';await feed('interrupt');
       await page.waitForFunction(n=>voiceProof.interruptions>n,before.interruptions,{timeout:20000});
       const after=await page.evaluate(()=>({interruptions:voiceProof.interruptions,stops:voiceProof.stops}));
       assert.ok(after.stops>before.stops);results.barge_in={before,after};
@@ -190,7 +195,7 @@ async function instrument(page) {
       await page.waitForTimeout(2000);
       await page.waitForFunction(()=>document.querySelector('#call-dialog').dataset.phase==='listening',null,{timeout:45000});
       const versionBefore=await page.evaluate(()=>({tools:voiceProof.tools,responses:voiceProof.toolResponses}));
-      await feed('tool');
+      stage='version-tool';await feed('tool');
       await page.waitForFunction(n=>voiceProof.tools>n,versionBefore.tools,{timeout:45000});
       // The spoken acknowledgement can vary. Only the durable server receipt
       // proves that the actual request was dispatched.
@@ -225,13 +230,14 @@ async function instrument(page) {
     results.media=await page.evaluate(()=>({inputPackets:voiceProof.inputPackets,outputPackets:voiceProof.outputPackets,outputBytes:voiceProof.outputBytes,
       starts:voiceProof.starts,stops:voiceProof.stops,maxQueuedAudioSeconds:voiceProof.maxQueuedAudioSeconds,
       playbackErrors:voiceProof.playbackErrors,tracksEnded:voiceProof.tracks.every(t=>t.readyState==='ended'),socketsClosed:voiceProof.sockets.every(s=>s.readyState===3)}));
+    results.protocol=await page.evaluate(()=>window.voiceEvents.snapshot());
     assert.ok(results.media.inputPackets>10&&results.media.outputBytes>10000&&results.media.starts>0);
     assert.ok(results.media.tracksEnded&&results.media.socketsClosed);results.checks.push('hangup releases microphone and audio transport');
-    await page.locator('#end-call').click();await page.reload();
+    stage='saved-transcript';await page.locator('#end-call').click();await page.reload();
     await page.waitForFunction(()=>/Instinct/i.test(document.querySelector('#messages').textContent));
     results.checks.push('transcript persists through reload');await screenshot('desktop-saved-chat');
     // Browser-level denial recovery with no provider call.
-    await page.setViewportSize({width:390,height:844});
+    stage='startup-recovery';await page.setViewportSize({width:390,height:844});
     await page.evaluate(()=>{Object.defineProperty(Object.getPrototypeOf(navigator.mediaDevices),'getUserMedia',{configurable:true,writable:true,
       value:async()=>{throw new DOMException('Permission denied','NotAllowedError');}});});
     await page.locator('#live-call').click();
@@ -275,9 +281,34 @@ async function instrument(page) {
     fs.writeFileSync(path.join(evidence,`${engine}-proof.json`),JSON.stringify(results,null,2)+'\n');
     console.log(JSON.stringify(results,null,2));
   } catch(error){
+    process.exitCode=1;console.error(error.message);
     await screenshot('failure').catch(()=>{});
-    console.error(error.message);console.error('UI:',await page.locator('#call-status').textContent().catch(()=>''));
-    console.error('Page errors:',errors);process.exitCode=1;
+    const metadata=await page.evaluate(()=>({protocol:window.voiceEvents?.snapshot(),beforeFailure:window.voiceProof?.beforeFailure,
+      tools:voiceProof.tools,toolResponses:voiceProof.toolResponses,turns:voiceProof.turns,
+      interruptions:voiceProof.interruptions,input:voiceProof.inputPackets,output:voiceProof.outputPackets,
+      playbackErrors:voiceProof.playbackErrors,maxQueuedAudioSeconds:voiceProof.maxQueuedAudioSeconds})).catch(()=>null);
+    const ownedConversation=proofConversationId?await page.evaluate(async id=>{
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3000);
+      try{
+        const response=await fetch('/api/conversations/'+encodeURIComponent(id),{signal:controller.signal});
+        if(!response.ok)return {available:false};
+        const c=await response.json();if(c.id!==id)return {available:false};
+        const hash=async text=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(String(text||'')))))
+          .map(b=>b.toString(16).padStart(2,'0')).join('');
+        const allowed=(value,choices)=>choices.includes(value)?value:'other';
+        return {available:true,message_count:c.messages.length,messages:await Promise.all(c.messages.slice(-100).map(async m=>({
+          role:allowed(m.role,['user','assistant','system']),status:allowed(m.status,['done','running','queued','error','waiting','cancelled']),
+          provider:allowed(m.provider,['gemini','dispatcher','voice','system']),content_sha256:await hash(m.content),
+          request_sha256:await hash(m.request_id),content_bytes:new TextEncoder().encode(String(m.content||'')).length,
+          voice_interrupted:m.voice_interrupted===true,has_task:!!(m.task_id||m.task_ids?.length)})))};
+      }finally{clearTimeout(timer);}
+    },proofConversationId).catch(()=>({available:false})):null;
+    try{
+      fs.writeFileSync(path.join(evidence,`${engine}-failure.json`),JSON.stringify({ok:false,engine,sha:server.sha,stage,
+        page_error_count:errors.length,metadata,owned_conversation:ownedConversation},null,2)+'\n');
+    }catch(_){console.error('Voice browser failure metadata could not be saved');}
+    console.error('UI:',await page.locator('#call-status').textContent().catch(()=>''));
+    console.error('Page errors:',errors);
     if(results.requested_story)console.error('Requested story diagnostics:',JSON.stringify(results.requested_story));
     console.error('Media diagnostics:',await page.evaluate(()=>({contexts:voiceProof.contexts.map(c=>c.state),microphone:voiceProof.microphoneContext?.state,
       tracks:voiceProof.tracks.map(t=>t.readyState),sockets:voiceProof.sockets.map(s=>s.readyState),closes:voiceProof.closes,input:voiceProof.inputPackets,output:voiceProof.outputPackets,

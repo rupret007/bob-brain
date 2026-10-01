@@ -118,7 +118,8 @@ def tick():
                     usage = budget.status(lane)
                     rate = budget.RATES[lane]
                     estimate = ((len(pending["prompt"].encode()) + 8192) * max(rate[0], rate[3]) + 8192 * rate[1]) / 1_000_000
-                    if usage["committed_usd"] + estimate > usage["cap_usd"] * .95:
+                    if usage['tier'] == 'stop' or (usage['cap_usd'] is not None and
+                            usage["committed_usd"] + estimate > usage["cap_usd"] * .95):
                         continue
                 row = task_queue.claim(ROOT, lane, identifier=pending["id"], allow_fallback=True,
                                        limit=health[lane].get("capacity", task_queue.capacity(lane)))

@@ -1,5 +1,38 @@
 # Solo Web Bob releases
 
+Typed answer turns requiring reasoning or precise output use Gemini 3.8 Flash
+with high thinking through the existing metered generateContent path. Ordinary,
+voice and image turns retain their checked Gemini 2.5 profile; this adds no tools.
+The API uses native completed final text instead of asking the model to write
+XML transport tags. Short native answers are valid; empty, thought-only and
+truncated responses still fail. Legacy worker extraction is unchanged.
+Gemini 3.8 reservations use the published post-promotion $1.50/$7.50 rates per
+million input/output tokens; settlement uses $0.75/$3.75 through 2026 and the
+higher rates from 2027. Output includes thinking. Pricing checked 2026-10-01 at
+https://ai.google.dev/gemini-api/docs/pricing; cached input is conservatively
+counted at the full input rate. A model upgrade is not evidence of answer quality:
+the frozen candidate still needs the affected real sample and all release gates.
+
+Jeff authorized Gemini on 2026-10-01 until its prepaid allowance needs refill.
+The checked default local Gemini dollar ceiling is now absent; cost reservations
+and settlements remain metered, and a finite runtime override can still tighten
+admission (zero stops it). MiniMax remains $48 with95% admission. Recorded
+spend is not an observed prepaid account balance. An explicit payment-required
+or depleted-prepayment response stops text/worker attempts durably, including
+new voice credential requests after that observation. Ordinary429rate limits
+remain distinct. Existing voice calls and browser-only voice errors do not
+write this funding marker. A failure to persist the marker stops the current
+attempt and requires operator repair; durable future suppression is unverified
+if the filesystem cannot save it. After Jeff confirms the funding problem is
+resolved, the operator may use the checked `budget.authorize_refill_retry(note)`;
+no background probe clears it or claims a verified balance. No purchase or
+auto-reload is authorized by this policy.
+
+The native receiver return procedure is `state/GROK-RECEIVER.md`. Install its
+reference in Bob's existing local startup handoff, preserving older instructions.
+Only native Grok may consume/checkpoint/ACK its batch. A compatibility-reader
+bootstrap receipt does not prove current live publication or automatic return.
+
 Jeff's 2026-09-29 instruction replaces the old Gemini/MiniMax BOTH_PASS and
 worker-preflight release gates. Use `release/solo.py`; the old scripts and failed
 receipts are historical evidence, not the active deployment path. Do not run the
@@ -40,6 +73,14 @@ barge-in, a harmless version tool, persisted transcripts and resource cleanup
 must pass. These product calls never invoke model reviewers or coding workers.
 Synthetic microphone testing does not claim physical iPhone microphone proof.
 
+Failed voice checks retain bounded protocol metadata: event order, successful
+tool sends, completion counts, sanitized close classification and pending audio
+and tool state. Only the proof-created conversation's result statuses and content
+hashes are saved; the isolated server preserves the same metadata before deleting
+its temporary fixture. No raw close reasons, tokens, model payloads or unrelated
+conversation text enter these diagnostics. A diagnostic result is not a release
+green, and an unexplained disconnect remains a recorded failure.
+
 Improvement voice checks also complete a requested longer story through the real
 Gemini writing API and spoken playback, while retaining a brief-answer check.
 The isolated server uses private fixture history and permits only the Gemini API
@@ -77,6 +118,23 @@ unheld executor proof belongs in a dedicated conversation after LIVE_PASS; it
 must verify actual execution and result/source integrity, not just acceptance.
 Ordinary status questions still use server observations. Passing routing probes
 or a local suite does not establish model-answer quality or Grok superiority.
+
+Once that suite has a verified result, improvement continuations retain its
+receipt and source identity, link the full result, and prepare a saved local
+capability worksheet. They must not repeat a test-log dump as if it answered a
+new research goal. An explicit, unquoted Grok research instruction may advance
+one bounded existing web-search attempt for that saved outcome. Inspection-only
+and offline restrictions persist across turns and restarts. Search admission is
+saved before network I/O; interrupted outcomes remain unknown and are not
+automatically repeated. Search leads are not verified first-party evidence or
+proof of Grok parity. Enable follow-ups report what is already configured;
+they do not change settings or launch another worker.
+
+Explanations may discuss supplied generic job states and negative evidence
+without being replaced by an operational disclaimer. Such data can carry into
+one adjacent explicit evidence follow-up, never from assistant claims or across
+a corrected state. Direct, owned, named, current-effect and receipt-ID claims
+still require real execution evidence, including when appended to a denial.
 
 The current controller holds `conductor/locks/webbob-release.lock` through
 preflight, snapshots, activation, both live rounds, recovery and publication.

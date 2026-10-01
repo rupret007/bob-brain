@@ -4,7 +4,10 @@ import re
 
 NO_DISPATCH = "I did not start, assign, or queue any work in this turn."
 WORKERS = r"(?:Codex|Claude|Cursor|Gemini|MiniMax|the (?:system|dispatcher|workers?)|all (?:LLMs|workers))"
-EFFECT = r"(?:start(?:ed|ing)?|creat(?:e|ed|ing)\b[^.!?\n]{0,60}\b(?:jobs?|tasks?)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|add(?:ed|ing)? work|put .{0,40} to work|kick(?:ed|ing)? off)"
+PLACEMENT_VERB = r"(?:put(?:ting)?|plac(?:e|ed|ing)|add(?:ed|ing)?|mov(?:e|ed|ing)|send(?:ing)?|sent|transfer(?:red|ring)?|submit(?:ted|ting)?)"
+QUEUE_PLACEMENT = (PLACEMENT_VERB + r"\b[^.;!?\n]{0,70}\b(?:in(?:to)?|to)\s+"
+                   r"(?:(?:a|an|the|my|your|our|this|that)\s+)?queue\b")
+EFFECT = r"(?:start(?:ed|ing)?|creat(?:e|ed|ing)\b[^.!?\n]{0,60}\b(?:jobs?|tasks?)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|add(?:ed|ing)? work|put .{0,40} to work|kick(?:ed|ing)? off|" + QUEUE_PLACEMENT + r")"
 CLAIM = re.compile(
     r"\b(?:I|we|Bob|" + WORKERS + r")\b[^.!?\n]{0,90}\b" + EFFECT + r"\b|"
     r"(?:^|[.!?\n]\s*)(?:queued|assigned|started|dispatched|launched|scheduled)\b|"
@@ -19,11 +22,47 @@ CLAIM = re.compile(
 JOB_ID = re.compile(r"\bwebchat-[a-f0-9]{32}\b")
 # In an explanation, generic jobs are examples. Owner references and named
 # jobs still make concrete claims; they need the same real receipts as actions.
-REFERENCE_TARGET = (r"\b(?:your|our|my|this|that|these|those)\b[^.;!?\n]{0,60}\b(?:jobs?|tasks?|work|council)\b|"
-                    r"\bthe\s+(?:(?!(?:a|an|the|is|are|was|were|has|have|means|when|once|if|until|job|task|work|queue|state|queued|running|scheduled|assigned|waiting)\b)[\w'-]+\s+){1,4}(?:job|task)\b")
+# A determiner belongs to its noun phrase, not to any later job in a clause.
+# "proven that the job..." and "these conditions indicate the work..." are
+# reports about evidence, not ownership of a task. Do not cross another
+# determiner, a predicate, or a clause boundary when looking for the subject.
+TARGET_MODIFIER = (r"(?!(?:a|an|the|your|our|my|this|that|these|those|is|are|was|were|has|have|had|"
+                   r"does|do|did|can|could|will|would|means|mean|shows?|proves?|indicates?|establishes?|"
+                   r"and|or|but|which|when|once|if|until|job|jobs|task|tasks|work|council|"
+                   r"queue|state)\b)[\w'-]+\s+")
+REFERENCE_TARGET = (r"\b(?:your|our|my)\s+(?:" + TARGET_MODIFIER + r"){0,4}(?:jobs?|tasks?|work|council)\b|"
+                    r"\b(?:this|that)\s+(?:" + TARGET_MODIFIER + r"){0,4}(?:job|task|work|council)\b|"
+                    r"\b(?:these|those)\s+(?:" + TARGET_MODIFIER + r"){0,4}(?:jobs|tasks)\b|"
+                    # A state label alone is not a job name. Ownership still
+                    # binds "your queued task"; another modifier identifies
+                    # named work such as "the scheduled parser repair job".
+                    r"\bthe\s+(?!(?:(?:queued|running|started|scheduled|assigned|waiting)\s+){1,4}(?:job|task)\b)"
+                    r"(?:" + TARGET_MODIFIER + r"){1,4}(?:job|task)\b")
+ASSERTION_AUX = r"(?:is|are|was|were|has|have|had|be|been|being|will|would|shall|should|can|could|may|might|must|get|gets|got)"
+ASSERTION_ADVERB = r"(?:now|just|already|still|also|then|[a-z]+ly)"
+QUEUE_STATE = (r"in\s+(?:(?:a|an|the|my|your|our|this|that|[\w]+['’]s)\s+)?"
+               r"(?:" + TARGET_MODIFIER + r"){0,3}queue\b")
+# Recognize a predicate associated with the target, not any effect word later
+# in its sentence. A new imperative or noun phrase does not inherit ownership:
+# "review your tasks, note that a queued receipt..." is a guide, not dispatch.
+# Keep modifiers and shared-subject coordination such as "the task you requested
+# was inspected and queued", including a closed parenthetical or relative.
+TARGET_PREDICATE = (
+    r"[*_]*\s*(?:[,(:]\s*[^,;.!?\n]{1,60}[,)]+\s*)?"
+    r"(?:(?:,\s*)?(?:that|which)\s+)?"
+    r"(?:(?:I|you|we|they|he|she)\s+[a-z]+\s+)?"
+    r"(?::\s*)?"
+    # Negation normalization removes one predicate only. Its positive
+    # continuation still belongs to this subject, including after a comma.
+    r"(?:has no established action\s*,?\s*(?:and|but|yet|then)\s+|"
+    r"(?:" + ASSERTION_AUX + r")\s+[a-z]+\s+(?:and|then|but)\s+|"
+    r"(?:" + ASSERTION_AUX + r"|" + ASSERTION_ADVERB + r")\s+|"
+    r"[a-z]+(?:ed|en)\s+(?:" + ASSERTION_ADVERB + r"\s+){0,2}(?:and|then|but)\s+|"
+    r"(?:and|then|but)\s+){0,10}"
+    r"(?:" + EFFECT + r"|" + QUEUE_STATE + r")\b")
 REFERENCE_EFFECT = re.compile(
     r"(?:^|[.!?\n]\s*)(?:queued|assigned|started|dispatched|launched|scheduled)\b|"
-    r"(?:" + REFERENCE_TARGET + r")[^.;!?\n]{0,80}\b" + EFFECT + r"\b|"
+    r"(?:" + REFERENCE_TARGET + r")" + TARGET_PREDICATE + r"|"
     r"\b(?:the|a) (?:job|task) (?:is|was|has|had)\s+(?:(?:just|now|already|been)\s+)*" + EFFECT + r"\b", re.I)
 DIRECT_CLAIM = re.compile(
     r"\b(?:I|we|Bob|" + WORKERS + r")\b[^.!?\n]{0,90}\b" + EFFECT + r"\b|"
@@ -33,35 +72,115 @@ DIRECT_CLAIM = re.compile(
 )
 
 
+def verbal_effects(prose):
+    """Disambiguate the bare verb 'queue' from a determined/locative noun.
+
+    Used only for actor claims. A concrete job's queue state remains a claim
+    under REFERENCE_EFFECT. Placement into a queue is an effect, too. Mask
+    only other noun mentions and preserve offsets for bounded actor scans.
+    """
+    placements = {m.end() - len('queue') for m in re.finditer(QUEUE_PLACEMENT, prose, re.I)}
+    return re.sub(r"(\b(?:a|an|the|my|your|our|this|that|in|into|on|from|of|[\w]+['’]s)\s+)queue\b",
+                  lambda m: m[0] if m.end() - len('queue') in placements else m[1] + ' ' * len('queue'),
+                  prose, flags=re.I)
+
+
+def unasserted_prose(prose):
+    """Mask a negative predicate, never a later positive effect assertion.
+
+    This text is used only for claim detection. The delivered answer retains
+    its original wording. Contrast, coordination and punctuation end the scope;
+    a disclaimer cannot shelter an appended action or receipt.
+    """
+    # Match one immediate predicate, never a tail of arbitrary words. In
+    # particular, EFFECT contains object-spanning forms such as create...job
+    # that must not be used to erase the scope of a negation.
+    verb = (r'(?:start(?:ed|ing)?|creat(?:e|ed|ing)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|'
+            r'dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|'
+            + PLACEMENT_VERB + r'|kick(?:ed|ing)? off|running|working|in progress|picked up)\b')
+    denial = (r"\b(?:(?:does|do|did|would|could)(?: not|n['’]t)|cannot|can['’]t)\s+"
+              r"(?:prove|establish|show|confirm|mean|demonstrate|indicate)\b|"
+              r"\bno (?:evidence|proof|record)\s+(?:shows?|proves?|establishes?|confirms?|that)\b|"
+              r"\bnot that\b")
+    subject = (r'(?:(?:the|a|your|our|my|this|that)\s+)?(?:work|jobs?|tasks?|tests?)|'
+               r'I|we|Bob|' + WORKERS)
+    predicate = (r'\s+(?:that\s+)?(?:' + subject + r')\s+'
+                 r'(?:(?:has|have|had|is|are|was|were)\s+)?(?:been\s+)?' + verb)
+    prose = re.sub(r'(?:' + denial + ')' + predicate, 'unproven assertion', prose, flags=re.I)
+    # Auxiliary negation belongs to this predicate only, not the sentence.
+    prose = re.sub(r"\b(?:(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|should)"
+                   r"(?: not|n['’]t)|cannot|won['’]t|can['’]t|shan['’]t)\s+"
+                   r"(?:(?:yet|ever|actually|already|currently|be|have|been|being)\s+){0,3}" + verb,
+                   'has no established action', prose, flags=re.I)
+    # A future offer explicitly contingent on the owner's confirmation is not
+    # a current effect. Mask just its predicate, keeping any following claim.
+    prose = re.sub(r"\b(?:just\s+)?say\s+(?:go|yes)\s+and\s+I(?:['’]ll| will)\s+" + verb,
+                   'an offer awaiting confirmation', prose, flags=re.I)
+    return prose
+
+
+GENERIC_STATE = re.compile(
+    r'\b(?:the|a) (?P<subject>job|task)\s+(?:is|was|has been|had been)\s+'
+    r'(?:(?:marked|listed|shown|described|labelled|labeled)\s+(?:as\s+)?)?'
+    r'(?P<state>queued|running|started|assigned|scheduled)\b', re.I)
+CURRENT_EFFECT = re.compile(r'\b(?:now|just|already|currently|today|here|this machine)\b', re.I)
+
+
+def reference_context(text, conversation):
+    """One adjacent user-supplied reference may support an explicit follow-up.
+
+    Never inherit state from assistant prose, skip across a new topic, or use
+    old facts to undo a correction. This supplies discussion data only.
+    """
+    from answer_intent import conceptual
+    from conversation_focus import CORRECTION
+    if (not re.search(r'\b(?:same|supplied|provided) (?:evidence|facts|data)\b', text, re.I)
+            or GENERIC_STATE.search(text) or CORRECTION.match(text.strip())
+            or re.search(r'\b(?:jobs?|tasks?|work)\s+(?:is|are|was|were|has|have|had)\b|'
+                         r'\b(?:no longer|correction|actually|instead)\b', text, re.I)):
+        return text
+    users = [m.get('content', '') for m in (conversation or {}).get('messages', []) if m.get('role') == 'user']
+    if users and users[-1] == text:
+        users.pop()
+    if users and conceptual(users[-1]) and GENERIC_STATE.search(unasserted_prose(users[-1])):
+        return users[-1] + '\n' + text
+    return text
+
+
 def dispatch_prose(text, *, reference=''):
     # Code examples and quoted user input are not action acknowledgements.
     prose = re.sub(r"```.*?```", "", text, flags=re.S)
+    prose = unasserted_prose(prose)
     # Mask only a generic conditional's state predicate, in either order.
     # Never erase its following clauses: they may assert a real owned/named
     # effect even without an explicit actor or job ID.
     predicate = r'(?:a (?:job|task)|jobs|tasks)\s+(?:is|are|has|have)\s+(?:been\s+)?(?:queued|running|started|assigned|scheduled)\b'
-    conditional = r'(?:when|if|until|once)'
+    conditional = r'(?:when|if|until|once|how)'
     prose = re.sub(r'\b' + conditional + r'\s+' + predicate,
                    'the described condition', prose, flags=re.I)
     prose = re.sub(r'(?:^|(?<=[.!?])\s+)' + predicate + r'(?=\s+' + conditional + r'\b)',
                    'The described state', prose, flags=re.I)
     # A conditional offer is not a claim that work was done.
-    prose = re.sub(r"(?:^|(?<=[.!?])\s+)I (?:can|could)\b(?:(?!\b(?:and|but)\s+(?:I|we|Bob)\b(?![’\x27]ll|\s+(?:will|can|could)\b))[^.;!?\n])*[.!?]?", "", prose, flags=re.I)
-    prose = re.sub(r"\bI (?:can(?:not|['’]t)|could(?: not|n['’]t)|did(?: not|n['’]t)|have(?: not|n['’]t))\b"
-                   r"(?:(?!\b(?:and|but)\s+(?:I|we|Bob)\b)[^.;!?\n])*", "", prose, flags=re.I)
+    # Remove only the actor/modal and its immediate verb; never swallow the
+    # rest of an offer or denial, which may contain a separate effect claim.
+    prose = re.sub(r"\bI (?:can(?:not|['’]t)?|could(?: not|n['’]t)?|did(?: not|n['’]t)|have(?: not|n['’]t))"
+                   r"\s+(?:been\s+)?[a-z]+\b", 'unasserted predicate', prose, flags=re.I)
     # Replace only the explicitly excluded verb. Separate positive claims
     # remain visible to the guard, including after a semicolon or conjunction.
-    prose = re.sub(r'\bwithout\s+' + EFFECT + r'\b', 'without performing an action', prose, flags=re.I)
+    prose = re.sub(r'\bwithout\s+(?:starting|creating|assigning|queueing|queuing|dispatching|'
+                   r'launching|scheduling|delegating|adding|putting|kicking off)\b',
+                   'without performing an action', prose, flags=re.I)
     if reference:
         # In a definition, generic subjects describe the term, not a live job.
         # Preserve owner/named-job, actor and deictic claims for the guard.
         def definition_subjects(match):
             part = match[0]
-            if (DIRECT_CLAIM.search(part) or JOB_ID.search(part) or re.search(REFERENCE_TARGET, part, re.I)
+            if (DIRECT_CLAIM.search(verbal_effects(part)) or JOB_ID.search(part) or re.search(REFERENCE_TARGET, part, re.I)
                     or re.search(r'\b(?:now|just|already|currently|today|here|this|that)\b', part, re.I)):
                 return part
             return re.sub(r'\b(?:the|a) (?:job|task)\b', 'the described state', part, flags=re.I)
-        prose = re.sub(r'(?:^|(?<=[.;!?])\s+)(?:queued|running|assigned|scheduled)\s+means\b[^.;!?\n]*',
+        prose = re.sub(r'(?:^|(?<=[.;!?])\s+)(?:(?:a|the)\s+)?(?:queued|running|assigned|scheduled)'
+                       r'(?:\s+(?:receipt|status|state|label))?\s+means\b[^.;!?\n]*',
                        definition_subjects, prose, flags=re.I)
         # Exempt only a definition's subject, never the rest of its sentence.
         # "Queued means accepted; I started it" must still fail the guard.
@@ -69,10 +188,18 @@ def dispatch_prose(text, *, reference=''):
                        r'\1The queue state', prose)
         # A supplied generic state may be discussed verbatim. No actor, owner,
         # job ID, or named task can acquire an action receipt through this path.
-        state = r'\b(?:the|a) (?:job|task) is (?:queued|running|started|assigned)\b'
-        supplied = {m[0].casefold() for m in re.finditer(state, reference, re.I)}
-        prose = re.sub(state, lambda m: 'the supplied state' if m[0].casefold() in supplied else m[0],
-                       prose, flags=re.I)
+        supplied = {(m['subject'].lower(), m['state'].lower())
+                    for m in GENERIC_STATE.finditer(dispatch_prose(reference))}
+        def supplied_state(match):
+            # A source paraphrase does not license a new current-effect claim.
+            start = max(prose.rfind(c, 0, match.start()) for c in '.;!?\n') + 1
+            ends = [prose.find(c, match.end()) for c in '.;!?\n']
+            end = min((n for n in ends if n >= 0), default=len(prose))
+            if CURRENT_EFFECT.search(prose[start:end]):
+                return match[0]
+            key = (match['subject'].lower(), match['state'].lower())
+            return 'the supplied state' if key in supplied else match[0]
+        prose = GENERIC_STATE.sub(supplied_state, prose)
     return prose
 
 
@@ -82,7 +209,7 @@ def claims_dispatch(text, *, reference=''):
     # Do not use the passive proximity heuristic for a conceptual answer: a
     # definition can describe assignment without asserting a particular job.
     claim = REFERENCE_EFFECT if reference else CLAIM
-    return bool(DIRECT_CLAIM.search(original) or JOB_ID.search(original)
+    return bool(DIRECT_CLAIM.search(verbal_effects(original)) or JOB_ID.search(original)
                 or claim.search(dispatch_prose(text, reference=reference)))
 
 

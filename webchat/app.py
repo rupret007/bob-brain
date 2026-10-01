@@ -195,6 +195,8 @@ class Chat(TaskDispatch):
                     interrupted = True
             if interrupted:
                 value["codex_thread_id"] = None
+                from self_improvement import recover_research
+                recover_research(value)
             if interrupted or migrated_intent or value.get("_coordination_outbox"):
                 self.save(value)
         if not self.conversations:

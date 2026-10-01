@@ -48,6 +48,9 @@ def instructions(text):
     """Quoted examples cannot add tool requirements to an answer request."""
     text = re.sub(r'```.*?```', '', text, flags=re.S)
     text = re.sub(r'"[^"\n]*"|“[^”\n]*”|`[^`\n]*`', '', text)
+    # Standalone single-quoted examples may contain contractions; apostrophes
+    # inside ordinary words do not open or close a quoted instruction.
+    text = re.sub(r"(?<!\w)'(?:[^'\n]|(?<=\w)'(?=\w))*'(?!\w)|‘(?:[^’\n]|(?<=\w)’(?=\w))*’(?!\w)", '', text)
     return re.sub(r'(?m)^\s*>.*$', '', text)
 
 

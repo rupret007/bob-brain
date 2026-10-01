@@ -393,7 +393,7 @@ def unperformed_restart(root, text):
 
 def enforce(root, text, answer, conversation=None, *, observation=None, redact=lambda value: value):
     content = answer["content"]
-    from answer_intent import conceptual
+    from answer_intent import conceptual, wants_answer, LIVE_REQUEST
     reference = conceptual(text)
     from worker_assignment import requested_workers
     blocked = dispatch_block(conversation)
@@ -414,10 +414,15 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
     if not reference and (STATUS_QUESTION.search(text) or correcting_status(text, conversation)):
         return operational_reply(root, answer["provider"], text, observation=observation, redact=redact)
     else:
-        from dispatch_receipts import claims_dispatch, dispatch_prose, NO_DISPATCH
+        from dispatch_receipts import claims_dispatch, dispatch_prose, reference_context, NO_DISPATCH
+        # Once operational routing is resolved, guides and other requested
+        # text can discuss state without acknowledging effects. Live status
+        # requests such as "show me resources" retain the branch above.
+        reference = reference or (wants_answer(text) and not LIVE_REQUEST.search(text))
         sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
-        content = "".join(part for part in sentences if not NO_JOB_NOTICE.search(part)).strip() or NO_DISPATCH
-        supplied = text if reference else ''
+        if not reference:
+            content = "".join(part for part in sentences if not NO_JOB_NOTICE.search(part)).strip() or NO_DISPATCH
+        supplied = reference_context(text, conversation) if reference else ''
         # The broad legacy proximity pattern mistakes explanations such as
         # "once it picks up a task ... that's running" for an actual receipt.
         # Reference answers still reject direct effects, concrete IDs and

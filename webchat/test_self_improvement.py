@@ -117,10 +117,11 @@ class ImprovementTests(SessionFixture):
         self.assertFalse(self.fake.calls)
         self.assertEqual(self.chat.get(self.identifier)['messages'][:len(prior)], prior)
 
-    def test_verified_result_survives_followup_restart_and_duplicate_without_new_effect(self):
-        self.send(GOAL)
+    def completed_fixture(self, goal=GOAL):
+        """Simulated journal evidence only; never launches an actual executor."""
+        self.send(goal)
         self.send('You already audited it. Do the next useful step.')
-        row = next(iter(task_queue.tasks(self.root).values()))
+        row = next(row for row in task_queue.tasks(self.root).values() if row['conversation_id'] == self.identifier)
         claim = task_queue.claim(self.root, 'mini', identifier=row['id'])
         task_queue.transition(self.root, row['id'], claim['claim_token'], 'running')
         task_queue.transition(self.root, row['id'], claim['claim_token'], 'executing')
@@ -131,13 +132,155 @@ class ImprovementTests(SessionFixture):
                                   execution_identity=row['expected_code_identity']))
         self.chat.close()
         self.chat = Chat(self.folder, self.root, self.fake)
+        return row, result, digest
+
+    def test_verified_result_survives_followup_restart_and_duplicate_without_new_effect(self):
+        row, result, digest = self.completed_fixture()
         answer = self.send('Finish that, and tell me what actually changed.')
-        self.assertIn(result, answer['content'])
-        self.assertEqual(answer['improvement_progress']['current_step'], 'bounded_steps_complete')
+        self.assertIn('/api/jobs/result?id=' + row['id'], answer['content'])
+        self.assertIn('no code was changed', answer['content'])
+        self.assertNotIn(result, answer['content'])  # Casual continuation links the full verified result.
+        self.assertEqual(answer['improvement_progress']['current_step'], 'comparison_prepared')
+        saved = self.chat.get(self.identifier)['improvement_goal']
+        self.assertEqual(saved['result_sha256'], digest)
+        self.assertTrue(saved['comparison_plan']['sources'])
         self.assertEqual(len(task_queue.tasks(self.root)), 1)
         self.assertEqual(self.chat.submit(self.identifier, 'Finish that, and tell me what actually changed.', answer['request_id'])['messages'][-1], answer)
-        self.send(ENABLE)
+        enabled = self.send(ENABLE)
+        self.assertNotEqual(enabled['content'], answer['content'])
+        self.assertIn('changed no setting', enabled['content'])
+        with patch('bob_gaps.web_search', return_value=dict(answer='A search lead, not verified product research.',
+                                                         source='https://docs.x.ai/', heading='Grok')) as search:
+            researched = self.send(RESEARCH)
+            self.assertEqual(search.call_count, 1)
+            self.assertIn('linked page has not been verified', researched['content'])
+            self.assertNotEqual(researched['content'], answer['content'])
+            saved = self.chat.get(self.identifier)['improvement_goal']
+            self.assertEqual(saved['outcome'], RESEARCH)
+            self.assertEqual(saved['current_step'], 'comparison_needs_primary_evidence')
+            self.assertEqual(saved['verification_job_id'], row['id'])
+            self.assertEqual(saved['result_sha256'], digest)
+            self.chat.close()
+            self.chat = Chat(self.folder, self.root, self.fake)
+            repeated = self.send(RESEARCH)
+            self.assertEqual(search.call_count, 1)
+            self.assertIn('did not repeat it', repeated['content'])
+            self.assertIn('Next:', repeated['content'])
+        with patch('bob_gaps.web_search', side_effect=AssertionError('No network under current restriction')):
+            limited = self.send('Research what Grok Bot does and self improve, but do not search the web.')
+            self.assertIn('no web search was made', limited['content'])
+            self.chat.close()
+            self.chat = Chat(self.folder, self.root, self.fake)
+            limited_again = self.send(RESEARCH)
+            self.assertIn('no web search was made', limited_again['content'])
+        with patch('bob_gaps.web_search', side_effect=TimeoutError('fixture timeout')) as search:
+            self.send('You may now search the web.')
+            failed = self.send('Research Grok Bot capabilities and self improve to be better than it.')
+            self.assertEqual(search.call_count, 1)
+            self.assertIn('no source-backed comparison', failed['content'])
+            self.send('Research Grok Bot capabilities and self improve to be better than it.')
+            self.assertEqual(search.call_count, 1)
         self.assertEqual(len(task_queue.tasks(self.root)), 1)
+
+    def test_research_requires_a_positive_user_instruction_and_preserves_restrictions(self):
+        denied = ('Self-improve to match Grok, but do not research it.',
+                  'Self-improve to match Grok using only supplied evidence.',
+                  'Self-improve to match Grok. "Research the product online." is an example.',
+                  'Self-improve to match Grok. The word research is just a label.',
+                  'Self-improve to match Grok. Research should wait until I approve the plan.',
+                  'Self-improve to match Grok. Research is an option, not an instruction.',
+                  "Self-improve to match Grok. 'This is an example. Research the product.'",
+                  'Self-improve to match Grok. ‘Here’s an example. Research the product.’',
+                  'Self-improve to match Grok.\n```\nResearch it online.\n```',
+                  'Self-improve to match Grok.\n> Research it online.')
+        with patch('bob_gaps.web_search', side_effect=AssertionError('Unauthorized network')) as search:
+            for text in denied:
+                self.identifier = self.chat.new_conversation()['id']
+                self.completed_fixture()
+                self.send(text)
+                self.assertEqual(search.call_count, 0, text)
+            self.identifier = self.chat.new_conversation()['id']
+            row, _, _ = self.completed_fixture()
+            self.send('Self-improve to match Grok, but do not research it.')
+            self.chat.close()
+            self.chat = Chat(self.folder, self.root, self.fake)
+            self.send(RESEARCH)
+            self.send('keep going')
+            self.assertEqual(search.call_count, 0)
+            self.assertTrue(self.chat.get(self.identifier)['improvement_goal']['network_restriction'])
+            self.send('The phrase "You may now search the web" is an example.')
+            self.send(RESEARCH)
+            self.assertEqual(search.call_count, 0)
+            self.send('You may browse only after I approve the plan.')
+            self.send('keep going')
+            self.assertEqual(search.call_count, 0)
+            self.assertTrue(self.chat.get(self.identifier)['improvement_goal']['network_restriction'])
+        self.assertEqual([r['id'] for r in task_queue.tasks(self.root).values()
+                          if r['conversation_id'] == self.identifier], [row['id']])
+
+    def test_saved_research_authorization_advances_after_verification_and_restart(self):
+        with patch('bob_gaps.web_search', return_value={'source': '', 'answer': ''}) as search:
+            row, _, _ = self.completed_fixture(RESEARCH)
+            self.assertEqual(search.call_count, 0)
+            self.send('keep going')
+            self.assertEqual(search.call_count, 1)
+            self.chat.close()
+            self.chat = Chat(self.folder, self.root, self.fake)
+            self.send('continue')
+            self.assertEqual(search.call_count, 1)
+            self.assertEqual(list(task_queue.tasks(self.root)), [row['id']])
+
+    def test_research_admission_failure_prevents_network_and_interruption_never_repeats_it(self):
+        self.completed_fixture()
+        request = str(uuid.uuid4())
+        with patch.object(self.chat, 'save', side_effect=OSError('fixture save failed')):
+            with patch('bob_gaps.web_search') as search, self.assertRaises(OSError):
+                self.chat.submit(self.identifier, RESEARCH, request)
+            search.assert_not_called()
+        self.assertNotIn('comparison_research', self.chat.get(self.identifier)['improvement_goal'])
+
+        def interrupted_search(query):
+            # Simulate abrupt process interruption only after asserting the
+            # durable admission exists, without making any network request.
+            saved = json.loads((self.chat.state / (self.identifier + '.json')).read_text())
+            attempt = next(iter(saved['improvement_goal']['comparison_research'].values()))
+            self.assertEqual(attempt['status'], 'admitted')
+            self.assertEqual(attempt['request_id'], request)
+            raise KeyboardInterrupt('fixture process interruption')
+        with patch('bob_gaps.web_search', side_effect=interrupted_search) as search, self.assertRaises(KeyboardInterrupt):
+            self.chat.submit(self.identifier, RESEARCH, request)
+        self.assertEqual(search.call_count, 1)
+        self.chat.close()
+        self.chat = Chat(self.folder, self.root, self.fake)
+        with patch('bob_gaps.web_search', side_effect=AssertionError('No repeat after interruption')):
+            retried = self.chat.submit(self.identifier, RESEARCH, request)['messages'][-1]
+            self.assertEqual(retried['status'], 'error')
+            self.assertIn('outcome is unknown', retried['content'])
+            continued = self.send('keep going')
+            self.assertIn('no automatic retry', continued['content'])
+            self.assertEqual(len(task_queue.tasks(self.root)), 1)
+
+    def test_research_final_save_failure_keeps_durable_admission(self):
+        self.completed_fixture()
+        save = self.chat.save
+        def persist_admission_only(conversation):
+            if any(a.get('status') == 'completed' for a in conversation.get('improvement_goal', {}).get('comparison_research', {}).values()):
+                raise OSError('fixture final save failed')
+            return save(conversation)
+        with patch.object(self.chat, 'save', side_effect=persist_admission_only):
+            with patch('bob_gaps.web_search', return_value={'source': '', 'answer': ''}) as search, self.assertRaises(OSError):
+                self.chat.submit(self.identifier, RESEARCH, str(uuid.uuid4()))
+            self.assertEqual(search.call_count, 1)
+        pending = self.chat.get(self.identifier)
+        self.assertEqual(pending['messages'][-1]['status'], 'queued')
+        self.assertEqual(next(iter(pending['improvement_goal']['comparison_research'].values()))['status'], 'admitted')
+        repeated = self.chat.submit(self.identifier, RESEARCH, pending['messages'][-1]['request_id'])
+        self.assertNotIn('saved its result', repeated['messages'][-1]['content'])
+        self.chat.close()
+        self.chat = Chat(self.folder, self.root, self.fake)
+        with patch('bob_gaps.web_search', side_effect=AssertionError('No repeat after failed final commit')):
+            answer = self.send('keep going')
+            self.assertIn('outcome is unknown', answer['content'])
 
     def test_audit_receipt_survives_retry_and_restart_without_another_audit(self):
         self.seed_incident()

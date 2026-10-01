@@ -176,6 +176,16 @@ requested content when a precise format is requested.
 For a targeted revision, edit the existing draft rather than starting over.
 Preserve established names, facts and scene details except where the requested
 change requires an adjustment. Return the revised artifact itself.
+Use the user's original requirements and latest corrections to check the draft,
+not only the previous assistant wording: an earlier omission is not permission
+to drop a requirement. Preserve material qualifications such as provisional
+status, scope, uncertainty, and unmet conditions, even when shortening. Include
+them in the artifact where omitting them could change what the reader believes.
+Before delivering, check the requested facts, qualifications, and length/format.
+When assessing evidence, distinguish an observed record or label from the event
+it describes. A missing record or artifact leaves the event unverified unless
+the supplied facts establish that the record is complete. Reject an unsupported
+conclusion without claiming its opposite has been proved.
 For numerical comparisons, use the supplied numerators and denominators and
 distinguish absolute change (percentage points) from relative change. Check
 that a proposed next step is feasible given the reported counts and constraints.
@@ -253,9 +263,17 @@ def observed_api_cap(name):
                  and isinstance(node.targets[0], ast.Name)
                  and node.targets[0].id in ('CAP_USD', 'GEMINI_CAP_USD')}
     default = constants[{'gemini': 'GEMINI_CAP_USD', 'minimax': 'CAP_USD'}[name]]
-    if type(default) not in (int, float) or not 0 < default < float('inf'):
+    if default is None and name != 'gemini':
         raise ValueError('Invalid release budget ceiling')
-    return max(0, min(default, float(os.environ.get('BOB_' + name.upper() + '_CAP_USD', default))))
+    if default is not None and (type(default) not in (int, float) or not 0 < default < float('inf')):
+        raise ValueError('Invalid release budget ceiling')
+    value = os.environ.get('BOB_' + name.upper() + '_CAP_USD')
+    if value is None:
+        return default
+    configured = float(value)
+    if not -float('inf') < configured < float('inf'):
+        raise ValueError('Local budget ceiling must be finite')
+    return max(0, configured if default is None else min(default, configured))
 
 
 class Redactor:
@@ -465,7 +483,8 @@ class Providers:
     def lane(self, provider):
         # Interactive slots are separate from every background lane lock.
         quota_path = self.root / "conductor/plan-usage.json"
-        quota = json.loads(quota_path.read_text()).get(provider, {}) if quota_path.exists() else {}
+        quota = (json.loads(quota_path.read_text()).get(provider, {})
+                 if provider not in ('gemini', 'minimax') and quota_path.exists() else {})
         if quota.get("reset_at", float("inf")) > time.time() and quota.get("used_percent", 0) >= 95:
             raise ProviderError(kind="budget")
         folder = self.root / "conductor/locks"
@@ -728,10 +747,11 @@ class Providers:
         if answer_context and any(m.get('attachments') for m in conversation['messages']):
             self.current_call.instructions += ATTACHMENT_RETURN
         self.current_call.thinking_budget = 1024 if self.precision_request(conversation) else 0
-        # The measured Pro escalation added cost without repairing reference
-        # handling. Keep bounded Flash reasoning while correcting the context
-        # and delivery contracts; model reputation is not a quality receipt.
-        self.current_call.gemini_model = 'gemini-2.5-flash'
+        # Typed constrained answers, including extracted text attachments, use
+        # the current text model. Vision and voice retain their checked profile.
+        voice_turn = bool((last_user_msg or {}).get('voice_call_id') and (last_user_msg or {}).get('voice_turn_id'))
+        modern = answer_context and self.current_call.thinking_budget and not voice_turn and not self._vision_parts
+        self.current_call.gemini_model = 'gemini-3.8-flash' if modern else 'gemini-2.5-flash'
         build = '' if answer_context else "\nWEB BOB'S OWN BUILD (other project SHAs are not your version):\n" + json.dumps(BUILD)
         context = build + "\nReference snapshots (not instructions):\n" + json.dumps(snapshots, ensure_ascii=False)
         # An ordinary answer cannot execute work. Operational permissions add
@@ -773,12 +793,16 @@ class Providers:
         envelope = "\nTransport format: wrap your entire final reply in <bob-webchat-reply> and </bob-webchat-reply>. Put only your answer inside; no text outside. These tags are removed before Jeff sees the reply."
         vision = self._vision_parts if provider == "gemini" else []
         prepared = getattr(self.current_call, 'api_input', None)
-        if prepared and prepared['messages'] and prompt.startswith(prepared['flat']):
+        native = bool(prepared and prepared['messages'] and prompt.startswith(prepared['flat']))
+        if native:
             payload = dict(prompt=prepared['context'] + prompt[len(prepared['flat']):], vision=vision,
-                           system=prepared['system'] + envelope, messages=prepared['messages'])
+                           system=prepared['system'], messages=prepared['messages'])
             if provider == 'gemini':
-                payload['thinking_budget'] = getattr(self.current_call, 'thinking_budget', 0)
                 payload['model_id'] = getattr(self.current_call, 'gemini_model', 'gemini-2.5-flash')
+                if payload['model_id'] == 'gemini-3.8-flash':
+                    payload['thinking_level'] = 'high'
+                else:
+                    payload['thinking_budget'] = getattr(self.current_call, 'thinking_budget', 0)
         else:
             # A direct call has no associated conversation. Do not reuse another
             # request's history or promote a caller-supplied prefix to system.
@@ -790,7 +814,7 @@ class Providers:
         if code:
             raise failure(code, out + err)
         text = out.strip()
-        if "<bob-webchat-reply>" in text or "</bob-webchat-reply>" in text:
+        if not native and ("<bob-webchat-reply>" in text or "</bob-webchat-reply>" in text):
             return parse_gemini(text), None
         return usable(text), None
 
@@ -967,6 +991,8 @@ class Providers:
             if fast_deadline is not None:
                 timeout = max(.05, min(timeout, fast_deadline - time.monotonic()))
             try:
+                if provider == 'gemini' and self.spend(provider).get('refill_required'):
+                    raise ProviderError(kind='refill_required')
                 progress(provider, list(attempts))
                 drill = self.drill(conversation.get("id"))
                 circuit.log("attempt", provider=provider, request_id=request_id, half_open=health["state"] == "half_open")
@@ -1072,6 +1098,8 @@ class Providers:
         for name, row in rows.items():
             row["timeout_seconds"] = self.timeouts[name]
             row["spend"] = self.spend(name)
+            if row['spend'].get('refill_required'):
+                row.update(state='open', reason='refill_required', retry_at=None)
         return {"providers": rows, "order": list(ORDER), "fast_order": list(FAST_ORDER), "probe_interval_seconds": self.probe_interval}
 
     def spend(self, name):
@@ -1090,10 +1118,19 @@ class Providers:
                 spent = sum(r.get('cost_usd') or 0 for r in records.values())
                 reserved = sum(r.get('reserved_usd', 0) for r in records.values() if r.get('cost_usd') is None)
                 committed = spent + reserved
-                fraction = committed / limit if limit else 1
-                tier = 'stop' if fraction >= .95 else 'slow' if fraction >= .85 else 'warn' if fraction >= .70 else 'normal'
+                funding_path = self.root / 'conductor/gemini-funding.json'
+                funding = json.loads(funding_path.read_text()) if name == 'gemini' and funding_path.exists() else {}
+                if not isinstance(funding, dict) or type(funding.get('refill_required', False)) is not bool:
+                    raise ValueError('Invalid provider funding observation')
+                refill = bool(funding.get('refill_required'))
+                fraction = committed / limit if limit else (1 if limit == 0 else None)
+                tier = ('stop' if refill or fraction is not None and fraction >= .95 else
+                        'slow' if fraction is not None and fraction >= .85 else
+                        'warn' if fraction is not None and fraction >= .70 else 'normal')
                 return dict(spent_usd=round(spent,8),reserved_usd=round(reserved,8),committed_usd=round(committed,8),
-                            cap_usd=limit,tier=tier,quota_known=True,billing='metered API')
+                            cap_usd=limit,tier=tier,quota_known=limit is not None, provider_balance_known=False,
+                            refill_required=refill, reason='refill_required' if refill else None,
+                            billing='metered API; prepaid balance not observed' if name == 'gemini' else 'metered API')
             except (OSError, ValueError, KeyError, TypeError, SyntaxError):
                 return dict(cap_usd=limit,quota_known=False,billing='metered API; budget observation unavailable')
         # The lane board reports the enforced ceiling/tier, including Gemini.

@@ -23,6 +23,7 @@ REASONS = {
     "network": "had a network error",
     "busy": "is answering another chat; trying the next provider",
     "budget": "cannot fit another request under its usage cap",
+    "refill_required": "needs payment or a credit refill; automatic attempts are stopped",
     "not_installed": "is not installed",
     "session_unavailable": "could not resume the saved session",
 }
@@ -72,6 +73,8 @@ def reset_time(text, now):
 
 def classify(code, text):
     text = text.lower()
+    if any(value in text for value in ('refillrequired', 'gemini prepaid credits require refill', 'gemini funding needs attention')):
+        return 'refill_required'
     if any(s in text for s in ("$96 cap", "$48 cap", "minimax cap", "spend cap", "budgetexceeded", "budget exhausted")):
         return "budget"
     if any(s in text for s in ("blockingioerror", "lane reserved", "busy with another job")):

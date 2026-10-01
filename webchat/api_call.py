@@ -43,7 +43,11 @@ def decode_transport(raw):
         if thinking_budget is not None and (type(thinking_budget) is not int or thinking_budget not in (0, 1024)):
             raise ValueError()
         model_id = payload.get('model_id')
-        if model_id is not None and model_id not in ('gemini-2.5-flash', 'gemini-2.5-pro'):
+        if model_id is not None and model_id not in ('gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3.8-flash'):
+            raise ValueError()
+        thinking_level = payload.get('thinking_level')
+        if (thinking_level is not None and (model_id != 'gemini-3.8-flash' or thinking_level not in ('low', 'medium', 'high'))
+                or model_id == 'gemini-3.8-flash' and (thinking_budget is not None or vision)):
             raise ValueError()
         if system is not None and not isinstance(system, str):
             raise ValueError()
@@ -66,7 +70,7 @@ def decode_transport(raw):
             except ValueError:
                 raise ValueError() from None
         return dict(prompt=prompt, vision=vision, system=system, messages=messages,
-                    thinking_budget=thinking_budget, model_id=model_id)
+                    thinking_budget=thinking_budget, thinking_level=thinking_level, model_id=model_id)
     except (ValueError, KeyError, TypeError, AttributeError):
         raise ValueError("Invalid chat transport payload.") from None
 
@@ -106,12 +110,15 @@ def main():
         kwargs = {"purpose": "webchat"}
         if supports_vision:
             kwargs["vision"] = vision or None
-        for name in ('system', 'messages', 'thinking_budget', 'model_id'):
+        for name in ('system', 'messages', 'thinking_budget', 'thinking_level', 'model_id'):
             if payload[name] is not None:
                 if name not in parameters:
                     raise RuntimeError('model_call does not support structured chat input. Upgrade services/api.py.')
                 kwargs[name] = payload[name]
-        answer = strip_reply_tags(model_call(lane, prompt, **kwargs))
+        answer = model_call(lane, prompt, **kwargs)
+        # Native extraction already requires a completed final response and
+        # excludes thought parts. Structured chat needs no model-written XML.
+        answer = answer.strip() if payload['system'] is not None and payload['messages'] else strip_reply_tags(answer)
     print(answer)
     return 0
 

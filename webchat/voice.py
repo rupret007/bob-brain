@@ -80,6 +80,17 @@ def api_key(root):
 
 
 def create_token(root, setup, expires):
+    # Do not mint another session after the metered text/worker path has
+    # observed explicit credit exhaustion. Existing calls are not recalled.
+    funding_path = root / 'conductor/gemini-funding.json'
+    try:
+        funding = json.loads(funding_path.read_text()) if funding_path.exists() else {}
+        if not isinstance(funding, dict) or type(funding.get('refill_required', False)) is not bool:
+            raise ValueError('Invalid funding observation')
+    except (OSError, ValueError):
+        raise VoiceError(503, 'Gemini funding status could not be read. Please try text chat.') from None
+    if funding.get('refill_required'):
+        raise VoiceError(503, 'Gemini funding needs attention (payment or refill) before another voice call.')
     payload = {
         "uses": 1,
         "expireTime": datetime.fromtimestamp(expires, timezone.utc).isoformat(),
