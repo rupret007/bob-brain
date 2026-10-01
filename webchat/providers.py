@@ -175,6 +175,11 @@ requested content when a precise format is requested.
 For a targeted revision, edit the existing draft rather than starting over.
 Preserve established names, facts and scene details except where the requested
 change requires an adjustment. Return the revised artifact itself.
+For numerical comparisons, use the supplied numerators and denominators and
+distinguish absolute change (percentage points) from relative change. Check
+that a proposed next step is feasible given the reported counts and constraints.
+Do not add sample sizes or statistical intervals without a supported calculation
+and a reason they help answer the question.
 """
 REFERENCE_RULES = """You are Jeff's Bob web chat. Answer the user's question about
 the supplied language, facts, or evidence. Read the entire message before deciding
@@ -649,7 +654,7 @@ class Providers:
         snapshots = [] if answer_context else list(self.snapshot(lite=fast, conversation_id=conversation.get("id")))
         if capability_question:
             snapshots += [dict(path='implemented Web Bob capability metadata', modified='current code and saved acknowledgment',
-                               truncated=False, text=json.dumps(grounding(self.context_root(conversation.get('id')), ORDER)))]
+                               truncated=False, text=json.dumps(grounding(self.context_root(conversation.get('id')), ORDER, conversation.get('id'))))]
         if retained:
             snapshots += [dict(path='conversation user-source index', modified='saved', truncated=False,
                                text=self.redact(json.dumps(retained, ensure_ascii=False)))]

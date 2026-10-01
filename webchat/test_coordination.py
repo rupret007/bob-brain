@@ -275,7 +275,24 @@ class ProductCoordinationTests(SessionFixture):
         self.assertIn('exact-batch acknowledgment', prompt)
         self.assertIn('automatic wake-up', prompt)
         self.assertIn('unverified', prompt)
+        self.send('I want it to be able to coordinate with Grok when Grok Bot is available and when it’s not have a record of what was done so when it comes back up it can catch up.')
+        prompt = provider.prompt(self.chat.get(self.identifier), fast=True)
+        self.assertIn('durable_shared_records_implemented', prompt)
+        self.assertIn('saved_conversation_receipts', prompt)
+        self.assertIn('answer-delivered', prompt)
+        self.assertIn('Reuse the', prompt)
         self.send('Write a poem about the lake.')
         prompt = provider.prompt(self.chat.get(self.identifier), fast=True)
         self.assertNotIn('implemented Web Bob capability metadata', prompt)
+        self.assertFalse(__import__('task_queue').tasks(self.root))
+
+    def test_mentioned_integrations_do_not_displace_unrelated_writing_or_quotes(self):
+        provider = Providers(self.root, self.chat.redact)
+        for text in ('I want no Grok integration; write a two-line poem about rain.',
+                     'I want a fictional story about Grok connecting two islands.',
+                     'Explain this quote: "I want Web Bob to coordinate with Grok."'):
+            with self.subTest(text=text):
+                self.send(text)
+                prompt = provider.prompt(self.chat.get(self.identifier), fast=True)
+                self.assertNotIn('implemented Web Bob capability metadata', prompt)
         self.assertFalse(__import__('task_queue').tasks(self.root))

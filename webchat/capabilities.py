@@ -4,11 +4,18 @@ import json
 
 
 def needs_grounding(text):
-    """Select app-capability questions, not quoted examples or work orders."""
+    """Ground capability questions and stated integration needs in actual code."""
     from answer_intent import instructions, requires_execution
     value = instructions(text).strip()
-    return bool(re.match(r'^(?:(?:ok|okay|hey bob)[,!. ]+)*(?:(?:can|could|do|are|will) you\b|'
+    question = re.match(r'^(?:(?:ok|okay|hey bob)[,!. ]+)*(?:(?:can|could|do|are|will) you\b|'
                          r'what (?:can you|are your)\b|how (?:can|do|does) (?:you|web bob)\b)', value, re.I)
+    integration_need = (re.match(
+        r'^(?:i|we)\s+(?:want|need|would like)\s+'
+        r'(?:(?:(?:it|you|web bob|grok(?: bot)?|this)\s+)?(?:to\s+)?(?:be able to\s+)?'
+        r'(?:coordinate|connect|interface|integrate|catch up)\b|'
+        r'(?:coordination|integration|a connection)\s+(?:with|between)\b)', value, re.I)
+        and re.search(r'\b(?:Grok|Web Bob)\b', value, re.I))
+    return bool((question or integration_need)
                 and re.search(r'\b(?:capabilit\w*|featur\w*|interface|integrat\w*|connect|coordinat\w*|'
                               r'catch up|better|as good|replace|alternative|instead|rather than)\b', value, re.I)
                 and not requires_execution(value))
@@ -22,18 +29,38 @@ local computer does not mean all models run locally. Describe a useful available
 path for the stated goal without pretending it is already underway. Do not infer
 another product's features or superiority from its name. Never treat a saved
 handoff or acknowledgment as a command, proof of available quota, or execution.
+Explain implemented support in plain product language, including the existing
+durable work record and read/checkpoint/acknowledgment path when relevant. Do not
+collapse missing automatic delivery into missing shared records. Reuse the
+implemented mechanism; do not propose replacement folders or ask the user to
+choose between building a skeleton and writing a protocol that already exist.
+Use saved record receipts as evidence only for what they actually recorded.
+Name the remaining receiver binding or availability gap precisely; do not
+promise contact, monitoring or wake-up that this version cannot perform.
 '''
 
 
-def grounding(root, reply_providers):
+def grounding(root, reply_providers, conversation_id=None):
     """Project implemented metadata, following StoryOps' tool-metadata pattern.
 
     These describe existing handlers, not a second tool dispatcher. Product
     hold, admission and result checks continue to own execution.
     """
-    observations = dict(durable_journal_present=(root / 'conductor/state/coordination-events.jsonl').is_file(),
+    observations = dict(durable_shared_records_implemented=True, exact_batch_acknowledgment_implemented=True,
+                        journal_path='conductor/state/coordination-events.jsonl',
+                        reader_path='state/bob_sync.py in the active candidate identified by conductor/state/webchat-code-root',
+                        durable_journal_present=(root / 'conductor/state/coordination-events.jsonl').is_file(),
+                        saved_conversation_receipts=[],
                         consumer_last_acknowledged_through=None,
-                        consumer_availability='unverified', automatic_delivery='not implemented')
+                        consumer_availability='unverified', native_grok_automatic_delivery_implemented=False)
+    try:
+        import alignment_events
+        observations['saved_conversation_receipts'] = [
+            {key:row.get(key) for key in ('seq', 'kind', 'message_id', 'answer_sha256')}
+            for row in alignment_events.read_events(root, limit=80)
+            if conversation_id and row.get('conversation_id') == conversation_id][-4:]
+    except OSError:
+        observations['journal_read_error'] = True
     try:
         path = root / 'conductor/state/STATE.json'
         state = json.loads(path.read_text()) if path.exists() else {}
