@@ -21,7 +21,7 @@ from chat_intent import permission_facts
 from build_info import BUILD
 
 RULES = """Read BOB-HANDOFF.md + bob-brain/ + conductor/handback/ (BOB-STATE.md, HANDBACK-SUMMARY.md, HANDBACK-LOG.md tail) and act as Bob.
-You are Jeff's Bob web chat on his Mac mini. Answer Jeff's latest message naturally
+You are Jeff's Bob web chat. Answer Jeff's latest message naturally
 and honestly — warm, casual, links and SHAs first when relevant. The current
 handoff and BOB-STATE override older brain memories.
 Answer only Jeff's latest message. For casual questions without a requested length
@@ -596,9 +596,11 @@ class Providers:
         if fast and needs_handoff_context(last_user):
             fast = False
         from conversation_focus import focus, answer_only, OPERATIONAL, needs_permission_facts
+        from capabilities import needs_grounding, grounding, GROUNDING_RULES
+        capability_question = needs_grounding(last_user)
         progress = conversation.get('improvement_goal') or {}
         suspended = progress.get('suspended_by') or {}
-        answer_context = (answer_only(conversation, last_user) or
+        answer_context = (answer_only(conversation, last_user) or capability_question or
                           bool(suspended and not OPERATIONAL.search(last_user))) and not needs_handoff_context(last_user)
         self.current_call.answer_context = answer_context
         history, remaining = [], 24000 if not fast else 12000
@@ -645,6 +647,9 @@ class Providers:
         # The operational snapshot is cached across conversations. Never append
         # private user excerpts or attachments into that shared list.
         snapshots = [] if answer_context else list(self.snapshot(lite=fast, conversation_id=conversation.get("id")))
+        if capability_question:
+            snapshots += [dict(path='implemented Web Bob capability metadata', modified='current code and saved acknowledgment',
+                               truncated=False, text=json.dumps(grounding(self.context_root(conversation.get('id')), ORDER)))]
         if retained:
             snapshots += [dict(path='conversation user-source index', modified='saved', truncated=False,
                                text=self.redact(json.dumps(retained, ensure_ascii=False)))]
@@ -690,6 +695,8 @@ class Providers:
         reference = conceptual(last_user)
         policy = REFERENCE_RULES if answer_context and reference else ANSWER_RULES if answer_context else RULES
         self.current_call.instructions = policy + scope
+        if capability_question:
+            self.current_call.instructions += '\n' + GROUNDING_RULES
         if self.current_call.draft_revision:
             self.current_call.instructions += '\n' + draft_revision.RULES
         if answer_context and any(m.get('attachments') for m in conversation['messages']):
@@ -880,6 +887,8 @@ class Providers:
 
     def reply(self, conversation, cancel, progress):
         self.current_call.cancel = cancel
+        self.current_call.answer_context = False
+        self.current_call.draft_revision = None
         order = self.route_order(conversation)
         last_user = next((m for m in reversed(conversation['messages']) if m['role'] == 'user'), {})
         visual = any(a.get('kind') in ('image', 'video') for a in last_user.get('attachments', []) if isinstance(a, dict))

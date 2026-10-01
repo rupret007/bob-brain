@@ -61,6 +61,27 @@ class ChatDispatchTests(Fixture):
         queue.transition(self.root, claim["id"], claim["claim_token"], "running")
         return queue.transition(self.root, claim["id"], claim["claim_token"], "succeeded", result=result)
 
+    def test_result_publication_outage_retries_after_restart_without_repeating_work(self):
+        import alignment_events
+        self.submit(worker='minimax')
+        completed = self.complete_task()
+        with patch.object(alignment_events, 'record_task_result', side_effect=OSError('journal unavailable')):
+            self.chat.reconcile_tasks()
+        self.assertIsNone(queue.tasks(self.root)[completed['id']]['delivered_at'])
+        self.assertEqual(len([m for m in self.chat.history(self.identifier)['messages'] if m.get('task_status')]), 1)
+        self.chat.close()
+        with patch.object(queue, 'claim', side_effect=AssertionError('Completed work must not run again')):
+            self.chat = Chat(self.folder, self.root, self.fake)
+            self.chat.reconcile_tasks()
+        recovered = queue.tasks(self.root)[completed['id']]
+        self.assertIsNotNone(recovered['delivered_at'])
+        for key in ('status', 'claimed_at', 'finished_at', 'result'):
+            self.assertEqual(recovered[key], completed[key])
+        self.assertEqual(len([m for m in self.chat.history(self.identifier)['messages'] if m.get('task_status')]), 1)
+        records = [r for r in alignment_events.read_events(self.root) if r['kind'] == 'task-result']
+        self.assertEqual(len(records), 1)
+        self.assertFalse(records[0]['outcome']['accepted_result'])  # Fixture has no artifact acceptance proof.
+
     def test_explicit_job_and_natural_work_dispatch_without_an_extra_confirmation(self):
         for text in ("start a job: review the task evidence", "Can you fix the queue consumer?", "Please have Gemini analyze this: 12 + 18", "Use Gemini to review this invariant: one claim per worker"):
             with self.subTest(text=text):

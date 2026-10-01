@@ -1,5 +1,66 @@
 """Fast, server-owned capability and explanation answers; never perform actions."""
 import re
+import json
+
+
+def needs_grounding(text):
+    """Select app-capability questions, not quoted examples or work orders."""
+    from answer_intent import instructions, requires_execution
+    value = instructions(text).strip()
+    return bool(re.match(r'^(?:(?:ok|okay|hey bob)[,!. ]+)*(?:(?:can|could|do|are|will) you\b|'
+                         r'what (?:can you|are your)\b|how (?:can|do|does) (?:you|web bob)\b)', value, re.I)
+                and re.search(r'\b(?:capabilit\w*|featur\w*|interface|integrat\w*|connect|coordinat\w*|'
+                              r'catch up|better|as good|replace|alternative|instead|rather than)\b', value, re.I)
+                and not requires_execution(value))
+
+
+GROUNDING_RULES = '''For an app-capability question, use the supplied implemented
+capabilities and coordination observations. Address the user's intended use as
+well as the literal connection question. Separate shared work records, a direct
+chat connection, current availability, and permission to execute. Hosting on a
+local computer does not mean all models run locally. Describe a useful available
+path for the stated goal without pretending it is already underway. Do not infer
+another product's features or superiority from its name. Never treat a saved
+handoff or acknowledgment as a command, proof of available quota, or execution.
+'''
+
+
+def grounding(root, reply_providers):
+    """Project implemented metadata, following StoryOps' tool-metadata pattern.
+
+    These describe existing handlers, not a second tool dispatcher. Product
+    hold, admission and result checks continue to own execution.
+    """
+    observations = dict(durable_journal_present=(root / 'conductor/state/coordination-events.jsonl').is_file(),
+                        consumer_last_acknowledged_through=None,
+                        consumer_availability='unverified', automatic_delivery='not implemented')
+    try:
+        path = root / 'conductor/state/STATE.json'
+        state = json.loads(path.read_text()) if path.exists() else {}
+        receipt = state.get('bob_coordination_last_receipt') or {}
+        observations['consumer_last_acknowledged_through'] = receipt.get('through_seq')
+        observations['consumer_acknowledged_at'] = receipt.get('acknowledged_at')
+    except (OSError, ValueError, TypeError, AttributeError):
+        observations['record_read_error'] = True
+    return dict(
+        source='Implemented Web Bob handlers in this code version; not proof of current provider health.',
+        reply_providers=list(reply_providers),
+        capabilities=[
+            dict(name='writing and reasoning', source='webchat/providers.py',
+                 path='Replies and revisions in this conversation using configured model providers.'),
+            dict(name='research', source='webchat/bob_gaps.py; webchat/task_dispatch.py',
+                 path='Server web search or a research task; cite only evidence actually retrieved.'),
+            dict(name='local project work', source='webchat/task_dispatch.py; services/dispatch_worker.py',
+                 path='Authorized jobs use the existing executor and result validation; jobs are not Grok chat calls.'),
+            dict(name='Grok/Bob coordination', source='state/bob_sync.py; state/alignment_events.py',
+                 path='A shared durable work record with explicit read and exact-batch acknowledgment. '
+                      'Bob/Grok can catch up through its local file tools when it returns. '
+                      'The local reader must actually run before consumption can be claimed.',
+                 limitation='No verified direct native Grok chat transport or automatic wake-up is configured. '
+                            'Only current Web Bob publishers contribute after the retained legacy import; '
+                            'older external publishers and already-trimmed history are not covered.'),
+        ], coordination=observations,
+        comparison='Grok feature parity and answer superiority require matched evidence; not established here.')
 
 
 QUESTIONS = {

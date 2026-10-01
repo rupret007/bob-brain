@@ -9,6 +9,7 @@ PATHS = ('webchat/task_dispatch.py', 'webchat/reply_authority.py', 'webchat/answ
 PATHS += ('state/source_identity.py', 'webchat/improvement_investigation.py')
 PATHS += ('webchat/app.py', 'webchat/chat_intent.py', 'webchat/dispatch_receipts.py')
 PATHS += ('webchat/draft_revision.py',)
+PATHS += ('webchat/capabilities.py', 'state/alignment_events.py', 'state/ledger.py', 'state/bob_sync.py')
 
 
 def fingerprint(root, suite):

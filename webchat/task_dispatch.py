@@ -522,6 +522,13 @@ class TaskDispatch:
                             message["action_card"].update(state="done" if success else "blocked", worker=row["worker"])
                     self.save(value)  # Commit the answer BEFORE acknowledging outbox delivery.
                     self.conversations[identifier] = value
+                import alignment_events
+                try:
+                    alignment_events.record_task_result(self.root, row, self.redact)
+                except OSError:
+                    # The conversation result is already durable. Leave this
+                    # outbox item pending so recovery retries only publication.
+                    continue
                 task_queue.delivered(self.root, row["id"], message_id)
 
     def reconcile_groups(self, rows):
@@ -555,6 +562,11 @@ class TaskDispatch:
                 self.save(value)
                 self.conversations[identifier] = value
             for row in members:
+                import alignment_events
+                try:
+                    alignment_events.record_task_result(self.root, row, self.redact)
+                except OSError:
+                    continue
                 task_queue.delivered(self.root, row["id"], message_id)
 
     def migrate_legacy_tasks(self):

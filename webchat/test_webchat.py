@@ -1410,10 +1410,11 @@ class HandbackJobTests(Fixture):
         state_ledger.record_webchat_turn(self.root, ask="ack drill turn", provider="state")
         state_ledger.write_catchup(self.root)
         self.assertIn("ack drill", (self.root / "conductor/state/BOB-CATCHUP.md").read_text())
-        seq = alignment_events.latest_seq(self.root)
-        state_ledger.ack_events_for_bob(self.root, seq=seq)
+        receipt = state_ledger.bob_catchup(self.root)
+        seq = receipt['through_seq']
+        state_ledger.ack_events_for_bob(self.root, receipt=receipt)
         loaded = state_ledger.load_state(self.root)
-        self.assertGreaterEqual(int(loaded.get("bob_events_ack_seq") or 0), seq)
+        self.assertGreaterEqual(int(loaded.get("bob_coordination_ack_seq") or 0), seq)
 
 class InstallerTests(Fixture):
     def test_webchat_only_leaves_other_agents_alone(self):

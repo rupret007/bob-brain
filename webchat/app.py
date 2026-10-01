@@ -195,7 +195,7 @@ class Chat(TaskDispatch):
                     interrupted = True
             if interrupted:
                 value["codex_thread_id"] = None
-            if interrupted or migrated_intent:
+            if interrupted or migrated_intent or value.get("_coordination_outbox"):
                 self.save(value)
         if not self.conversations:
             self.new_conversation()
@@ -204,7 +204,83 @@ class Chat(TaskDispatch):
 
     def save(self, conversation):
         conversation["updated_at"] = time.time()
-        private_write(self.state / (conversation["id"] + ".json"), json.dumps(conversation, ensure_ascii=False, indent=2) + "\n")
+        if self.ledger_root(conversation['id']) != self.root:
+            # Fixture context must remain excluded after its in-memory overlay
+            # is cleared or the process restarts.
+            conversation['_coordination_excluded'] = True
+        pending = conversation.setdefault('_coordination_outbox', {})
+        for record in self.coordination_records(conversation):
+            pending.setdefault(record['event_id'], record)
+        path = self.state / (conversation["id"] + ".json")
+        private_write(path, json.dumps(conversation, ensure_ascii=False, indent=2) + "\n")
+        if conversation.get('_coordination_excluded'):
+            return
+        # The event payload and authoritative conversation commit together. If
+        # publication fails, another turn or startup retries this same outbox.
+        import alignment_events
+        changed = False
+        for event_id, record in list(pending.items()):
+            try:
+                alignment_events.append_event(self.root, **record)
+            except OSError:
+                self.coordination_error()
+                break
+            pending.pop(event_id)
+            changed = True
+        if changed:
+            try:
+                private_write(path, json.dumps(conversation, ensure_ascii=False, indent=2) + "\n")
+            except OSError:
+                # A crash can replay already published events, whose stable
+                # identities make the publication idempotent, never execution.
+                self.coordination_error()
+
+    def coordination_error(self):
+        if hasattr(self.providers, 'circuit'):
+            try:
+                self.providers.circuit.log('coordination_error', reason='Shared record publication unavailable')
+            except OSError:
+                pass
+
+    def coordination_records(self, conversation):
+        """Project saved work only; private texting never enters the handoff."""
+        if (conversation.get('_coordination_excluded') or
+                self.ledger_root(conversation['id']) != self.root):
+            return []
+        messages = conversation.get('messages', [])
+        if not messages:
+            return []
+        last = messages[-1]
+        # Historical entries and direct voice transcription can precede a
+        # dispatched request. Missing IDs must not bind unrelated turns (or an
+        # empty permission record) merely because both values are None.
+        if not last.get('request_id'):
+            return []
+        user = next((m for m in reversed(messages) if m.get('role') == 'user'
+                     and m.get('request_id') == last.get('request_id')), {})
+        if not user or last.get('texting') or user.get('texting'):
+            return []
+        records = []
+        permission = conversation.get('intent_state', {}).get('last_permission') or {}
+        if permission and permission.get('request_id') == user.get('request_id'):
+            state = conversation['intent_state']
+            scope = json.loads(self.redact(json.dumps({key:state[key] for key in ('holds', 'last_permission')})))
+            records.append(dict(actor='web-bob', kind='scope-change',
+                event_id=conversation['id'] + ':permission:' + user['request_id'],
+                summary='Saved ' + permission['action'] + ' in one conversation.',
+                conversation_id=conversation['id'], request_id=user['request_id'], saved_scope=scope,
+                authority='Applies to this saved conversation; does not grant the receiver new work.'))
+        if (last.get('role') == 'assistant' and last.get('status') == 'done'
+                and not last.get('task_id') and not last.get('task_ids')):
+            import hashlib
+            content = self.redact(last.get('content', ''))
+            digest = hashlib.sha256(content.encode()).hexdigest()
+            records.append(dict(actor='web-bob', kind='answer-delivered',
+                event_id=conversation['id'] + ':answer:' + last['id'] + ':' + digest,
+                summary='Delivered a chat answer; this is not a verified external action.',
+                conversation_id=conversation['id'], request_id=user['request_id'], message_id=last['id'],
+                answer_excerpt=content[:1000], answer_sha256=digest))
+        return records
 
     def ledger_root(self, conversation_id: str | None = None) -> Path:
         if conversation_id:
@@ -257,7 +333,7 @@ class Chat(TaskDispatch):
             return self.public(value)
 
     def public(self, value):
-        excluded = {"codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job",
+        excluded = {"_coordination_outbox", "_coordination_excluded", "codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job",
                     "pending_memory", "pending_memory_id", "pending_memory_removal"}
         # Extensions never see core-private state or mutable conversation objects.
         filtered = {k: copy.deepcopy(v) for k, v in value.items() if k not in excluded}
@@ -1620,7 +1696,7 @@ class Handler(BaseHTTPRequestHandler):
         cursor = since
         try:
             while time.time() < deadline:
-                batch = align_ev.read_events(chat.root, since_seq=cursor)
+                batch = align_ev.read_events_page(chat.root, since_seq=cursor)['events']
                 for row in batch:
                     cursor = max(cursor, int(row.get("seq") or 0))
                     payload = json.dumps(row, ensure_ascii=False).encode()
@@ -1753,7 +1829,8 @@ class Handler(BaseHTTPRequestHandler):
                 since = int(parse_qs(urlsplit(self.path).query).get("since", ["0"])[0] or 0)
             except ValueError:
                 raise RequestError(400, "Invalid since parameter.") from None
-            return self.send(200, {"events": align_ev.read_events(chat.root, since_seq=since), "latest_seq": align_ev.latest_seq(chat.root)})
+            page = align_ev.read_events_page(chat.root, since_seq=since)
+            return self.send(200, dict(page, latest_seq=align_ev.latest_seq(chat.root)))
         if route == "/api/alignment/stream":
             return self.stream_alignment(chat)
         raise RequestError(404, "Not found.")
