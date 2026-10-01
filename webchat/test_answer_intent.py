@@ -46,6 +46,7 @@ class AnswerIntentTests(SessionFixture):
                        'Please write a four-line poem about the lake.',
                        'Help me write a four-line poem about the lake.',
                        'Could you help me to draft a neighborhood notice?',
+                       'Give me three chapter titles about a mountain.',
                        'Draft a thank-you note for my neighbor.',
                        'Compare these proposals: A costs 10, B costs 12.',
                        'Analyze the bug in this supplied code: def add(a,b): return a-b',
@@ -67,6 +68,18 @@ class AnswerIntentTests(SessionFixture):
                      'Help me research the latest release using official sources',
                      'Help me create a pull request', 'Help me review PR #161'):
             self.assertFalse(wants_answer(text), text)
+
+    def test_inference_about_permissions_is_not_a_dispatch_receipt(self):
+        self.fake.reply_text = ("No, an absent scheduling block doesn't mean a model has remaining quota. "
+                                "It just means there isn't a current block preventing new work from being scheduled. "
+                                "Each provider has its own quota and reset times.")
+        prompt = 'Does having no scheduling block prove a model has capacity?'
+        self.assertEqual(self.send(prompt)['content'], self.fake.reply_text)
+        self.assertFalse(task_queue.tasks(self.root))
+        self.fake.reply_text += ' I queued your repair.'
+        self.assertNotEqual(self.send(prompt)['content'], self.fake.reply_text)
+        from answer_intent import conceptual
+        self.assertFalse(conceptual('Does a queue prove completion? Then run the tests.'))
 
 
     def test_explicit_execution_targets_and_worker_choices_remain_tasks(self):
@@ -136,7 +149,7 @@ class BudgetAwareRoutingTests(SessionFixture):
     def test_auto_uses_healthy_headroom_and_retains_bounded_fallback(self):
         provider = Providers(self.root, self.chat.redact)
         conversation = self.chat.get(self.identifier)
-        conversation['messages'] = [dict(role='user',content='Explain the supplied numbers.',status='done')]
+        conversation['messages'] = [dict(role='user',content='Draft a friendly welcome note.',status='done')]
         usage = {'gemini':dict(cap_usd=50,committed_usd=46),
                  'minimax':dict(cap_usd=48,committed_usd=8)}
         attempted = []
@@ -151,6 +164,28 @@ class BudgetAwareRoutingTests(SessionFixture):
             result = provider.reply(conversation, threading.Event(), lambda *_:None)
         self.assertEqual(attempted, ['minimax','gemini'])
         self.assertEqual(result['provider'], 'gemini')
+
+    def test_precision_prefers_measured_quality_but_still_respects_health_and_cap(self):
+        provider = Providers(self.root, self.chat.redact)
+        conversation = self.chat.get(self.identifier)
+        conversation['messages'] = [dict(role='user', content='Compare plans costing 16 and 20.', status='done')]
+        usage = {'gemini':dict(cap_usd=50, committed_usd=46), 'minimax':dict(cap_usd=48, committed_usd=8)}
+        circuit = provider.circuit_for(self.identifier)
+        with patch.object(provider, 'spend', side_effect=lambda name:usage.get(name, {})), \
+                patch.object(circuit, 'snapshot', return_value={}) as health:
+            self.assertEqual(provider.route_order(conversation)[0], 'gemini')
+            health.return_value = {'gemini':{'state':'cooldown'}}
+            self.assertEqual(provider.route_order(conversation)[0], 'minimax')
+            health.return_value = {}
+            usage['gemini']['committed_usd'] = 47.5
+            self.assertEqual(provider.route_order(conversation)[0], 'minimax')
+
+    def test_long_answer_uses_api_quality_route_without_cli_for_length_alone(self):
+        provider = Providers(self.root, self.chat.redact)
+        conversation = self.chat.get(self.identifier)
+        conversation['messages'] = [dict(role='user', content='Write a 120-word guide using these facts: ' + 'Supplied detail. ' * 40, status='done')]
+        with patch.object(provider, 'available_fast_order', return_value=('gemini','minimax','cursor','codex')):
+            self.assertEqual(provider.route_order(conversation)[0], 'gemini')
 
     def test_explicit_choice_and_vision_capability_precede_cost_preference(self):
         provider = Providers(self.root, self.chat.redact)

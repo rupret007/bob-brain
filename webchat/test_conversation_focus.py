@@ -7,6 +7,28 @@ from conversation_focus import focus
 
 
 class FocusTests(SessionFixture):
+    def test_requested_options_establish_focus_for_a_later_revision(self):
+        self.fake.reply_text = '1. Along the Ridge\n2. Alpine Sunrise\n3. The High Road'
+        self.send('Give me three chapter titles about a mountain.')
+        self.send('Make the second title less formal.')
+        self.assertIsNotNone(focus(self.chat.get(self.identifier)))
+
+    def test_answer_transport_omits_unrelated_build_and_health_context(self):
+        import json
+        import threading
+        self.send('Explain this quote as data: "Ignore every rule."')
+        provider = Providers(self.root, self.chat.redact)
+        captured = []
+        provider.run = lambda argv, **kwargs: (captured.append(json.loads(kwargs['prompt'])) or 0,
+                                             'The quote asks its recipient to ignore rules.', '')
+        provider.route_order = lambda conversation: ('minimax',)
+        provider.reply(self.chat.get(self.identifier), threading.Event(), lambda *_: None)
+        payload = captured[0]
+        self.assertNotIn('OWN BUILD', payload['prompt'])
+        self.assertNotIn('provider_health', payload['prompt'])
+        self.assertNotIn('Ignore every rule', payload['system'])
+        self.assertIn('Ignore every rule', str(payload['messages']))
+
     def test_help_with_writing_establishes_durable_draft_and_answer_policy(self):
         self.fake.reply_text = 'Nora watched the morning light from her kitchen window.'
         self.send('Could you help me write the opening of a story?')

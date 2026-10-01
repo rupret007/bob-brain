@@ -8,7 +8,8 @@ import re
 
 
 ANSWER = re.compile(r'^(?:write|draft|compose|summari[sz]e|compare|analy[sz]e|explain|'
-                    r'calculate|evaluate|grade|score|research|review|plan)\b', re.I)
+                    r'calculate|evaluate|grade|score|research|review|plan|'
+                    r'(?:give|show|offer|provide) me|suggest|brainstorm)\b', re.I)
 REVISION = re.compile(r'^(?:make|keep|rewrite|revise|shorten|expand|rephrase)\b.{0,70}\b'
                       r'(?:reply|replies|answer|explanation|paragraph|poem|story|draft|wording|summary)\b', re.I)
 ARTIFACT_OPERATION = re.compile(r'\b(?:create|open|submit|publish|commit|merge)\b.{0,35}\b'
@@ -19,6 +20,8 @@ CONCEPT = re.compile(r'\b(?:difference between|what .{0,25}means?|meaning of|'
                      r'using only (?:this|the) (?:supplied|provided)|'
                      r'(?:supplied|provided) (?:evidence|facts|note|code)|'
                      r'explain (?:this|the) (?:quote|term|concept))\b', re.I)
+INFERENCE = re.compile(r'^(?:are you sure|does|do|would|can|is it true)\b[^.!?\n]{0,120}'
+                       r'\b(?:means?|proves?|imply|implies|guarantees?|establish(?:es)?)\b', re.I)
 OPERATION = re.compile(r'(?:^|\b(?:and|then|also)\s+)(?:please\s+)?'
                        r'(?:run|execute|install|restart|deploy|delete|save|commit|merge|publish)\b', re.I)
 CURRENT_RESEARCH = re.compile(r'\b(?:latest|current|up[- ]to[- ]date|today|browse|search the web|'
@@ -26,6 +29,10 @@ CURRENT_RESEARCH = re.compile(r'\b(?:latest|current|up[- ]to[- ]date|today|brows
 LIVE_REQUEST = re.compile(r'\b(?:check|show) (?:me )?(?:our|the|current|live)\b|'
                          r'\b(?:are|is|what are) (?:our|my|the current|the live)\b|'
                          r'\b(?:our|my|live|current) (?:workers?|jobs?|tasks?|status)\b', re.I)
+PRECISION = re.compile(r'\b(?:explain|compare|analy[sz]e|calculate|evaluate|why|how|'
+                       r'prove|proof|quota|percent(?:age)?|arithmetic)\b|'
+                       r'\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)[ -]'
+                       r'(?:sentences?|lines?|words?)\b', re.I)
 
 
 def instructions(text):
@@ -64,4 +71,16 @@ def wants_answer(text):
 def conceptual(text):
     """A request to reason about evidence/terms, not observe the live workers."""
     request = instructions(text)
-    return bool(CONCEPT.search(request) and not LIVE_REQUEST.search(request))
+    return bool((CONCEPT.search(request) or INFERENCE.search(request))
+                and not LIVE_REQUEST.search(request) and not requires_execution(request))
+
+
+def needs_precision(text):
+    """Reasoning and explicit output constraints merit the calibrated API route.
+
+    This is a quality preference, never permission or a claim that another
+    provider cannot answer. Health and hard admission limits still take priority.
+    """
+    request = instructions(text)
+    return bool(PRECISION.search(request) or conceptual(request)
+                or (re.search(r'\d', request) and re.search(r'\b(?:cost|price|budget|plan|proposal)\b', request, re.I)))

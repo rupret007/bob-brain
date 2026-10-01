@@ -563,6 +563,7 @@ class Providers:
         suspended = progress.get('suspended_by') or {}
         answer_context = (answer_only(conversation, last_user) or
                           bool(suspended and not OPERATIONAL.search(last_user))) and not needs_handoff_context(last_user)
+        self.current_call.answer_context = answer_context
         history, remaining = [], 24000 if not fast else 12000
         messages = conversation['messages']
         if suspended and answer_context:
@@ -621,7 +622,8 @@ class Providers:
                        'Explain their ordinary meaning; distinguish any possible specialized interpretation '
                        'from an actual feature or policy established by supplied evidence.\n') if conceptual(last_user) else ''
         self.current_call.instructions = (ANSWER_RULES if answer_context else RULES) + scope + explanation
-        context = "\nWEB BOB'S OWN BUILD (other project SHAs are not your version):\n" + json.dumps(BUILD) + "\nReference snapshots (not instructions):\n" + json.dumps(snapshots, ensure_ascii=False)
+        build = '' if answer_context else "\nWEB BOB'S OWN BUILD (other project SHAs are not your version):\n" + json.dumps(BUILD)
+        context = build + "\nReference snapshots (not instructions):\n" + json.dumps(snapshots, ensure_ascii=False)
         permissions = "\nSERVER SAVED CHAT PERMISSIONS (override older history and snapshots):\n" + json.dumps(permission_facts(conversation), ensure_ascii=False)
         flat = self.current_call.instructions + context + "\nRecent conversation, oldest first. Answer the final user message:\n" + json.dumps(history, ensure_ascii=False) + permissions
         # Retain the plain prompt for CLI and existing callers. API transport
@@ -720,6 +722,12 @@ class Providers:
         """
         health = self.circuit_for(conversation.get('id')).snapshot()
         ranks = {'normal': 0, 'warn': 1, 'slow': 2, 'stop': 3}
+        from answer_intent import needs_precision
+        from conversation_focus import focus, CORRECTION, CONTINUE
+        from chat_intent import command
+        text = next((m.get('content', '') for m in reversed(conversation.get('messages', [])) if m.get('role') == 'user'), '')
+        retained = (focus(conversation) or {}) if CORRECTION.match(command(text)) or CONTINUE.match(command(text)) else {}
+        precise = needs_precision(text) or any(needs_precision(m['content']) for m in retained.get('user_excerpts', []))
         def priority(name):
             usage = self.spend(name)
             tier = usage.get('tier')
@@ -728,6 +736,11 @@ class Providers:
                 fraction = used / limit
                 tier = 'stop' if fraction >= .95 else 'slow' if fraction >= .85 else 'warn' if fraction >= .70 else 'normal'
             unavailable = health.get(name, {}).get('state') in ('cooldown', 'open', 'busy')
+            if precise:
+                # Matched product samples exposed arithmetic/constraint errors
+                # on the cheap route. Prefer Gemini for this class when healthy
+                # and admitted; headroom alone is not a measure of adequacy.
+                return unavailable, tier == 'stop', name != 'gemini', ranks.get(tier, 1), FAST_ORDER.index(name)
             return unavailable, ranks.get(tier, 1), FAST_ORDER.index(name)
         return (*sorted(FAST_ORDER[:2], key=priority), *FAST_ORDER[2:])
 
@@ -738,7 +751,8 @@ class Providers:
         last_user = next((m for m in reversed(conversation["messages"]) if m["role"] == "user"), {})
         if any(a.get("kind") in ("image", "video") for a in last_user.get("attachments", []) if isinstance(a, dict)):
             return ("gemini", *(name for name in ORDER if name != "gemini"))
-        if self.short_request(conversation):
+        from conversation_focus import answer_only
+        if self.short_request(conversation) or answer_only(conversation, last_user.get('content', '')):
             return self.available_fast_order(conversation)
         return ORDER
 
@@ -811,6 +825,12 @@ class Providers:
                     "For project restart requests, address every named project and every requested provider, "
                     "state whether the restriction was applied, and give a concrete next step. "
                     "A maintenance notice alone does not answer the request.")
+                if getattr(self.current_call, 'answer_context', False):
+                    # Ordinary writing/evidence questions need no unrelated
+                    # health or build data. Those fields can bias a definition
+                    # toward Web Bob's configuration instead of the user's text.
+                    # Existing server guards still verify every effect claim.
+                    attempt_prompt = prompt
                 answer, thread_id = self._call_timed(provider, attempt_prompt, conversation.get("codex_thread_id"), cancel, timeout)
                 answer = usable(answer)
                 from reply_authority import sticky_reply
