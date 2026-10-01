@@ -73,6 +73,14 @@ barge-in, a harmless version tool, persisted transcripts and resource cleanup
 must pass. These product calls never invoke model reviewers or coding workers.
 Synthetic microphone testing does not claim physical iPhone microphone proof.
 
+Failed voice checks retain bounded protocol metadata: event order, successful
+tool sends, completion counts, sanitized close classification and pending audio
+and tool state. Only the proof-created conversation's result statuses and content
+hashes are saved; the isolated server preserves the same metadata before deleting
+its temporary fixture. No raw close reasons, tokens, model payloads or unrelated
+conversation text enter these diagnostics. A diagnostic result is not a release
+green, and an unexplained disconnect remains a recorded failure.
+
 Improvement voice checks also complete a requested longer story through the real
 Gemini writing API and spoken playback, while retaining a brief-answer check.
 The isolated server uses private fixture history and permits only the Gemini API

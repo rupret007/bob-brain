@@ -233,7 +233,7 @@ test('old audio and completion callbacks cannot hide a pending tool',async t=>{
   assert.equal(f.states.at(-1).phase,'speaking');
   [...s.sources][0].onended();assert.equal(f.states.at(-1).phase,'listening');
 });
-for(const ending of ['cancel','hangup'])test(`pending voice state clears on ${ending} and rejects late tool speech`,async t=>{
+for(const ending of ['cancel','hangup','remote-close'])test(`pending voice state clears on ${ending} and rejects late tool speech`,async t=>{
   const dispatched=deferred();
   const f=fixture({api:async route=>{
     if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
@@ -245,14 +245,90 @@ for(const ending of ['cancel','hangup'])test(`pending voice state clears on ${en
   const work=f.controller.tool(s,{id:'pending',name:'ask_bob'});await pause();
   assert.equal(s.pendingTools.size,1);
   if(ending==='cancel')f.controller.event(s,{toolCallCancellation:{ids:['pending']}});
+  else if(ending==='remote-close') { s.socket.onclose({code:1011,reason:'Internal error'});await pause(); }
   else await f.controller.stop();
   assert.equal(s.pendingTools.size,0);
   const phase=f.states.at(-1).phase;
-  assert.equal(phase,ending==='cancel'?'listening':'ended');
+  assert.equal(phase,ending==='cancel'?'listening':ending==='remote-close'?'error':'ended');
   dispatched.resolve({request_id:'r',conversation:{messages:[{role:'assistant',request_id:'r',status:'done',content:'Late result'}]}});
   await work;
   assert.equal(s.socket.sent.filter(m=>m.toolResponse).length,0);
   assert.equal(f.states.at(-1).phase,phase);
+  if(ending==='remote-close'){
+    assert.equal(f.tracks[0].stopped,true);assert.equal(s.audio.state,'closed');
+    assert.equal(f.requests.filter(r=>r.route.endsWith('/start')).length,1);
+    assert.equal(f.requests.filter(r=>r.route.endsWith('/end')).length,1);
+  }
+});
+test('remote close persists a partially spoken reply as interrupted and releases queued audio',async()=>{
+  const f=fixture();await f.controller.start('chat');const s=f.controller.session;
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'Tell me a story'},outputTranscription:{text:'The sailor found'}}});
+  f.controller.play(s,{data:btoa('\0'.repeat(4800)),mimeType:'audio/pcm;rate=24000'});
+  const sources=[...s.sources];s.socket.onclose({code:1011,reason:'Internal error'});await pause();
+  assert.ok(sources.every(source=>source.stopped&&source.disconnected));
+  const saved=f.requests.filter(r=>r.route.endsWith('/transcript')).flatMap(r=>r.data.entries);
+  assert.ok(saved.some(row=>row.role==='assistant'&&row.content==='The sailor found'&&row.interrupted===true));
+  assert.equal(s.socket.onmessage,null);assert.equal(f.controller.active,false);
+});
+
+function protocolFixture(){
+  class Socket{
+    constructor(){this.listeners={};this.sent=[];}
+    addEventListener(name,fn){this.listeners[name]=fn;}
+    send(value){if(this.rejectSend)throw new Error('closed');this.sent.push(value);}
+    emit(name,data){this.listeners[name]?.(data);}
+  }
+  const window={WebSocket:Socket};
+  vm.runInNewContext('('+require('./voice_proof_diagnostics.cjs').toString()+')()',{window,Date,TextDecoder});
+  const socket=new window.WebSocket('wss://secret.example?access_token=secret-token');
+  const receive=value=>socket.emit('message',{data:JSON.stringify(value)});
+  return{window,socket,receive,snapshot:()=>window.voiceEvents.snapshot()};
+}
+test('voice proof retains event order and pending tools without private payloads',()=>{
+  const f=protocolFixture();f.socket.emit('open',{});
+  f.receive({toolCall:{functionCalls:[{id:'private-tool-id',name:'secret-tool',args:{message:'private context'}}]}});
+  f.receive({serverContent:{modelTurn:{parts:[{inlineData:{mimeType:'audio/pcm',data:'private-audio'}}]}}});
+  f.socket.emit('close',{code:1011,wasClean:true,reason:'Internal error with secret-token and private account'});
+  const proof=f.snapshot();assert.equal(proof.pending,1);assert.equal(proof.counts.outputAudio,1);
+  assert.equal(proof.events.at(-1).classification,'internal');
+  assert.deepEqual(Array.from(proof.events,e=>e.kind),['open','tool_call','close']);
+  assert.equal(proof.events.at(-1).counts.toolResponses,0);
+  assert.doesNotMatch(JSON.stringify(proof),/private|secret|wss|access_token/);
+});
+test('voice proof records successful tool responses and cancellations but not failed sends',()=>{
+  const f=protocolFixture();f.receive({toolCall:{functionCalls:[{id:'one'},{id:'two'}]}});
+  f.socket.rejectSend=true;
+  assert.throws(()=>f.socket.send(JSON.stringify({toolResponse:{functionResponses:[{id:'one'}]}})),/closed/);
+  assert.equal(f.snapshot().counts.toolResponses,0);assert.equal(f.snapshot().pending,2);
+  f.socket.rejectSend=false;f.socket.send(JSON.stringify({toolResponse:{functionResponses:[{id:'one',response:{result:'secret answer'}}]}}));
+  f.receive({toolCallCancellation:{ids:['two']}});
+  f.receive({serverContent:{generationComplete:true,turnComplete:true}});
+  assert.equal(f.snapshot().pending,0);assert.equal(f.snapshot().counts.toolResponses,1);
+  assert.equal(f.snapshot().counts.cancellations,1);assert.equal(f.snapshot().counts.turns,1);
+  assert.doesNotMatch(JSON.stringify(f.snapshot()),/secret answer/);
+});
+test('voice diagnostics bound history and classify close reasons without copying them',()=>{
+  for(const [reason,category]of [['Your prepayment credits are depleted. secret','prepaid_depleted'],
+      ['RESOURCE_EXHAUSTED secret','resource_exhausted'],['DEADLINE_EXCEEDED secret','deadline_exceeded'],
+      ['UNAVAILABLE secret','unavailable'],['INVALID_ARGUMENT secret','invalid_argument'],['secret','unclassified'],['','empty']]){
+    const f=protocolFixture();for(let n=0;n<140;n++)f.receive({serverContent:{turnComplete:true}});
+    f.socket.emit('close',{code:1011,wasClean:true,reason});const proof=f.snapshot();
+    assert.equal(proof.events.length,128);assert.equal(proof.dropped,13);assert.equal(proof.counts.turns,140);
+    assert.equal(proof.events.at(-1).classification,category);assert.doesNotMatch(JSON.stringify(proof),/secret/);
+  }
+});
+test('failure diagnostics cannot prevent cleanup on older sessions or an observer error',()=>{
+  const f=protocolFixture(),observed=[];let cleaned=0;
+  const prototype={fail(s,message){assert.equal(s,this.session);assert.equal(message,'safe');cleaned++;}};
+  f.window.voiceEvents.wrapFailure(prototype,s=>observed.push(s));
+  const oldSession={sources:new Set(),nextAudio:0,audio:{currentTime:0}},controller=Object.create(prototype);
+  controller.session=oldSession;controller.fail(oldSession,'safe');
+  assert.equal(cleaned,1);assert.equal(observed[0].pendingTools,null);
+  controller.session={get pendingTools(){throw new Error('untrusted private error');}};
+  controller.fail(controller.session,'safe');assert.equal(cleaned,2);
+  f.window.voiceEvents.wrapFailure(prototype,()=>{throw new Error('observer error');});
+  controller.session=oldSession;controller.fail(oldSession,'safe');assert.equal(cleaned,3);
+  assert.doesNotMatch(JSON.stringify(observed),/untrusted|private/);
 });
 test('private text results and confirmation tokens never reach voice provider',async t=>{
   const f=fixture({api:async(route)=>{

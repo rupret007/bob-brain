@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real product audio with synthetic speech, no council, workers or messages."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,34 @@ import threading
 
 CODE = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(CODE / d) for d in ('webchat', 'services', 'state')]
+
+
+def fixture_failure(chat):
+    """Only owned isolated fixture metadata; never copy transcripts or secrets."""
+    def digest(value):
+        return hashlib.sha256(str(value or '').encode()).hexdigest()
+
+    def allowed(value, choices):
+        return value if value in choices else 'other'
+
+    with chat.lock:
+        conversations = list(chat.conversations.values())
+        records = []
+        for conversation in conversations[:8]:
+            messages = conversation.get('messages', [])
+            records.append(dict(conversation_sha256=digest(conversation.get('id')),message_count=len(messages),
+                messages=[dict(role=allowed(m.get('role'),('user','assistant','system')),
+                    status=allowed(m.get('status'),('done','running','queued','error','waiting','cancelled')),
+                    provider=allowed(m.get('provider'),('gemini','dispatcher','voice','system')),
+                    request_sha256=digest(m.get('request_id')),content_sha256=digest(m.get('content')),
+                    content_bytes=len(str(m.get('content','')).encode()),
+                    voice_interrupted=m.get('voice_interrupted') is True,
+                    has_task=bool(m.get('task_id') or m.get('task_ids'))) for m in messages[-100:]]))
+        calls = list(chat.voice.calls.values())
+        return dict(scope='owned isolated fixture only',conversation_count=len(conversations),conversations=records,
+                    call_count=len(calls),calls=[dict(ended=c.get('ended') is True,
+                        tool_count=len(c.get('tools',{})),conversation_sha256=digest(c.get('conversation_id')),
+                        request_hashes=[digest(r) for r in list(c.get('tools',{}).values())[:64]]) for c in calls[:8]])
 
 
 def probe(root, output, url=None, engines=('chromium', 'webkit')):
@@ -63,6 +92,16 @@ def probe(root, output, url=None, engines=('chromium', 'webkit')):
             from task_dispatch import task_queue
             if chat and task_queue.tasks(private):
                 raise RuntimeError('Voice proof queued a worker')
+        except BaseException:
+            if chat:
+                try:
+                    metadata = fixture_failure(chat)
+                    metadata['sha'] = BUILD['sha']
+                    (output / 'fixture-failure.json').write_text(json.dumps(metadata,indent=2)+'\n')
+                except Exception:
+                    # Retain the original failed probe even if diagnostics cannot save.
+                    print('Voice fixture failure metadata unavailable',file=sys.stderr)
+            raise
         finally:
             if server:
                 server.shutdown()
