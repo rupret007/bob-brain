@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
+const proveHangupControls = require('./voice_hangup_controls.cjs');
 async function until(page, predicate) {
   // Keep CSP enabled: older WebKit's waitForFunction internally uses eval.
   const deadline = Date.now() + 5000;
@@ -123,7 +124,8 @@ process.stdin.on('end', async () => {
       await page.locator('#end-call').click();
       assert.equal(await page.locator('#message').inputValue(), 'Unsent draft survives voice recovery');
       assert.deepEqual(errors, []);
-      browsers.push({engine, all_pass: true, page_errors: [], synthetic_transport: true,
+      const hangup = await proveHangupControls(browser, config);
+      browsers.push({engine, all_pass: true, page_errors: [], synthetic_transport: true, hangup,
         checks: ['fixed credit explanation; raw details hidden', '44px visible keyboard recovery',
           'no automatic retry; composer preserved', 'unknown close stays generic; microphone/socket cleanup',
           'actual HTTP rejects expired startup credential; no new socket; draft and audio cleanup preserved']});

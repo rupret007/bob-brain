@@ -37,11 +37,13 @@ def main():
         try:
             result = subprocess.run(['node', str(Path(__file__).with_name('browser_voice_availability.cjs'))],
                 input=json.dumps(dict(url=f'http://127.0.0.1:{server.server_port}', password=fixture.chat.password,
-                                     output=str(args.output_dir.resolve()))), text=True, capture_output=True, timeout=60)
+                                     output=str(args.output_dir.resolve()))), text=True, capture_output=True, timeout=90)
             if result.returncode:
                 raise RuntimeError(result.stderr)
             evidence = json.loads(result.stdout)
             assert evidence['all_pass'] and len(evidence['browsers']) == 2
+            assert all(len(b['hangup']) == 5 and all(c['all_pass'] for c in b['hangup'])
+                       for b in evidence['browsers'])
             assert not fixture.mock.sends and not fixture.mock.unexpected_writes
             assert not fixture.providers.calls and not task_queue.tasks(fixture.root)
             assert len(minted) == len(fixture.chat.voice.calls) == 2

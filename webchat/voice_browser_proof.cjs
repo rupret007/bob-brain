@@ -122,6 +122,23 @@ async function instrument(page) {
     // Record only allowlisted playback diagnostics, never provider payloads or credentials.
     await page.evaluate(()=>{
       voiceProof.playbackErrors=[];voiceProof.maxQueuedAudioSeconds=0;
+      // Capture activation before cleanup: a resolved Playwright click alone
+      // does not prove WebKit delivered a DOM click to the live Hang up button.
+      voiceProof.hangup=[];
+      const recordHangup=(kind,active=null)=>{
+        try {
+          const button=document.querySelector('#end-call'),rect=button?.getBoundingClientRect();
+          voiceProof.hangup.push({kind,active,button:rect?{x:rect.x,y:rect.y,width:rect.width,height:rect.height}:null,
+            tracksEnded:voiceProof.tracks.every(t=>t.readyState==='ended'),
+            sockets:voiceProof.sockets.map(s=>s.readyState)});
+          if(voiceProof.hangup.length>32)voiceProof.hangup.shift();
+        }catch(_){ /* Observation must not affect activation or resource cleanup. */ }
+      };
+      for(const type of ['pointerdown','pointerup','click'])document.addEventListener(type,event=>{
+        if(event.isTrusted&&event.target.id==='end-call')recordHangup(type);
+      },true);
+      const stop=window.BobVoice.prototype.stop;
+      window.BobVoice.prototype.stop=function(...args){recordHangup('stop',this.active);return stop.apply(this,args);};
       window.voiceEvents.wrapFailure(window.BobVoice.prototype,state=>{voiceProof.beforeFailure=state;});
       const play=window.BobVoice.prototype.play;
       window.BobVoice.prototype.play=function(s,data){
@@ -219,6 +236,7 @@ async function instrument(page) {
     }
     await page.setViewportSize({width:1280,height:900});await screenshot('desktop-call');
     results.transcript_sha256=require('node:crypto').createHash('sha256').update(await page.locator('#call-transcript').textContent()).digest('hex');
+    stage='hangup';
     await page.locator('#end-call').click();
     await page.waitForFunction(()=>document.querySelector('#call-status').textContent.includes('transcript saved'),null,{timeout:15000});
     const microphone = await page.evaluate(()=>voiceProof.tracks.map(t=>t.readyState));
@@ -231,6 +249,9 @@ async function instrument(page) {
       starts:voiceProof.starts,stops:voiceProof.stops,maxQueuedAudioSeconds:voiceProof.maxQueuedAudioSeconds,
       playbackErrors:voiceProof.playbackErrors,tracksEnded:voiceProof.tracks.every(t=>t.readyState==='ended'),socketsClosed:voiceProof.sockets.every(s=>s.readyState===3)}));
     results.protocol=await page.evaluate(()=>window.voiceEvents.snapshot());
+    results.hangup=await page.evaluate(()=>voiceProof.hangup);
+    assert.equal(results.hangup.filter(e=>e.kind==='click').length,1,'One real Hang up activation is required');
+    assert.equal(results.hangup.filter(e=>e.kind==='stop'&&e.active).length,1,'One active call must stop');
     assert.ok(results.media.inputPackets>10&&results.media.outputBytes>10000&&results.media.starts>0);
     assert.ok(results.media.tracksEnded&&results.media.socketsClosed);results.checks.push('hangup releases microphone and audio transport');
     stage='saved-transcript';await page.locator('#end-call').click();await page.reload();
@@ -286,7 +307,8 @@ async function instrument(page) {
     const metadata=await page.evaluate(()=>({protocol:window.voiceEvents?.snapshot(),beforeFailure:window.voiceProof?.beforeFailure,
       tools:voiceProof.tools,toolResponses:voiceProof.toolResponses,turns:voiceProof.turns,
       interruptions:voiceProof.interruptions,input:voiceProof.inputPackets,output:voiceProof.outputPackets,
-      playbackErrors:voiceProof.playbackErrors,maxQueuedAudioSeconds:voiceProof.maxQueuedAudioSeconds})).catch(()=>null);
+      playbackErrors:voiceProof.playbackErrors,maxQueuedAudioSeconds:voiceProof.maxQueuedAudioSeconds,
+      hangup:voiceProof.hangup})).catch(()=>null);
     const ownedConversation=proofConversationId?await page.evaluate(async id=>{
       const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),3000);
       try{

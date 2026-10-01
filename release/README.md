@@ -81,6 +81,14 @@ its temporary fixture. No raw close reasons, tokens, model payloads or unrelated
 conversation text enter these diagnostics. A diagnostic result is not a release
 green, and an unexplained disconnect remains a recorded failure.
 
+Hang up keeps its existing label node during streaming status updates: WebKit
+can otherwise suppress a click whose text node changes between press/release.
+The offline voice-availability gate exercises that race with trusted mouse input
+on phone, resized phone and desktop layouts, plus touch/keyboard controls in both
+browsers. Resources must close once while transcript saving is still blocked.
+Real voice proof records bounded trusted activation/stop metadata before failure
+cleanup; it still requires one actual click, resource closure and a saved transcript.
+
 Improvement voice checks also complete a requested longer story through the real
 Gemini writing API and spoken playback, while retaining a brief-answer check.
 The isolated server uses private fixture history and permits only the Gemini API
