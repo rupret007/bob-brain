@@ -9,6 +9,30 @@ import unittest
 
 
 class ReleaseImportsTests(unittest.TestCase):
+    def test_observed_caps_match_checked_admission_policy_and_tightening(self):
+        code = Path(__file__).resolve().parents[1]
+        script = """
+import os
+import budget
+from providers import observed_api_cap
+for lane in ('gemini', 'minimax'):
+    key = 'BOB_' + lane.upper() + '_CAP_USD'
+    for value in (None, '20', '0', '-1', '999'):
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+        assert observed_api_cap(lane) == budget.cap(lane), (lane, value)
+print('checked admission policy matches')
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            env = dict(os.environ, BOB_ROOT=temporary, PYTHONDONTWRITEBYTECODE='1',
+                       PYTHONPATH=os.pathsep.join(str(code / p) for p in ('services', 'webchat')))
+            result = subprocess.run([sys.executable, '-c', script], cwd=temporary,
+                                    env=env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('checked admission policy matches', result.stdout)
+
     def test_app_uses_release_ledger_with_data_root_and_pythonpath_pollution(self):
         code = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temporary:

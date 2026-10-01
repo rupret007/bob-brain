@@ -1,6 +1,7 @@
 """Bounded Bob conversations through the installed, already authenticated CLIs."""
 from __future__ import annotations
 
+import ast
 import json
 import fcntl
 import os
@@ -235,6 +236,26 @@ HANDOFF_CONTEXT_RE = re.compile(
 def needs_handoff_context(text: str) -> bool:
     """Short phone asks about Bob ledger still need full brain + handback snapshots."""
     return bool(HANDOFF_CONTEXT_RE.search(text or ""))
+
+
+def observed_api_cap(name):
+    """Read this release's ceiling as data, without importing service runtime.
+
+    The legacy dashboard can cache an older module named ``budget``. Reading
+    its imports would make chat routing depend on which panel loaded first.
+    Admission still runs in the existing API child using services/budget.py;
+    this is only its ceiling and runtime-tightening observation.
+    """
+    source = Path(__file__).resolve().parents[1] / 'services/budget.py'
+    constants = {node.targets[0].id: ast.literal_eval(node.value)
+                 for node in ast.parse(source.read_text()).body
+                 if isinstance(node, ast.Assign) and len(node.targets) == 1
+                 and isinstance(node.targets[0], ast.Name)
+                 and node.targets[0].id in ('CAP_USD', 'GEMINI_CAP_USD')}
+    default = constants[{'gemini': 'GEMINI_CAP_USD', 'minimax': 'CAP_USD'}[name]]
+    if type(default) not in (int, float) or not 0 < default < float('inf'):
+        raise ValueError('Invalid release budget ceiling')
+    return max(0, min(default, float(os.environ.get('BOB_' + name.upper() + '_CAP_USD', default))))
 
 
 class Redactor:
@@ -1058,14 +1079,11 @@ class Providers:
             # Read the same ledger/cap used by admission. A stale lane board
             # must not advertise headroom after newer calls reserve it. This
             # path only observes: it never repairs/truncates journal bytes.
-            services = str(Path(__file__).resolve().parents[1] / 'services')
-            if services not in sys.path:
-                sys.path.insert(0, services)
-            from budget import cap
-            limit = cap(name)
+            limit = None
             path = self.root / 'conductor/ledger' / (name + '.jsonl')
             lock_path = self.root / 'conductor/locks' / ('ledger-' + name + '.lock')
             try:
+                limit = observed_api_cap(name)
                 with lock_path.open('rb') as handle:
                     fcntl.flock(handle, fcntl.LOCK_SH)
                     records = {r['call_id']:r for r in map(json.loads, path.read_text().splitlines())}
@@ -1076,8 +1094,8 @@ class Providers:
                 tier = 'stop' if fraction >= .95 else 'slow' if fraction >= .85 else 'warn' if fraction >= .70 else 'normal'
                 return dict(spent_usd=round(spent,8),reserved_usd=round(reserved,8),committed_usd=round(committed,8),
                             cap_usd=limit,tier=tier,quota_known=True,billing='metered API')
-            except (OSError, ValueError, KeyError, TypeError):
-                return dict(cap_usd=limit,quota_known=False,billing='metered API; ledger unavailable')
+            except (OSError, ValueError, KeyError, TypeError, SyntaxError):
+                return dict(cap_usd=limit,quota_known=False,billing='metered API; budget observation unavailable')
         # The lane board reports the enforced ceiling/tier, including Gemini.
         board = self.root / "conductor/lanes.json"
         if board.exists():
