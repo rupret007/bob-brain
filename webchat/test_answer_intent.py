@@ -19,6 +19,7 @@ class AnswerIntentTests(SessionFixture):
                       'The repair job you requested is running.',
                       'The task was queued on this machine just now.',
                       'Queued means accepted; the task was assigned just now.',
+                      'That explanation works without starting work; I queued your repair.',
                       'I created the repair task.', 'Gemini’s working on your repair.',
                       'A job is running when its worker begins executing; I queued your repair.',
                       'A job is running when its worker begins executing and I queued your repair.',
@@ -33,6 +34,7 @@ class AnswerIntentTests(SessionFixture):
         for text in ('A job is running once its worker begins executing.',
                      'A job is running when its worker begins executing.',
                      'Queued means a job has been assigned to a worker but has not started.',
+                     'That explanation describes a task without starting any work.',
                      "Queued means the job is waiting in line for a worker to pick it up — it's been assigned but not started yet. Running means a worker has grabbed it and is actively doing the work.",
                      'Running means execution has begun; queued means it is waiting.'):
             self.fake.reply_text = text

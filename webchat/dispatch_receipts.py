@@ -44,6 +44,9 @@ def dispatch_prose(text, *, reference=''):
     prose = re.sub(r"(?:^|(?<=[.!?])\s+)I (?:can|could)\b(?:(?!\b(?:and|but)\s+(?:I|we|Bob)\b(?![’\x27]ll|\s+(?:will|can|could)\b))[^.;!?\n])*[.!?]?", "", prose, flags=re.I)
     prose = re.sub(r"\bI (?:can(?:not|['’]t)|could(?: not|n['’]t)|did(?: not|n['’]t)|have(?: not|n['’]t))\b"
                    r"(?:(?!\b(?:and|but)\s+(?:I|we|Bob)\b)[^.;!?\n])*", "", prose, flags=re.I)
+    # Replace only the explicitly excluded verb. Separate positive claims
+    # remain visible to the guard, including after a semicolon or conjunction.
+    prose = re.sub(r'\bwithout\s+' + EFFECT + r'\b', 'without performing an action', prose, flags=re.I)
     if reference:
         # In a definition, generic subjects describe the term, not a live job.
         # Preserve owner/named-job, actor and deictic claims for the guard.
