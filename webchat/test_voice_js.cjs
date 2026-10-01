@@ -207,6 +207,53 @@ test('cancelled tools cannot dispatch or speak after a barge-in',async()=>{
   s.cancelledTools.add('cancelled');await f.controller.tool(s,{id:'cancelled',name:'ask_bob'});
   assert.equal(f.requests.filter(r=>r.route.endsWith('/tool')).length,0);await f.controller.stop();
 });
+test('old audio and completion callbacks cannot hide a pending tool',async t=>{
+  const dispatched=deferred();
+  const f=fixture({api:async route=>{
+    if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
+    if(route.endsWith('/tool'))return dispatched.promise;
+    return {ok:true};
+  }});
+  t.after(()=>f.controller.stop());await f.controller.start('chat');const s=f.controller.session;
+  f.controller.play(s,{data:btoa('\0'.repeat(4800)),mimeType:'audio/pcm;rate=24000'});
+  const source=[...s.sources][0];
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'Tell me a long story'}}});
+  s.inputTurn.lastInputAt=0;
+  const work=f.controller.tool(s,{id:'pending',name:'ask_bob'});await pause();
+  assert.equal(s.pendingTools.size,1);assert.equal(f.states.at(-1).phase,'thinking');
+  source.onended();assert.equal(f.states.at(-1).phase,'thinking');
+  f.controller.event(s,{serverContent:{turnComplete:true}});
+  assert.equal(f.states.at(-1).phase,'thinking');
+  await f.controller.retrySave();assert.equal(f.states.at(-1).phase,'thinking');
+  s.audio.state='suspended';s.audio.onstatechange();assert.equal(f.states.at(-1).phase,'paused');
+  await f.controller.resume();assert.equal(f.states.at(-1).phase,'thinking');
+  dispatched.resolve({request_id:'r',conversation:{messages:[{role:'assistant',request_id:'r',status:'done',content:'A sailor found a compass.'}]}});
+  await work;assert.equal(s.pendingTools.size,0);
+  f.controller.play(s,{data:btoa('\0'.repeat(4800)),mimeType:'audio/pcm;rate=24000'});
+  assert.equal(f.states.at(-1).phase,'speaking');
+  [...s.sources][0].onended();assert.equal(f.states.at(-1).phase,'listening');
+});
+for(const ending of ['cancel','hangup'])test(`pending voice state clears on ${ending} and rejects late tool speech`,async t=>{
+  const dispatched=deferred();
+  const f=fixture({api:async route=>{
+    if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
+    if(route.endsWith('/tool'))return dispatched.promise;
+    return {ok:true};
+  }});
+  t.after(()=>f.controller.stop());await f.controller.start('chat');const s=f.controller.session;
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'Tell me a long story'}}});s.inputTurn.lastInputAt=0;
+  const work=f.controller.tool(s,{id:'pending',name:'ask_bob'});await pause();
+  assert.equal(s.pendingTools.size,1);
+  if(ending==='cancel')f.controller.event(s,{toolCallCancellation:{ids:['pending']}});
+  else await f.controller.stop();
+  assert.equal(s.pendingTools.size,0);
+  const phase=f.states.at(-1).phase;
+  assert.equal(phase,ending==='cancel'?'listening':'ended');
+  dispatched.resolve({request_id:'r',conversation:{messages:[{role:'assistant',request_id:'r',status:'done',content:'Late result'}]}});
+  await work;
+  assert.equal(s.socket.sent.filter(m=>m.toolResponse).length,0);
+  assert.equal(f.states.at(-1).phase,phase);
+});
 test('private text results and confirmation tokens never reach voice provider',async t=>{
   const f=fixture({api:async(route)=>{
     if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
