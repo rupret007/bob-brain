@@ -289,11 +289,47 @@ class VoiceCalls:
             if not user:
                 raise VoiceError(409, "Still transcribing. Please repeat that request.")
             request_id = str(uuid.uuid5(uuid.UUID(call_id), turn_id + ":tool"))
+            if turn_id in call.get('interrupted_turns', ()):
+                # An interrupted admission cannot start later. Replays of an
+                # existing request retain its terminal answer and real effects.
+                if user.get('request_id') == request_id:
+                    return {"conversation_id": identifier, "request_id": request_id,
+                            "conversation": chat.public(chat.get(identifier))}
+                raise VoiceError(409, "That spoken request was interrupted. Please ask a new question.")
             # Model function arguments are deliberately ignored. The only input is
             # the caller's saved transcript, through exactly the typed-chat handler.
             result = chat.submit(identifier, user["content"], request_id, source_voice=source_id, actor=owner)
             call["tools"][turn_id] = request_id
             return {"conversation_id": identifier, "request_id": request_id, "conversation": result}
+
+    def interrupt(self, call_id, owner, turn_id):
+        """Stop only this spoken turn's unfinished reply, never its committed effects."""
+        chat = self.chat
+        with chat.lock:
+            call = self.get(call_id, owner, allow_ended=True)
+            if not isinstance(turn_id, str) or not UUID.fullmatch(turn_id):
+                raise VoiceError(400, "A transcribed turn is required.")
+            identifier = call['conversation_id']
+            value = chat.get(identifier)
+            source_id = str(uuid.uuid5(uuid.UUID(call_id), turn_id + ':user'))
+            if not any(m['id'] == source_id and m['role'] == 'user' for m in value['messages']):
+                raise VoiceError(409, "The interrupted spoken turn has not been saved.")
+            # Admission and this tombstone share the chat lock. A delayed tool
+            # request cannot restart a turn interrupted before its admission.
+            call.setdefault('interrupted_turns', set()).add(turn_id)
+            request_id = str(uuid.uuid5(uuid.UUID(call_id), turn_id + ':tool'))
+            answer = next((m for m in value['messages'] if m['role'] == 'assistant'
+                           and m.get('request_id') == request_id and m.get('voice_call_id') == call_id), None)
+            if answer and answer['status'] in ('queued', 'running', 'waiting'):
+                chat.stop(identifier, request_id=request_id)
+            # Cancelling a provider sets its event; its thread may still be
+            # exiting. Observe quiescence without joining under the chat lock.
+            info = chat.workers.get(identifier)
+            pending = answer and answer['status'] in ('queued', 'running', 'waiting')
+            settled = not pending and (not info or not answer or info['reply_id'] != answer['id'])
+            state = ('not_started' if not answer else 'cancelled' if answer['status'] == 'cancelled'
+                     else 'stopping' if answer['status'] in ('queued', 'running', 'waiting') else 'completed')
+            return {'ok': True, 'state': state, 'settled': settled}
 
     def end(self, call_id, owner):
         with self.chat.lock:

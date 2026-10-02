@@ -70,7 +70,7 @@ function fixture(options = {}) {
     requests.push({route,data});
     if(options.api) return options.api(route,data);
     if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example.test',token:'auth_tokens/test',model:'models/test',expires_at:Date.now()/1000+600};
-    return {ok:true};
+    return {ok:true,settled:true};
   },onState:(text,phase)=>states.push({text,phase}),onTranscript:()=>{},onSaved:()=>{}});
   return {controller,window,states,requests,sockets,contexts,tracks,stream};
 }
@@ -137,7 +137,7 @@ test('late startup resume after hangup cannot load a worklet or open a provider'
   assert.equal(modules,0);assert.equal(f.requests.length,0);assert.equal(f.tracks[0].stopped,true);
 });
 test('hanging up while token request is pending ends that late session',async()=>{
-  const token=deferred();const f=fixture({api:async(route)=>route.endsWith('/start')?token.promise:{ok:true}});
+  const token=deferred();const f=fixture({api:async(route)=>route.endsWith('/start')?token.promise:{ok:true,settled:true}});
   const starting=f.controller.start('chat');await pause();await f.controller.stop();
   token.resolve({call_id:'late',expires_at:Date.now()/1000+600});await starting;
   assert.equal(f.sockets.length,0);assert.equal(f.requests.at(-1).route,'/api/voice/end');
@@ -199,7 +199,7 @@ test('transcript retry retains dirty data and uses one flusher',async()=>{
   const f=fixture({api:async(route)=>{
     if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
     if(route.endsWith('/transcript')&&failing)throw new Error('offline');
-    return {ok:true};
+    return {ok:true,settled:true};
   }});
   await f.controller.start('chat');const s=f.controller.session;
   f.controller.event(s,{serverContent:{inputTranscription:{text:'Please keep this'}}});
@@ -222,7 +222,7 @@ test('tool dispatch takes saved spoken turn, never model arguments',async()=>{
   const f=fixture({api:async(route)=>{
     if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
     if(route.endsWith('/tool'))return {request_id:'r',conversation:{messages:[{role:'assistant',request_id:'r',status:'done',content:'Queued — job test.'}]}};
-    return {ok:true};
+    return {ok:true,settled:true};
   }});
   await f.controller.start('chat');const s=f.controller.session;
   f.controller.event(s,{serverContent:{inputTranscription:{text:'start a job: test widget'}}});
@@ -244,7 +244,7 @@ test('old audio and completion callbacks cannot hide a pending tool',async t=>{
   const f=fixture({api:async route=>{
     if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
     if(route.endsWith('/tool'))return dispatched.promise;
-    return {ok:true};
+    return {ok:true,settled:true};
   }});
   t.after(()=>f.controller.stop());await f.controller.start('chat');const s=f.controller.session;
   f.controller.play(s,{data:btoa('\0'.repeat(4800)),mimeType:'audio/pcm;rate=24000'});
@@ -270,13 +270,17 @@ for(const ending of ['cancel','hangup','remote-close'])test(`pending voice state
   const f=fixture({api:async route=>{
     if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
     if(route.endsWith('/tool'))return dispatched.promise;
-    return {ok:true};
+    return {ok:true,settled:true};
   }});
   t.after(()=>f.controller.stop());await f.controller.start('chat');const s=f.controller.session;
   f.controller.event(s,{serverContent:{inputTranscription:{text:'Tell me a long story'}}});s.inputTurn.lastInputAt=0;
   const work=f.controller.tool(s,{id:'pending',name:'ask_bob'});await pause();
   assert.equal(s.pendingTools.size,1);
-  if(ending==='cancel')f.controller.event(s,{toolCallCancellation:{ids:['pending']}});
+  if(ending==='cancel'){
+    f.controller.event(s,{toolCallCancellation:{ids:['pending']}});
+    assert.equal(f.states.at(-1).phase,'thinking','server cancellation has not settled yet');
+    await pause();
+  }
   else if(ending==='remote-close') { s.socket.onclose({code:1011,reason:'Internal error'});await pause(); }
   else await f.controller.stop();
   assert.equal(s.pendingTools.size,0);
@@ -291,6 +295,90 @@ for(const ending of ['cancel','hangup','remote-close'])test(`pending voice state
     assert.equal(f.requests.filter(r=>r.route.endsWith('/start')).length,1);
     assert.equal(f.requests.filter(r=>r.route.endsWith('/end')).length,1);
   }
+});
+test('waiting voice reply is interrupted before a newer version request and waits for worker exit',async t=>{
+  const stopped=deferred();let toolCount=0,interruptCount=0;
+  const f=fixture({api:async(route,data)=>{
+    if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
+    if(route.endsWith('/tool')){
+      toolCount++;const id='r'+toolCount;
+      return {request_id:id,conversation:{messages:[{role:'assistant',request_id:id,
+        status:toolCount===1?'waiting':'done',content:toolCount===1?'The provider could not complete this reply.':'Web Bob version 1234567'}]}};
+    }
+    if(route.endsWith('/interrupt'))return ++interruptCount===1?{ok:true,settled:false}:stopped.promise;
+    return {ok:true,settled:true};
+  }});
+  t.after(()=>f.controller.stop());await f.controller.start('chat');const s=f.controller.session;
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'Tell me a long story'}}});
+  s.inputTurn.lastInputAt=0;const old=s.inputTurn;
+  await f.controller.tool(s,{id:'story',name:'ask_bob'});
+  f.controller.event(s,{serverContent:{outputTranscription:{text:'The story is waiting.'}}});
+  f.controller.play(s,{data:btoa('\0'.repeat(4800)),mimeType:'audio/pcm;rate=24000'});
+  f.controller.event(s,{serverContent:{turnComplete:true}});
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'What version are you running?'}}});
+  s.inputTurn.lastInputAt=0;const next=s.inputTurn;
+  assert.notEqual(old.id,next.id);
+  f.controller.event(s,{serverContent:{interrupted:true}});
+  const work=f.controller.tool(s,{id:'version',name:'ask_bob'});
+  await pause();assert.equal(toolCount,1);
+  assert.equal(f.requests.find(r=>r.route.endsWith('/interrupt')).data.turn_id,old.id);
+  assert.equal(s.cancelledTools.has('version'),false);
+  await new Promise(resolve=>setTimeout(resolve,400));assert.equal(toolCount,1);
+  stopped.resolve({ok:true,settled:true});await work;
+  assert.equal(toolCount,2);assert.equal(s.interruptions.size,0);
+  assert.equal(f.requests.filter(r=>r.route.endsWith('/tool')).at(-1).data.turn_id,next.id);
+  assert.match(s.socket.sent.at(-1).toolResponse.functionResponses[0].response.result,/Web Bob/);
+});
+test('interruption before tool admission saves and cancels that turn without starting it',async t=>{
+  const saved=deferred();
+  const f=fixture({api:async route=>{
+    if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
+    if(route.endsWith('/transcript'))return saved.promise;
+    return {ok:true,settled:true};
+  }});
+  t.after(()=>f.controller.stop());await f.controller.start('chat');const s=f.controller.session;
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'Tell me a long story'}}});s.inputTurn.lastInputAt=0;
+  const turn=s.inputTurn.id,work=f.controller.tool(s,{id:'story',name:'ask_bob'});
+  await pause();f.controller.event(s,{serverContent:{interrupted:true}});
+  saved.resolve({ok:true});await work;await f.controller.flushInterruptions(s);
+  assert.equal(f.requests.filter(r=>r.route.endsWith('/tool')).length,0);
+  assert.equal(f.requests.find(r=>r.route.endsWith('/interrupt')).data.turn_id,turn);
+  assert.equal(s.socket.sent.filter(m=>m.toolResponse).length,0);
+});
+test('failed interruption blocks later tools until explicit save recovery confirms cancellation',async t=>{
+  let failing=true,toolCount=0;
+  const f=fixture({api:async route=>{
+    if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
+    if(route.endsWith('/interrupt')&&failing)throw new Error('Cancellation could not be confirmed.');
+    if(route.endsWith('/tool')){
+      const id='r'+(++toolCount);
+      return {request_id:id,conversation:{messages:[{role:'assistant',request_id:id,status:'waiting',content:'Reply queued.'}]}};
+    }
+    return {ok:true,settled:true};
+  }});
+  t.after(()=>f.controller.stop());await f.controller.start('chat');const s=f.controller.session;
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'Tell me a story'}}});s.inputTurn.lastInputAt=0;
+  await f.controller.tool(s,{id:'story',name:'ask_bob'});
+  f.controller.event(s,{serverContent:{outputTranscription:{text:'Reply queued.'},interrupted:true}});
+  // The interrupted output may arrive in a separate event from its transcript.
+  f.controller.event(s,{serverContent:{interrupted:true}});await pause();
+  assert.equal(f.states.at(-1).phase,'unsaved');assert.equal(s.interruptions.size,1);
+  f.controller.event(s,{serverContent:{turnComplete:true}});
+  assert.equal(f.states.at(-1).phase,'unsaved','turn completion must retain Retry save');
+  f.controller.play(s,{data:btoa('\0'.repeat(4800)),mimeType:'audio/pcm;rate=24000'});
+  assert.equal(f.states.at(-1).phase,'unsaved','speaking must retain Retry save');
+  [...s.sources][0].onended();
+  assert.equal(f.states.at(-1).phase,'unsaved','audio completion must retain Retry save');
+  s.audio.state='suspended';s.audio.onstatechange();
+  assert.equal(f.states.at(-1).phase,'unsaved','cancellation recovery precedes audio resume');
+  f.controller.event(s,{serverContent:{inputTranscription:{text:'What version are you running?'}}});s.inputTurn.lastInputAt=0;
+  await f.controller.tool(s,{id:'version',name:'ask_bob'});assert.equal(toolCount,1);
+  assert.equal(f.states.at(-1).phase,'unsaved','a failed new tool must retain Retry save');
+  assert.match(f.states.at(-1).text,/earlier reply.*Retry save/);
+  failing=false;await f.controller.retrySave();assert.equal(s.interruptions.size,0);
+  assert.equal(s.interruptionError,false);assert.equal(f.states.at(-1).phase,'paused');
+  await f.controller.resume();assert.equal(f.states.at(-1).phase,'listening');
+  await f.controller.tool(s,{id:'version-retry',name:'ask_bob'});assert.equal(toolCount,2);
 });
 test('remote close persists a partially spoken reply as interrupted and releases queued audio',async()=>{
   const f=fixture();await f.controller.start('chat');const s=f.controller.session;
@@ -366,7 +454,7 @@ test('private text results and confirmation tokens never reach voice provider',a
   const f=fixture({api:async(route)=>{
     if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
     if(route.endsWith('/tool'))return {request_id:'r',conversation:{messages:[{role:'assistant',request_id:'r',status:'done',texting:true,content:'Private thread wbtxt-secret'}]}};
-    return {ok:true};
+    return {ok:true,settled:true};
   }});
   t.after(()=>f.controller.stop());await f.controller.start('chat');const s=f.controller.session;
   f.controller.event(s,{serverContent:{inputTranscription:{text:'texts'}}});s.inputTurn.lastInputAt=0;
@@ -389,7 +477,7 @@ test('private memory inspection results never enter a voice tool response',async
     if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
     if(route.endsWith('/tool'))return {request_id:'r',conversation:{messages:[{role:'assistant',request_id:'r',status:'done',
       private_memory:true,content:'Private saved-note fixture copper-puffin-739'}]}};
-    return {ok:true};
+    return {ok:true,settled:true};
   }});
   t.after(()=>f.controller.stop());await f.controller.start('chat');const s=f.controller.session;
   f.controller.event(s,{serverContent:{inputTranscription:{text:'show my saved memories'}}});s.inputTurn.lastInputAt=0;
@@ -458,7 +546,7 @@ test('barge-in during a dispatched tool preserves interrupted transcript on save
     if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
     if(route.endsWith('/transcript') && savesFail && data.entries.some(row=>row.interrupted))throw new Error('offline');
     if(route.endsWith('/tool'))return dispatched.promise;
-    return {ok:true};
+    return {ok:true,settled:true};
   }});
   t.after(()=>f.controller.stop());
   await f.controller.start('chat');const s=f.controller.session;
@@ -490,7 +578,7 @@ test('hangup releases the server lease even while transcript saving is blocked',
   const pending=deferred();const f=fixture({api:async(route)=>{
     if(route.endsWith('/start'))return {call_id:'fixture',url:'wss://example',token:'token',expires_at:Date.now()/1000+600};
     if(route.endsWith('/transcript'))return pending.promise;
-    return {ok:true};
+    return {ok:true,settled:true};
   }});
   await f.controller.start('chat');f.controller.event(f.controller.session,{serverContent:{inputTranscription:{text:'Keep this'}}});
   const stopping=f.controller.stop();await pause();

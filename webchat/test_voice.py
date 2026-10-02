@@ -35,6 +35,136 @@ class VoiceTests(fixtures.Fixture):
     def save_entries(self, *entries):
         return self.chat.voice.transcript(self.call, self.owner, list(entries))
 
+    def test_interrupted_waiting_story_allows_next_version_tool(self):
+        user = self.entry('Tell me a very long story about a sailor.')
+        self.save_entries(user)
+        with patch.object(self.fake, 'reply', side_effect=AllDown([], time.time() + 300, 'saved prompt')):
+            request = self.chat.voice.tool(self.call, self.owner, user['turn_id'])
+            self.wait()
+        self.save_entries(self.entry('The story is waiting.', role='assistant', turn=user['turn_id']),
+                          self.entry('Stop. Just say okay Jeff.', order=1))
+        result = self.chat.voice.interrupt(self.call, self.owner, user['turn_id'])
+        self.assertTrue(result['settled'])
+        rows = self.chat.get(self.identifier)['messages']
+        answer = next(m for m in rows if m.get('request_id') == request['request_id'] and m['role'] == 'assistant')
+        self.assertEqual(answer['status'], 'cancelled')
+        self.assertNotIn('retry_prompt', self.chat.get(self.identifier))
+        replay = self.chat.voice.tool(self.call, self.owner, user['turn_id'])
+        self.assertEqual(replay['request_id'], request['request_id'])
+        self.assertEqual(replay['conversation']['messages'], self.chat.public(self.chat.get(self.identifier))['messages'])
+        version = self.entry('What version are you running?', order=2)
+        self.save_entries(version)
+        answer = self.chat.voice.tool(self.call, self.owner, version['turn_id'])['conversation']['messages'][-1]
+        self.assertEqual(answer['provider'], 'dispatcher')
+
+    def test_voice_interruption_before_admission_cannot_start_later(self):
+        user = self.entry('Tell me a story.')
+        self.save_entries(user)
+        result = self.chat.voice.interrupt(self.call, self.owner, user['turn_id'])
+        self.assertEqual(result['state'], 'not_started')
+        self.assertTrue(result['settled'])
+        for _ in range(2):
+            with self.assertRaises(VoiceError):
+                self.chat.voice.tool(self.call, self.owner, user['turn_id'])
+        self.assertEqual(self.fake.calls, [])
+        self.assertEqual(len(self.chat.get(self.identifier)['messages']), 1)
+
+    def test_voice_interruption_is_owned_and_turn_bound(self):
+        user = self.entry('Tell me a story.')
+        self.save_entries(user)
+        for call, owner, turn in ((self.call, 'other', user['turn_id']),
+                                  (str(uuid.uuid4()), self.owner, user['turn_id']),
+                                  (self.call, self.owner, str(uuid.uuid4())),
+                                  (self.call, self.owner, 'invalid')):
+            with self.subTest(call=call, owner=owner, turn=turn), self.assertRaises(VoiceError):
+                self.chat.voice.interrupt(call, owner, turn)
+        self.assertFalse(self.chat.voice.calls[self.call].get('interrupted_turns'))
+
+    def test_late_voice_interruption_preserves_newer_reply_and_completed_effect(self):
+        from task_dispatch import task_queue
+        action = self.entry('Start a job: write unit tests for a pretend blue widget.')
+        self.save_entries(action)
+        receipt = self.chat.voice.tool(self.call, self.owner, action['turn_id'])
+        before = copy.deepcopy(task_queue.tasks(self.root))
+        later = self.entry('Tell me a short story.', order=1)
+        self.save_entries(later)
+        self.fake.hold.clear()
+        try:
+            next_request = self.chat.voice.tool(self.call, self.owner, later['turn_id'])
+            info = self.chat.workers[self.identifier]
+            result = self.chat.voice.interrupt(self.call, self.owner, action['turn_id'])
+            self.assertEqual(result['state'], 'completed')
+            self.assertTrue(result['settled'])
+            self.assertFalse(info['cancel'].is_set())
+            self.assertEqual(task_queue.tasks(self.root), before)
+            replay = self.chat.voice.tool(self.call, self.owner, action['turn_id'])
+            self.assertEqual(replay['request_id'], receipt['request_id'])
+            self.assertNotEqual(next_request['request_id'], receipt['request_id'])
+        finally:
+            self.fake.hold.set()
+            self.wait()
+
+    def test_running_voice_interrupt_waits_for_matching_worker_exit(self):
+        user = self.entry('Tell me a short story.')
+        self.save_entries(user)
+        self.fake.hold.clear()
+        try:
+            request = self.chat.voice.tool(self.call, self.owner, user['turn_id'])
+            result = self.chat.voice.interrupt(self.call, self.owner, user['turn_id'])
+            self.assertFalse(result['settled'])
+            self.assertTrue(self.chat.workers[self.identifier]['cancel'].is_set())
+            answer = next(m for m in self.chat.get(self.identifier)['messages']
+                          if m.get('request_id') == request['request_id'] and m['role'] == 'assistant')
+            self.assertEqual(answer['status'], 'cancelled')
+        finally:
+            self.fake.hold.set()
+            self.wait()
+        self.assertTrue(self.chat.voice.interrupt(self.call, self.owner, user['turn_id'])['settled'])
+
+    def test_waiting_voice_interrupt_during_worker_cleanup_clears_retry(self):
+        user = self.entry('Tell me a short story.')
+        self.save_entries(user)
+        observed = []
+        save = self.chat.save
+        def interrupt_waiting(value):
+            save(value)
+            if any(m.get('status') == 'waiting' for m in value['messages']):
+                observed.append(self.chat.voice.interrupt(self.call, self.owner, user['turn_id']))
+        with patch.object(self.chat, 'save', side_effect=interrupt_waiting), \
+                patch.object(self.fake, 'reply', side_effect=AllDown([], time.time() + 300, 'saved prompt')):
+            self.chat.voice.tool(self.call, self.owner, user['turn_id'])
+            self.wait()
+        self.assertEqual(len(observed), 1)
+        self.assertFalse(observed[0]['settled'])
+        value = self.chat.get(self.identifier)
+        self.assertEqual(value['messages'][-1]['status'], 'cancelled')
+        self.assertNotIn('retry_prompt', value)
+
+    def test_pending_voice_reply_cannot_report_settled_without_matching_worker(self):
+        user = self.entry('Tell me a short story.')
+        self.save_entries(user)
+        with patch.object(self.fake, 'reply', side_effect=AllDown([], time.time() + 300, 'saved prompt')):
+            request = self.chat.voice.tool(self.call, self.owner, user['turn_id'])
+            self.wait()
+        answer = next(m for m in self.chat.get(self.identifier)['messages']
+                      if m.get('request_id') == request['request_id'] and m['role'] == 'assistant')
+        newer = {'reply_id': str(uuid.uuid4()), 'cancel': threading.Event()}
+        try:
+            for status, worker in (('waiting', newer), ('running', None), ('queued', None)):
+                with self.subTest(status=status):
+                    answer['status'] = status
+                    if worker:
+                        self.chat.workers[self.identifier] = worker
+                    else:
+                        self.chat.workers.pop(self.identifier, None)
+                    result = self.chat.voice.interrupt(self.call, self.owner, user['turn_id'])
+                    self.assertFalse(result['settled'])
+                    self.assertEqual(result['state'], 'stopping')
+                    self.assertEqual(answer['status'], status)
+                    self.assertFalse(newer['cancel'].is_set())
+        finally:
+            self.chat.workers.pop(self.identifier, None)
+
     def test_same_memory_and_server_locked_tools(self):
         config = self.configs[0]
         self.assertEqual(config["model"], "models/" + MODEL)
@@ -46,6 +176,7 @@ class VoiceTests(fixtures.Fixture):
     def test_owned_call_and_duplicate_start(self):
         for action in (lambda: self.chat.voice.end(self.call, "other"),
                        lambda: self.chat.voice.transcript(self.call, "other", []),
+                       lambda: self.chat.voice.interrupt(self.call, "other", str(uuid.uuid4())),
                        lambda: self.chat.voice.tool(self.call, "other", str(uuid.uuid4()))):
             with self.assertRaises(VoiceError) as cm: action()
             self.assertEqual(cm.exception.status, 404)
@@ -571,6 +702,31 @@ class VoiceTests(fixtures.Fixture):
 
 
 class VoiceHTTPTests(fixtures.HTTPTests):
+    def test_owned_http_voice_interrupt_cancels_waiting_reply_then_accepts_next_tool(self):
+        self.login()
+        self.chat.providers.snapshot = lambda **_: []
+        self.chat.voice.token_factory = lambda *_: 'auth_tokens/test'
+        code, _, body = self.request('POST', '/api/voice/start', {'conversation_id': self.identifier})
+        self.assertEqual(code, 201)
+        call = json.loads(body)['call_id']
+        turn = str(uuid.uuid4())
+        payload = {'call_id': call, 'turn_id': turn}
+        entry = {'turn_id': turn, 'role': 'user', 'content': 'Tell me a long story.', 'order': 0}
+        self.assertEqual(self.request('POST', '/api/voice/transcript', {'call_id': call, 'entries': [entry]})[0], 200)
+        with patch.object(self.fake, 'reply', side_effect=AllDown([], time.time() + 300, 'saved prompt')):
+            self.assertEqual(self.request('POST', '/api/voice/tool', payload)[0], 200)
+            self.wait()
+        self.assertEqual(self.request('POST', '/api/voice/interrupt', payload, {'Origin': 'https://evil.example'})[0], 403)
+        code, _, body = self.request('POST', '/api/voice/interrupt', payload)
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(body), {'ok': True, 'state': 'cancelled', 'settled': True})
+        self.assertEqual(self.request('POST', '/api/voice/interrupt', payload)[0], 200)
+        later = dict(entry, turn_id=str(uuid.uuid4()), content='What version are you running?', order=1)
+        self.assertEqual(self.request('POST', '/api/voice/transcript', {'call_id': call, 'entries': [later]})[0], 200)
+        code, _, body = self.request('POST', '/api/voice/tool', dict(payload, turn_id=later['turn_id']))
+        self.assertEqual(code, 200)
+        self.assertEqual(json.loads(body)['conversation']['messages'][-1]['provider'], 'dispatcher')
+
     def test_logout_during_token_request_returns_no_credential_and_leaves_reads_responsive(self):
         self.login()
         self.chat.providers.snapshot = lambda **_: []
@@ -634,7 +790,7 @@ class VoiceHTTPTests(fixtures.HTTPTests):
         self.assertFalse(self.chat.voice.busy(self.identifier))
 
     def test_voice_auth_csrf_origin_and_tailnet(self):
-        for route in ("start", "transcript", "tool", "end", "pulse"):
+        for route in ("start", "transcript", "tool", "interrupt", "end", "pulse"):
             self.assertEqual(self.request("POST", "/api/voice/" + route, {})[0], 401)
         self.login()
         self.chat.providers.snapshot = lambda **_: []
@@ -655,7 +811,7 @@ class VoiceHTTPTests(fixtures.HTTPTests):
         first_csrf = self.csrf
         self.login()  # A token belonging to another authenticated session is invalid too.
         for token in (None, "", "wrong", first_csrf):
-            for route in ("start", "transcript", "tool", "end", "pulse"):
+            for route in ("start", "transcript", "tool", "interrupt", "end", "pulse"):
                 with self.subTest(route=route, token=token):
                     # Send raw JSON so the fixture does not insert a CSRF header.
                     connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)

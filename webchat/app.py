@@ -1107,21 +1107,24 @@ class Chat(TaskDispatch):
                     self.workers.pop(identifier, None)
                     self.overlay_pins.pop(identifier, None)
 
-    def stop(self, identifier):
+    def stop(self, identifier, *, request_id=None):
         with self.lock:
             value = self.get(identifier)
             info = self.workers.get(identifier)
             if info:
-                info["cancel"].set()
                 pending = next((m for m in value["messages"] if m["id"] == info["reply_id"]), None)
-                if pending and pending["status"] in ("queued", "running"):
+                if request_id is not None and (not pending or pending.get('request_id') != request_id):
+                    return
+                info["cancel"].set()
+                if pending and pending["status"] in ("queued", "running", "waiting"):
                     pending.update(status="cancelled", content="Reply stopped.")
                     pending.pop("retry_at", None)
                     value.pop("retry_prompt", None)
                     value["codex_thread_id"] = None
                     self.save(value)
             else:
-                waiting = next((m for m in reversed(value["messages"]) if m.get("status") == "waiting"), None)
+                waiting = next((m for m in reversed(value["messages"]) if m.get("status") == "waiting"
+                                and (request_id is None or m.get('request_id') == request_id)), None)
                 if waiting is None:
                     return
                 waiting.update(status="cancelled", content="Queued request stopped.")
@@ -1868,6 +1871,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, chat.voice.transcript(data.get("call_id"), owner, data.get("entries")))
             if route == "/api/voice/tool":
                 return self.send(200, chat.voice.tool(data.get("call_id"), owner, data.get("turn_id")))
+            if route == "/api/voice/interrupt":
+                return self.send(200, chat.voice.interrupt(data.get("call_id"), owner, data.get("turn_id")))
             if route == "/api/voice/end":
                 return self.send(200, chat.voice.end(data.get("call_id"), owner))
             if route == "/api/voice/pulse":

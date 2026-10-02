@@ -11,6 +11,14 @@ class BobVoice {
   }
   get active() { return !!this.session; }
   state(text, phase = "listening") {
+    // Keep Retry save available until the server confirms cancellation. Normal
+    // audio and tool callbacks must not hide a failed interruption's recovery.
+    if (this.session?.interruptionError && ["listening", "speaking", "thinking", "paused", "unsaved"].includes(phase)) {
+      text = "The earlier reply has not stopped yet. Tap Retry save before another request."; phase = "unsaved";
+    }
+    if (phase === "listening" && this.session?.interruptions.size) {
+      text = "Stopping the earlier reply… you can keep speaking."; phase = "thinking";
+    }
     // Earlier speech can finish while a newer ask_bob request is still running.
     // Save/resume and audio callbacks must not describe that wait as idle.
     if (phase === "listening" && this.session?.pendingTools.size) {
@@ -33,7 +41,8 @@ class BobVoice {
       this.state("Live calls need a browser with streaming audio support. Try current Safari or Chrome.", "error"); return;
     }
     const s = { conversationId, entries: new Map(), turns: [], sources: new Set(), nextAudio: 0,
-      tools: new Map(), pendingTools: new Set(), cancelledTools: new Set(), closed: false, ready: false };
+      tools: new Map(), toolTurns: new Map(), pendingTools: new Set(), cancelledTools: new Set(),
+      interruptions: new Set(), interrupting: null, interruptionError: false, closed: false, ready: false };
     this.session = s;
     this.state("Connecting… allow the microphone when asked.", "connecting");
     try {
@@ -144,10 +153,17 @@ class BobVoice {
     if (event.goAway) { this.fail(s, "The voice session has ended. Tap the waveform to continue."); return; }
     for (const id of event.toolCallCancellation?.ids || []) {
       s.cancelledTools.add(id); s.pendingTools.delete(id);
+      this.interruptTurn(s, s.toolTurns.get(id));
     }
     if (event.toolCallCancellation && !s.sources.size) this.state("Listening… speak whenever you’re ready.");
     const content = event.serverContent || {};
     if (content.interrupted) {
+      // New input transcription may already exist while older audio plays.
+      // Bind cancellation to that output, or the sole pending tool when no
+      // output has begun; never infer it from the latest input alone.
+      const output = s.outputTurn || (s.sources.size ? s.playingTurn : null);
+      const pending = new Set([...s.pendingTools].map(id => s.toolTurns.get(id)).filter(Boolean));
+      this.interruptTurn(s, output?.id || (pending.size === 1 ? [...pending][0] : null));
       this.clearAudio(s);
       if (s.outputTurn) {
         s.outputTurn.interrupted = true;
@@ -222,19 +238,55 @@ class BobVoice {
     for (const source of s.sources) { source.onended = null; try { source.stop(); source.disconnect(); } catch (_) {} }
     s.sources.clear(); s.nextAudio = 0;
   }
+  interruptTurn(s, turnId) {
+    if (!turnId || ![...s.toolTurns.values()].includes(turnId)) return;
+    for (const [id, turn] of s.toolTurns) if (turn === turnId) {
+      s.cancelledTools.add(id); s.pendingTools.delete(id);
+    }
+    s.interruptions.add(turnId);
+    this.flushInterruptions(s).then(() => {
+      if (this.session === s && !s.sources.size) this.state("Listening… speak whenever you’re ready.");
+    }).catch(() => {
+      if (this.session === s) this.state("The earlier reply has not stopped yet. Tap Retry save before another request.", "unsaved");
+    });
+  }
+  flushInterruptions(s) {
+    if (!s.interruptions.size) return Promise.resolve();
+    if (!s.interrupting) s.interrupting = (async () => {
+      await this.save(s, true);
+      for (const turnId of s.interruptions) {
+        const deadline = Date.now() + 10000;
+        while (true) {
+          const result = await this.api("/api/voice/interrupt", { call_id: s.callId, turn_id: turnId });
+          if (result.settled === true) { s.interruptions.delete(turnId); break; }
+          if (Date.now() >= deadline) throw new Error("The earlier reply is still stopping. Tap Retry save before another request.");
+          await new Promise(resolve => setTimeout(resolve, 350));
+        }
+      }
+      s.interruptionError = false;
+    })().catch(error => {
+      s.interruptionError = true;
+      if (this.session === s) this.state("", "unsaved");
+      throw error;
+    }).finally(() => { s.interrupting = null; });
+    return s.interrupting;
+  }
   async tool(s, tool) {
     if (this.session !== s || s.cancelledTools.has(tool.id)) return;
     s.pendingTools.add(tool.id);
     try {
       if (tool.name !== "ask_bob") throw new Error("This tool is not available.");
       const turn = s.inputTurn || this.newTurn(s);
+      s.toolTurns.set(tool.id, turn.id);
       // Input transcription is independent of tool events; allow it to catch up.
       for (let n = 0; n < 30 && (!turn.user.trim() || Date.now() - turn.lastInputAt < 350); n++) await new Promise(r => setTimeout(r, 100));
       if (this.session !== s || s.cancelledTools.has(tool.id)) return;
       if (!turn?.user.trim()) throw new Error("I couldn’t transcribe that request. Please repeat it.");
       this.state("Bob is checking… you can keep speaking.", "thinking");
       await this.save(s, true);
+      await this.flushInterruptions(s);
       if (this.session !== s || s.cancelledTools.has(tool.id)) return;
+      this.state("Bob is checking… you can keep speaking.", "thinking");
       const result = await this.api("/api/voice/tool", { call_id: s.callId, turn_id: turn.id });
       let conversation = result.conversation, answer;
       const deadline = Date.now() + 180000;
@@ -295,7 +347,11 @@ class BobVoice {
     this.onSaved();
   }
   async retrySave() {
-    try { await this.flush(); this.state(this.active ? "Listening… transcript saved." : "Call ended · transcript saved to chat.", this.active ? "listening" : "ended"); }
+    try {
+      await this.flush();
+      if (this.session) await this.flushInterruptions(this.session);
+      this.state(this.active ? "Listening… transcript saved." : "Call ended · transcript saved to chat.", this.active ? "listening" : "ended");
+    }
     catch (_) { this.state("Transcript hasn’t saved yet. Keep this page open and tap Retry save.", "unsaved"); }
   }
   async resume() {
