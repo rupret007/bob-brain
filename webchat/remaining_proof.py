@@ -62,9 +62,14 @@ def main():
             recovered = json.loads(delivery.stdout)
             assert recovered['all_pass'] and len(recovered['browsers']) == 2
             assert len(fixture.mock.sends) == fixture.mock.calls.count(('POST', '/web-bob/v1/confirm')) == 2
+            assert fixture.mock.calls.count(('POST', '/web-bob/v1/status')) == 4
             assert not fixture.mock.unexpected_writes and not fixture.providers.calls and not task_queue.tasks(fixture.root)
-            assert all(a['event'] == 'owner_sent_via_andrea' for c in fixture.chat.conversations.values()
-                       for a in c.get('_texting', {}).get('audit', []))
+            audits = [a for c in fixture.chat.conversations.values()
+                      for a in c.get('_texting', {}).get('audit', [])]
+            assert len(audits) == 2
+            assert all(a['event'] == 'owner_confirmed_delivery_unconfirmed' and
+                       [check['state'] for check in a.get('delivery_checks', [])] == ['sent', 'sent']
+                       for a in audits)
             evidence['delivery_recovery'] = recovered
             evidence.update(scope='isolated synthetic messaging; real HTTP/browser', real_texts_sent=0,
                             synthetic_provider_posts=2, model_calls=0, queued_workers=0)
