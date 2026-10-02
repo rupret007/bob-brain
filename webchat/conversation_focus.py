@@ -13,12 +13,20 @@ CORRECTION = re.compile(r'^(?:actually|correction|oops|my mistake|no|instead|i m
                         r'rephrase|use .{0,40} instead|change .{0,40} to|'
                         r'the (?:first|second|third|fourth|fifth|last)\b.{0,60}\b(?:too|try|instead|change|make|needs?|should))\b', re.I)
 CONTINUE = re.compile(r'^(?:continue|keep going|finish that|do it|go ahead|what did you finish)\b', re.I)
+RETURN = re.compile(r'^(?:back|return|returning|getting back) to\b|'
+                    r'^(?:get|go) back to\b', re.I)
 OPERATIONAL = re.compile(r'\b(?:our|my|live|current) (?:workers?|jobs?|services?|resources?)\b|'
                          r'\b(?:disk|storage|handoff|handback|bob-state|memory|remember|profile)\b', re.I)
 
 
 def correction(text):
-    return bool(CORRECTION.match(command(text)) or revises_answer(text))
+    from answer_intent import instructions, requires_execution, requires_research, ARTIFACT_OPERATION, RETRIEVAL_TARGET, LIVE_REQUEST
+    original = command(text)
+    request = instructions(original)
+    returning = (RETURN.match(request) and not requires_execution(original) and not requires_research(original)
+                 and not ARTIFACT_OPERATION.search(request) and not RETRIEVAL_TARGET.search(request)
+                 and not LIVE_REQUEST.search(request))
+    return bool(CORRECTION.match(command(text)) or revises_answer(text) or returning)
 
 
 def needs_permission_facts(text):
@@ -112,6 +120,9 @@ def focus(conversation):
 
 def answer_only(conversation, text):
     text = command(text)
-    return bool((not OPERATIONAL.search(text) or conceptual(text)) and (wants_answer(text) or conceptual(text)
+    from answer_intent import requires_execution, requires_research
+    return bool(not requires_execution(text) and not requires_research(text)
+                and (not OPERATIONAL.search(text) or conceptual(text))
+                and (wants_answer(text) or conceptual(text)
                 or (conversation.get('answer_focus', {}).get('origin')
                     and (correction(text) or CONTINUE.match(text)))))

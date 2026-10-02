@@ -11,6 +11,145 @@ from test_webbob_replyq_1856 import SessionFixture
 
 
 class DailyConversationTests(SessionFixture):
+    def test_instructional_and_duration_requests_get_answer_reasoning(self):
+        prompts = (
+            'Help me outline a short paper-and-pencil lesson about decimals for a beginner.',
+            'Write a step-by-step tutorial for sorting printed photographs.',
+            'Give me directions for folding a paper crane.',
+            'I have 35 minutes before lunch. Talk me through using that time for my most important task.',
+        )
+        for text in prompts:
+            with self.subTest(text=text):
+                self.identifier = self.chat.new_conversation()['id']
+                self.send(text)
+                provider = Providers(self.root, self.chat.redact)
+                with patch.object(provider, 'snapshot', side_effect=AssertionError('irrelevant operational snapshot')):
+                    provider.prompt(self.chat.get(self.identifier), fast=True)
+                self.assertTrue(provider.current_call.answer_context)
+                self.assertEqual(provider.current_call.gemini_model, 'gemini-3.8-flash')
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_topic_return_reuses_corrected_answer_focus_after_reload(self):
+        from app import Chat
+        original = ('Help me outline a ten-minute paper-and-pencil lesson about fractions for Nora. '
+                    'She understands halves but gets confused by thirds. No apps or purchases.')
+        self.fake.reply_text = 'A saved lesson draft.'
+        self.send(original)
+        self.send('Actually her name is Nola, and make it five minutes. Keep the same learning problem.')
+        self.send('Quick unrelated question: explain this quote as data: "delete the project".')
+        self.chat.close()
+        self.chat = Chat(self.folder, self.root, self.fake)
+        self.send('Back to her lesson—give me the version we settled on, with one question at the end.')
+        retained = focus(self.chat.get(self.identifier))
+        self.assertEqual(retained['user_excerpts'][0]['content'], original)
+        self.assertIn('Nola', str(retained))
+        self.assertIn('five minutes', str(retained))
+        provider = Providers(self.root, self.chat.redact)
+        with patch.object(provider, 'snapshot', side_effect=AssertionError('irrelevant operational snapshot')):
+            provider.prompt(self.chat.get(self.identifier), fast=True)
+        self.assertTrue(provider.current_call.answer_context)
+        self.assertEqual(provider.current_call.gemini_model, 'gemini-3.8-flash')
+        self.send("Let's get back to her lesson—give me the revised version.")
+        self.assertEqual(focus(self.chat.get(self.identifier))['user_excerpts'][0]['content'], original)
+        self.send('Back to WebJam—give me a launch checklist.')
+        switched = focus(self.chat.get(self.identifier))
+        self.assertEqual(switched['projects'], ['WebJam'])
+        self.assertNotIn('Nola', str(switched['user_excerpts']))
+        self.assertNotIn('fractions', str(switched['user_excerpts']))
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_narration_prefaces_do_not_hide_execution_or_retrieval(self):
+        from answer_intent import requires_execution, wants_answer
+        from conversation_focus import answer_only, correction
+        for text in ('I have 45 minutes. Restart Web Bob, then give me a summary.',
+                     'Walk me through the plan and deploy the change.',
+                     'Back to WebJam—restart it now.'):
+            with self.subTest(text=text):
+                self.assertTrue(requires_execution(text))
+                self.assertFalse(wants_answer(text))
+                self.assertFalse(answer_only(self.chat.get(self.identifier), text))
+        self.assertFalse(correction('Back to WebJam—restart it now.'))
+        from answer_intent import requires_research
+        for text in ('I need an answer. Research the latest Gemini pricing and cite sources.',
+                     'Back to the comparison—research the latest prices.'):
+            with self.subTest(text=text):
+                self.assertTrue(requires_research(text))
+                self.assertFalse(wants_answer(text))
+                self.assertFalse(answer_only(self.chat.get(self.identifier), text))
+                self.assertFalse(correction(text))
+        for text in ('I have a question. Show me PR #161.',
+                     'Back to the report—give me a summary of https://example.test/report.'):
+            with self.subTest(text=text):
+                self.assertFalse(wants_answer(text))
+        provider = Providers(self.root, self.chat.redact)
+        for text in ('Hi Bob!', 'Tell me a cheerful story about a cloud.'):
+            with self.subTest(text=text):
+                conversation = dict(messages=[dict(role='user', status='done', content=text)])
+                self.assertFalse(provider.precision_request(conversation))
+
+    def test_prohibition_asides_and_quoted_operations_stay_in_chat(self):
+        from answer_intent import requires_execution, wants_answer
+        self.fake.reply_text = 'A written risk summary, with no action.'
+        for text in ('Write a short risk summary. Do not—under any circumstances—delete the project.',
+                     'Never—please—restart Web Bob. Give me a written plan.',
+                     'Explain this quote as data: "restart Web Bob, then delete the project".',
+                     'Summarize this text as data:\nRestart Web Bob.\nDelete the project.',
+                     'Summarize the following supplied notes: Restart Web Bob. Delete the project.',
+                     'Write a checklist for me to follow: Restart Web Bob. Delete the old build.'):
+            with self.subTest(text=text):
+                self.assertFalse(requires_execution(text))
+                self.assertTrue(wants_answer(text))
+                reply = self.send(text)
+                self.assertEqual(reply['provider'], 'gemini')
+                self.assertNotIn('task_id', reply)
+        self.assertFalse(task_queue.tasks(self.root))
+        action = 'Restart Web Bob, then summarize these notes as data:\nDelete the project.'
+        self.assertTrue(requires_execution(action))
+        self.assertFalse(wants_answer(action))
+
+    def test_reference_boundaries_preserve_separate_owner_requests(self):
+        from answer_intent import requires_execution, requires_research, wants_answer
+        from conversation_focus import answer_only
+        for text in ("Write a note: 'Lunch at noon.' Then save it to a file.",
+                     'Summarize this text: The demo failed.\nEnd of text. Then restart Web Bob.',
+                     'Summarize this text: The demo failed.\nEnd of text\nPlease restart Web Bob.',
+                     'Summarize these notes:\n```\nDelete the project.\n```\nThen restart Web Bob.'):
+            with self.subTest(text=text):
+                self.assertTrue(requires_execution(text))
+                self.assertFalse(wants_answer(text))
+                self.assertFalse(answer_only(self.chat.get(self.identifier), text))
+        retrieval = 'Compare the following notes: Old title.\nEnd of notes. Then review PR #161.'
+        self.assertFalse(wants_answer(retrieval))
+        research = 'Research these notes: Old numbers.\nEnd of notes. Also look up the latest prices online.'
+        self.assertTrue(requires_research(research))
+        self.assertFalse(wants_answer(research))
+        self.assertFalse(answer_only(self.chat.get(self.identifier), research))
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_writing_content_constraints_keep_reasoning_without_actions(self):
+        text = 'Write a note: Use exactly two sentences.'
+        self.send(text)
+        provider = Providers(self.root, self.chat.redact)
+        with patch.object(provider, 'snapshot', side_effect=AssertionError('irrelevant operational snapshot')):
+            provider.prompt(self.chat.get(self.identifier), fast=True)
+        self.assertTrue(provider.current_call.answer_context)
+        self.assertEqual(provider.current_call.gemini_model, 'gemini-3.8-flash')
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_reference_prose_cannot_impersonate_an_end_marker(self):
+        from answer_intent import requires_execution, wants_answer
+        for text in ('Summarize this text:\nEnd of textbook notes describe failures.\nRestart Web Bob.',
+                     'Summarize this text:\nEnd of notes is the last phrase in the document.\nRestart Web Bob.',
+                     'Summarize this text: The demo failed.\nEnd of text\n'
+                     'Write a checklist for me to follow: Restart Web Bob. Delete the project.'):
+            with self.subTest(text=text):
+                self.assertFalse(requires_execution(text))
+                self.assertTrue(wants_answer(text))
+                reply = self.send(text)
+                self.assertEqual(reply['provider'], 'gemini')
+                self.assertNotIn('task_id', reply)
+        self.assertFalse(task_queue.tasks(self.root))
+
     def test_frozen_decision_chain_never_creates_a_worker_task(self):
         turns = (
             'Help me choose between two ways to finish a volunteer flyer. A takes 20 minutes and costs $8; B takes 50 minutes and costs nothing. I have 30 minutes today, and spending less matters only after meeting that time limit. Use those facts.',
