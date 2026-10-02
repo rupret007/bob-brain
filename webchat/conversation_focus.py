@@ -7,7 +7,8 @@ import re
 from answer_intent import conceptual, wants_answer, revises_answer
 from chat_intent import command, projects
 
-CORRECTION = re.compile(r'^(?:actually|correction|no|instead|i meant|that is the wrong|'
+CORRECTION = re.compile(r'^(?:actually|correction|oops|my mistake|no|instead|i meant|that is the wrong|'
+                        r'(?:less|more) (?:formal|casual|friendly|concise|detailed|technical|playful|serious)|'
                         r'(?:make|keep) (?:it|that|this|these|those|the (?:first|second|third|fourth|fifth|last))|rewrite|revise|shorten|expand|'
                         r'rephrase|use .{0,40} instead|change .{0,40} to|'
                         r'the (?:first|second|third|fourth|fifth|last)\b.{0,60}\b(?:too|try|instead|change|make|needs?|should))\b', re.I)

@@ -158,3 +158,21 @@ class DailyConversationTests(SessionFixture):
         self.assertIn('paper-and-pencil', retained['user_excerpts'][0]['content'])
         self.assertIn('Nola', str(retained))
         self.assertNotIn('delete the project', str(retained))
+
+    def test_informal_name_date_and_tone_corrections_retain_the_original_commitment(self):
+        original = 'Draft a note to Maya: I can review Thursday but cannot promise a full rewrite. Ask for two questions.'
+        self.send(original)
+        self.send('Oops her name is Maia, and Friday works, not Thursday.')
+        self.send("Less formal. Also don't say I'll finish it Friday; that's just when I can look.")
+        self.send('Keep that meaning, but make it two sentences.')
+        conversation = self.chat.get(self.identifier)
+        retained = focus(conversation)
+        self.assertEqual(len(retained['user_excerpts']), 4)
+        self.assertEqual(retained['user_excerpts'][0]['content'], original)
+        self.assertIn('Maia', str(retained))
+        provider = Providers(self.root, self.chat.redact)
+        with patch.object(provider, 'snapshot', side_effect=AssertionError('irrelevant operational context')):
+            provider.prompt(conversation, fast=True)
+        self.assertTrue(provider.current_call.answer_context)
+        self.assertEqual(provider.current_call.gemini_model, 'gemini-3.8-flash')
+        self.assertFalse(task_queue.tasks(self.root))

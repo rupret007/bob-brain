@@ -183,6 +183,10 @@ status, scope, uncertainty, and unmet conditions, even when shortening. Include
 them in the artifact where omitting them could change what the reader believes.
 Preserve the degree of commitment: uncertainty about promising an outcome does
 not establish inability or refusal to do it.
+In real-world writing, preserve the wording of commitments, limitations and
+conditions when changing tone or length, unless the user explicitly changes
+those facts. Change the surrounding style without strengthening or weakening
+what the writer is promising.
 Before delivering, check the requested facts, qualifications, and length/format.
 When assessing evidence, distinguish an observed record or label from the event
 it describes. A missing record or artifact leaves the event unverified unless
