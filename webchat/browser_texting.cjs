@@ -8,7 +8,7 @@ const { chromium } = require(process.env.BOB_PLAYWRIGHT_MODULE || "playwright");
   const config = JSON.parse(fs.readFileSync(0, "utf8"));
   const url = new URL(config.url);
   assert.equal(url.hostname, "127.0.0.1");
-  assert(!["8787", "1234", "4315"].includes(url.port), "Refuse known live ports");
+  assert(!["8787", "1234", "4315", "4316", "4306"].includes(url.port), "Refuse known live ports");
   const browser = await chromium.launch({ headless: true,
     ...(process.env.BOB_CHROMIUM_PATH ? { executablePath: process.env.BOB_CHROMIUM_PATH } : {}) });
   try {
@@ -43,6 +43,35 @@ const { chromium } = require(process.env.BOB_PLAYWRIGHT_MODULE || "playwright");
       const filename = `WEBBOB-TEXTING-0927-${name}.png`;
       await page.screenshot({ path: path.join(config.output, filename), animations: "disabled" });
       screenshots.push(filename);
+    }
+    if (config.delivery_flow) {
+      const prepared = await say("draft reply to Alex Morgan: Synthetic delivery state test.");
+      const draft = prepared.messages.at(-1).text_draft;
+      await say(draft.confirm_message);
+      const states = ["submitted", "delivery_failed", "delivered"];
+      for (let i=0; i<states.length; i++) {
+        const card = page.locator(`.text-draft-card[data-state="${states[i]}"]`).last();
+        await card.waitFor();
+        assert.equal(await card.locator('.text-confirmation').count(), 0);
+        assert.equal(await card.getByRole('button', {name:'Put confirmation in chat'}).count(), 0);
+        const description = await card.locator('.text-delivery-status').textContent();
+        assert(description.includes(i===0 ? 'not confirmed' : i===1 ? 'failure' : 'delivered'));
+        await card.scrollIntoViewIfNeeded(); await screenshot('phone-' + states[i]);
+        await page.reload(); await card.waitFor();
+        if (i<states.length-1) {
+          const response = page.waitForResponse(r => r.url()===config.url+'/api/messages' && r.request().method()==='POST');
+          await card.getByRole('button', {name:'Check delivery',exact:true}).click();
+          const checked = await response;
+          assert.equal(checked.status(),202);
+          assert.equal(checked.request().postDataJSON().message,'check text delivery '+draft.id);
+          await page.locator('#attach-plus:enabled').waitFor();
+        }
+      }
+      assert.deepEqual(errors,[]);
+      console.log(JSON.stringify({ok:true,synthetic_only:true,screenshots,browser_errors:errors,
+        checks:['submitted distinct from delivered','late failure visible','delivered receipt visible',
+          'Check delivery submits status command only','no confirmation controls after submission','reload preserves status']}));
+      await context.close(); return;
     }
     await page.getByRole("button", { name: "Texts", exact: true }).click();
     await page.getByText("Recent text threads", { exact: false }).waitFor();

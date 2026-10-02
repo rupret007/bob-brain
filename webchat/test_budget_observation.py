@@ -86,10 +86,10 @@ class BudgetObservationTests(SessionFixture):
             self.assertEqual(sys.path, paths)
             self.assertEqual((usage['cap_usd'], usage['committed_usd'], usage['reserved_usd']), (None, 46, 1))
             self.assertFalse(usage['provider_balance_known'])
-            answer = self.send('top priority use any and all resources')
+            answer = self.send('Explain how to choose a useful task.')
             self.assertEqual(answer['status'], 'done')
             # With Gemini's former local ceiling removed, both lanes are
-            # normal tier; the ordinary fast route prefers Gemini.
+            # normal tier; the qualified conversation route prefers Gemini.
             self.assertEqual(answer['provider'], 'gemini')
             self.assertEqual(answer['content'], answer_text)
             self.assertEqual(call.call_count, 1)

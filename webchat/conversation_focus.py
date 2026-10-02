@@ -121,8 +121,9 @@ def focus(conversation):
 def answer_only(conversation, text):
     text = command(text)
     from answer_intent import requires_execution, requires_research
+    from self_improvement import RESOURCES
+    followup = conversation.get('answer_focus', {}).get('origin') and (
+        correction(text) or CONTINUE.match(text) or RESOURCES.fullmatch(text.rstrip(' .!?')))
     return bool(not requires_execution(text) and not requires_research(text)
                 and (not OPERATIONAL.search(text) or conceptual(text))
-                and (wants_answer(text) or conceptual(text)
-                or (conversation.get('answer_focus', {}).get('origin')
-                    and (correction(text) or CONTINUE.match(text)))))
+                and (wants_answer(text) or conceptual(text) or followup))

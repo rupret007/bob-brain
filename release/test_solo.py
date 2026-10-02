@@ -15,6 +15,36 @@ class CurrentModeReplayTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
 
+    def test_delivery_gate_requires_a_new_inspection_of_the_bound_message(self):
+        before = dict(event='owner_sent_via_andrea', body='synthetic',
+                      delivery_checks=[dict(state='delivery_failed', at=1)])
+        after = copy.deepcopy(before)
+        after['delivery_checks'].append(dict(state='delivery_failed', at=2))
+        bridge = dict(actionId='original-action', digest='original-scope')
+        evidence = dict(bridge, state='delivery_failed')
+        answer = dict(content='Messages reports this text failed. Nothing was resent.')
+        solo.verify_delivery_refresh(before, after, bridge, evidence, answer)
+        cases = [
+            (before, evidence, answer),
+            (after, evidence, dict(content='Could not refresh delivery status. ' + answer['content'])),
+            (after, dict(evidence, actionId='other-action'), answer),
+            (after, dict(evidence, digest='other-scope'), answer),
+            (dict(after, body='changed'), evidence, answer),
+            (dict(after, delivery_checks=[dict(state='delivered', at=1),
+                                         dict(state='delivery_failed', at=2)]), evidence, answer),
+        ]
+        for observed, receipt, reply in cases:
+            with self.subTest(observed=observed, receipt=receipt, reply=reply), self.assertRaises(Exception):
+                solo.verify_delivery_refresh(before, observed, bridge, receipt, reply)
+
+    def test_unscoped_resources_requires_a_useful_question_without_action_claims(self):
+        solo.verify_resource_clarification(dict(provider='planner', content='Which task should I work on, and what result do you want?'))
+        for content in ('I did not start, assign, or queue any work in this turn.',
+                        'I am ready to use all resources.', 'What task? I started it already.',
+                        'Task and result are understood.'):
+            with self.subTest(content=content), self.assertRaises(Exception):
+                solo.verify_resource_clarification(dict(provider='planner', content=content))
+
     def test_improvement_gate_rejects_stale_or_fabricated_audit_evidence(self):
         from app import Chat
         from texting_fixture import OfflineProviders

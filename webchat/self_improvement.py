@@ -14,6 +14,8 @@ from chat_intent import blocked_scopes, command, hold_reply, projects, state_for
 
 ENABLE = re.compile(r"^enable (?:what we need to enable|(?:the )?(?:additional |project )?workers)[.!]*$", re.I)
 RESOURCES = re.compile(r"^(?:top priority\s+)?(?:make it happen[,.]?\s+)?use (?:any and )?all (?:of )?(?:the |these )?resources[.!]*$", re.I)
+DEICTIC = re.compile(r'^make (?:this|that|it) better than grok(?: bot)?[.!]*$', re.I)
+PROGRESS = re.compile(r'^(?:what (?:did|have) you actually (?:do|done)|what have you (?:done|finished))[.!?]*$', re.I)
 SELF = re.compile(r"\bself[ -]improv(?:e|ement|ing)\b", re.I)
 GOAL = re.compile(r"\b(?:better than|beat|match)\s+(?:bob the bot|grok(?: bot)?)\b", re.I)
 DIRECTIVE = re.compile(r"^(?:well\s+)?(?:make|research|use|coordinate|self[ -]improve|improve yourself|"
@@ -48,7 +50,7 @@ def resolve(text, previous):
     if direct_goal(text):
         return text
     enable = bool(ENABLE.fullmatch(value))
-    if not enable and not RESOURCES.fullmatch(value):
+    if not enable and not RESOURCES.fullmatch(value) and not DEICTIC.fullmatch(value):
         return None
     for message in reversed(previous):
         if message.get('role') != 'user':
@@ -56,7 +58,8 @@ def resolve(text, previous):
         prior = message.get('content', '')
         if direct_goal(prior):
             return prior
-        if ENABLE.fullmatch(command(prior).rstrip(' .!?')) or RESOURCES.fullmatch(command(prior).rstrip(' .!?')):
+        if (ENABLE.fullmatch(command(prior).rstrip(' .!?')) or RESOURCES.fullmatch(command(prior).rstrip(' .!?'))
+                or DEICTIC.fullmatch(command(prior).rstrip(' .!?'))):
             continue
         break
     # A standalone enable request still warrants a real configuration check;
@@ -178,7 +181,8 @@ def observe_turn(conversation, text, request_id):
     if execution_limit(value):
         saved['execution_restriction'] = dict(request_id=request_id, text=text[:600])
         saved['authorized_steps'] = ['local routing investigation']
-    if network is not None or direct_goal(text) or continuation(value) or ENABLE.fullmatch(value) or RESOURCES.fullmatch(value):
+    if (network is not None or direct_goal(text) or continuation(value) or ENABLE.fullmatch(value)
+            or RESOURCES.fullmatch(value) or DEICTIC.fullmatch(value) or PROGRESS.fullmatch(value)):
         return
     from reply_authority import STATUS_QUESTION, HOLD_QUESTION
     from answer_intent import conceptual
@@ -300,10 +304,29 @@ def handle(chat, conversation, text, request_id):
     previous = conversation['messages'][:-2]
     saved = conversation.get('improvement_goal')
     value = command(text).rstrip(' .!?')
+    if saved and not saved.get('suspended_by') and PROGRESS.fullmatch(value):
+        request = saved.get('verification_request_id')
+        row = next((r for r in task_queue.tasks(chat.root).values() if r.get('conversation_id') == conversation['id']
+                    and r.get('request_id') == request), None) if request else None
+        content = 'I completed the saved local routing investigation.\n\n' + render(saved['investigation'])
+        if row:
+            accepted = row.get('acceptance') if isinstance(row.get('acceptance'), dict) else {}
+            verified = (row['status'] == 'succeeded' and row.get('execution_started_at') and
+                        accepted.get('accepted') is True and accepted.get('method') == 'verified-execution' and
+                        row.get('result_sha256') == hashlib.sha256(row.get('result', '').encode()).hexdigest() and
+                        accepted.get('result_sha256') == row['result_sha256'] and
+                        accepted.get('execution_identity') == saved['investigation']['code_identity'])
+            content += ('\n\nThe regression execution passed and its result was verified: [Result](/api/jobs/result?id=' + row['id'] + ').'
+                        if verified else '\n\nThe saved regression task is ' + row['status'] + ': `' + row['id'] +
+                        '`. That does not establish a verified passing result.')
+        else:
+            content += '\n\nNo linked regression task is recorded for this investigation; I cannot claim execution.'
+        content += '\n\nThis is a report of saved evidence. I did not start another step or change code.'
+        return chat.intent_reply(conversation, content, provider='planner')
     goal = resolve(text, previous)
     if saved and saved['outcome'] == 'Check worker scheduling prerequisites' and direct_goal(text):
         saved = None
-    followup = bool(continuation(value) or ENABLE.fullmatch(value) or RESOURCES.fullmatch(value))
+    followup = bool(continuation(value) or ENABLE.fullmatch(value) or RESOURCES.fullmatch(value) or DEICTIC.fullmatch(value))
     if saved and followup and not saved.get('suspended_by'):
         # An intervening project directive supersedes an unscoped continuation.
         intervening = [m for m in previous if m.get('role') == 'user'
@@ -314,6 +337,16 @@ def handle(chat, conversation, text, request_id):
     elif saved and followup and saved.get('suspended_by'):
         return None
     if goal is None:
+        if RESOURCES.fullmatch(value) or DEICTIC.fullmatch(value):
+            from conversation_focus import answer_only
+            if not answer_only(conversation, text):
+                scopes = blocked_scopes(state_for(conversation), [])
+                if scopes:
+                    return chat.intent_reply(conversation, hold_reply(scopes))
+                question = ('Which task should I work on, and what result do you want?'
+                            if RESOURCES.fullmatch(value) else
+                            'What should I improve—Web Bob itself, or a particular answer or project?')
+                return chat.intent_reply(conversation, question, provider='planner')
         return None
     if saved and direct_goal(text):
         saved.pop('suspended_by', None)
@@ -338,6 +371,12 @@ def handle(chat, conversation, text, request_id):
                      created_at=time.time(), updated_at=time.time(), completed_effects=['local routing investigation'],
                      next_decision='Run webchat/test_answer_intent.py through the existing local CPU executor.')
         conversation['improvement_goal'] = saved
+        configuration_only = goal == 'Check worker scheduling prerequisites'
+        if configuration_only:
+            saved.update(authorized_steps=['local scheduling inspection'], current_step='configuration_checked',
+                         next_decision='Identify the concrete task and desired result before starting project work.')
+            receipt['plan'] = ['Inspect current scheduling blocks.', 'Report actual routing checks and their limits.',
+                               saved['next_decision']]
         if execution_limit(text):
             saved['execution_restriction'] = dict(request_id=request_id, text=text[:600])
             saved['authorized_steps'] = ['local routing investigation']
@@ -348,7 +387,8 @@ def handle(chat, conversation, text, request_id):
         content = ('I completed a source-backed routing investigation and saved the cases, actual outcomes, '
                    'source locations, and hashes with this conversation.\n\n' + render(investigation) +
                    '\n\n' + scheduling + '\n\n' +
-                   ('Your inspection-only limit is saved; no regression execution is authorized. ' if saved.get('execution_restriction') else
+                   ('Next: tell me the task and desired result; no project execution was requested. ' if configuration_only else
+                    'Your inspection-only limit is saved; no regression execution is authorized. ' if saved.get('execution_restriction') else
                     'Next: verify the answer/execution boundary with the local regression suite. ') +
                    'This step changed no code, launched no worker, and made no external Grok comparison.')
     else:

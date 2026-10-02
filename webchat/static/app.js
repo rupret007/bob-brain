@@ -553,7 +553,8 @@ if ($("login-form")) {
     const title = document.createElement("h3");
     title.textContent = "Text draft · " + ({ pending: "not sent", editing: "editing", expired: "confirmation expired",
       superseded: "replaced", cancelled: "cancelled", confirmed_not_sent: "confirmed here, not sent",
-      read_only: "read-only · never sent", sent: "sent via Andrea", delivery_unconfirmed: "delivery unconfirmed" }[draft.state] || "not sent");
+      read_only: "read-only · never sent", submitted: "submitted · delivery unconfirmed", sent: "sent · delivery unconfirmed",
+      delivered: "delivered", delivery_failed: "delivery failed", delivery_unconfirmed: "delivery unconfirmed" }[draft.state] || "not sent");
     const recipient = document.createElement("p");
     recipient.className = "text-recipient";
     recipient.textContent = `To: ${draft.recipient.name}\n${draft.recipient.addresses.join(", ")}\nThread: ${draft.recipient.guid}`;
@@ -599,15 +600,19 @@ if ($("login-form")) {
       card.append(edit, cancel);
     }
     const status = document.createElement("p"); status.className = "text-delivery-status";
-    if (draft.check_delivery_message && !draft.read_only && draft.state === "delivery_unconfirmed") {
+    if (draft.check_delivery_message && !draft.read_only && ["submitted", "sent", "delivered", "delivery_failed", "delivery_unconfirmed"].includes(draft.state)) {
       const check = document.createElement("button"); check.type = "button"; check.textContent = "Check delivery";
       check.addEventListener("click", () => submitChatText(draft.check_delivery_message));
       card.append(check);
     }
     status.textContent = draft.read_only || draft.state === "read_only"
       ? "Instinct is read-only. This draft cannot be sent from Web Bob."
-      : draft.state === "sent"
-      ? "Sent through Andrea’s BlueBubbles bridge."
+      : draft.state === "delivery_failed"
+      ? "Messages reports a delivery failure. No automatic resend. A new send needs a fresh draft and confirmation."
+      : draft.state === "delivered"
+      ? "Messages reports this text delivered."
+      : draft.state === "submitted" || draft.state === "sent"
+      ? "Submitted through Andrea. Delivery is not confirmed; Check delivery refreshes the original message without resending."
       : draft.state === "delivery_unconfirmed"
         ? "Delivery is unconfirmed. Check delivery to look for Andrea’s receipt without resending."
         : draft.state === "confirmed_not_sent"

@@ -38,6 +38,8 @@ class MockMessaging:
         self.chats, self.messages = copy.deepcopy(CHATS), copy.deepcopy(MESSAGES)
         self.chat_queries = []
         self.exact_chat_response = None
+        self.initial_delivery_state = 'sent'
+        self.delivery_states = []
         self.mode = "ok"
         self.password, self.token = "fixture-bb-password", "fixture-andrea-token"
         fixture = self
@@ -69,9 +71,14 @@ class MockMessaging:
                     bound = fixture.bridge_drafts.get(payload.get('bridgeDraftId'))
                     if not bound or any(payload.get(k) != v for k, v in bound['scope'].items()):
                         return self.respond(403, {'error': 'Wrong draft binding'})
-                    if url.path.endswith('/cancel'):
-                        if bound['state'] == 'pending':
+                    if url.path.endswith('/cancel') or url.path.endswith('/status'):
+                        if url.path.endswith('/cancel') and bound['state'] == 'pending':
                             bound['state'] = 'cancelled'
+                        if url.path.endswith('/status') and fixture.delivery_states and bound.get('receipt'):
+                            status = fixture.delivery_states.pop(0)
+                            bound['receipt'].update(state=status, delivery=dict(state=status,
+                                error=4 if status=='delivery_failed' else 0, checkedAt=time.time()*1000,
+                                deliveredAt=time.time()*1000 if status=='delivered' else None, fresh=True))
                         return self.respond(200, bound.get('receipt') or dict(ok=True, state=bound['state'],
                             **{k: bound['row'][k] for k in ('draftId', 'digest', 'actionId')}))
                     if url.path != '/web-bob/v1/confirm' or not fixture.enable_web_bob_send:
@@ -89,7 +96,9 @@ class MockMessaging:
                     fixture.sends.append({"chatGuid": guid, "text": text})
                     # Andrea hands off to BlueBubbles on the same loopback fixture.
                     fixture.calls.append(("POST", "/api/v1/message/text"))
-                    bound['receipt'] = {"ok": True, "state": "sent", "messageGuid": "mock-" + secrets.token_hex(8),
+                    bound['receipt'] = {"ok": True, "state": fixture.initial_delivery_state, "deliveryProtocol": 1,
+                        "delivery": {"state": fixture.initial_delivery_state, "error": 0, "deliveredAt": None, "checkedAt": time.time()*1000, "fresh": True},
+                        "messageGuid": "mock-" + secrets.token_hex(8),
                         **{k: bound['row'][k] for k in ('draftId', 'digest', 'actionId')}}
                     time.sleep(fixture.send_response_delay)
                     if fixture.drop_send_response:

@@ -112,6 +112,20 @@ class FocusTests(SessionFixture):
         self.assertEqual(provider.current_call.gemini_model, 'gemini-3.8-flash')
         self.assertEqual(provider.route_order(self.chat.get(self.identifier))[0], 'codex')
 
+    def test_resource_and_comparison_followups_improve_the_current_answer_without_operational_context(self):
+        self.send('Write a short thank-you note to Nora for helping yesterday.')
+        self.send('Correction: she helped this morning. Keep it casual.')
+        for followup in ('top priority use any and all resources', 'make this better than grok'):
+            self.fake.reply_text = 'Thanks, Nora, for your help this morning. I really appreciated it!'
+            reply = self.send(followup)
+            self.assertEqual(reply['content'], self.fake.reply_text)
+            self.assertNotIn('improvement_receipt', reply)
+            provider = Providers(self.root, self.chat.redact)
+            with patch.object(provider,'snapshot',side_effect=AssertionError('Unrelated operational snapshot')):
+                prompt = provider.prompt(self.chat.get(self.identifier),fast=True)
+            self.assertIn('morning', prompt)
+            self.assertNotIn('improvement_goal', self.chat.get(self.identifier))
+
     def test_ordinary_explanations_do_not_receive_an_operations_manual(self):
         self.send('Tell me what "use all resources" means; do not start work.')
         provider = Providers(self.root, self.chat.redact)

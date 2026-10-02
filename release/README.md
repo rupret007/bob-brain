@@ -124,8 +124,12 @@ When the owner has archived `SOLO-WORKER`, releases preserve the enabled worker
 and reviewer services. They never recreate that marker. Live action checks use
 an explicit conversation hold in fresh replay sessions and verify the truthful
 hold receipt without queueing work. The isolated suite verifies actual dispatch.
-An unscoped resource-use request must reach the real model without a status
-observation. A Web Bob self-improvement goal must complete a source-backed
+An unscoped resource-use request must ask a specific question about the missing
+objective and desired result, without inventing work or claiming generic readiness.
+When a user-provided answer task is active, resources and deictic improvement
+follow-ups remain answer turns. Progress questions inspect the active goal's
+saved evidence without advancing it or reviving a suspended goal.
+A Web Bob self-improvement goal must complete a source-backed
 local routing investigation, with saved source hashes and actual probe outcomes.
 Both live rounds independently verify that evidence and the transcript/marker
 receipt. Subsequent exact resource/enable prompts use an explicit conversation
@@ -135,6 +139,18 @@ unheld executor proof belongs in a dedicated conversation after LIVE_PASS; it
 must verify actual execution and result/source integrity, not just acceptance.
 Ordinary status questions still use server observations. Passing routing probes
 or a local suite does not establish model-answer quality or Grok superiority.
+
+The paired Andrea delivery protocol distinguishes provider submission, explicit
+transport send, delivery, failure and unsupported/unknown status. Older sent
+receipts prove submission only. Check delivery refreshes the immutable message
+and approved scope through the authenticated status route; it cannot resend.
+Failure evidence persists across weaker observations and requires a newer
+positive delivery timestamp to establish recovery. The original confirmation
+audit remains intact while later checks append observations. Live receipt replay
+must prove a new successful inspection, not merely match a cached failure.
+The synthetic browser and compiled cross-language proofs verify these outcomes
+with no real texts. Actual phone delivery remains a separate owner check after
+a fresh exact draft approval; a reply or same-account echo alone does not pass.
 
 Once that suite has a verified result, improvement continuations retain its
 receipt and source identity, link the full result, and prepare a saved local

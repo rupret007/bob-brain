@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove the blocked-send UI on a spare port using synthetic messaging only."""
+"""Prove blocked sends and delivery-state UI using isolated synthetic messaging."""
 import argparse
 import hashlib
 import json
@@ -61,13 +61,28 @@ def main():
             assert not mock.unexpected_writes
             assert not providers.calls
             assert not task_queue.tasks(root)
+            mock.enable_web_bob_send = True
+            mock.initial_delivery_state = 'submitted'
+            mock.delivery_states = ['delivery_failed', 'delivered']
+            delivery_result = subprocess.run(['node', str(CODE/'webchat/browser_texting.cjs')],
+                input=json.dumps(dict(url=url,password=chat.password,output=str(output),delivery_flow=True)),
+                capture_output=True,text=True,timeout=90,cwd=CODE)
+            if delivery_result.returncode:
+                raise RuntimeError(delivery_result.stderr)
+            delivery_browser = json.loads(delivery_result.stdout)
+            assert mock.sends == [dict(chatGuid='iMessage;-;+15550101010',text='Synthetic delivery state test.')]
+            assert not mock.delivery_states and not providers.calls and not task_queue.tasks(root)
+            assert not mock.unexpected_writes
+            assert sum(route == '/web-bob/v1/confirm' for method,route in mock.calls) == 1
+            assert sum(route == '/web-bob/v1/status' for method,route in mock.calls) == 2
+            browser['screenshots'] += delivery_browser['screenshots']
             after = listeners()
             assert before == after, "Live listener identities changed during proof"
             evidence = {"ok": True, "scope": "mock messaging, real isolated HTTP server and browser",
-                "delivery": "blocked_andrea_bridge_unavailable", "mock_sends": 0, "real_texts_sent": 0,
+                "delivery": "blocked_then_synthetic_submission_failure_delivery", "mock_sends": 1, "real_texts_sent": 0,
                 "started_at": started, "finished_at": datetime.now(timezone.utc).isoformat(),
                 "webchat_url": url, "mock_messaging_url": mock.base,
-                "browser": browser, "mock_requests": mock.calls, "unexpected_writes": mock.unexpected_writes,
+                "browser": browser, "delivery_browser": delivery_browser, "mock_requests": mock.calls, "unexpected_writes": mock.unexpected_writes,
                 "model_calls": len(providers.calls), "queued_jobs": 0,
                 "confirmation_audit": [{k: v for k, v in a.items() if k != "actor"} for a in audits],
                 "live_listeners_before": before, "live_listeners_after": after,
