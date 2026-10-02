@@ -91,19 +91,36 @@ def probe(andrea):
                     result = say(card['confirm_message'], request_id)
                 assert 'delivery is unconfirmed' in result['content']
                 assert say(card['confirm_message'], request_id) == result
-                assert say('check text delivery ' + card['id'])['content'].startswith('Sent via Andrea')
-                assert 'already verified sent' in say('check text delivery ' + card['id'])['content']
+                assert 'Submitted to Messages' in say('check text delivery ' + card['id'])['content']
+                (private/'delivery-state.json').write_text(json.dumps(dict(error=4)))
+                assert 'reports this text failed' in say('check text delivery ' + card['id'])['content']
+                # Stale acceptance does not erase a known error.
+                (private/'delivery-state.json').write_text('{}')
+                assert 'reports this text failed' in say('check text delivery ' + card['id'])['content']
+                (private/'delivery-state.json').write_text(json.dumps(dict(isDelivered=True,dateDelivered=time.time()*1000+1)))
+                assert 'reports this text delivered' in say('check text delivery ' + card['id'])['content']
+                # A mismatched current provider row cannot corroborate delivery.
+                (private/'delivery-state.json').write_text(json.dumps(dict(guid='unrelated-message')))
+                assert 'Could not refresh' in say('check text delivery ' + card['id'])['content']
                 say(card['confirm_message'])
                 counts = json.loads((private/'provider-count.json').read_text())
                 assert counts['sends'] == 1
-                assert json.loads(queries_path.read_text()) == before_confirm_queries + [expected_query], 'Confirm must independently verify once; replay must not repeat it'
+                queries = json.loads(queries_path.read_text())
+                assert queries[:3] == before_confirm_queries + [expected_query], 'Confirm must independently verify recipient before dispatch'
+                rcs_query = {**expected_query, 'guid': expected_query['guid'].replace('iMessage;', 'RCS;')}
+                assert all(q in (expected_query, rcs_query) for q in queries), 'Only exact same-recipient aliases may be inspected'
+                assert rcs_query in queries, 'The migrated RCS alias must actually be verified'
                 saved = json.loads((chat.state/(cid+'.json')).read_text())
                 assert len(saved['_texting']['audit']) == 1
-                assert saved['_texting']['audit'][0]['event'] == 'owner_sent_via_andrea'
+                assert saved['_texting']['audit'][0]['event'] == 'owner_confirmed_delivery_unconfirmed'
+                assert [r['state'] for r in saved['_texting']['audit'][0]['delivery_checks']] == ['submitted','delivery_failed','delivery_failed','delivered']
+                assert saved['_texting']['drafts'][card['id']]['state'] == 'delivered'
                 assert not mock.sends and not mock.unexpected_writes and not chat.providers.calls
                 return dict(all_pass=True, scope='real Python Chat -> Andrea HTTP -> durable SQLite/core action -> synthetic provider',
                             synthetic_provider_posts=1, real_texts_sent=0, worker_dispatches=0,
                             lost_receipt_recovered_without_confirmation_retry=True,
+                            acceptance_failure_delivery_and_mismatched_status_verified=True,
+                            migrated_recipient_aliases_verified=True,
                             andrea_sha=subprocess.check_output(['git','-C',str(andrea),'rev-parse','HEAD'],text=True).strip(),
                             andrea_artifact_sha256=manifest['artifactSha256'],
                             andrea_fixture_sha256=hashlib.sha256(fixture.read_bytes()).hexdigest())

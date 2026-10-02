@@ -103,8 +103,9 @@ class TextingE2ETest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, (result.stderr or "") + (result.stdout or ""))
         payload = json.loads(result.stdout.strip().splitlines()[-1])
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["mock_sends"], 0)
-        self.assertEqual(payload["delivery"], "blocked_andrea_bridge_unavailable")
+        self.assertEqual(payload["mock_sends"], 1)
+        self.assertEqual(payload["real_texts_sent"], 0)
+        self.assertEqual(payload["delivery"], "blocked_then_synthetic_submission_failure_delivery")
 
 
 if __name__ == "__main__":

@@ -63,6 +63,61 @@ class TextingTests(unittest.TestCase):
         self.assertEqual(self.providers.calls, [])
         self.assertEqual(task_queue.tasks(self.root), {})
 
+    def test_sent_refresh_reports_later_failure_without_resend_and_survives_restart(self):
+        self.mock.enable_web_bob_send = True
+        card = self.draft()
+        self.say(card['confirm_message'])
+        saved = self.private()['drafts'][card['id']]
+        receipt = self.mock.bridge_drafts[saved['bridge']['draftId']]['receipt']
+        receipt.update(state='delivery_failed', delivery=dict(state='delivery_failed', error=4,
+                       checkedAt=time.time()*1000, deliveredAt=None, fresh=True))
+        result = self.say('check text delivery ' + card['id'])
+        self.assertIn('reports this text failed', result['messages'][-1]['content'])
+        self.assertEqual(self.private()['drafts'][card['id']]['state'], 'delivery_failed')
+        self.assertEqual(len(self.mock.sends), 1)
+        self.say(card['confirm_message'])
+        self.assertEqual(len(self.mock.sends), 1)
+        self.chat.close()
+        self.chat = Chat(self.folder, self.root, self.providers, texting=self.texting)
+        result = self.say('check text delivery ' + card['id'])
+        self.assertIn('reports this text failed', result['messages'][-1]['content'])
+        self.assertEqual(len(self.mock.sends), 1)
+        self.assertEqual(self.providers.calls, [])
+        self.assertEqual(task_queue.tasks(self.root), {})
+
+    def test_submission_delivery_and_unavailable_checks_have_distinct_owner_replies(self):
+        self.mock.enable_web_bob_send = True
+        card = self.draft(); self.say(card['confirm_message'])
+        saved = self.private()['drafts'][card['id']]
+        receipt = self.mock.bridge_drafts[saved['bridge']['draftId']]['receipt']
+        for state, phrase in [('submitted','Delivery is not confirmed'), ('delivered','reports this text delivered')]:
+            receipt.update(state=state, delivery=dict(state=state,error=0,checkedAt=time.time()*1000,
+                           deliveredAt=time.time()*1000 if state=='delivered' else None,fresh=True))
+            result = self.say('check text delivery ' + card['id'])
+            self.assertIn(phrase, result['messages'][-1]['content'])
+            self.assertEqual(self.private()['drafts'][card['id']]['state'], state)
+        receipt['deliveryRefreshUnavailable'] = True
+        result = self.say('check text delivery ' + card['id'])
+        self.assertIn('Could not refresh', result['messages'][-1]['content'])
+        self.assertEqual(self.private()['drafts'][card['id']]['state'],'delivered')
+        self.assertEqual(len(self.mock.sends),1)
+
+    def test_legacy_receipt_is_submission_only_and_old_sent_drafts_offer_refresh(self):
+        self.mock.enable_web_bob_send = True
+        card = self.draft(); self.say(card['confirm_message'])
+        saved = self.private()['drafts'][card['id']]
+        receipt = self.mock.bridge_drafts[saved['bridge']['draftId']]['receipt']
+        receipt.pop('deliveryProtocol'); receipt.pop('delivery')
+        saved.pop('transport_verified')
+        view = self.texting.public(self.chat.conversations[self.identifier])
+        shown = next(m['text_draft'] for m in view['messages'] if m.get('text_draft_id')==card['id'])
+        self.assertEqual(shown['state'],'submitted')
+        self.assertEqual(shown['check_delivery_message'],'check text delivery '+card['id'])
+        result=self.say('check text delivery '+card['id'])
+        self.assertIn('Delivery is not confirmed',result['messages'][-1]['content'])
+        self.assertEqual(self.private()['drafts'][card['id']]['state'],'submitted')
+        self.assertEqual(len(self.mock.sends),1)
+
     def test_ambiguous_names_and_duplicate_transports_require_exact_target(self):
         result = self.say("draft reply to Alex: Hello")["messages"][-1]
         self.assertIn("Several threads match", result["content"])
@@ -450,7 +505,7 @@ class TextingTests(unittest.TestCase):
             card = self.draft()
             self.say(card['confirm_message'])
             expected = 'delivery_unconfirmed' if lost else 'sent'
-            outcome = 'Delivery remains unconfirmed' if lost else 'already verified sent'
+            outcome = 'Delivery remains unconfirmed' if lost else SENT_VIA_ANDREA
             calls = list(self.mock.calls)
             audit = copy.deepcopy(self.private()['audit'])
             for command in ('cancel text', 'cancel', 'never mind',
@@ -514,10 +569,11 @@ class TextingTests(unittest.TestCase):
         reply = self.say(check, actor='new-owner-session')['messages'][-1]
         self.assertIn('nothing was resent', reply['content'])
         self.assertEqual(self.private()['drafts'][card['id']]['state'], 'sent')
-        self.assertEqual(self.private()['audit'][0]['event'], 'owner_sent_via_andrea')
+        self.assertEqual(self.private()['audit'][0]['event'], 'owner_confirmed_delivery_unconfirmed')
+        self.assertEqual(self.private()['audit'][0]['delivery_checks'][-1]['state'], 'sent')
         self.say(check)
         repeated = self.say(card['confirm_message'])
-        self.assertIn('already verified sent', repeated['messages'][-1]['content'])
+        self.assertIn(SENT_VIA_ANDREA, repeated['messages'][-1]['content'])
         self.assertEqual(len(self.mock.sends), 1)
         self.assertEqual(self.mock.calls.count(('POST', '/web-bob/v1/confirm')), 1)
         self.assertEqual(self.providers.calls, [])
@@ -534,7 +590,7 @@ class TextingTests(unittest.TestCase):
         self.say(card['confirm_message'])
         with patch.object(self.texting.andrea, 'check_delivery', return_value=None):
             reply = self.say('check text delivery ' + card['id'])['messages'][-1]
-            self.assertEqual(reply['content'], DELIVERY_UNCONFIRMED)
+            self.assertIn(DELIVERY_UNCONFIRMED, reply['content'])
         self.assertEqual(self.private()['drafts'][card['id']]['state'], 'delivery_unconfirmed')
         self.assertEqual(len(self.mock.sends), 1)
 

@@ -390,10 +390,68 @@ class ImprovementTests(SessionFixture):
         self.assertFalse(task_queue.tasks(self.root))
         self.assertEqual(self.fake.calls[-1]['messages'][-2]['content'], prompt)
 
-    def test_bare_resources_and_status_keep_existing_behavior(self):
+    def test_bare_resources_asks_for_objective_without_model_or_fake_action(self):
         self.fake.reply_text = 'Which task should receive those resources?'
-        self.assertEqual(self.send(RESOURCES)['provider'], 'gemini')
+        answer = self.send(RESOURCES)
+        self.assertEqual(answer['provider'], 'planner')
+        self.assertIn('Which task', answer['content'])
+        self.assertIn('what result', answer['content'])
+        self.assertNotIn('improvement_goal', self.chat.get(self.identifier))
+        self.assertFalse(self.fake.calls)
+        self.assertFalse(task_queue.tasks(self.root))
         self.send(GOAL)
         answer = self.send('how are the workers doing?')
         self.assertEqual(answer['provider'], 'state')
         self.assertIn('status_observation', answer)
+
+    def test_progress_question_reports_inspection_and_queue_without_advancing(self):
+        self.send(GOAL)
+        before = self.chat.get(self.identifier)['improvement_goal']
+        reply = self.send('what did you actually do?')
+        self.assertIn('completed the saved local routing investigation', reply['content'])
+        self.assertIn('No linked regression task is recorded', reply['content'])
+        self.assertEqual(self.chat.get(self.identifier)['improvement_goal'], before)
+        self.assertFalse(task_queue.tasks(self.root))
+        self.send('keep going')
+        rows = task_queue.tasks(self.root)
+        reply = self.send('what did you actually do?')
+        self.assertIn('queued', reply['content'])
+        self.assertIn('does not establish a verified passing result', reply['content'])
+        self.assertEqual(task_queue.tasks(self.root), rows)
+        self.assertNotIn('suspended_by', self.chat.get(self.identifier)['improvement_goal'])
+
+    def test_progress_after_verified_execution_reports_actual_result_without_new_work(self):
+        row, _, _ = self.completed_fixture()
+        before = task_queue.tasks(self.root)
+        reply = self.send('what did you actually do?')
+        self.assertIn('execution passed', reply['content'])
+        self.assertIn('/api/jobs/result?id=' + row['id'], reply['content'])
+        self.assertEqual(task_queue.tasks(self.root), before)
+
+    def test_progress_question_after_topic_change_and_restart_does_not_report_old_investigation(self):
+        self.send(GOAL)
+        self.send('Write a short thank-you note for Nora.')
+        self.chat.close(); self.chat = Chat(self.folder, self.root, self.fake)
+        self.fake.reply_text = 'I drafted the thank-you note for Nora in this chat.'
+        reply = self.send('what did you actually do?')
+        self.assertNotIn('routing investigation', reply['content'])
+        self.assertNotEqual(reply['provider'], 'planner')
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_deictic_improvement_requires_current_target_and_preserves_read_only_scope(self):
+        reply = self.send('make this better than grok')
+        self.assertIn('What should I improve', reply['content'])
+        self.assertFalse(task_queue.tasks(self.root))
+        self.send('Make Web Bob better than Grok; only inspect locally, do not run tests.')
+        reply = self.send('make this better than grok')
+        self.assertIn('saved scope excludes execution', reply['content'])
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_standalone_enable_does_not_promise_or_authorize_a_regression_job(self):
+        reply = self.send(ENABLE)
+        saved = self.chat.get(self.identifier)['improvement_goal']
+        self.assertEqual(saved['authorized_steps'], ['local scheduling inspection'])
+        self.assertEqual(saved['current_step'], 'configuration_checked')
+        self.assertIn('tell me the task', reply['content'])
+        self.send('keep going')
+        self.assertFalse(task_queue.tasks(self.root))

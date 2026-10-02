@@ -11,6 +11,7 @@ import copy
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import secrets
@@ -35,17 +36,30 @@ BRIDGE_BLOCKED = ("Not sent. Your confirmation was recorded here, but Andrea’s
                   "owner bridge could not accept this exact draft. "
                   "Ask Andrea for a fresh recipient-bound draft in its registered owner "
                   "chat and approve that card there. This Web Bob confirmation cannot be reused.")
-SENT_VIA_ANDREA = "Sent via Andrea’s BlueBubbles bridge."
+SENT_VIA_ANDREA = "Sent via Andrea. Messages reports sent; delivery is not confirmed."
+SUBMITTED_VIA_ANDREA = "Submitted to Messages via Andrea. Delivery is not confirmed. Use Check delivery to inspect it without resending."
+DELIVERED_VIA_ANDREA = "Messages reports this text delivered."
+FAILED_VIA_ANDREA = "Messages reports this text failed. Nothing was resent. Any new send needs a fresh draft and your confirmation."
 DELIVERY_UNCONFIRMED = ("Confirmation recorded; delivery is unconfirmed. Use Check delivery on this draft "
                         "to look for Andrea’s receipt without resending. This confirmation cannot be reused.")
+DELIVERY_STATES = ('delivery_unconfirmed', 'submitted', 'sent', 'delivered', 'delivery_failed')
+
+
+def delivery_reply(draft):
+    state = draft['state']
+    # Historical sent records only proved submission. Do not grandfather them
+    # into transport confirmation when a conversation is reopened after upgrade.
+    if state == 'sent' and not draft.get('transport_verified'):
+        state = 'submitted'
+    return {'submitted': SUBMITTED_VIA_ANDREA, 'sent': SENT_VIA_ANDREA,
+            'delivered': DELIVERED_VIA_ANDREA, 'delivery_failed': FAILED_VIA_ANDREA}.get(state, DELIVERY_UNCONFIRMED)
 
 
 def consumed_delivery_reply(draft):
     """An approval or cancellation cannot undo a handoff or establish its outcome."""
-    if draft and draft['state'] in ('delivery_unconfirmed', 'sent'):
+    if draft and draft['state'] in DELIVERY_STATES:
         outcome = ('Delivery remains unconfirmed. Use Check delivery; it never resends.'
-                   if draft['state'] == 'delivery_unconfirmed' else
-                   'This draft was already verified sent via Andrea. Web Bob cannot recall it.')
+                   if draft['state'] == 'delivery_unconfirmed' else delivery_reply(draft))
         return 'That text confirmation was already used. ' + outcome + ' Nothing was resent.'
     return None
 
@@ -234,7 +248,7 @@ class Andrea:
         return "Andrea’s Web Bob bridge is connected. Review an exact direct-recipient draft and confirm it separately to send. Instinct remains read-only."
 
     def deliver(self, draft, confirmation, request_id):
-        """Return True for delivery, False for rejection, or None for an unknown outcome."""
+        """Return correlated transport state, False for rejection, or None if unknown."""
         remote = draft.get("bridge")
         if not self.token or not remote:
             return False
@@ -255,9 +269,25 @@ class Andrea:
     def delivery_receipt(draft, result):
         remote = draft['bridge']
         guid = result.get("messageGuid")
-        return True if (result.get("ok") is True and result.get("state") == "sent" and
+        correlated = (result.get("ok") is True and result.get("state") in DELIVERY_STATES and
             result.get("draftId") == remote["draftId"] and result.get("digest") == remote["digest"] and
-            result.get("actionId") == remote["actionId"] and isinstance(guid, str) and guid.strip()) else None
+            result.get("actionId") == remote["actionId"] and isinstance(guid, str) and guid.strip())
+        if not correlated:
+            return None
+        # Version-one bridge receipts attest only submission/action correlation.
+        if result.get('deliveryProtocol') != 1:
+            return 'submitted'
+        evidence = result.get('delivery')
+        if result['state'] != 'submitted':
+            if (not isinstance(evidence, dict) or evidence.get('state') != result['state'] or
+                    type(evidence.get('checkedAt')) not in (int, float) or
+                    not math.isfinite(evidence['checkedAt']) or evidence['checkedAt'] <= 0):
+                return None
+            error = evidence.get('error')
+            if (result['state'] in ('sent', 'delivered') and (type(error) is not int or error != 0) or
+                    result['state'] == 'delivery_failed' and (type(error) is not int or error <= 0)):
+                return None
+        return result['state']
 
     def check_delivery(self, draft):
         """Inspect consumed consent without confirming again; revoke any unconsumed handoff.
@@ -273,12 +303,16 @@ class Andrea:
             result = self.call('cancel', {**self.scope(draft), 'bridgeDraftId': remote['draftId']})
         except TextingError:
             return None  # A failed inspection says nothing about delivery.
-        if self.delivery_receipt(draft, result) is True:
-            return True
         if (result.get('ok') is True and result.get('state') == 'cancelled' and
                 all(result.get(k) == remote[k] for k in ('draftId', 'digest', 'actionId'))):
             return False
-        return None
+        try:
+            result = self.call('status', {**self.scope(draft), 'bridgeDraftId': remote['draftId']})
+        except TextingError:
+            return None
+        if result.get('deliveryRefreshUnavailable'):
+            return None
+        return self.delivery_receipt(draft, result)
 
 
 def fingerprint(draft):
@@ -343,7 +377,9 @@ class Texting:
                     ("id", "recipient", "body", "revision", "state", "expires_at")}
             card['delivery_available'] = bool(draft.get('bridge')) and card['state'] == 'pending'
             card['check_delivery_message'] = ('check text delivery ' + draft['id']
-                if draft.get('bridge') and draft['state'] == 'delivery_unconfirmed' else None)
+                if draft.get('bridge') and draft['state'] in DELIVERY_STATES else None)
+            if card['state'] == 'sent' and not draft.get('transport_verified'):
+                card['state'] = 'submitted'
             if draft.get('read_only') or self.instinct.is_target(draft['recipient']):
                 card['read_only'] = True
                 card['check_delivery_message'] = None
@@ -460,10 +496,10 @@ class Texting:
         conversation["messages"][-1].update(status="done", provider="texting", content=DELIVERY_UNCONFIRMED)
         persist(conversation)
         delivered = self.andrea.deliver(draft, text, request_id)
-        if delivered is True:
-            draft["state"] = "sent"
-            audit["event"] = "owner_sent_via_andrea"
-            content = SENT_VIA_ANDREA
+        if isinstance(delivered, str) and delivered in DELIVERY_STATES:
+            draft.update(state=delivered, transport_verified=True)
+            audit["event"] = "owner_sent_via_andrea" if delivered == "sent" else "owner_delivery_" + delivered
+            content = delivery_reply(draft)
         elif delivered is False:
             draft["state"] = "confirmed_not_sent"
             audit["event"] = "owner_confirmed_not_sent"
@@ -475,24 +511,23 @@ class Texting:
     def check_delivery(self, conversation, identifier):
         state = conversation.get('_texting', {})
         draft = state.get('drafts', {}).get(identifier)
-        if not draft or draft['state'] not in ('delivery_unconfirmed', 'sent'):
+        if not draft or draft['state'] not in DELIVERY_STATES:
             return 'No uncertain delivery to check for that draft. Nothing was sent by this check.'
         if draft.get('read_only') or self.instinct.is_target(draft['recipient']):
             from instinct import READ_ONLY
             return READ_ONLY
-        if draft['state'] == 'sent':
-            return 'This draft was already verified sent via Andrea. Nothing was resent.'
         delivered = self.andrea.check_delivery(draft)
         if delivered is None:
-            return DELIVERY_UNCONFIRMED
-        draft['state'] = 'sent' if delivered else 'confirmed_not_sent'
+            return 'Could not refresh delivery status. Last recorded status: ' + delivery_reply(draft)
+        draft['state'] = delivered if isinstance(delivered, str) else 'confirmed_not_sent'
+        draft['transport_verified'] = isinstance(delivered, str)
         draft['token'] = None
         for audit in state.get('audit', []):
             if audit.get('draft_id') == identifier:
-                audit.update(event='owner_sent_via_andrea' if delivered else 'owner_confirmed_not_sent',
-                             receipt_checked_at=self.clock())
-        return ('Sent via Andrea’s BlueBubbles bridge. Verified the existing receipt; nothing was resent.'
-                if delivered else 'Not sent. Andrea cancelled the unconsumed handoff; nothing was resent.')
+                # Keep the original confirmation event and append later facts.
+                audit.setdefault('delivery_checks', []).append(dict(state=draft['state'], at=self.clock()))
+        return (delivery_reply(draft) + ' Checked the original message; nothing was resent.'
+                if isinstance(delivered, str) else 'Not sent. Andrea cancelled the unconsumed handoff; nothing was resent.')
 
     def handle(self, conversation, text, actor, request_id, persist, redact):
         state = conversation.get("_texting", {})

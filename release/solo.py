@@ -66,7 +66,8 @@ def bridge_replay(root, cid, draft_id):
     cfg = json.loads(config_path.read_text())
     health = Andrea(cfg['url'], cfg['token']).call('health')
     require(health.get('ok') and health.get('connected') and health.get('paused') is False and
-            health.get('instinctReadOnly') is True and health.get('sha') == andrea_pin()['sha'],
+            health.get('instinctReadOnly') is True and health.get('sha') == andrea_pin()['sha'] and
+            health.get('deliveryProtocol') == 1,
             'Actual Andrea bridge is unavailable or at the wrong revision')
     saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
     remote = saved['_texting']['drafts'][draft_id]['bridge']
@@ -229,8 +230,19 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
     return dict(all_pass=True, conversation_id=cid, checks=receipts, real_texts_sent=0, queued_workers=0)
 
 
+def verify_resource_clarification(answer):
+    content = answer.get('content', '')
+    require(answer.get('provider') == 'planner' and '?' in content and
+            re.search(r'\b(?:task|goal|objective)\b', content, re.I) and
+            re.search(r'\b(?:result|outcome|accomplish)\b', content, re.I) and
+            not re.search(r'\b(?:ready|on board|queued|assigned|started)\b', content, re.I) and
+            'I did not start, assign, or queue' not in content and
+            not answer.get('improvement_receipt') and not answer.get('task_id') and not answer.get('task_ids'),
+            'Unscoped resource request did not ask for a concrete objective without inventing work')
+
+
 def resources_replay(client, root, *, real):
-    """Exercise model fallback, bounded improvement work and genuine status controls."""
+    """Exercise useful clarification, bounded improvement and genuine status controls."""
     from task_dispatch import task_queue
     cid = client.new()
     receipts = []
@@ -249,8 +261,7 @@ def resources_replay(client, root, *, real):
         before = client.call('/api/conversations/' + cid)['messages']
         value, answer = submit(client, cid, prompt)
         if index == 0:
-            require(answer.get('provider') in ({'gemini', 'minimax', 'codex', 'claude', 'cursor'} if real else {'fixture'}),
-                    'Unscoped resource request bypassed the model')
+            verify_resource_clarification(answer)
         elif index == 1:
             verify_improvement_reply(root, before, answer)
         else:
@@ -270,10 +281,10 @@ def resources_replay(client, root, *, real):
         saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
         require(next(m for m in saved['messages'] if m['id'] == answer['id']) == answer,
                 'Improvement/resource reply was not durably saved')
-        receipts.append(dict(check='Jeff resource request uses model, source investigation, or saved continuation hold', prompt=prompt,
+        receipts.append(dict(check='Jeff resource request asks for objective, investigates source, or preserves a hold', prompt=prompt,
                              conversation_id=cid, request_id=answer['request_id'], provider=answer['provider'],
                              answer=answer['content'], improvement_receipt=answer.get('improvement_receipt'),
-                             real_provider=real and index == 0, passed=True))
+                             real_provider=False, passed=True))
     for prompt in ('what is the status?', 'how are the workers doing?'):
         _, answer = submit(client, cid, prompt)
         require(answer.get('provider') == 'state' and answer.get('status_observation'),
@@ -448,8 +459,23 @@ def capability_replay(client, cid, root):
     return checks
 
 
+def verify_delivery_refresh(before_audit, after_audit, bridge, evidence, answer):
+    """A cached failure is not evidence that the requested inspection succeeded."""
+    previous = before_audit.get('delivery_checks', [])
+    current = after_audit.get('delivery_checks', [])
+    require('could not refresh' not in answer.get('content', '').lower() and
+            len(current) == len(previous) + 1 and current[:-1] == previous and
+            current[-1]['state'] == evidence['state'],
+            'Delivery refresh did not append a new successful inspection')
+    require({k: v for k, v in before_audit.items() if k != 'delivery_checks'} ==
+            {k: v for k, v in after_audit.items() if k != 'delivery_checks'},
+            'Delivery refresh changed the original confirmation audit')
+    require(all(evidence.get(key) == bridge[key] for key in ('actionId', 'digest')),
+            'Delivery evidence does not belong to the original action and scope')
+
+
 def delivered_notice_replay(client, root):
-    """Recover one already delivered release notice; never submit send authority."""
+    """Refresh the original notice transport evidence; never submit send authority."""
     notice_path = root / 'conductor/reviews/BEAT-GROK-0700-milestone-1-notice.json'
     if not notice_path.exists():
         return []
@@ -459,23 +485,42 @@ def delivered_notice_replay(client, root):
     path = root / 'conductor/webchat/sessions' / (notice['conversation_id'] + '.json')
     before = json.loads(path.read_text())['_texting']
     draft = before['drafts'][notice['draft_id']]
-    require(draft['state'] in ('delivery_unconfirmed', 'sent') and draft['token'] is None and
+    require(draft['state'] in ('delivery_unconfirmed', 'submitted', 'sent', 'delivered', 'delivery_failed') and draft['token'] is None and
             draft['bridge']['actionId'] == notice['action_id'] and
             hashlib.sha256(draft['body'].encode()).hexdigest() == notice['body_sha256'] and
             len(before['audit']) == 1, 'Existing notice consent or identity changed')
     _, answer = submit(client, notice['conversation_id'], 'check text delivery ' + notice['draft_id'])
     after = json.loads(path.read_text())['_texting']
+    import sqlite3
+    from texting import delivery_reply
+    cfg = json.loads((root / 'conductor/webchat/andrea-bridge.json').read_text())
+    with sqlite3.connect(Path(cfg['audit_db']).resolve().as_uri() + '?mode=ro', uri=True) as db:
+        record = db.execute('SELECT evidence FROM webbob_delivery WHERE draftId = ?',
+                            (draft['bridge']['draftId'],)).fetchone()
+    require(record is not None, 'Original notice has no durable transport observation')
+    evidence = json.loads(record[0])
+    checked = after['drafts'][notice['draft_id']]
+    require(len(after['audit']) == 1, 'Delivery refresh changed the audit count')
+    verify_delivery_refresh(before['audit'][0], after['audit'][0], draft['bridge'], evidence, answer)
     require(answer.get('provider') == 'texting' and 'nothing was resent' in answer['content'].lower() and
-            after['drafts'][notice['draft_id']]['state'] == 'sent' and len(after['audit']) == 1 and
-            after['audit'][0]['event'] == 'owner_sent_via_andrea', 'Existing verified receipt was not recovered')
+            checked['state'] == evidence['state'] and evidence.get('checkedAt') and
+            evidence.get('messageGuid') and len(after['audit']) == 1 and
+            after['audit'][0]['event'] == before['audit'][0]['event'] and
+            after['audit'][0]['delivery_checks'][-1]['state'] == evidence['state'] and
+            checked['token'] is None and checked['bridge'] == draft['bridge'],
+            'Original notice status did not match its durable transport evidence and consumed scope')
+    if evidence['state'] in ('sent', 'delivered'):
+        require(evidence['error'] == 0, 'Transport error was reported as successful')
+    elif evidence['state'] == 'delivery_failed':
+        require(isinstance(evidence['error'], int) and evidence['error'] > 0, 'Failure lacks transport evidence')
+    require(delivery_reply(checked) in answer['content'], 'Notice status text contradicts its evidence')
     _, cancelled = submit(client, notice['conversation_id'], 'cancel text draft ' + notice['draft_id'])
     final = json.loads(path.read_text())['_texting']
-    require(cancelled.get('provider') == 'texting' and 'already verified sent' in cancelled['content'] and
-            'cannot recall' in cancelled['content'] and 'Nothing sent.' not in cancelled['content'] and
-            final == after, 'Cancellation must preserve the verified delivery outcome and consumed consent')
-    return [dict(check='existing delivered milestone receipt recovered without another confirmation or send',
-                 passed=True, real_texts_sent=0, additional_confirmations=0),
-            dict(check='cancel after delivery preserves the verified outcome and makes no recall claim', passed=True)]
+    require(cancelled.get('provider') == 'texting' and 'confirmation was already used' in cancelled['content'] and
+            delivery_reply(checked) in cancelled['content'] and 'Nothing sent.' not in cancelled['content'] and
+            final == after, 'Cancellation must preserve the observed outcome and consumed consent')
+    return [dict(check='original notice status refreshed against durable transport evidence without sending',
+                 state=evidence['state'], passed=True, real_texts_sent=0, additional_confirmations=0)]
 
 
 def instinct_replay(client, cid):

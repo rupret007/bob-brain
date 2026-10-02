@@ -39,7 +39,7 @@ class AndreaBridgeTests(unittest.TestCase):
             with self.subTest(key=key), patch('texting.request_json', return_value={**receipt, key: None}):
                 self.assertIsNone(self.client.deliver(value, 'yes wbtxt-' + 'c'*32, 'confirm-123'))
         with patch('texting.request_json', return_value=receipt) as request:
-            self.assertTrue(self.client.deliver(value, 'yes wbtxt-' + 'c'*32, 'confirm-123'))
+            self.assertEqual(self.client.deliver(value, 'yes wbtxt-' + 'c'*32, 'confirm-123'), 'submitted')
         self.assertEqual(request.call_args.args[1], '/web-bob/v1/confirm')
         self.assertEqual(request.call_args.kwargs['data']['actor'], value['actor'])
         self.assertEqual(request.call_args.kwargs['data']['draftRequestId'], value['request_id'])
@@ -52,12 +52,23 @@ class AndreaBridgeTests(unittest.TestCase):
                 self.assertFalse(self.client.deliver(changed, 'yes wbtxt-' + 'c'*32, 'confirm-123'))
                 request.assert_not_called()
 
-    def test_receipt_check_uses_only_cancel_and_requires_exact_bound_evidence(self):
+    def test_delivery_claim_requires_correlated_explicit_transport_evidence(self):
+        value = self.bound()
+        receipt = dict(ok=True, state='delivered', deliveryProtocol=1, messageGuid='receipt-123', **value['bridge'])
+        self.assertIsNone(self.client.delivery_receipt(value, receipt))
+        receipt['delivery'] = dict(state='delivered', error=0, checkedAt=time.time()*1000, fresh=True)
+        self.assertEqual(self.client.delivery_receipt(value, receipt), 'delivered')
+        for key, invalid in [('state','sent'),('error',4),('error',False),('checkedAt',float('nan'))]:
+            with self.subTest(key=key, invalid=invalid):
+                malformed={**receipt,'delivery':{**receipt['delivery'],key:invalid}}
+                self.assertIsNone(self.client.delivery_receipt(value,malformed))
+
+    def test_receipt_check_revokes_pending_then_reads_status_with_exact_binding(self):
         value = self.bound()
         receipt = dict(ok=True, state='sent', messageGuid='receipt-123', **value['bridge'])
         with patch('texting.request_json', return_value=receipt) as request:
-            self.assertTrue(self.client.check_delivery(value))
-        self.assertEqual(request.call_args.args[1], '/web-bob/v1/cancel')
+            self.assertEqual(self.client.check_delivery(value), 'submitted')
+        self.assertEqual([call.args[1] for call in request.call_args_list], ['/web-bob/v1/cancel', '/web-bob/v1/status'])
         self.assertNotIn('confirmation', request.call_args.kwargs['data'])
         for key in ('draftId', 'digest', 'actionId', 'state', 'messageGuid', 'ok'):
             with self.subTest(key=key), patch('texting.request_json', return_value={**receipt, key: None}):
