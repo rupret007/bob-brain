@@ -9,6 +9,65 @@ from providers import Providers, ProviderError
 
 
 class AnswerIntentTests(SessionFixture):
+    def test_instructional_actors_and_state_terms_remain_writing(self):
+        examples = (
+            "Queued doesn't mean finished.",
+            'Queued is not the same as completed.',
+            "Assigned doesn’t imply completion.",
+            'Use Web Bob for questions and writing; a queued receipt does not mean completion.',
+            'Ask Web Bob a question; a queued receipt is not proof of completion.',
+            'Welcome to Web Bob—let’s get started!',
+            'Web Bob helps you get started with ordinary questions.',
+            'I suggest starting with an ordinary question.',
+            'I recommend beginning with a short note; use Gemini for writing examples.',
+            'Models have separate limits, and queued work has to respect saved project holds.',
+        )
+        for example in examples:
+            with self.subTest(example=example):
+                self.fake.reply_text = example
+                answer = self.send('Write a practical guide explaining job receipts and how to ask questions.')
+                self.assertEqual(answer['status'], 'done')
+                self.assertEqual(answer['content'], example)
+                self.assertNotIn('task_id', answer)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_instructional_phrasing_preserves_concrete_effect_detection(self):
+        descriptions = (
+            "Queued doesn't mean finished.",
+            'Use Web Bob for questions and writing',
+            'Ask Web Bob a question',
+            'Welcome to Web Bob—let’s get started!',
+            'Web Bob helps you get started with ordinary questions.',
+            'I suggest starting with an ordinary question.',
+        )
+        claims = (
+            'I queued your repair.', 'Your repair task was queued.',
+            'The parser repair job was dispatched.', 'Codex is now working.',
+            'The job was assigned just now.', 'Queued your repair task.',
+            'Started your repair task.', 'Job webchat-' + 'b' * 32 + ' is queued.',
+        )
+        for description in descriptions:
+            for claim in claims:
+                for boundary in ('; ', ' — ', ' and '):
+                    with self.subTest(description=description, claim=claim, boundary=boundary):
+                        self.fake.reply_text = description + boundary + claim
+                        answer = self.send('Write a practical guide explaining job receipts and how to ask questions.')
+                        self.assertNotEqual(answer['content'], self.fake.reply_text)
+        for claim in ('Bob started your repair.', 'Gemini queued your repair.',
+                      'I started your repair.', 'We will get started on your repair.',
+                      'Ask Bob a question; he queued your repair.',
+                      'Use Gemini for examples; it has started your repair.',
+                      'I suggest starting with a question, considering ' +
+                      'the supplied constraints ' * 8 + 'and will queue your repair.',
+                      'I will plan carefully, considering ' +
+                      'the supplied constraints ' * 5 + 'and use Bob to start your repair.',
+                      'Models have separate limits, and queued work has been assigned to Gemini.',
+                      'I suggest starting with a question; I assigned your repair to Gemini.'):
+            with self.subTest(claim=claim):
+                self.fake.reply_text = claim
+                self.assertNotEqual(self.send('Write a guide explaining job receipts.')['content'], claim)
+        self.assertFalse(task_queue.tasks(self.root))
+
     def test_guide_state_descriptions_are_not_dispatch_receipts(self):
         examples = (
             'A queued receipt confirms that a task was queued, not that it was completed.',
@@ -79,8 +138,8 @@ class AnswerIntentTests(SessionFixture):
                   'Preserve the facts and qualifications.')
         self.chat.close()
         self.chat = Chat(self.folder, self.root, self.fake)
-        revision = ('Welcome! Ask questions or request writing in chat, such as drafting an email. '
-                    'Queued work is not finished work. Saved project holds govern execution. '
+        revision = ('Welcome to Web Bob—let’s get started! Ask questions or request writing in chat, '
+                    'such as drafting an email. Queued doesn’t mean finished. Saved project holds govern execution. '
                     'Available models have separate limits; Auto chooses an existing route. '
                     'This candidate is being validated.')
         self.fake.reply_text = revision
