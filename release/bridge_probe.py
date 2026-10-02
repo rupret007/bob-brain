@@ -67,12 +67,17 @@ def probe(andrea):
                 card = first['text_draft']; assert card['state'] == 'pending'
                 pending = chat.conversations[cid]['_texting']['drafts'][card['id']]
                 assert pending.get('bridge'), 'Real Andrea handshake did not bind the Web Bob draft'
+                expected_query = dict(guid=card['recipient']['guid'], limit=2, offset=0, **{'with': ['participants']})
+                queries_path = private/'recipient-queries.json'
+                assert json.loads(queries_path.read_text()) == [expected_query], 'Prepare did not use the actual exact-recipient resolver'
                 assert not (private/'provider-count.json').exists()
                 assert say('yes')['content'].startswith('Nothing sent')
                 assert say('cancel text draft '+card['id'])['content'].startswith('Text draft cancelled')
                 assert 'cancelled' in say(card['confirm_message'])['content']
                 assert not (private/'provider-count.json').exists()
                 card = say('draft reply to Alex Morgan: Approved synthetic fixture text.')['text_draft']
+                before_confirm_queries = json.loads(queries_path.read_text())
+                assert before_confirm_queries == [expected_query, expected_query]
                 request_id = str(uuid.uuid4())
                 # Discard only the response after the actual compiled bridge has
                 # completed its one synthetic delivery. Recover by receipt, never
@@ -91,6 +96,7 @@ def probe(andrea):
                 say(card['confirm_message'])
                 counts = json.loads((private/'provider-count.json').read_text())
                 assert counts['sends'] == 1
+                assert json.loads(queries_path.read_text()) == before_confirm_queries + [expected_query], 'Confirm must independently verify once; replay must not repeat it'
                 saved = json.loads((chat.state/(cid+'.json')).read_text())
                 assert len(saved['_texting']['audit']) == 1
                 assert saved['_texting']['audit'][0]['event'] == 'owner_sent_via_andrea'

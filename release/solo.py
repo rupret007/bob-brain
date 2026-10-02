@@ -715,7 +715,8 @@ def checks(root, feature):
                 for name in ('webchat', 'services', 'reviews', 'release')}
     if ORDER.index(feature) >= ORDER.index('bridge'):
         commands['bridge-contract'] = [sys.executable, 'release/bridge_probe.py', '--andrea',
-            str(root / 'workspaces/andrea-webbob-bridge-0018'), '--output', str(out / 'bridge-contract.json')]
+            str(root / 'workspaces' / andrea_pin().get('worktree', 'andrea-webbob-bridge-0018')),
+            '--output', str(out / 'bridge-contract.json')]
     commands['eval'] = [sys.executable, 'webchat/bob_parity_eval.py']
     commands['browser'] = [sys.executable, 'webchat/texting_proof.py', '--output-dir', str(out / 'texting-browser')]
     if ORDER.index(feature) >= ORDER.index('media'):
