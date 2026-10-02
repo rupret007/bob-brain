@@ -64,7 +64,11 @@ class SessionFixture(unittest.TestCase):
         info = self.chat.workers.get(self.identifier)
         if info:
             info["thread"].join(3)
-        return self.chat.get(self.identifier)["messages"][-1]
+            self.assertFalse(info["thread"].is_alive(), "Reply worker did not finish within the fixture bound")
+        answer = next(m for m in self.chat.history(self.identifier)["messages"]
+                      if m.get("request_id") == request_id and m.get("role") == "assistant")
+        self.assertNotIn(answer["status"], ("queued", "running"))
+        return answer
 
 
 class Session9be598f8ResourcesTests(SessionFixture):

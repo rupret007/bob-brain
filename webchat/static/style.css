@@ -207,7 +207,8 @@ select option { background: var(--surface-2); color: var(--text); }
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 12px 4px 8px;
-  scroll-behavior: smooth;
+  /* Automatic positioning must finish before a card can be pressed. */
+  scroll-behavior: auto;
   scrollbar-color: #3a4254 transparent;
 }
 .welcome { text-align: center; padding: min(12vh, 88px) 20px 24px; color: var(--muted); max-width: 22rem; margin: 0 auto; }

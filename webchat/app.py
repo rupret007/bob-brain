@@ -987,6 +987,13 @@ class Chat(TaskDispatch):
             info = self.workers.get(identifier)
             return (info is not None and info["cancel"] is cancel
                     and reply(value)["status"] in ("queued", "running"))
+        def release_worker():
+            # Caller holds self.lock. An older thread must never retire a
+            # follow-up that acquired this conversation after publication.
+            info = self.workers.get(identifier)
+            if info is not None and info["cancel"] is cancel:
+                self.workers.pop(identifier, None)
+                self.overlay_pins.pop(identifier, None)
         def progress(provider, attempts):
             with self.lock:
                 value = self.get(identifier)
@@ -1058,22 +1065,25 @@ class Chat(TaskDispatch):
                 if rid:
                     reply(value)["request_id"] = rid
                 reply(value).pop("retry_at", None)
-                self.save(value)
-                user = user_msg.get("content", "")
-                head = draft_head_sha(self.root)
-                commits = [head] if head else []
-                self.record_turn(conversation_id=identifier, ask=user, provider=answer.get("provider"),
-                            jobs=[], files=[], commits=commits, confirmations=[], refusals=[],
-                            open_items=[user[:200]] if user else [],
-                            request_id=user_msg.get("request_id"))
                 try:
-                    ledger = self.ledger_root(identifier)
-                    if not (ledger == self.root and state_ledger._DRILL_NOISE_RE.search(user or "")):
-                        state_ledger.record_webchat_turn(
-                            ledger, ask=user, provider=answer.get("provider"), request_id=user_msg.get("request_id"),
-                        )
-                except OSError:
-                    pass
+                    self.save(value)
+                    user = user_msg.get("content", "")
+                    head = draft_head_sha(self.root)
+                    commits = [head] if head else []
+                    self.record_turn(conversation_id=identifier, ask=user, provider=answer.get("provider"),
+                                jobs=[], files=[], commits=commits, confirmations=[], refusals=[],
+                                open_items=[user[:200]] if user else [],
+                                request_id=user_msg.get("request_id"))
+                    try:
+                        ledger = self.ledger_root(identifier)
+                        if not (ledger == self.root and state_ledger._DRILL_NOISE_RE.search(user or "")):
+                            state_ledger.record_webchat_turn(
+                                ledger, ask=user, provider=answer.get("provider"), request_id=user_msg.get("request_id"),
+                            )
+                    except OSError:
+                        pass
+                finally:
+                    release_worker()
         except AllDown as exc:
             with self.lock:
                 value = self.get(identifier)
@@ -1088,6 +1098,7 @@ class Chat(TaskDispatch):
                     provider=None, content="Reply stopped." if cancel.is_set() else str(exc),
                     attempts=exc.attempts, retry_at=exc.retry_at)
                 self.save(value)
+                release_worker()
         except Exception as exc:
             with self.lock:
                 value = self.get(identifier)
@@ -1100,28 +1111,29 @@ class Chat(TaskDispatch):
                            else "The reply failed unexpectedly. Your message is saved; please try again.")
                 reply(value).update(status="cancelled" if cancelled else "error", content=self.redact(message))
                 self.save(value)
+                release_worker()
         finally:
             with self.lock:
-                info = self.workers.get(identifier)
-                if info is not None and info["cancel"] is cancel:
-                    self.workers.pop(identifier, None)
-                    self.overlay_pins.pop(identifier, None)
+                release_worker()
 
-    def stop(self, identifier):
+    def stop(self, identifier, *, request_id=None):
         with self.lock:
             value = self.get(identifier)
             info = self.workers.get(identifier)
             if info:
-                info["cancel"].set()
                 pending = next((m for m in value["messages"] if m["id"] == info["reply_id"]), None)
-                if pending and pending["status"] in ("queued", "running"):
+                if request_id is not None and (not pending or pending.get('request_id') != request_id):
+                    return
+                info["cancel"].set()
+                if pending and pending["status"] in ("queued", "running", "waiting"):
                     pending.update(status="cancelled", content="Reply stopped.")
                     pending.pop("retry_at", None)
                     value.pop("retry_prompt", None)
                     value["codex_thread_id"] = None
                     self.save(value)
             else:
-                waiting = next((m for m in reversed(value["messages"]) if m.get("status") == "waiting"), None)
+                waiting = next((m for m in reversed(value["messages"]) if m.get("status") == "waiting"
+                                and (request_id is None or m.get('request_id') == request_id)), None)
                 if waiting is None:
                     return
                 waiting.update(status="cancelled", content="Queued request stopped.")
@@ -1868,6 +1880,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, chat.voice.transcript(data.get("call_id"), owner, data.get("entries")))
             if route == "/api/voice/tool":
                 return self.send(200, chat.voice.tool(data.get("call_id"), owner, data.get("turn_id")))
+            if route == "/api/voice/interrupt":
+                return self.send(200, chat.voice.interrupt(data.get("call_id"), owner, data.get("turn_id")))
             if route == "/api/voice/end":
                 return self.send(200, chat.voice.end(data.get("call_id"), owner))
             if route == "/api/voice/pulse":

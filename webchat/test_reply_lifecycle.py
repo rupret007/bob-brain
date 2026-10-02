@@ -15,6 +15,92 @@ from voice import VoiceError
 class ReplyLifecycleTests(Fixture):
     prompt = 'Describe an imaginary small purple cloud.'
 
+    def test_completed_reply_admits_followup_before_old_thread_returns(self):
+        self.completed_followup()
+
+    def test_bookkeeping_error_does_not_leave_completed_reply_reserved(self):
+        self.completed_followup(bookkeeping_error=True)
+
+    def completed_followup(self, bookkeeping_error=False):
+        published, release_old, second_entered, release_second = (threading.Event() for _ in range(4))
+        first_request, second_request = str(uuid.uuid4()), str(uuid.uuid4())
+        original_lock = self.chat.lock
+        calls, first_thread, explicitly_released = [], [], []
+        chat = self.chat
+        identifier = self.identifier
+
+        class PublicationBoundary:
+            def __enter__(self):
+                return original_lock.__enter__()
+
+            def __exit__(self, *args):
+                pause = (first_thread and threading.current_thread() is first_thread[0]
+                         and not published.is_set()
+                         and any(m.get('request_id') == first_request and m.get('role') == 'assistant'
+                                 and m.get('status') == 'done'
+                                 for m in chat.conversations[identifier]['messages']))
+                result = original_lock.__exit__(*args)
+                if pause:
+                    published.set()
+                    explicitly_released.append(release_old.wait(3))
+                return result
+
+        def reply(conversation, cancel, progress):
+            request = conversation['messages'][-1]['request_id']
+            calls.append(request)
+            if request == first_request:
+                first_thread.append(threading.current_thread())
+            else:
+                second_entered.set()
+                release_second.wait(3)
+            return dict(content='An imaginary purple cloud drifts above the lake.', provider='gemini', attempts=[])
+
+        self.chat.lock = PublicationBoundary()
+        self.fake.reply = reply
+        overlay = self.root / 'private-overlay'
+        overlay.mkdir()
+        self.chat.overlay_roots[identifier] = overlay
+        if bookkeeping_error:
+            original_record = self.chat.record_turn
+            def record(**kwargs):
+                if kwargs.get('request_id') == first_request:
+                    raise ValueError('fixture bookkeeping failure')
+                return original_record(**kwargs)
+            patcher = patch.object(self.chat, 'record_turn', side_effect=record)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.addCleanup(release_old.set)
+        self.addCleanup(release_second.set)
+        try:
+            self.chat.submit(identifier, self.prompt, first_request, provider='gemini')
+            self.assertTrue(published.wait(3))
+            history = self.chat.history(identifier)
+            self.assertEqual(history['messages'][-1]['status'], 'done')
+            self.assertFalse(history['reply_stopping'])
+            self.chat.submit(identifier, self.prompt, second_request, provider='gemini')
+            self.assertTrue(second_entered.wait(3))
+            new_worker = self.chat.workers[identifier]
+            # Replaying the completed request must not dispatch another reply.
+            self.chat.submit(identifier, self.prompt, first_request, provider='gemini')
+            release_old.set()
+            first_thread[0].join(3)
+            self.assertFalse(first_thread[0].is_alive())
+            self.assertEqual(explicitly_released, [True])
+            self.assertIs(self.chat.workers[identifier], new_worker)
+            self.assertEqual(self.chat.overlay_pins[identifier], overlay)
+            self.assertEqual(calls, [first_request, second_request])
+            release_second.set()
+            new_worker['thread'].join(3)
+            self.assertFalse(new_worker['thread'].is_alive())
+            self.assertNotIn(identifier, self.chat.workers)
+            self.assertEqual(len(self.chat.history(identifier)['messages']), 4)
+        finally:
+            release_old.set()
+            release_second.set()
+            for worker in first_thread + [v['thread'] for v in list(self.chat.workers.values())]:
+                worker.join(3)
+            self.chat.lock = original_lock
+
     def blocked_reply(self, outcome='success'):
         entered, callback, progressed, release = (threading.Event() for _ in range(4))
         def reply(conversation, cancel, progress):

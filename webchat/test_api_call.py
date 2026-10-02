@@ -27,6 +27,7 @@ class APIRootTests(unittest.TestCase):
                 '    assert prompt == "reference data"\n'
                 '    assert thinking_budget == 1024\n'
                 '    assert model_id == "gemini-2.5-pro"\n'
+                '    print("HTTP attempt 1/3 failed: HTTP 503 curl_rc=0", flush=True)\n'
                 '    return "The structured helper preserved context."\n')
             payload = json.dumps(dict(prompt='reference data', system='trusted policy', thinking_budget=1024, model_id='gemini-2.5-pro',
                                       messages=[dict(role='user', content='user asks')]))
@@ -34,7 +35,8 @@ class APIRootTests(unittest.TestCase):
             env = dict(os.environ, BOB_ROOT=str(root))
             result = subprocess.run(command, env=env, input=payload, text=True, capture_output=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn('preserved context', result.stdout)
+            self.assertEqual(result.stdout, 'The structured helper preserved context.\n')
+            self.assertIn('HTTP attempt 1/3 failed', result.stderr)
             helper.write_text('def model_call(lane, prompt, purpose):\n    raise AssertionError("must not be called")\n')
             result = subprocess.run(command, env=env, input=payload, text=True, capture_output=True, timeout=10)
             self.assertNotEqual(result.returncode, 0)

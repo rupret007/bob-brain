@@ -8,9 +8,11 @@ PLACEMENT_VERB = r"(?:put(?:ting)?|plac(?:e|ed|ing)|add(?:ed|ing)?|mov(?:e|ed|in
 QUEUE_PLACEMENT = (PLACEMENT_VERB + r"\b[^.;!?\n]{0,70}\b(?:in(?:to)?|to)\s+"
                    r"(?:(?:a|an|the|my|your|our|this|that)\s+)?queue\b")
 EFFECT = r"(?:start(?:ed|ing)?|creat(?:e|ed|ing)\b[^.!?\n]{0,60}\b(?:jobs?|tasks?)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|add(?:ed|ing)? work|put .{0,40} to work|kick(?:ed|ing)? off|" + QUEUE_PLACEMENT + r")"
+CLAUSE_START = r"(?:^|[.;!?\n–—]\s*|\b(?:and|then|but|yet)\s+)"
+BARE_EFFECT = CLAUSE_START + r"(?:queued|assigned|started|dispatched|launched|scheduled)\b"
 CLAIM = re.compile(
     r"\b(?:I|we|Bob|" + WORKERS + r")\b[^.!?\n]{0,90}\b" + EFFECT + r"\b|"
-    r"(?:^|[.!?\n]\s*)(?:queued|assigned|started|dispatched|launched|scheduled)\b|"
+    + BARE_EFFECT + r"|"
     r"\b(?:work|jobs?|tasks?|reviews?|audits?|tests?)\b[^.!?\n]{0,80}\b(?:has|have|is|are|was|were|being|been)\b"
     r"[^.!?\n]{0,30}\b" + EFFECT + r"\b|"
     r"\b(?:I['’]ll|I will|we['’]ll|we will|the system (?:will|is))\b[^.!?\n]{0,100}"
@@ -40,6 +42,10 @@ REFERENCE_TARGET = (r"\b(?:your|our|my)\s+(?:" + TARGET_MODIFIER + r"){0,4}(?:jo
                     r"(?:" + TARGET_MODIFIER + r"){1,4}(?:job|task)\b")
 ASSERTION_AUX = r"(?:is|are|was|were|has|have|had|be|been|being|will|would|shall|should|can|could|may|might|must|get|gets|got)"
 ASSERTION_ADVERB = r"(?:now|just|already|still|also|then|[a-z]+ly)"
+COORDINATED_EFFECT = re.compile(
+    r'(?:\b(?:and|then|but|yet)|[;–—])\s+'
+    r'(?:(?:I|we|he|she|it|they)\s+)?'
+    r'(?:(?:' + ASSERTION_AUX + r'|' + ASSERTION_ADVERB + r')\s+){0,4}' + EFFECT + r'\b', re.I)
 QUEUE_STATE = (r"in\s+(?:(?:a|an|the|my|your|our|this|that|[\w]+['’]s)\s+)?"
                r"(?:" + TARGET_MODIFIER + r"){0,3}queue\b")
 # Recognize a predicate associated with the target, not any effect word later
@@ -61,7 +67,7 @@ TARGET_PREDICATE = (
     r"(?:and|then|but)\s+){0,10}"
     r"(?:" + EFFECT + r"|" + QUEUE_STATE + r")\b")
 REFERENCE_EFFECT = re.compile(
-    r"(?:^|[.!?\n]\s*)(?:queued|assigned|started|dispatched|launched|scheduled)\b|"
+    BARE_EFFECT + r"|"
     r"(?:" + REFERENCE_TARGET + r")" + TARGET_PREDICATE + r"|"
     r"\b(?:the|a) (?:job|task) (?:is|was|has|had)\s+(?:(?:just|now|already|been)\s+)*" + EFFECT + r"\b|"
     # State-only modifiers are not job names, but a deictic assertion about
@@ -77,12 +83,43 @@ DIRECT_CLAIM = re.compile(
 
 
 def verbal_effects(prose):
-    """Disambiguate the bare verb 'queue' from a determined/locative noun.
+    """Disambiguate instructions, suggestions, and determined queue nouns.
 
     Used only for actor claims. A concrete job's queue state remains a claim
     under REFERENCE_EFFECT. Placement into a queue is an effect, too. Mask
-    only other noun mentions and preserve offsets for bounded actor scans.
+    only immediate nonassertive terms and preserve bounded-scan offsets.
     """
+    def remaining_sentence(match):
+        end = re.search(r'[.!?\n]', prose[match.end():])
+        return prose[match.end():match.end() + end.start()] if end else prose[match.end():]
+
+    def instruction_actor(match):
+        # An imperative object is not the subject of a later state adjective.
+        # Retain it when a pronoun subsequently asserts that actor's effect.
+        tail = remaining_sentence(match)
+        if re.search(r'\b(?:he|she|it|they)\s+(?:(?:' + ASSERTION_AUX + r'|' + ASSERTION_ADVERB +
+                     r')\s+){0,4}' + EFFECT + r'\b', tail, re.I):
+            return match[0]
+        return match[0][:match.start('actor') - match.start()] + ' ' * len(match['actor'])
+
+    # A conjunction may continue a shared-subject promise rather than begin
+    # an owner-directed instruction; only punctuation or the start qualifies.
+    prose = re.sub(r'(?:^|[.;!?\n–—]\s*)(?P<instruction>(?:please\s+)?(?:ask|tell|use|try)\s+)'
+                   r'(?P<actor>(?:Web\s+)?Bob|' + WORKERS + r')\b',
+                   instruction_actor, prose, flags=re.I)
+
+    def suggested_predicate(match):
+        # Keep a positive shared-subject continuation, including one beyond
+        # the bounded actor scan. Normalize only the immediate suggestion.
+        if COORDINATED_EFFECT.search(remaining_sentence(match)):
+            return match[0]
+        return match['prefix'] + ' ' * len(match['predicate'])
+
+    prose = re.sub(r"\b(?P<prefix>(?:I|we)\s+(?:suggest|recommend|propose)\s+)"
+                   r"(?P<predicate>starting|queueing|queuing|assigning|dispatching|launching|scheduling|delegating)\b",
+                   suggested_predicate, prose, flags=re.I)
+    prose = re.sub(r"\b(?P<prefix>(?:let['’]s|let us|helps?\s+you)\s+get\s+)"
+                   r"(?P<predicate>started)\b", suggested_predicate, prose, flags=re.I)
     placements = {m.end() - len('queue') for m in re.finditer(QUEUE_PLACEMENT, prose, re.I)}
     return re.sub(r"(\b(?:a|an|the|my|your|our|this|that|in|into|on|from|of|[\w]+['’]s)\s+)queue\b",
                   lambda m: m[0] if m.end() - len('queue') in placements else m[1] + ' ' * len('queue'),
@@ -130,14 +167,10 @@ def unasserted_prose(prose):
                            r"(?:(?:with|from)\s+(?:(?:the|a|an|your|our|this|that)\s+)?"
                            r"(?:(?:hard|time|cost|given|stated|supplied|original|initial)\s+){0,3}" + abstract + r"\b|"
                            r"by\s+(?:considering|comparing|explaining|reasoning about)\b[^.;!?\n]{0,60}\b" + abstract + r"\b)" + phrase_end, re.I)
-    coordinated_effect = re.compile(r'(?:\b(?:and|then|but|yet)|;)\s+'
-                                    r'(?:(?:I|we)\s+)?(?:(?:' + ASSERTION_AUX + r'|' + ASSERTION_ADVERB + r')\s+){0,4}'
-                                    + EFFECT + r'\b', re.I)
-
     def reasoning_predicate(match):
         end = re.search(r'[.!?\n]', prose[match.end():])
         tail = prose[match.end():match.end() + end.start()] if end else prose[match.end():]
-        if coordinated_effect.search(tail):
+        if COORDINATED_EFFECT.search(tail):
             return match[0]
         return re.sub(r'\bstart(?:ed|ing)?\b', 'reasoned', match[0], count=1, flags=re.I)
 
@@ -235,7 +268,7 @@ def dispatch_prose(text, *, reference=''):
         # receipt either. Leave the noun's predicate visible: "Queued work is
         # now running" still asserts progress and must fail the other guard.
         nominal = (r'(?:work|jobs?|tasks?|receipts?|status|states?|labels?)\s+'
-                   r'(?:is|are|was|were|does|do|can|cannot)\b')
+                   r'(?:is|are|was|were|has|have|had|does|do|can|cannot)\b')
         def nominal_subject(match):
             end = re.search(r'[.;!?\n]', prose[match.end():])
             tail = prose[match.end():match.end() + end.start()] if end else prose[match.end():]
@@ -246,8 +279,10 @@ def dispatch_prose(text, *, reference=''):
             if subject and re.match(TARGET_PREDICATE, tail[subject.end():], re.I):
                 return match[0]
             return match[1] + 'The described'
-        prose = re.sub(r'(?im)(^|[.!?]\s+)(?:queued|assigned|started|dispatched|launched|scheduled)'
-                       r'(?=\s+(?:' + meaning + r'\b|does not prove\b|is a state\b|' + nominal + r'))',
+        negative_meaning = (r"(?:does|do)(?: not|n['’]t)\s+(?:mean|imply|prove|show|confirm|establish)\b|"
+                            r"is not\s+(?:the same as|equivalent to|proof(?: of)?)\b")
+        prose = re.sub(r'(?im)(' + CLAUSE_START + r')(?:queued|assigned|started|dispatched|launched|scheduled)'
+                       r'(?=\s+(?:' + meaning + r'\b|' + negative_meaning + r'|is a state\b|' + nominal + r'))',
                        nominal_subject, prose)
         # A supplied generic state may be discussed verbatim. No actor, owner,
         # job ID, or named task can acquire an action receipt through this path.
