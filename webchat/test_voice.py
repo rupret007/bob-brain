@@ -2,6 +2,9 @@
 import copy
 import http.client
 import json
+from pathlib import Path
+import subprocess
+import sys
 import time
 import threading
 import unittest
@@ -11,7 +14,7 @@ from unittest.mock import patch
 
 from app import Chat, RequestError
 from failover import AllDown
-from providers import Providers
+from providers import Providers, clean_env, run
 from job_queue import parse_start
 import test_webchat as fixtures
 from voice import VoiceError, api_key, create_token, MODEL, SOCKET_URL
@@ -702,6 +705,60 @@ class VoiceTests(fixtures.Fixture):
 
 
 class VoiceHTTPTests(fixtures.HTTPTests):
+    def test_http_voice_interrupt_reaps_real_writer_tree_without_replay(self):
+        self.login()
+        self.chat.providers.snapshot = lambda **_: []
+        self.chat.voice.token_factory = lambda *_: 'auth_tokens/test'
+        marker = self.root / 'owned-writer.json'
+        invocations = []
+        original_reply = self.fake.reply
+        def blocked_writer(conversation, cancel, progress):
+            invocations.append(conversation['messages'][-1]['request_id'])
+            progress('gemini', [])
+            run([sys.executable, str(Path(__file__).with_name('drill_child.py')), str(marker)],
+                cwd=self.root, env=dict(clean_env(), BOB_WEBCHAT_DRILLS='1'), cancel=cancel, timeout=5)
+            raise AssertionError('Cancelled writer returned normally')
+        self.fake.reply = blocked_writer
+        code, _, body = self.request('POST', '/api/voice/start', {'conversation_id': self.identifier})
+        self.assertEqual(code, 201)
+        call, turn = json.loads(body)['call_id'], str(uuid.uuid4())
+        payload = dict(call_id=call, turn_id=turn)
+        entry = dict(turn_id=turn, role='user', content='Tell me a story about a sailor.', order=0)
+        self.assertEqual(self.request('POST', '/api/voice/transcript', dict(call_id=call, entries=[entry]))[0], 200)
+        try:
+            code, _, body = self.request('POST', '/api/voice/tool', payload)
+            self.assertEqual(code, 200)
+            request = json.loads(body)['request_id']
+            deadline = time.monotonic() + 3
+            identities = None
+            while time.monotonic() < deadline:
+                try:
+                    identities = json.loads(marker.read_text())
+                    break
+                except (OSError, ValueError):
+                    time.sleep(.01)
+            self.assertIsNotNone(identities)
+            self.assertEqual(self.request('POST', '/api/voice/interrupt', payload)[0], 200)
+            self.wait()
+            for pid in (identities['parent'], *identities['children']):
+                state = subprocess.run(['ps', '-p', str(pid), '-o', 'stat='],
+                                       capture_output=True, text=True, timeout=2).stdout.strip()
+                self.assertTrue(not state or state.startswith('Z'), (pid, state))
+            for _ in range(2):
+                self.assertEqual(self.request('POST', '/api/voice/tool', payload)[0], 200)
+            self.assertEqual(invocations, [request])
+            self.assertNotIn(self.identifier, self.chat.workers)
+        finally:
+            self.chat.stop(self.identifier)
+            self.wait()
+            self.fake.reply = original_reply
+        self.assertEqual(self.request('POST', '/api/voice/end', {'call_id': call})[0], 200)
+        code, _, _ = self.request('POST', '/api/messages', dict(conversation_id=self.identifier,
+            message='Describe a blue cloud.', request_id=str(uuid.uuid4()), provider='gemini'))
+        self.assertEqual(code, 202)
+        self.wait()
+        self.assertEqual(self.chat.history(self.identifier)['messages'][-1]['content'], 'A saved reply.')
+
     def test_owned_http_voice_interrupt_cancels_waiting_reply_then_accepts_next_tool(self):
         self.login()
         self.chat.providers.snapshot = lambda **_: []

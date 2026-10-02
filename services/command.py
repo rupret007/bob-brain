@@ -8,10 +8,37 @@ import subprocess
 import threading
 
 
+def signal_group(group, sig):
+    """A Darwin zombie-only group can return EPERM, despite being terminal.
+
+    Prove that narrow case after the failed signal. A live member, failed
+    observation or malformed row retains the original permission error.
+    """
+    try:
+        os.killpg(group, sig)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        try:
+            result = subprocess.run(['/bin/ps', '-axo', 'pgid=,stat='],
+                                    capture_output=True, text=True, timeout=3)
+            rows = [(int(pgid), status) for pgid, status in
+                    (line.split() for line in result.stdout.splitlines() if line.strip())]
+            terminal = result.returncode == 0 and all(
+                status.startswith('Z') for pgid, status in rows if pgid == group)
+        except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+            terminal = False
+        if not terminal:
+            raise
+        return False
+
+
 def kill_group(process):
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
-            os.killpg(process.pid, sig)
+            if not signal_group(process.pid, sig):
+                break
         except ProcessLookupError:
             break
         if sig == signal.SIGTERM:
@@ -36,18 +63,25 @@ def run(argv, *, timeout=60, capture_output=False, text=False, check=False, deta
                                text=text, **kwargs)
     previous = {}
     def interrupted(signum, frame):
-        kill_group(process)
+        # Cleanup belongs to the BaseException path. A cleanup OSError must
+        # never replace this cancellation and become a retryable HTTP error.
         raise SystemExit(128 + signum)
     if threading.current_thread() is threading.main_thread():
         for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             previous[sig] = signal.signal(sig, interrupted)
     try:
         stdout, stderr = process.communicate(timeout=timeout)
-    except BaseException:
-        kill_group(process)
-        for pipe in (process.stdout, process.stderr):
-            if pipe:
-                pipe.close()
+    except BaseException as original:
+        try:
+            kill_group(process)
+        except Exception as cleanup:
+            if isinstance(original, (SystemExit, KeyboardInterrupt)):
+                raise original from cleanup
+            raise
+        finally:
+            for pipe in (process.stdout, process.stderr):
+                if pipe:
+                    pipe.close()
         raise
     finally:
         for sig, handler in previous.items():

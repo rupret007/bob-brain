@@ -12,11 +12,11 @@ import unittest
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 from app import Chat, RequestError
 from failover import AllDown, Circuit, ORDER, ProviderError, classify, reset_time
-from providers import Cancelled, Providers, clean_env, parse_codex, parse_cursor, run
+from providers import Cancelled, Providers, clean_env, kill_group, parse_codex, parse_cursor, run
 from actions import queue_once
 
 
@@ -220,6 +220,28 @@ class FailoverTests(Fixture):
                 for pid in [pids["parent"], *pids["children"]]:
                     result = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True)
                     self.assertTrue(not result.stdout.strip() or result.stdout.strip().startswith("Z"), (pid, result.stdout))
+
+    def test_cleanup_continues_owned_groups_and_reports_live_permission_failure(self):
+        with patch.object(sys, 'path', [str(Path(__file__).resolve().parents[1] / 'services'), *sys.path]):
+            import command
+        import signal
+        proc = Mock(pid=1000)
+        error = PermissionError(1, 'fixture group denied')
+        calls = []
+        def send(group, sig):
+            calls.append((group, sig))
+            if group == 1001:
+                raise error
+            return True
+        rows = '1000 999 1000\n1001 1000 1001\n2000 999 2000\n'
+        with patch('providers.subprocess.run', return_value=Mock(stdout=rows)), \
+                patch.object(command, 'signal_group', side_effect=send):
+            with self.assertRaises(PermissionError) as caught:
+                kill_group(proc)
+        self.assertIs(caught.exception, error)
+        self.assertEqual(calls, [(1001, signal.SIGTERM), (1000, signal.SIGTERM),
+                                 (1001, signal.SIGKILL), (1000, signal.SIGKILL)])
+        self.assertTrue(proc.wait.called)
 
     def test_drill_file_requires_startup_opt_in(self):
         path = self.root / "conductor/webchat/.drill.json"

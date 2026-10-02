@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+from contextlib import redirect_stdout
 from pathlib import Path
 
 CODE_ROOT = Path(__file__).resolve().parents[1]
@@ -105,7 +106,9 @@ def main():
     if vision and not supports_vision:
         raise RuntimeError("model_call does not support vision parameter. Upgrade services/api.py.")
 
-    with slot(lane):
+    # Provider admission/retry logs are diagnostics, never answer bytes. Keep
+    # stdout reserved for the completed answer consumed by the chat process.
+    with redirect_stdout(sys.stderr), slot(lane):
         budget.check(lane)
         kwargs = {"purpose": "webchat"}
         if supports_vision:

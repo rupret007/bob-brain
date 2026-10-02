@@ -326,6 +326,10 @@ def clean_env():
 
 
 def kill_group(process):
+    services = str(Path(__file__).resolve().parents[1] / 'services')
+    if services not in sys.path:
+        sys.path.insert(0, services)
+    from command import signal_group
     # API helpers create their own groups. Capture descendants before signalling
     # the parent so those children cannot become orphans.
     groups = {process.pid}
@@ -342,18 +346,27 @@ def kill_group(process):
         groups.update(pgid for pid, _, pgid in rows if pid in children and pgid in children)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         pass
+    errors = []
     for sig in (signal.SIGTERM, signal.SIGKILL):
         for group in sorted(groups, reverse=True):
             try:
-                os.killpg(group, sig)
-            except ProcessLookupError:
-                pass
+                if not signal_group(group, sig):
+                    groups.discard(group)
+            except OSError as exc:
+                # Still clean the other owned groups, then report the failure.
+                errors.append(exc)
         if sig == signal.SIGTERM:
             try:
                 process.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 pass
-    process.wait(timeout=5)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        if not errors:
+            raise
+    if errors:
+        raise errors[0]
 
 
 def run(argv, *, cwd, env, cancel, timeout=180, prompt=None):
