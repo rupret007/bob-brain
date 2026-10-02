@@ -181,6 +181,8 @@ not only the previous assistant wording: an earlier omission is not permission
 to drop a requirement. Preserve material qualifications such as provisional
 status, scope, uncertainty, and unmet conditions, even when shortening. Include
 them in the artifact where omitting them could change what the reader believes.
+Preserve the degree of commitment: uncertainty about promising an outcome does
+not establish inability or refusal to do it.
 Before delivering, check the requested facts, qualifications, and length/format.
 When assessing evidence, distinguish an observed record or label from the event
 it describes. A missing record or artifact leaves the event unverified unless
@@ -189,6 +191,10 @@ conclusion without claiming its opposite has been proved.
 For numerical comparisons, use the supplied numerators and denominators and
 distinguish absolute change (percentage points) from relative change. Check
 that a proposed next step is feasible given the reported counts and constraints.
+Treat hard constraints as feasibility filters before optimizing preferences.
+If no option qualifies, say so and explain which constraint or option would need
+to change; do not silently relax the user's limit. Preserve the stated primary
+objective rather than automatically maximizing the number of easy tasks.
 Do not add sample sizes or statistical intervals without a supported calculation
 and a reason they help answer the question.
 """
@@ -245,7 +251,8 @@ HANDOFF_CONTEXT_RE = re.compile(
 
 def needs_handoff_context(text: str) -> bool:
     """Short phone asks about Bob ledger still need full brain + handback snapshots."""
-    return bool(HANDOFF_CONTEXT_RE.search(text or ""))
+    from answer_intent import conceptual
+    return bool(HANDOFF_CONTEXT_RE.search(text or "") and not conceptual(text or ""))
 
 
 def observed_api_cap(name):
@@ -857,7 +864,7 @@ class Providers:
     def precision_request(self, conversation):
         from answer_intent import needs_precision
         from capabilities import needs_grounding
-        from conversation_focus import focus, CORRECTION, CONTINUE
+        from conversation_focus import focus, correction, CONTINUE
         from chat_intent import command
         from self_improvement import continuation, RESOURCES, ENABLE
         text = next((m.get('content', '') for m in reversed(conversation.get('messages', [])) if m.get('role') == 'user'), '')
@@ -867,10 +874,10 @@ class Providers:
         # this is context selection only, never permission to resume execution.
         newer_followup = ((conversation.get('improvement_goal') or {}).get('suspended_by') and
                          (continuation(value) or RESOURCES.fullmatch(value) or ENABLE.fullmatch(value)))
-        retained = (focus(conversation) or {}) if newer_followup or CORRECTION.match(value) or CONTINUE.match(value) else {}
+        retained = (focus(conversation) or {}) if newer_followup or correction(value) or CONTINUE.match(value) else {}
         # Revising an existing artifact requires constraint preservation even
         # when its original request contained no count or reasoning keyword.
-        revision = bool(retained and CORRECTION.match(value))
+        revision = bool(retained and correction(value))
         # Actual capability replies on the cheaper route reversed handoff
         # direction and invented prerequisites despite correct source facts.
         # These small questions still require careful role/evidence reasoning.

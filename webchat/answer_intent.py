@@ -9,7 +9,7 @@ import re
 
 ANSWER = re.compile(r'^(?:write|draft|compose|summari[sz]e|compare|analy[sz]e|explain|'
                     r'calculate|evaluate|grade|score|research|review|plan|'
-                    r'(?:give|show|offer|provide) me|suggest|brainstorm|choose|decide|clarify|simplify)\b', re.I)
+                    r'(?:give|show|offer|provide) me|suggest|brainstorm|outline|make sense of|choose|decide|clarify|simplify)\b', re.I)
 REVISION = re.compile(r'^(?:make|keep|rewrite|revise|shorten|expand|rephrase)\b.{0,70}\b'
                       r'(?:reply|replies|answer|explanation|paragraph|poem|story|draft|wording|summary)\b', re.I)
 COMMUNICATION_REVISION = re.compile(r'^(?:make|keep)\b.{0,70}\b'
@@ -33,7 +33,8 @@ RETRIEVAL_TARGET = re.compile(r'\b(?:PR|pull request|issue)\s*#?\d+\b|'
                               r'\bcommit\s+[a-f0-9]{7,40}\b|https?://\S+', re.I)
 CONCEPT = re.compile(r'\b(?:difference between|what .{0,25}means?|meaning of|'
                      r'using only (?:this|the) (?:supplied|provided)|'
-                     r'(?:supplied|provided) (?:evidence|facts|note|code)|'
+                     r'(?:supplied|provided) (?:evidence|facts|notes?|code)|'
+                     r'grounded in (?:the|these|those|supplied|provided) (?:notes?|facts|evidence|data)|'
                      r'explain (?:this|the) (?:quote|term|concept))\b', re.I)
 INFERENCE = re.compile(r'^(?:are you sure|does|do|would|can|is it true)\b[^.!?\n]{0,120}'
                        r'\b(?:means?|proves?|imply|implies|guarantees?|establish(?:es)?)\b', re.I)
@@ -54,7 +55,9 @@ LIVE_REQUEST = re.compile(r'\b(?:check|show) (?:me )?(?:our|the|current|live)\b|
                          r'\b(?:are|is|what are) (?:our|my|the current|the live)\b|'
                          r'\b(?:our|my|live|current) (?:workers?|jobs?|tasks?|status)\b', re.I)
 PRECISION = re.compile(r'\b(?:explain|compare|comparison|analy[sz]e|calculate|evaluate|research|review|why|how|which|whether|'
-                       r'prove|proof|quota|percent(?:age)?|arithmetic)\b|'
+                       r'prov(?:e[sd]?|ing)|proof|choos(?:e|ing)|decid(?:e|ing)|decisions?|recommendations?|'
+                       r'constraints?|criteria|tradeoffs?|evidence|establish(?:ed|es)?|inference|assumptions?|'
+                       r'quota|percent(?:age)?|arithmetic)\b|'
                        r'\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)[ -]'
                        r'(?:[a-z]+[ -]){0,2}'
                        r'(?:sentences?|lines?|words?|titles?|options?|items?|examples?)\b', re.I)
@@ -142,4 +145,4 @@ def needs_precision(text):
     """
     request = instructions(text)
     return bool(PRECISION.search(request) or conceptual(request)
-                or (re.search(r'\d', request) and re.search(r'\b(?:cost|price|budget|plan|proposal)\b', request, re.I)))
+                or (re.search(r'\d', request) and re.search(r'\b(?:costs?|prices?|budgets?|plans?|proposals?)\b', request, re.I)))

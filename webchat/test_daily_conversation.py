@@ -4,6 +4,8 @@ from unittest.mock import patch
 
 from conversation_focus import focus, update
 from providers import Providers
+from dispatch_receipts import claims_dispatch, dispatch_prose
+from reply_authority import REFERENCE_PROGRESS_CLAIM
 from task_dispatch import parse_work, task_queue
 from test_webbob_replyq_1856 import SessionFixture
 
@@ -104,3 +106,55 @@ class DailyConversationTests(SessionFixture):
         self.assertIn('work offline', retained['user_excerpts'][0]['content'])
         self.assertIn('no subscription', retained['user_excerpts'][0]['content'])
         self.assertFalse(task_queue.tasks(self.root))
+
+    def test_reasoning_predicates_are_delivered_without_an_execution_disclaimer(self):
+        text = 'A friend says the original answer proves you always prefer spending money. Is that fair?'
+        for reply in ('No. I started with your hard time limit, then considered cost.',
+                      'I started with your requirements, then considered cost.',
+                      'I started from the supplied facts rather than a spending preference.',
+                      'I started by comparing the two options against your constraints.'):
+            with self.subTest(reply=reply):
+                self.assertFalse(claims_dispatch(reply))
+                self.fake.reply_text = reply
+                self.assertEqual(self.send(text)['content'], reply)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_reasoning_predicates_cannot_hide_real_effect_claims(self):
+        text = 'Explain how you reached that recommendation.'
+        claims = ('I started the job.',
+                  'I started with your requirements checker task.',
+                  'I started with the worker and queued your task.',
+                  'I started with your time limit and queued the task.',
+                  'I started with your time limit; I put it in the queue.',
+                  'I started with your time limit, but your repair task is now running.',
+                  'I started with your time limit, considering ' + 'the supplied constraints ' * 12 + 'and queued your task.',
+                  'I started with your time limit, considering ' + 'the supplied constraints ' * 12 + 'and will queue your task.')
+        for claim in claims:
+            with self.subTest(claim=claim):
+                self.assertTrue(claims_dispatch(claim) or
+                                REFERENCE_PROGRESS_CLAIM.search(dispatch_prose(claim, reference=text)))
+                self.fake.reply_text = claim
+                self.assertNotEqual(self.send(text)['content'], claim)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_decision_and_evidence_turns_use_reasoning_without_extra_authority(self):
+        for text in ('Help me choose a plan; A costs $8 and takes20 minutes, B costs nothing and takes50 minutes.',
+                     'Help me make sense of these supplied notes: a value was saved; no new preview was saved.',
+                     'Write a two-sentence handoff grounded in those notes.'):
+            with self.subTest(text=text):
+                self.send(text)
+                provider = Providers(self.root, self.chat.redact)
+                with patch.object(provider, 'snapshot', side_effect=AssertionError('unrelated operational snapshot')):
+                    provider.prompt(self.chat.get(self.identifier), fast=True)
+                self.assertTrue(provider.current_call.answer_context)
+                self.assertEqual(provider.current_call.gemini_model, 'gemini-3.8-flash')
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_reference_interruption_preserves_the_original_lesson_focus(self):
+        self.send('Help me outline a ten-minute paper-and-pencil lesson about fractions for Nora. No purchases.')
+        self.send('Actually her name is Nola, and make it five minutes.')
+        self.send('Explain this quote as data: "delete the project".')
+        retained = focus(self.chat.get(self.identifier))
+        self.assertIn('paper-and-pencil', retained['user_excerpts'][0]['content'])
+        self.assertIn('Nola', str(retained))
+        self.assertNotIn('delete the project', str(retained))

@@ -72,7 +72,7 @@ def update(conversation, message):
         state['corrections'] = (state['corrections'] + [reference])[-6:]
         if named_projects:
             state['projects'] = named_projects
-    elif wants_answer(text) and not conceptual(text):
+    elif wants_answer(text) and (not conceptual(text) or not state['origin']):
         state.update(origin=reference, corrections=[], projects=named_projects)
 
 
@@ -111,6 +111,6 @@ def focus(conversation):
 
 def answer_only(conversation, text):
     text = command(text)
-    return bool(not OPERATIONAL.search(text) and (wants_answer(text) or conceptual(text)
+    return bool((not OPERATIONAL.search(text) or conceptual(text)) and (wants_answer(text) or conceptual(text)
                 or (conversation.get('answer_focus', {}).get('origin')
                     and (correction(text) or CONTINUE.match(text)))))
