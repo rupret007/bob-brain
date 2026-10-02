@@ -81,6 +81,55 @@ class TextingTests(unittest.TestCase):
         self.mock.chats[0]["participants"] = []
         self.assertIn("could not verify", self.say("draft reply to Alex Morgan: Hi")["messages"][-1]["content"])
 
+    def test_exact_older_thread_drafts_and_confirms_once_without_model_or_job(self):
+        self.mock.enable_web_bob_send = True
+        older = copy.deepcopy(self.mock.chats[0])
+        self.mock.chats = [dict(self.mock.chats[1], guid=f'SMS;-;+1555020{i:04d}')
+                           for i in range(200)] + [older]
+        self.assertNotIn(older['guid'], [c['guid'] for c in self.texting.bluebubbles.chats()])
+        draft = self.draft(f"send a text to {older['guid']}: Older thread test")
+        self.assertEqual(draft['recipient']['addresses'], ['+15550101010'])
+        self.assertEqual(draft['recipient']['guid'], older['guid'])
+        self.assertTrue(draft['delivery_available'])
+        self.assertEqual(self.mock.chat_queries[-1],
+                         {'guid': older['guid'], 'limit': 2, 'offset': 0, 'with': ['participants']})
+        self.assertEqual(self.mock.sends, [])
+        self.say('yes')
+        self.assertEqual(self.mock.sends, [])
+        request_id = str(uuid.uuid4())
+        sent = self.say(draft['confirm_message'], request_id=request_id)
+        self.assertEqual(sent['messages'][-1]['content'], SENT_VIA_ANDREA)
+        self.say(draft['confirm_message'], request_id=request_id)
+        self.assertEqual(self.mock.sends, [{'chatGuid': older['guid'], 'text': 'Older thread test'}])
+        self.assertEqual(self.providers.calls, [])
+        self.assertEqual(task_queue.tasks(self.root), {})
+
+    def test_exact_lookup_rejects_missing_wrong_duplicate_and_unverified_identity(self):
+        guid = 'SMS;-;+15550109999'
+        self.mock.enable_web_bob_send = True
+        correct = dict(guid=guid, participants=[{'address': '+15550109999'}])
+        for rows in ([], [self.mock.chats[0]], [correct, correct],
+                     [dict(correct, participants=[])], [dict(correct, participants='invalid')]):
+            with self.subTest(rows=rows):
+                self.mock.exact_chat_response = rows
+                result = self.say(f'draft reply to {guid}: Hi')['messages'][-1]
+                self.assertNotIn('text_draft', result)
+                self.assertEqual(self.mock.bridge_drafts, {})
+                self.assertEqual(self.mock.sends, [])
+        self.assertEqual(self.providers.calls, [])
+
+    def test_exact_older_instinct_thread_remains_read_only(self):
+        guid = 'SMS;-;+15550109998'
+        self.mock.enable_web_bob_send = True
+        self.mock.exact_chat_response = [dict(guid=guid, displayName='Instinct',
+                                              participants=[{'address': '+15550109998'}])]
+        draft = self.draft(f'draft reply to {guid}: Hi')
+        self.assertEqual(draft['state'], 'read_only')
+        self.assertIsNone(draft['confirm_message'])
+        self.assertFalse(draft['delivery_available'])
+        self.assertEqual(self.mock.bridge_drafts, {})
+        self.assertEqual(self.mock.sends, [])
+
     def test_colloquial_text_phrasing_is_not_texting_help(self):
         def conversation():
             return {"id": str(uuid.uuid4()), "messages": [{"role": "user"}, {"role": "assistant", "content": ""}]}

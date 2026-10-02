@@ -36,6 +36,8 @@ class MockMessaging:
         self.andrea_error_status = None
         self.andrea_error_body = None
         self.chats, self.messages = copy.deepcopy(CHATS), copy.deepcopy(MESSAGES)
+        self.chat_queries = []
+        self.exact_chat_response = None
         self.mode = "ok"
         self.password, self.token = "fixture-bb-password", "fixture-andrea-token"
         fixture = self
@@ -117,8 +119,15 @@ class MockMessaging:
                     return self.respond(200, {"data": "bad response"})
                 if allowed_post:
                     body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                    assert body["limit"] == 200 and body["with"] == ["participants", "lastMessage"]
-                    return self.respond(200, {"status": 200, "data": fixture.chats})
+                    fixture.chat_queries.append(body)
+                    if 'guid' in body:
+                        assert body['limit'] == 2 and body['offset'] == 0 and body['with'] == ['participants']
+                        rows = ([c for c in fixture.chats if c['guid'] == body['guid']]
+                                if fixture.exact_chat_response is None else fixture.exact_chat_response)
+                    else:
+                        assert body["limit"] == 200 and body["with"] == ["participants", "lastMessage"]
+                        rows = fixture.chats[:200]
+                    return self.respond(200, {"status": 200, "data": rows})
                 if self.command == "GET" and url.path.startswith("/api/v1/chat/") and url.path.endswith("/message"):
                     guid = unquote(url.path[len("/api/v1/chat/"):-len("/message")])
                     assert guid in [c["guid"] for c in fixture.chats]
