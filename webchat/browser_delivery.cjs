@@ -52,7 +52,11 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       }
       await page.reload();
       const response = page.waitForResponse(r => r.url() === config.url + '/api/messages' && r.request().method() === 'POST');
-      await card.getByRole('button', {name: 'Check delivery', exact: true}).click();
+      // Keep the response rejection observed if activation itself fails first.
+      response.catch(() => {});
+      // A trusted press spanning a poll must stay on the same delivery button.
+      // Animated automatic scrolling used to move it before release in WebKit.
+      await card.getByRole('button', {name: 'Check delivery', exact: true}).click({delay: 1500});
       assert((await (await response).json()).messages.at(-1).content.includes('nothing was resent'));
       await page.locator(`.text-draft-card[data-draft-id="${draft.id}"][data-state="sent"]`).waitFor();
       assert.equal(await card.getByRole('button', {name: 'Check delivery', exact: true}).count(), 0);
