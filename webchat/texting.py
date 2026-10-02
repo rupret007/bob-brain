@@ -142,6 +142,17 @@ class BlueBubbles:
         return self._read("/chat/" + urllib.parse.quote(guid, safe="") + "/message",
                           params={"limit": 30, "sort": "DESC"})[:30]
 
+    def exact_chat(self, guid):
+        # The recent list is a browsing window, not an identity directory.
+        # BlueBubbles supports a GUID filter on this same read-only endpoint.
+        chats = self._read("/chat/query", {"guid": guid, "limit": 2, "offset": 0,
+                                         "with": ["participants"]})
+        if len(chats) > 1 or any(c.get("guid") != guid for c in chats):
+            raise TextingError("BlueBubbles did not verify the exact thread. Nothing was sent.")
+        if chats:
+            recipient(chats[0])  # Require returned metadata; never infer recipients from the GUID.
+        return chats
+
 
 class Andrea:
     """Dedicated owner bridge; never use Andrea's read/control credentials."""
@@ -363,6 +374,11 @@ class Texting:
         chats = self.bluebubbles.chats()
         self.instinct.observe(chats)
         exact = [c for c in chats if query == c.get("guid")]
+        if not exact and re.fullmatch(r"(?:iMessage|SMS|RCS);[+-];[^\s]{1,480}", query):
+            exact = self.bluebubbles.exact_chat(query)
+            self.instinct.observe(exact)
+            if not exact:
+                raise TextingError("No matching thread for that exact thread ID. Nothing was sent.")
         matches = exact or [c for c in chats if label(c).casefold() == query.casefold() or
                            query in [p.get("address") for p in (c.get("participants") or []) if isinstance(p, dict)]]
         matches = matches or [c for c in chats if query.casefold() in label(c).casefold()]
