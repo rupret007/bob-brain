@@ -63,7 +63,11 @@ TARGET_PREDICATE = (
 REFERENCE_EFFECT = re.compile(
     r"(?:^|[.!?\n]\s*)(?:queued|assigned|started|dispatched|launched|scheduled)\b|"
     r"(?:" + REFERENCE_TARGET + r")" + TARGET_PREDICATE + r"|"
-    r"\b(?:the|a) (?:job|task) (?:is|was|has|had)\s+(?:(?:just|now|already|been)\s+)*" + EFFECT + r"\b", re.I)
+    r"\b(?:the|a) (?:job|task) (?:is|was|has|had)\s+(?:(?:just|now|already|been)\s+)*" + EFFECT + r"\b|"
+    # State-only modifiers are not job names, but a deictic assertion about
+    # that subject still claims a current effect rather than defining a term.
+    r"\b(?:the|a)\s+(?:(?:queued|running|started|scheduled|assigned|waiting)\s+){1,4}(?:job|task)\b"
+    r"(?=[^.;!?\n]{0,120}\b(?:now|just|already|currently|today|here)\b)" + TARGET_PREDICATE, re.I)
 DIRECT_CLAIM = re.compile(
     r"\b(?:I|we|Bob|" + WORKERS + r")\b[^.!?\n]{0,90}\b" + EFFECT + r"\b|"
     r"\b" + WORKERS + r"\b.{0,45}\b(?:is|are) (?:now )?(?:working|running|busy|on it)\b|"
@@ -169,14 +173,31 @@ def reference_context(text, conversation):
 
 
 def dispatch_prose(text, *, reference=''):
-    # Code examples and quoted user input are not action acknowledgements.
+    # Code examples are not action acknowledgements. Prose still needs the
+    # same effect checks; quotation marks alone cannot shelter a receipt.
     prose = re.sub(r"```.*?```", "", text, flags=re.S)
     prose = unasserted_prose(prose)
-    # Mask only a generic conditional's state predicate, in either order.
+    # An instruction to ask an actor for work is not that actor performing it.
+    # Normalize only the infinitive predicate, preserving every later clause.
+    infinitive = (r'(?:start|create|assign|queue|dispatch|launch|schedule|delegate|'
+                  r'submit|send|put|kick off)\b')
+    prose = re.sub(r'(?:^|(?<=[.;!?\n])\s*)(?:please\s+)?(?:ask|tell|instruct)\s+'
+                   r'(?:Bob|' + WORKERS + r')\s+to\s+' + infinitive,
+                   'request an action', prose, flags=re.I)
+    # Mask only a conditional's state predicate, in either order. An owned or
+    # named task can appear in a hypothetical without proving its live state.
     # Never erase its following clauses: they may assert a real owned/named
     # effect even without an explicit actor or job ID.
     predicate = r'(?:a (?:job|task)|jobs|tasks)\s+(?:is|are|has|have)\s+(?:been\s+)?(?:queued|running|started|assigned|scheduled)\b'
     conditional = r'(?:when|if|until|once|how)'
+    subject = (r'(?:(?:a|an|the|your|our|my|this|that)\s+(?:' + TARGET_MODIFIER + r'){0,4}'
+               r'(?:jobs?|tasks?|work)|jobs|tasks)')
+    condition_state = (subject + r'\s+(?:is|are)\s+'
+                       r'(?:queued|running|started|assigned|scheduled)\b')
+    # 'how your task was queued' and 'I confirmed when...' report an effect.
+    # Only a clause-leading present condition may normalize an owned subject.
+    prose = re.sub(r'(?:^|(?<=[.;!?\n])\s*)(?:when|if|until|once)\s+' + condition_state,
+                   'the described condition', prose, flags=re.I)
     prose = re.sub(r'\b' + conditional + r'\s+' + predicate,
                    'the described condition', prose, flags=re.I)
     prose = re.sub(r'(?:^|(?<=[.!?])\s+)' + predicate + r'(?=\s+' + conditional + r'\b)',
@@ -196,17 +217,38 @@ def dispatch_prose(text, *, reference=''):
         # Preserve owner/named-job, actor and deictic claims for the guard.
         def definition_subjects(match):
             part = match[0]
+            # 'that' introducing an explanation is not a deictic task owner.
+            # REFERENCE_TARGET checks actual ownership; current-effect words
+            # belong to the body, not 'just means' describing the label.
+            body = match['body']
             if (DIRECT_CLAIM.search(verbal_effects(part)) or JOB_ID.search(part) or re.search(REFERENCE_TARGET, part, re.I)
-                    or re.search(r'\b(?:now|just|already|currently|today|here|this|that)\b', part, re.I)):
+                    or CURRENT_EFFECT.search(body)):
                 return part
             return re.sub(r'\b(?:the|a) (?:job|task)\b', 'the described state', part, flags=re.I)
+        meaning = r'(?:(?:only|simply|just)\s+)?(?:means|indicates|signifies|confirms|shows)'
         prose = re.sub(r'(?:^|(?<=[.;!?])\s+)(?:(?:a|the)\s+)?(?:queued|running|assigned|scheduled)'
-                       r'(?:\s+(?:receipt|status|state|label))?\s+means\b[^.;!?\n]*',
+                       r'(?:\s+(?:receipt|status|state|label))?\s+' + meaning + r'\b(?P<body>[^.;!?\n]*)',
                        definition_subjects, prose, flags=re.I)
         # Exempt only a definition's subject, never the rest of its sentence.
         # "Queued means accepted; I started it" must still fail the guard.
-        prose = re.sub(r'(?im)(^|[.!?]\s+)(queued)(?=\s+(?:means|does not prove|is a state)\b)',
-                       r'\1The queue state', prose)
+        # A state adjective before a generic noun is not an omitted-actor
+        # receipt either. Leave the noun's predicate visible: "Queued work is
+        # now running" still asserts progress and must fail the other guard.
+        nominal = (r'(?:work|jobs?|tasks?|receipts?|status|states?|labels?)\s+'
+                   r'(?:is|are|was|were|does|do|can|cannot)\b')
+        def nominal_subject(match):
+            end = re.search(r'[.;!?\n]', prose[match.end():])
+            tail = prose[match.end():match.end() + end.start()] if end else prose[match.end():]
+            # Keep the nominal subject's own positive action predicate, even
+            # for plurals or past tense. Later explanatory verbs are not its
+            # predicate: queued work can be waiting until a worker starts it.
+            subject = re.match(r'\s+(?:work|jobs?|tasks?)\b', tail, re.I)
+            if subject and re.match(TARGET_PREDICATE, tail[subject.end():], re.I):
+                return match[0]
+            return match[1] + 'The described'
+        prose = re.sub(r'(?im)(^|[.!?]\s+)(?:queued|assigned|started|dispatched|launched|scheduled)'
+                       r'(?=\s+(?:' + meaning + r'\b|does not prove\b|is a state\b|' + nominal + r'))',
+                       nominal_subject, prose)
         # A supplied generic state may be discussed verbatim. No actor, owner,
         # job ID, or named task can acquire an action receipt through this path.
         supplied = {(m['subject'].lower(), m['state'].lower())

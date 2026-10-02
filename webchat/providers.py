@@ -188,6 +188,10 @@ conditions when changing tone or length, unless the user explicitly changes
 those facts. Change the surrounding style without strengthening or weakening
 what the writer is promising.
 Before delivering, check the requested facts, qualifications, and length/format.
+For a lesson, tutorial, or practical walkthrough, check that each step actually
+produces its stated result. Verify counts, measurements, and relationships in
+the instructions; prefer a simple reproducible method when an illustration is
+uncertain. Keep prerequisites within the supplied materials and available time.
 When assessing evidence, distinguish an observed record or label from the event
 it describes. A missing record or artifact leaves the event unverified unless
 the supplied facts establish that the record is complete. Reject an unsupported

@@ -9,6 +9,98 @@ from providers import Providers, ProviderError
 
 
 class AnswerIntentTests(SessionFixture):
+    def test_guide_state_descriptions_are_not_dispatch_receipts(self):
+        examples = (
+            'A queued receipt confirms that a task was queued, not that it was completed.',
+            'A queued status simply indicates a job was assigned, not that it finished.',
+            'A queued receipt just means that a job was queued, not that it completed.',
+            'Queued work is not finished work.',
+            'Scheduled tasks are not necessarily completed tasks.',
+            'Queued work is waiting until a worker starts it.',
+            'When your task is queued, look for its result before assuming it is finished.',
+            'If the repair task is running, wait for its result.',
+            'Ask Bob to start a task when you are ready.',
+        )
+        for example in examples:
+            with self.subTest(example=example):
+                self.fake.reply_text = example
+                reply = self.send('Write a practical guide explaining job receipts.')
+                self.assertEqual(reply['status'], 'done')
+                self.assertEqual(reply['content'], example)
+                self.assertNotIn('task_id', reply)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_guide_explanations_do_not_shelter_real_effect_claims(self):
+        descriptions = (
+            'A queued receipt confirms that a task was queued, not that it completed.',
+            'Queued work is not finished work.',
+            'When your task is queued, wait for its result.',
+            'Ask Bob to start a task when you are ready.',
+        )
+        claims = (
+            'I queued your repair.', 'Your repair task was queued.',
+            'Your task is now running.', 'The queued task was assigned just now.',
+            'Job webchat-' + 'a' * 32 + ' is queued.',
+        )
+        for description in descriptions:
+            for claim in claims:
+                with self.subTest(description=description, claim=claim):
+                    self.fake.reply_text = description + ' ' + claim
+                    self.assertNotEqual(self.send('Write a guide explaining job receipts.')['content'],
+                                        self.fake.reply_text)
+        for claim in ('Queued your repair task.', 'Started the repair.',
+                      'The queued task was assigned just now.',
+                      'I will ask Bob to start your repair.',
+                      'I did ask Bob to start your repair.',
+                      'Here is how your repair task was queued.',
+                      'I confirmed when your repair task was queued.',
+                      'Queued jobs are now assigned.',
+                      'Queued jobs were assigned to Gemini.',
+                      'Scheduled tasks were dispatched.',
+                      'A queued receipt confirms your repair task was queued.',
+                      'A queued receipt shows that the task was assigned just now.',
+                      'Ask Bob to start a task; I queued your repair.'):
+            with self.subTest(claim=claim):
+                self.fake.reply_text = claim
+                self.assertNotEqual(self.send('Write a guide explaining job receipts.')['content'], claim)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_exact_owner_guide_revision_survives_reload_and_replay(self):
+        from app import Chat
+        import uuid
+        origin = ('Write a 120-word quick-start note for me to use Web Bob. Use only these facts: '
+                  'ordinary questions and writing requests can be answered in chat; a queued receipt '
+                  'does not prove work finished; saved project holds govern execution; available models '
+                  'have separate limits; Auto chooses an existing route. This candidate is being validated, '
+                  'so do not claim release readiness or superiority over Grok. Keep it practical and friendly.')
+        self.fake.reply_text = 'A starter note.'
+        self.send(origin)
+        self.send('Actually keep it under 90 words and include one example of a writing request. '
+                  'Preserve the facts and qualifications.')
+        self.chat.close()
+        self.chat = Chat(self.folder, self.root, self.fake)
+        revision = ('Welcome! Ask questions or request writing in chat, such as drafting an email. '
+                    'Queued work is not finished work. Saved project holds govern execution. '
+                    'Available models have separate limits; Auto chooses an existing route. '
+                    'This candidate is being validated.')
+        self.fake.reply_text = revision
+        prompt = 'Make that note friendlier while keeping the same word limit, facts, example and qualifications.'
+        request_id = str(uuid.uuid4())
+        self.chat.submit(self.identifier, prompt, request_id)
+        worker = self.chat.workers.get(self.identifier)
+        if worker:
+            worker['thread'].join(3)
+            self.assertFalse(worker['thread'].is_alive())
+        delivered = self.chat.get(self.identifier)['messages'][-1]
+        self.assertEqual(delivered['status'], 'done')
+        self.assertEqual(delivered['content'], revision)
+        calls = len(self.fake.calls)
+        before = (self.chat.state / (self.identifier + '.json')).read_bytes()
+        self.chat.submit(self.identifier, prompt, request_id)
+        self.assertEqual(len(self.fake.calls), calls)
+        self.assertEqual((self.chat.state / (self.identifier + '.json')).read_bytes(), before)
+        self.assertFalse(task_queue.tasks(self.root))
+
     def test_actual_generic_execution_definition_survives_receipt_guard(self):
         self.fake.reply_text = ('A queued worker is sitting in line waiting its turn — the job is stored and waiting for an available slot. '
                                 'Once it picks up a task and starts doing actual work (processing code, generating text, whatever), that\'s "running."')
