@@ -35,6 +35,30 @@ class ServicesTest(unittest.TestCase):
         self.tmp.cleanup()
     def folder(self):
         p=self.root/'job';p.mkdir();return p
+    def test_screen_inventory_accepts_one_many_and_no_sessions(self):
+        for output, code, expected in (
+            ('There is a screen on:\n\t1352.svc-webchat\t(Detached)\n1 Socket in /tmp/.screen.\n',
+             0, {'svc-webchat': '1352.svc-webchat'}),
+            ('There are screens on:\n\t1352.svc-webchat\t(Attached)\n\t1400.svc-job-runner\t(Detached)\n2 Sockets in /tmp/.screen.\n',
+             0, {'svc-webchat': '1352.svc-webchat', 'svc-job-runner': '1400.svc-job-runner'}),
+            ('No Sockets found in /tmp/.screen.\n', 1, {}),
+        ):
+            with self.subTest(output=output), patch.object(runtime, 'run', return_value=NS(
+                    returncode=code, stdout=output, stderr='')) as probe:
+                self.assertEqual(runtime.screen_sessions(timeout=4), expected)
+                probe.assert_called_once_with(['screen', '-ls'], capture_output=True, text=True, timeout=4)
+
+    def test_unavailable_screen_inventory_remains_an_error(self):
+        for output in ('', 'Cannot access screen directory: Permission denied\n',
+                       'error while checking Sockets in an unavailable directory\n'):
+            with self.subTest(output=output), patch.object(runtime, 'run', return_value=NS(
+                    returncode=1, stdout='', stderr=output)):
+                with self.assertRaisesRegex(RuntimeError, 'screen inventory unavailable'):
+                    runtime.screen_sessions()
+        with patch.object(runtime, 'run', side_effect=subprocess.TimeoutExpired(['screen', '-ls'], 3)):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                runtime.screen_sessions(timeout=3)
+
     def test_start_waits_for_slow_bootstrap_after_one_launch(self):
         elapsed = [0.0]
         def sleep(seconds):

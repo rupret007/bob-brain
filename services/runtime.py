@@ -30,7 +30,7 @@ HEARTBEATS = CONDUCTOR / "heartbeats"
 def screen_sessions(*, timeout=15):
     result = run(["screen", "-ls"], capture_output=True, text=True, timeout=timeout)
     text = result.stdout + result.stderr
-    if not ("Sockets in" in text or "No Sockets found" in text):
+    if not (re.search(r"(?m)^\s*\d+ Sockets? in ", text) or "No Sockets found" in text):
         raise RuntimeError("screen inventory unavailable; refusing to guess")
     return {m.group(2): m.group(1) + "." + m.group(2)
             for m in re.finditer(r"(?m)^\s*(\d+)\.([\w.-]+)\s*\((?:Detached|Attached)\)", text)}
