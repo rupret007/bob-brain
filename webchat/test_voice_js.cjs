@@ -6,6 +6,38 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const code = fs.readFileSync(path.join(__dirname, 'static/voice.js'), 'utf8');
 const pause = () => new Promise(resolve => setImmediate(resolve));
+const interruptionAcknowledged = require('./voice_interruption_controls.cjs');
+function interruptionProof(options = {}) {
+  const events=[
+    {seq:10,kind:'interrupted',counts:{interruptions:1,outputAudio:20}},
+    {seq:11,kind:'generation_complete',counts:{interruptions:1,outputAudio:25}},
+    {seq:12,kind:'turn_complete',counts:{interruptions:1,outputAudio:25}}];
+  const sample={before:{interruptions:0,stops:0,requests:1,replies:1},
+    proof:{stops:1,starts:8,startsAtInterruption:7},events,
+    requests:['You: Earlier request','You: Stop. Just say okay.'],replies:['Bob: Earlier answer','Bob: Okay.']};
+  options.mutate?.(sample);
+  return vm.runInNewContext('('+interruptionAcknowledged.toString()+')(before)',{
+    before:sample.before,window:{voiceProof:sample.proof,voiceEvents:{snapshot:()=>({events:sample.events})}},
+    document:{querySelectorAll:selector=>(selector==='.call-you'?sample.requests:sample.replies).map(textContent=>({textContent}))}});
+}
+test('voice interruption proof accepts fresh completed audio acknowledgment with native spelling/name omission',()=>{
+  assert.equal(interruptionProof(),true);
+  assert.equal(interruptionProof({mutate:s=>{s.requests[1]='You: Stop. Just say okay Jeff.';s.replies[1]='Bob: OK, Jeff!';}}),true);
+});
+for(const [name,mutate] of [
+  ['stale acknowledgment',s=>{s.replies=['Bob: Okay.'];}],
+  ['no new request',s=>{s.requests=['You: Stop. Just say okay.'];}],
+  ['no new audio',s=>{s.events.slice(1).forEach(e=>{e.counts.outputAudio=20;});}],
+  ['incomplete reply',s=>{s.events.pop();}],
+  ['no completed generation',s=>{s.events.splice(1,1);}],
+  ['completion preceding interruption',s=>{s.events[1].seq=8;s.events[2].seq=9;}],
+  ['continued story',s=>{s.replies[1]='Bob: Okay. The sailor continued toward the horizon.';}],
+  ['unrelated request',s=>{s.requests[1]='You: What is next?';}],
+  ['recognized name ignored',s=>{s.requests[1]='You: Stop. Just say okay Jeff.';}],
+  ['playback never stopped',s=>{s.proof.stops=0;}],
+  ['new audio never played',s=>{s.proof.starts=7;}],
+  ['no new interruption',s=>{s.events[0].counts.interruptions=0;}],
+]) test('voice interruption proof rejects '+name,()=>assert.equal(interruptionProof({mutate}),false));
 function deferred() { let resolve, reject; const promise = new Promise((a,b) => { resolve=a; reject=b; }); return {promise,resolve,reject}; }
 function fixture(options = {}) {
   const states=[], requests=[], sockets=[], contexts=[], tracks=[];

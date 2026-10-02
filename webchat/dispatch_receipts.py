@@ -116,7 +116,28 @@ def unasserted_prose(prose):
     # a current effect. Mask just its predicate, keeping any following claim.
     prose = re.sub(r"\b(?:just\s+)?say\s+(?:go|yes)\s+and\s+I(?:['’]ll| will)\s+" + verb,
                    'an offer awaiting confirmation', prose, flags=re.I)
-    return prose
+    # Starting an explanation from an abstract premise is not starting a job.
+    # Normalize only the immediate reasoning predicate, retaining actors and
+    # every other clause. A shared-subject effect later in this sentence keeps
+    # the original predicate detectable even beyond the bounded actor scan.
+    abstract = r'(?:limits?|constraints?|facts?|evidence|premises?|assumptions?|requirements?|priorities|priority|criteria|options?|reasoning)'
+    phrase_end = r'(?=$|\s*[,;.!?\n]|\s+(?:and|then|but|yet|rather|because|instead|before|after)\b)'
+    reasoning = re.compile(r"\b(?:I|we)\s+(?:(?:have|had|first|initially)\s+)?start(?:ed|ing)?\s+"
+                           r"(?:(?:with|from)\s+(?:(?:the|a|an|your|our|this|that)\s+)?"
+                           r"(?:(?:hard|time|cost|given|stated|supplied|original|initial)\s+){0,3}" + abstract + r"\b|"
+                           r"by\s+(?:considering|comparing|explaining|reasoning about)\b[^.;!?\n]{0,60}\b" + abstract + r"\b)" + phrase_end, re.I)
+    coordinated_effect = re.compile(r'(?:\b(?:and|then|but|yet)|;)\s+'
+                                    r'(?:(?:I|we)\s+)?(?:(?:' + ASSERTION_AUX + r'|' + ASSERTION_ADVERB + r')\s+){0,4}'
+                                    + EFFECT + r'\b', re.I)
+
+    def reasoning_predicate(match):
+        end = re.search(r'[.!?\n]', prose[match.end():])
+        tail = prose[match.end():match.end() + end.start()] if end else prose[match.end():]
+        if coordinated_effect.search(tail):
+            return match[0]
+        return re.sub(r'\bstart(?:ed|ing)?\b', 'reasoned', match[0], count=1, flags=re.I)
+
+    return reasoning.sub(reasoning_predicate, prose)
 
 
 GENERIC_STATE = re.compile(

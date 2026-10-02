@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const installVoiceDiagnostics = require('./voice_proof_diagnostics.cjs');
+const interruptionAcknowledged = require('./voice_interruption_controls.cjs');
 const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
 const root = process.env.BOB_VOICE_PROOF_ROOT;
 if (!root) throw new Error('Set BOB_VOICE_PROOF_ROOT to an isolated proof-server data folder.');
@@ -40,7 +41,10 @@ async function instrument(page) {
           try {
             const value = JSON.parse(typeof event.data === 'string' ? event.data : new TextDecoder().decode(event.data));
             const content = value.serverContent || {};
-            if (content.interrupted) voiceProof.interruptions++;
+            if (content.interrupted) {
+              voiceProof.interruptions++;
+              voiceProof.startsAtInterruption = voiceProof.starts;
+            }
             if (content.turnComplete) voiceProof.turns++;
             if (value.toolCall) voiceProof.tools++;
             for (const part of content.modelTurn?.parts || []) if (part.inlineData?.mimeType?.startsWith('audio/pcm')) {
@@ -200,15 +204,23 @@ async function instrument(page) {
       const before=await page.evaluate(()=>({interruptions:voiceProof.interruptions,stops:voiceProof.stops,starts:voiceProof.starts}));
       stage='story';await feed('story');
       await page.waitForFunction(n=>voiceProof.starts>n,before.starts,{timeout:45000});
+      const interruptionBefore=await page.evaluate(()=>({interruptions:voiceProof.interruptions,stops:voiceProof.stops,
+        requests:document.querySelectorAll('.call-you').length,replies:document.querySelectorAll('.call-bob').length}));
       stage='interrupt';await feed('interrupt');
       await page.waitForFunction(n=>voiceProof.interruptions>n,before.interruptions,{timeout:20000});
       const after=await page.evaluate(()=>({interruptions:voiceProof.interruptions,stops:voiceProof.stops}));
       assert.ok(after.stops>before.stops);results.barge_in={before,after};
       results.checks.push('real provider barge-in clears queued playback');await screenshot('iphone-interrupted');
-      // Listening during the interruption is not the end of the new utterance.
-      // Wait for Bob's short reply and its completed turn before the next ask.
-      // Native transcription may spell the same spoken acknowledgement "Ok".
-      await page.waitForFunction(()=>[...document.querySelectorAll('.call-bob')].some(e=>/\bok(?:ay)?\b.*\bjeff\b/i.test(e.textContent)),null,{timeout:45000});
+      // A historical matching reply or interrupted turnComplete is insufficient.
+      // Require new acknowledged input, playback, generation and turn completion
+      // after the interruption. Keep native name omissions explicit in evidence.
+      await page.waitForFunction(interruptionAcknowledged,interruptionBefore,{timeout:45000});
+      results.interruption_acknowledgment=await page.evaluate(()=>({
+        recognized_request:document.querySelectorAll('.call-you')[document.querySelectorAll('.call-you').length-1].textContent,
+        reply:document.querySelectorAll('.call-bob')[document.querySelectorAll('.call-bob').length-1].textContent,
+        requested_name_recognized:/\bjeff\b/i.test(document.querySelectorAll('.call-you')[document.querySelectorAll('.call-you').length-1].textContent),
+        completed_spoken_reply_after_interruption:true}));
+      results.checks.push('fresh completed spoken acknowledgment follows real interruption');
       await page.waitForTimeout(2000);
       await page.waitForFunction(()=>document.querySelector('#call-dialog').dataset.phase==='listening',null,{timeout:45000});
       const versionBefore=await page.evaluate(()=>({tools:voiceProof.tools,responses:voiceProof.toolResponses}));

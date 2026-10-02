@@ -106,10 +106,10 @@ def parse_work(text, *, conversation=None):
     if target_request and (task_queue.file_task_kind(request) or implementation_deliverable(request)):
         return text.strip(), 'auto'
     if conversation and conversation.get('answer_focus', {}).get('origin'):
-        from conversation_focus import CORRECTION
+        from conversation_focus import correction
         from answer_intent import requires_execution, requires_research
         request = command(text)
-        if (CORRECTION.match(request) and not task_queue.file_task_kind(request)
+        if (correction(request) and not task_queue.file_task_kind(request)
                 and not requires_execution(request) and not requires_research(request)):
             # A reference to the current answer stays an answer regardless of
             # its artifact noun (notice, invitation, note, paragraph, etc.).

@@ -4,16 +4,21 @@ No model summarizes permissions. Excerpts retain message/request provenance;
 saved holds and the task journal remain authoritative for effects.
 """
 import re
-from answer_intent import conceptual, wants_answer
+from answer_intent import conceptual, wants_answer, revises_answer
 from chat_intent import command, projects
 
-CORRECTION = re.compile(r'^(?:actually|correction|no|instead|i meant|that is the wrong|'
+CORRECTION = re.compile(r'^(?:actually|correction|oops|my mistake|no|instead|i meant|that is the wrong|'
+                        r'(?:less|more) (?:formal|casual|friendly|concise|detailed|technical|playful|serious)|'
                         r'(?:make|keep) (?:it|that|this|these|those|the (?:first|second|third|fourth|fifth|last))|rewrite|revise|shorten|expand|'
                         r'rephrase|use .{0,40} instead|change .{0,40} to|'
                         r'the (?:first|second|third|fourth|fifth|last)\b.{0,60}\b(?:too|try|instead|change|make|needs?|should))\b', re.I)
 CONTINUE = re.compile(r'^(?:continue|keep going|finish that|do it|go ahead|what did you finish)\b', re.I)
 OPERATIONAL = re.compile(r'\b(?:our|my|live|current) (?:workers?|jobs?|services?|resources?)\b|'
                          r'\b(?:disk|storage|handoff|handback|bob-state|memory|remember|profile)\b', re.I)
+
+
+def correction(text):
+    return bool(CORRECTION.match(command(text)) or revises_answer(text))
 
 
 def needs_permission_facts(text):
@@ -59,16 +64,17 @@ def update(conversation, message):
     state['last_request_id'] = identifier
     text = command(message.get('content', ''))
     reference = dict(message_id=message.get('id'), request_id=identifier)
-    if state['origin'] and CORRECTION.match(text):
+    named_projects = projects(text)
+    if named_projects and not set(named_projects).issubset(state.get('projects', [])) and not CONTINUE.match(text):
+        # A newly named project cannot revise an unrelated answer origin.
+        # The current turn may establish its own focus below.
+        state.update(origin=None, corrections=[], projects=named_projects)
+    if state['origin'] and correction(text):
         state['corrections'] = (state['corrections'] + [reference])[-6:]
-        if projects(text):
-            state['projects'] = projects(text)
-    elif wants_answer(text) and not conceptual(text):
-        state.update(origin=reference, corrections=[], projects=projects(text))
-    elif projects(text) and not CONTINUE.match(text):
-        # A different project instruction cannot inherit another project's draft.
-        if projects(text) != state.get('projects', []):
-            state.update(origin=None, corrections=[], projects=projects(text))
+        if named_projects:
+            state['projects'] = named_projects
+    elif wants_answer(text) and (not conceptual(text) or not state['origin']):
+        state.update(origin=reference, corrections=[], projects=named_projects)
 
 
 def focus(conversation):
@@ -106,6 +112,6 @@ def focus(conversation):
 
 def answer_only(conversation, text):
     text = command(text)
-    return bool(not OPERATIONAL.search(text) and (wants_answer(text) or conceptual(text)
+    return bool((not OPERATIONAL.search(text) or conceptual(text)) and (wants_answer(text) or conceptual(text)
                 or (conversation.get('answer_focus', {}).get('origin')
-                    and (CORRECTION.match(text) or CONTINUE.match(text)))))
+                    and (correction(text) or CONTINUE.match(text)))))
