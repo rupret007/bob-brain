@@ -249,6 +249,9 @@ def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="a
             return row
         if permission_file and (Path(root) / 'conductor/locks/webbob-activation.json').exists():
             raise AdmissionPaused('Release verification is in progress; no worker job was queued.')
+        import generation_budget
+        blocked=generation_budget.task_block(root,report_contract)
+        if blocked:raise AdmissionPaused(blocked)
         for member in (r for r in rows.values() if group_id and r.get("group_id") == group_id):
             if (member.get("group_index") == group_index or
                 (member.get("group_size"), member.get("conversation_id"), member.get("group_goal")) !=
@@ -328,6 +331,13 @@ def claim(root, worker, now=None, *, identifier=None, allow_fallback=False, limi
                 continue
             if permission_block(root, row):
                 continue
+            import generation_budget
+            blocked=generation_budget.task_block(root,row.get('report_contract'))
+            if blocked:
+                if row.get('error')!=blocked:
+                    row['error']=blocked
+                    _append(path,row,'generation_held',now)
+                continue
             if row["requested_worker"] not in ("auto", worker) and not allow_fallback:
                 continue
             if worker not in worker_order(row["kind"]):
@@ -352,7 +362,8 @@ def transition(root, identifier, token, event, *, now=None, **fields):
         if not row or row["status"] not in ACTIVE or row["claim_token"] != token or row["lease_until"] <= now:
             return None
         if event in ('running', 'executing'):
-            blocked = permission_block(root, row)
+            import generation_budget
+            blocked = permission_block(root, row) or generation_budget.task_block(root,row.get('report_contract'))
             if blocked:
                 row.update(status='queued', claim_token=None, lease_until=0, retry_at=0,
                            attempts=max(0, row['attempts'] - 1), error=blocked)

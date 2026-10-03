@@ -792,6 +792,10 @@ def checks(root, feature):
         env.pop('NODE_PATH', None)
         env.pop('BOB_ANDREA_WEBBOB_CONFIG', None)
         env.pop('ANDREA_WEBBOB_CONFIG_PATH', None)
+        # Synthetic suites must never debit an operator's active model budget.
+        # The real voice probe retains attribution for its actual transports.
+        if name != 'voice-browser':
+            env = fixture_generation_environment(env)
         # macOS /var is a symlink: existing repo identity tests expect canonical
         # temporary paths, matching the predecessor release harness.
         env['TMPDIR'] = '/private/tmp'
@@ -831,10 +835,17 @@ def checks(root, feature):
     if passed and ORDER.index(feature) >= ORDER.index('bridge'):
         record['andrea'] = andrea_gates(root)
     if passed:
-        record['staging'] = staging(root, sha, feature)
+        from unittest.mock import patch
+        with patch.dict(os.environ, fixture_generation_environment(os.environ), clear=True):
+            record['staging'] = staging(root, sha, feature)
     atomic_json(out / 'checks.json', record)
     require(passed, 'Offline check failed; inspect ' + str(out))
     print(str(out / 'checks.json'), flush=True)
+
+
+def fixture_generation_environment(environment):
+    return {key:value for key,value in environment.items()
+            if not key.startswith('BOB_GENERATION_') and key != 'BOB_REQUIRE_GENERATION_BUDGET'}
 
 
 def verify_checks(sha, feature, check_path):

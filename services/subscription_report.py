@@ -211,7 +211,8 @@ def check_report(answer, contract):
 def execute(root, row, token, redact):
     contract = validate(row.get('report_contract'), conversation_id=row['conversation_id'],
                         request_id=row['request_id'], prompt=row['prompt'], worker=row['worker'], attempt_limit=row['attempt_limit'])
-    if row['worker'] != 'claude':
+    from resource_capabilities import supports
+    if not supports(row['worker'],'bounded-report'):
         raise RuntimeError('This bounded report adapter currently supports Claude only; no fallback was attempted')
     sources = report_artifacts.load_inputs(root, contract)
     current_context(root, contract)
@@ -222,10 +223,23 @@ def execute(root, row, token, redact):
     prompt = (RULES + '\n\nASSIGNMENT:\n' + contract['scope'] + '\nDELIVERABLE:\n' +
               contract['expected_deliverable'] + '\n\nEVIDENCE SNAPSHOT:\n' + canonical(sources))
     current_context(root, contract)
+    import generation_budget
+    bound = contract.get('generation_binding')
+    if not bound:
+        # Legacy tasks cannot silently acquire a different goal on held resume.
+        configured = generation_budget.binding(root, row['request_id'], 'report-executor', row['prompt'])
+        if configured:
+            raise RuntimeError('This older report lacks its original generation binding; create a new explicit assignment.')
+    admission_env = generation_budget.bound_environment(bound, os.environ)
+    from build_info import BUILD
+    admission_env['BOB_GENERATION_SOURCE_SHA'] = BUILD['sha']
+    admission_env['BOB_GENERATION_TASK_ID'] = row['id']
+    native_receipt = generation_budget.reserve('claude', kind='native', env=admission_env)
     # Existing permission/claim fence is checked immediately before generation.
     if not task_queue.transition(root, row['id'], token, 'executing',
                                  model=MODEL, requested_effort=EFFORT, report_checkpoint='inputs_verified',
                                  contract_sha256=contract['contract_sha256'], billing_provenance=provenance):
+        generation_budget.settle(native_receipt, None, status='cancelled_before_launch')
         return 0
     argv = ['claude', '-p', *FLAGS, '--max-turns', '1', '--output-format', 'stream-json', '--verbose',
             '--model', MODEL, '--effort', EFFORT, '--max-budget-usd', '1']
@@ -233,7 +247,8 @@ def execute(root, row, token, redact):
     ok = False
     try:
         with tempfile.TemporaryDirectory(prefix='webbob-report-') as cwd:
-            result = run_input(argv, prompt, timeout=remaining(row), env=env, cwd=cwd)
+            seconds = min(remaining(row), generation_budget.remaining(native_receipt))
+            result = run_input(argv, prompt, timeout=seconds, env=env, cwd=cwd)
         answer, usage, _ = parse_events(result,events=events)
         answer = redact(answer)
         citations = check_report(answer, contract)
@@ -260,3 +275,4 @@ def execute(root, row, token, redact):
         return 0 if ok else 1
     finally:
         budget.record_cli('claude', events, ok, 'bounded-report')
+        generation_budget.settle(native_receipt, None, status='response' if ok else 'failed_or_interrupted')

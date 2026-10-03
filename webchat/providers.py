@@ -794,6 +794,14 @@ class Providers:
             snapshots += [dict(path='saved chat hold facts', modified='saved', truncated=False,
                                text=self.redact(json.dumps(facts, ensure_ascii=False)))]
         import draft_revision
+        import reply_contract
+        contract=reply_contract.current(conversation)
+        if contract and contract.get('resource_projection'):
+            snapshots.append(dict(path='server-owned resource decision evidence',modified='this turn',truncated=False,
+                                  text=self.redact(json.dumps(contract['resource_projection'],ensure_ascii=False))))
+        if contract and contract.get('catchup_projection'):
+            snapshots.append(dict(path='server-owned receiver receipt projection',modified='owner supplied',truncated=False,
+                                  text=self.redact(json.dumps(contract['catchup_projection'],ensure_ascii=False))))
         self.current_call.draft_revision = draft_revision.source(conversation, self.redact) if answer_context and not blocked else None
         if self.current_call.draft_revision:
             snapshots += [dict(path='bound source draft for this edit', modified='saved', truncated=False,
@@ -832,6 +840,17 @@ class Providers:
             self.current_call.instructions += '\n' + GROUNDING_RULES
         if self.current_call.draft_revision:
             self.current_call.instructions += '\n' + draft_revision.RULES
+        else:
+            import reply_contract
+            contract = reply_contract.current(conversation)
+            if contract and contract['kind']=='writing':
+                self.current_call.instructions += '\n' + reply_contract.RULES
+            elif contract and contract['kind']=='resource_advice':
+                import resource_decision
+                self.current_call.instructions += '\n' + resource_decision.RULES
+            elif contract and contract['kind']=='catchup':
+                import catchup_contract
+                self.current_call.instructions += '\n' + catchup_contract.RULES
         if answer_context and any(m.get('attachments') for m in conversation['messages']):
             self.current_call.instructions += ATTACHMENT_RETURN
         self.current_call.thinking_budget = 1024 if self.precision_request(conversation) else 0
@@ -862,6 +881,30 @@ class Providers:
     def _vision_parts(self, value):
         self.current_call.vision = value
 
+    def call_environment(self):
+        return dict(getattr(self.current_call, 'env', self.env),BOB_GENERATION_SOURCE_SHA=BUILD['sha'])
+
+    def native_run(self, provider, argv, **kwargs):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'state'))
+        import generation_budget
+        env = self.call_environment()
+        if kwargs['cancel'].is_set():
+            raise Cancelled('Reply stopped.')
+        try:
+            ref = generation_budget.reserve(provider, kind='native', env=env)
+        except generation_budget.AdmissionDenied:
+            raise ProviderError(kind='budget') from None
+        if ref:
+            remaining = generation_budget.remaining(ref)
+            kwargs['timeout'] = min(kwargs['timeout'], 180, max(.01, remaining))
+        outcome = 'failed_or_interrupted'
+        try:
+            result = self.run(argv, env=env, **kwargs)
+            outcome = 'response' if result[0] == 0 else 'failed'
+            return result
+        finally:
+            generation_budget.settle(ref, None, status=outcome)
+
     def call(self, provider, prompt, thread_id, cancel):
         timeout = getattr(self.current_call, "timeout", None) or self.timeouts[provider]
         if self._vision_parts and provider != "gemini":
@@ -872,7 +915,7 @@ class Providers:
         if provider == "claude":
             with self.lane(provider):
                 executable = shutil.which("claude", path=self.env["PATH"]) or "claude"
-                code, out, err = self.run([executable, "-p", "Give a short critique only.\n" + prompt, "--output-format", "json", "--tools", "", "--permission-mode", "plan"], cwd=self.root, env=self.env, cancel=cancel, timeout=timeout)
+                code, out, err = self.native_run(provider, [executable, "-p", "Give a short critique only.\n" + prompt, "--output-format", "json", "--tools", "", "--permission-mode", "plan"], cwd=self.root, cancel=cancel, timeout=timeout)
                 if code:
                     raise failure(code, out + err)
                 return parse_cursor(out), None
@@ -897,7 +940,7 @@ class Providers:
             payload = dict(prompt=prompt + envelope, vision=vision)
         transport = json.dumps(payload, ensure_ascii=False)
         script = Path(__file__).with_name("api_call.py")
-        code, out, err = self.run([sys.executable, str(script), provider], cwd=self.root, env=dict(self.env, BOB_ROOT=str(self.root)),
+        code, out, err = self.run([sys.executable, str(script), provider], cwd=self.root, env=dict(self.call_environment(), BOB_ROOT=str(self.root)),
                                   cancel=cancel, timeout=timeout, prompt=transport)
         if code:
             raise failure(code, out + err)
@@ -921,10 +964,10 @@ class Providers:
             if self.resume_supported and thread_id:
                 argv += ["resume", thread_id]
             argv.append("-")
-            code, out, err = self.run(argv, cwd=self.root, env=self.env, cancel=cancel, timeout=timeout, prompt=prompt)
+            code, out, err = self.native_run(provider, argv, cwd=self.root, cancel=cancel, timeout=timeout, prompt=prompt)
             if code:
                 reason = failure(code, out + err)
-                if thread_id and reason.kind == "session_unavailable":
+                if thread_id and reason.kind == "session_unavailable" and not self.call_environment().get('BOB_GENERATION_BUDGET'):
                     return self.call_cli(provider, prompt, None, cancel)
                 raise reason
             answer, new_id = parse_codex(out)
@@ -932,7 +975,7 @@ class Providers:
         if provider == "cursor":
             executable = shutil.which("cursor-agent", path=self.env["PATH"]) or str(Path.home() / ".local/bin/cursor-agent")
             argv = [executable, "--trust", "--mode", "ask", "--print", "--output-format", "json", prompt]
-            code, out, err = self.run(argv, cwd=self.root, env=self.env, cancel=cancel, timeout=timeout)
+            code, out, err = self.native_run(provider, argv, cwd=self.root, cancel=cancel, timeout=timeout)
             if code:
                 raise failure(code, out + err)
             return parse_cursor(out), None
@@ -1001,6 +1044,8 @@ class Providers:
 
     def route_order(self, conversation):
         selected = conversation.get("preferred_provider", "auto")
+        if conversation.get('provider_mode') == 'only':
+            return (selected,) if selected in NAMES else ()
         if selected in NAMES:
             return (selected, *(name for name in ORDER if name != selected))
         last_user = next((m for m in reversed(conversation["messages"]) if m["role"] == "user"), {})
@@ -1040,8 +1085,18 @@ class Providers:
         self.current_call.cancel = cancel
         self.current_call.answer_context = False
         self.current_call.draft_revision = None
-        order = self.route_order(conversation)
         last_user = next((m for m in reversed(conversation['messages']) if m['role'] == 'user'), {})
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'state'))
+        import generation_budget
+        try:
+            ref = last_user.get('_generation')
+            self.current_call.env = generation_budget.bound_environment(ref, self.env)
+            attribution = generation_budget.attribution(self.current_call.env)
+            allowed = generation_budget.selection(attribution['root'], attribution['id'])['chat_providers'] if attribution else list(NAMES)
+        except generation_budget.AdmissionDenied:
+            raise ProviderError(kind='budget') from None
+        from resource_capabilities import supports
+        order = tuple(p for p in self.route_order(conversation) if p in allowed and supports(p,'conversation'))
         visual = any(a.get('kind') in ('image', 'video') for a in last_user.get('attachments', []) if isinstance(a, dict))
         fast = (conversation.get('preferred_provider', 'auto') == 'auto' and self.short_request(conversation)
                 and not visual and not self.context_reasoning_request(conversation) and set(order) == set(FAST_ORDER))
@@ -1058,7 +1113,8 @@ class Providers:
             if cancel.is_set():
                 raise Cancelled("Reply stopped.")
             if fast_deadline is not None and time.monotonic() >= fast_deadline:
-                tail = [name for name in ORDER if name not in tried]
+                tail = [name for name in ORDER if name not in tried and name in allowed
+                        and conversation.get('provider_mode') != 'only']
                 if tail:
                     order = order[:index] + tail
                     fast_deadline = None

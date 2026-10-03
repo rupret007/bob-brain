@@ -44,6 +44,18 @@ def validate(value, *, conversation_id, request_id, prompt, worker, attempt_limi
                     'owner', 'scope', 'allowed_effects', 'input_manifest', 'expected_deliverable',
                     'attempt_limit', 'timeout_seconds', 'permitted_workers', 'authorization_request_id',
                     'output_relative', 'contract_sha256'}
+        if 'generation_binding' in value:
+            required.add('generation_binding')
+            binding = value['generation_binding']
+            if binding is not None:
+                import generation_budget
+                if (not isinstance(binding,dict) or set(binding) != {'root','id','purpose','request_id','actor_sha256','input_sha256'} or
+                        binding['request_id'] != request_id or binding['purpose'] != 'product' or
+                        not isinstance(binding['root'],str) or not binding['root'].startswith('/') or
+                        not generation_budget.ID.fullmatch(binding['id']) or
+                        binding['input_sha256'] != hashlib.sha256(prompt.encode()).hexdigest() or
+                        not SHA.fullmatch(binding['actor_sha256'])):
+                    raise ValueError()
         if set(value) != required:
             raise ValueError()
         body = {k:v for k,v in value.items() if k != 'contract_sha256'}
@@ -82,7 +94,7 @@ def validate(value, *, conversation_id, request_id, prompt, worker, attempt_limi
 
 
 def build(*, conversation_id, request_id, prompt, worker, goal_id, goal_revision,
-          input_manifest, expected_deliverable, timeout_seconds=900):
+          input_manifest, expected_deliverable, timeout_seconds=900, generation_binding=None):
     identifier = task_id(conversation_id, request_id)
     value = dict(version=VERSION, task_id=identifier, goal_id=goal_id, goal_revision=goal_revision,
                  assignment_revision=1, owner=worker, scope=prompt, allowed_effects=list(EFFECTS),
@@ -90,6 +102,7 @@ def build(*, conversation_id, request_id, prompt, worker, goal_id, goal_revision
                  attempt_limit=1, timeout_seconds=timeout_seconds, permitted_workers=[worker],
                  authorization_request_id=request_id,
                  output_relative='conductor/state/project-reports/' + goal_id + '/' + identifier + '.md')
+    value['generation_binding'] = generation_binding
     value['contract_sha256'] = digest(value)
     return validate(value, conversation_id=conversation_id, request_id=request_id, prompt=prompt,
                     worker=worker, attempt_limit=1)

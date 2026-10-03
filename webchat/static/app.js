@@ -444,7 +444,23 @@ if ($("login-form")) {
       else article.setAttribute("aria-label", message.provider ? `Assistant, ${providers[message.provider] || "Bob"}` : "Assistant");
       const body = document.createElement("div"); body.className = "body";
       if (pending) body.textContent = providers[message.provider] ? `${providers[message.provider]} is replying…` : "One moment…";
-      else if (message.role === "assistant" && !message.texting && !message.private_memory) body.innerHTML = renderMarkdown(message.content || "");
+      else if (message.role === "assistant" && !message.texting && !message.private_memory) {
+        if (message.artifact?.accepted && message.artifact?.kind === "writing") {
+          const label = document.createElement("div");
+          label.className = "artifact-label";
+          label.textContent = "Draft";
+          body.append(label);
+          const content = document.createElement("div");
+          content.innerHTML = renderMarkdown(message.artifact.text || message.content || "");
+          body.append(content);
+          if (message.artifact.commentary) {
+            const note = document.createElement("p");
+            note.className = "artifact-commentary";
+            note.textContent = message.artifact.commentary;
+            body.append(note);
+          }
+        } else body.innerHTML = renderMarkdown(message.content || "");
+      }
       else body.textContent = message.private_memory && message.memory_action_label || message.content;
       article.append(body);
       if (message.private_memory && Array.isArray(message.project_facts)) {

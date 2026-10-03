@@ -7,8 +7,12 @@ import math
 import os
 import time
 import uuid
+import sys
+from pathlib import Path
 
 from state import CONDUCTOR, _append, _rows, lock, read_json, write_json
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'state'))
+import generation_budget
 
 LANES = ("codex", "claude", "cursor", "gemini", "minimax", "mini")
 CAP_USD = 48.0
@@ -140,6 +144,11 @@ def reserve(lane, prompt, max_tokens, purpose="model", *, model_id=None, google_
         row = {"call_id": uuid.uuid4().hex, "event": "reserved", "lane": lane,
                "reserved_usd": bound, "cost_usd": None, "purpose": purpose, "timestamp": time.time(),
                "model": model_id, "search_cost_usd": search_cost}
+        try:
+            # Always lane -> goal lock order. Transport needs both reservations.
+            row['goal_reservation'] = generation_budget.reserve(lane, bound, call_id=row['call_id'],env=dict(os.environ,BOB_ROOT=str(CONDUCTOR.parent)))
+        except generation_budget.AdmissionDenied as exc:
+            raise BudgetExceeded(str(exc)) from None
         _append(path(lane), row)
         return row
 
@@ -172,6 +181,7 @@ def settle(lane, reservation, data):
         # the bound. Never discard billing evidence to make the cap look healthy.
         cost = max(cost, reservation["reserved_usd"])
     with lock("ledger-" + lane):
+        generation_budget.settle(reservation.get('goal_reservation'), cost, usage=usage)
         _append(path(lane), dict(reservation, event="response", cost_usd=cost, usage=usage,
                                 response_id=data.get("id"), timestamp=time.time()))
 

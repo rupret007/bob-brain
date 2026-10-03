@@ -97,6 +97,9 @@ def execute(identifier, token):
         with contextlib.ExitStack() as stack:
             stack.enter_context(lock("dispatch-" + identifier, blocking=False))
             owns_task = True
+            import generation_budget
+            blocked=generation_budget.task_block(ROOT,row.get('report_contract'))
+            if blocked:raise ResultRejected(blocked)
             stack.enter_context(slot(row["worker"]))
             api_only = row["worker"] in task_queue.API_WORKERS
             kind = task_queue.task_kind(row["kind"], row["prompt"])

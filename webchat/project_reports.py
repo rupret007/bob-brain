@@ -1,6 +1,7 @@
 """Explicit project report assignments on the existing durable task path."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import time
@@ -18,6 +19,27 @@ REPORT = re.compile(r'\b(?:readiness report|project report|next[- ]actions brief
 NO_ACTION = re.compile(r"\b(?:don't|do not|don’t|only explain|just explain|later|eventually|not yet|if|unless|once|after I)\b", re.I)
 SOURCE_PATHS = ('docs/PERSISTENT-CONTEXT.md', 'webchat/project_context.py', 'webchat/task_dispatch.py',
                 'services/subscription_report.py', 'state/task_queue.py', 'release/README.md')
+
+
+def bridge_observation(chat):
+    """Dedicated health only: no thread reads, draft/cancel or send endpoints."""
+    observation=dict(observed_at=time.time(), interface='Andrea dedicated Web Bob bridge health',
+                     status='unconfigured', coverage='Bridge health only; no message delivery was tested.')
+    client=getattr(getattr(chat,'texting',None),'andrea',None)
+    # Test/drill data roots never borrow the live bridge merely through an
+    # inherited credential configuration. Tests inject this observation helper.
+    configured_root=os.environ.get('BOB_ROOT')
+    if not client or not getattr(client,'token',None) or not configured_root or Path(configured_root).resolve()!=chat.root.resolve():
+        return observation
+    try:
+        value=client.call('health')
+        allowed=('service','protocol','ok','connected','paused','instinctReadOnly','sha','deliveryProtocol')
+        if not isinstance(value,dict):raise ValueError()
+        fields={k:value[k] for k in allowed if k in value and isinstance(value[k],(str,bool,int))}
+        observation.update(status='observed',response=fields,finished_at=time.time())
+    except Exception:
+        observation.update(status='unavailable',finished_at=time.time(),error='The bounded bridge health read failed; delivery state remains unknown.')
+    return observation
 
 
 def recognizes(text):
@@ -88,10 +110,15 @@ def collect(chat, snapshot, text, *, source_root=None):
             coverage.append(dict(path=path, complete=len(clipped) == len(raw),
                                  delivered_lines=body.count('\n') + 1, source_bytes=len(raw),
                                  full_source_sha256=hashlib.sha256(raw).hexdigest()))
+    import source_evidence
+    bridge=bridge_observation(chat)
+    add('snapshot/andrea-bridge-health.json',report_contract.canonical(bridge),'runtime_observation')
     observed = dict(observed_at=time.time(), code_evidence_root=str(source_root), coverage=coverage,
-                    limits='Static bounded source and saved observations; no tests, endpoint probes or messages were run.')
+                    source_identity=source_evidence.verify(chat.root,source_root),
+                    limits='Bounded source, current saved project/task observations and dedicated bridge health where configured. '
+                           'No test suite, thread content, delivery replay, cancellation or message send was run.')
     pins = {}
-    for name in ('webchat-code-root', 'web-dispatch-code-root'):
+    for name in ('webchat-code-root', 'dispatch-code-root'):
         try:
             pins[name] = report_artifacts.read(chat.root, 'conductor/state/' + name, 4096).decode().strip()
         except (OSError, ValueError):
@@ -107,6 +134,7 @@ def collect(chat, snapshot, text, *, source_root=None):
 
 
 def handle(chat, conversation, text, request_id):
+    import generation_budget
     value = instructions(text).strip()
     match = ACTION.match(value)
     if not match or not REPORT.search(value):
@@ -116,13 +144,17 @@ def handle(chat, conversation, text, request_id):
                                'I have not started it. The bounded route can use saved project context and evidence when you authorize it now.')
     worker = (match[1] or 'claude').lower()
     # Capability is explicit; a missing adapter cannot widen to a coding worker.
-    if worker != 'claude':
+    from resource_capabilities import supports
+    if not supports(worker,'bounded-report'):
         return chat.intent_reply(conversation, 'This bounded report route supports Claude’s subscription login. '
                                'The requested worker has no qualified evidence-only adapter here; no job was created.')
     if not re.search(r'\bread[- ]only\b', value, re.I):
         return chat.intent_reply(conversation, 'I can prepare that as a saved read-only project report. '
                                'Say “create a read-only Web Bob readiness report” to authorize that bounded investigation.')
     try:
+        user = next(m for m in reversed(conversation['messages']) if m.get('role')=='user')
+        binding = user.get('_generation') or generation_budget.binding(chat.root,request_id,'report-owner',text)
+        if binding:generation_budget.selection(binding['root'],binding['id'])
         if chat.ledger_root(conversation['id']) != chat.root:
             raise ValueError('Report dispatch is unavailable in a drill conversation.')
         snapshot = project_context.projection(chat.root, conversation, value)
@@ -130,12 +162,15 @@ def handle(chat, conversation, text, request_id):
             raise ValueError('Save the project priority first so the report has a clear objective. '
                              'For example: “For the Web Bob project, remember the priority: reliable daily assistance.”')
         sources, manifest = collect(chat, snapshot, value)
+        if binding:
+            binding = dict(binding, input_sha256=hashlib.sha256(value.encode()).hexdigest(), purpose='product')
         contract = report_contract.build(conversation_id=conversation['id'], request_id=request_id,
             prompt=value, worker=worker, goal_id=snapshot['goal_id'], goal_revision=snapshot['revision'],
+            generation_binding=binding,
             input_manifest=manifest, expected_deliverable='A source-backed report answering the assigned question, '
             'with evidence, prioritized actions, tradeoffs, pending decisions and honest limits. Apply the latest owner correction.')
-    except (OSError, ValueError) as exc:
-        message = str(exc) if isinstance(exc, ValueError) else 'The assigned evidence could not be read or saved safely.'
+    except (OSError, ValueError, generation_budget.AdmissionDenied) as exc:
+        message = str(exc) if isinstance(exc, (ValueError,generation_budget.AdmissionDenied)) else 'The assigned evidence could not be read or saved safely.'
         return chat.intent_reply(conversation, message)
     # submit_task saves the exact source snapshot with the original intent;
     # reconciliation publishes those bytes before the queue append. A restart

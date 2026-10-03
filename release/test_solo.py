@@ -10,6 +10,14 @@ import solo
 
 
 class CurrentModeReplayTests(unittest.TestCase):
+    def test_synthetic_children_cannot_inherit_real_generation_admission(self):
+        env=dict(BOB_GENERATION_BUDGET='real-goal',BOB_GENERATION_BUDGET_ROOT='/real',
+                 BOB_GENERATION_PURPOSE='controller',BOB_REQUIRE_GENERATION_BUDGET='1',
+                 BOB_ROOT='/fixture',PATH='/bin')
+        result=solo.fixture_generation_environment(env)
+        self.assertEqual(result,dict(BOB_ROOT='/fixture',PATH='/bin'))
+        self.assertEqual(env['BOB_GENERATION_BUDGET'],'real-goal')
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

@@ -46,7 +46,9 @@ def source(conversation, redact):
     ids = {m['request_id'] for m in retained['user_excerpts']}
     if not latest or latest.get('request_id') not in ids or latest.get('provider') in ('dispatcher', 'planner', 'state'):
         return None
-    original = redact(latest.get('content', ''))
+    if latest.get('_reply_contract',{}).get('kind')=='writing' and not latest.get('artifact',{}).get('accepted'):
+        return None
+    original = redact(latest.get('artifact',{}).get('text',latest.get('content', '')))
     if not original.strip() or len(original) > LIMIT or '<bob-webchat-attachment' in original:
         return None
     # A new subject is not an edit merely because the turn begins "change".

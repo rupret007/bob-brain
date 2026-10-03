@@ -246,6 +246,24 @@ def group_result_receipt(rows, label):
 
 
 class TaskDispatch:
+    def generation_dispatch_error(self, conversation, request_id, prompt, contract=None):
+        """Only the report executor preserves a goal binding end to end today."""
+        import generation_budget
+        try:
+            user=next((m for m in conversation['messages'] if m.get('role')=='user' and m.get('request_id')==request_id),{})
+            ref=(contract or {}).get('generation_binding') or user.get('_generation')
+            current=generation_budget.binding(self.root,request_id,'dispatch-owner',prompt,require_active=False)
+            if ref is None:ref=current
+            if ref:
+                generation_budget.selection(ref['root'],ref['id'])
+                if not contract or not contract.get('generation_binding'):
+                    return ('This active generation allowance supports chat and bounded read-only reports. '
+                            'The requested executor has no bound job allowance here, so no task was queued. '
+                            'A read-only readiness report can use the current project evidence.')
+        except generation_budget.AdmissionDenied as exc:
+            return str(exc)
+        return None
+
     def paused_dispatch_reply(self, conversation):
         """Keep solo maintenance safe without ending a real request at a dead end."""
         if not (self.root / 'conductor/SOLO-WORKER').exists():
@@ -282,6 +300,8 @@ class TaskDispatch:
             if (self.root / "conductor/MAINTENANCE").exists():
                 raise ValueError("Scheduling is paused for maintenance; no assignments were queued.")
             packages = plan(self.root, conversation, description, workers)
+            blocked=self.generation_dispatch_error(conversation,request_id,description)
+            if blocked:return self.intent_reply(conversation,blocked)
         except ValueError as exc:
             return self.intent_reply(conversation, str(exc))
         conversation["assignment_workers"] = list(workers)
@@ -372,6 +392,8 @@ class TaskDispatch:
                                            worker=worker, attempt_limit=attempt_limit)
             except ValueError as exc:
                 return self.intent_reply(conversation, str(exc))
+            blocked=self.generation_dispatch_error(conversation,original_request,description,report_contract)
+            if blocked:return self.intent_reply(conversation,blocked)
             if report_inputs is not None:
                 import report_artifacts
                 report_artifacts.validate_inputs(report_contract, report_inputs)
@@ -401,6 +423,8 @@ class TaskDispatch:
             self.conversations[identifier] = conversation
             return self.public(conversation)
         try:
+            blocked=self.generation_dispatch_error(conversation,request_id,description,report_contract)
+            if blocked:return self.intent_reply(conversation,blocked)
             task_queue.validate_attempt_limit(attempt_limit)
             publish_project = None
             draft_pr = False
@@ -481,6 +505,12 @@ class TaskDispatch:
                             message["content"] = content
                             changed = True
                         continue
+                    blocked=self.generation_dispatch_error(value,intent['request_id'],intent['prompt'],intent.get('report_contract'))
+                    if blocked:
+                        if message.get('content')!=blocked:
+                            message.update(status='done',provider='dispatcher',content=blocked)
+                            changed=True
+                        continue  # Keep the original pending identity for review/cancellation.
                     try:
                         if intent.get('report_contract'):
                             import report_artifacts
@@ -668,8 +698,14 @@ class TaskDispatch:
                 if not match:
                     continue
                 prompt = match.group(1).strip()
-                row = task_queue.enqueue(self.root, value["id"], message["request_id"], prompt,
-                                         kind=task_kind(prompt), source_file=filename)
+                try:
+                    row = task_queue.enqueue(self.root, value["id"], message["request_id"], prompt,
+                                             kind=task_kind(prompt), source_file=filename)
+                except task_queue.AdmissionPaused as exc:
+                    if card.get('admission_block')!=str(exc):
+                        card['admission_block']=str(exc)
+                        changed=True
+                    continue  # Preserve the legacy receipt; startup and cancel stay usable.
                 message["task_id"] = row["id"]
                 card["task_id"] = row["id"]
                 changed = True

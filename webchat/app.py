@@ -352,6 +352,9 @@ class Chat(TaskDispatch):
         # Extensions never see core-private state or mutable conversation objects.
         filtered = {k: copy.deepcopy(v) for k, v in value.items() if k not in excluded}
         public = {k: v for k, v in self.texting.public(filtered).items() if k not in excluded}
+        for message in public.get('messages', []):
+            message.pop('_generation', None)
+            message.pop('_reply_contract', None)
         info = self.workers.get(value["id"])
         public["reply_stopping"] = bool(info and info["cancel"].is_set())
         return public
@@ -573,9 +576,11 @@ class Chat(TaskDispatch):
             self.sessions[digest] = {"expires": now + SESSION_SECONDS, "csrf": secrets.token_urlsafe(32), "digest": digest}
             return token
 
-    def submit(self, identifier, text, request_id, provider="auto", worker=None, actor=None, attachments=None, source_voice=None):
+    def submit(self, identifier, text, request_id, provider="auto", worker=None, actor=None, attachments=None, source_voice=None, provider_mode='fallback'):
         if provider not in ("auto", "minimax", "gemini", "codex", "claude", "cursor"):
             raise RequestError(400, "Choose auto, minimax, gemini, codex, claude, or cursor.")
+        if provider_mode not in ('fallback', 'only') or provider_mode == 'only' and provider == 'auto':
+            raise RequestError(400, 'Choose one provider for provider-only mode.')
         if not isinstance(text, str):
             raise RequestError(400, "Write a message between 1 and 6,000 characters.")
         text = text.strip()
@@ -608,6 +613,7 @@ class Chat(TaskDispatch):
             for message in conversation["messages"]:
                 if message.get("request_id") == request_id:
                     if (message["content"] != text or message.get("preferred_provider", "auto") != provider
+                            or message.get('provider_mode', 'fallback') != provider_mode
                             or message.get("requested_worker") != worker
                             or message.get("attachments", []) != public_attachments):
                         raise RequestError(409, "That request ID was already used for a different message.")
@@ -622,9 +628,21 @@ class Chat(TaskDispatch):
             intent_state = chat_intent.state_for(conversation)
             was_held = bool(intent_state["holds"])
             conversation["preferred_provider"] = provider
+            conversation['provider_mode'] = provider_mode
+            import generation_budget
+            try:
+                admitted = generation_budget.binding(self.root, request_id, actor, text, require_active=False)
+            except generation_budget.AdmissionDenied:
+                # Broken or expired generation settings cannot block hold,
+                # cancel, context removal or other deterministic controls.
+                # Generation/dispatch boundaries revalidate before effects.
+                admitted = None
             user_message = {"id": str(uuid.uuid4()), "request_id": request_id, "preferred_provider": provider,
                             "role": "user", "content": text, "status": "done", "created_at": time.time(),
                             "requested_worker": worker}
+            user_message['provider_mode'] = provider_mode
+            if admitted:
+                user_message['_generation'] = admitted
             if public_attachments:
                 user_message["attachments"] = public_attachments
             reply_message = {"id": str(uuid.uuid4()), "request_id": request_id, "role": "assistant", "content": "",
@@ -994,7 +1012,22 @@ class Chat(TaskDispatch):
             cancel = threading.Event()
             if identifier in self.overlay_roots:
                 self.overlay_pins[identifier] = self.overlay_roots[identifier]
-            snapshot = copy.deepcopy(self.get(identifier))
+            value = self.get(identifier)
+            import reply_contract
+            value['messages'][-1].setdefault('_reply_contract', reply_contract.derive(value, self.redact,self.ledger_root(identifier)))
+            user = next((m for m in reversed(value['messages']) if m.get('role')=='user'), {})
+            if '_generation' not in user:
+                import generation_budget
+                try:
+                    binding = generation_budget.binding(self.root,user.get('request_id'),'saved-owner-request',user.get('content',''))
+                except generation_budget.AdmissionDenied:
+                    value['messages'][-1].update(status='error',content='The active generation allowance does not admit this reply.')
+                    self.save(value)
+                    return
+                if binding:
+                    user['_generation'] = binding
+            self.save(value)
+            snapshot = copy.deepcopy(value)
             worker = threading.Thread(target=self.complete, args=(identifier, cancel, snapshot), daemon=True)
             self.workers[identifier] = {"thread": worker, "cancel": cancel, "started_at": time.time(),
                                         "reply_id": self.get(identifier)["messages"][-1]["id"]}
@@ -1069,12 +1102,14 @@ class Chat(TaskDispatch):
                 from reply_authority import enforce
                 from status_observation import bind_observation
                 observation = {}
-                answer["content"] = self.redact(enforce(self.ledger_root(identifier), user_msg.get("content", ""), answer, value,
-                                                       observation=observation, redact=self.redact))
+                from reply_contract import deliver
+                delivered, artifact = deliver(self.ledger_root(identifier), user_msg.get('content',''), answer, value,
+                                               observation=observation, redact=self.redact)
+                answer['content'] = self.redact(delivered)
+                if artifact:
+                    answer['artifact'] = artifact
                 if observation:
                     answer["status_observation"] = bind_observation(observation, value)
-                else:
-                    answer["content"] = repair_hollow_progress(answer["content"])
                 cleaned, outbound = strip_assistant_attachment_markers(answer["content"])
                 answer.pop("attachments", None)  # Provider metadata cannot bypass ownership checks.
                 from chat_media import requested_attachment_ids
@@ -1960,6 +1995,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(202, chat.submit(
                 data.get("conversation_id"), data.get("message", ""), data.get("request_id"),
                 data.get("provider", "auto"), worker=data.get("worker"), actor=session["digest"], attachments=data.get("attachments"),
+                provider_mode=data.get('provider_mode', 'fallback'),
             ))
         if route == "/api/cancel":
             chat.stop(self.body().get("conversation_id"))

@@ -146,12 +146,18 @@ def cli(lane, prompt, cwd, coding, timeout):
     else:
         argv = [str(CURSOR), "-p", prompt, "--output-format", "json", "--trust"]
         argv += ["--force"] if coding else ["--mode", "ask"]
+    import generation_budget
+    admission = generation_budget.reserve(lane, kind='native',env=dict(os.environ,BOB_ROOT=str(CONDUCTOR.parent)))
     try:
+        if admission:
+            timeout = min(timeout,180,generation_budget.remaining(admission))
         result = run(sandbox_command(argv, cwd, read_only=not coding), cwd=str(cwd), env=clean_env(),
                      capture_output=True, text=True, timeout=timeout)
     except Exception:
+        generation_budget.settle(admission, None, status='failed_or_interrupted')
         budget.record_cli(lane, [], False, "coding" if coding else "analysis")
         raise
+    generation_budget.settle(admission, None, status='response' if result.returncode == 0 else 'failed')
     events, answers = [], []
     for line in result.stdout.splitlines():
         try:

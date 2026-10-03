@@ -109,6 +109,7 @@ def focus(conversation):
     ids = {r['request_id'] for r in references}
     answer = next((m for m in reversed(conversation.get('messages', []))
                    if m.get('role') == 'assistant' and m.get('status') == 'done'
+                   and (not m.get('_reply_contract') or m['_reply_contract']['kind'] != 'writing' or m.get('artifact',{}).get('accepted'))
                    and m.get('request_id') in ids and m.get('provider') not in ('dispatcher', 'planner', 'state')), None)
     artifact = dict(request_id=answer['request_id'], content=answer['content'][:2000],
                     truncated=len(answer['content']) > 2000) if answer else None
