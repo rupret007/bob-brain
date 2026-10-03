@@ -471,7 +471,8 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         kept = [part for part in sentences if not PROVIDER_CLAIM.search(part)]
         if len(kept) != len(sentences):
             content = "".join(kept).strip() or "What would you like me to work on?"
-    sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
+    from reported_records import units, presentation, foreign_label, foreign_subject, source_bindings, receipt
+    sentences = list(units(content))
     def asserted_permission_change(part):
         for change in PERMISSION_CHANGE.finditer(part):
             # A conditional governs its own predicate, not a subsequent
@@ -516,6 +517,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         return bool(scopes and asks_scope and not asserted_permission_change(part) and
                     (not mentioned or all(blocked_scopes(state,[name]) for name in mentioned)))
     def saved_hold_reference(part):
+        part=re.sub(r'^\s*(?:[-*+]\s+|\d+[.)]\s+)', '', part)
         # Referencing a matching saved hold is not an acknowledgment of a new
         # permission change. Effect/dispatch checks still examine all prose.
         if not scopes or asserted_permission_change(part):return False
@@ -553,51 +555,37 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         return True
     from conversation_focus import focus
     record=focus(conversation or {}) if reported else None
-    record_ids=set(re.findall(r'\b[A-Za-z][\w]*-\d+\b',' '.join(
-        e.get('content','') for e in (record or {}).get('user_excerpts',[]))))
+    bindings=source_bindings(record)
+    record_ids=set(bindings)
     # The server-bound focus supplies the referent for "its status" and
     # "the hold" across corrections. It does not authorize any real effect.
-    record_subject=bool(record_ids)
+    record_subject=next(iter(bindings),None)
     def attributed_record_hold(part):
         nonlocal record_subject
         if not reported or not record_ids:return False
-        plain=re.sub(r'[*_`]', '', part)
-        plain=re.sub(r'^\s*(?:[-+]\s+|\d+[.)]\s+)?', '', plain)
-        # Labels are presentation, never authority; effect checks above still
-        # inspect the original, and subject checks inspect the whole clause.
-        label=re.match(r'^([\w /-]{1,64}):\s*',plain)
+        label,plain=presentation(part)
+        # Neutral presentation never erases a bound record. An actual actor
+        # label breaks inheritance, but an explicit body subject may rebind it.
+        # Every effect/permission check still examines the unmodified text.
         if label:
-            structural=re.fullmatch(r'(?:(?:recorded|known|current|verified|next|safe|execution|hold|identity|source|scope|constraint|and)\s+)*(?:facts|status|state|steps?|checks?|requirements?|evidence|decision|uncertainties|match|compliance)',label[1],re.I)
-            # A heading can explicitly return to the bound task after a
-            # historical result. Keep that referent for subsequent fields.
-            # An ID appearing in an arbitrary actor's heading does not make
-            # that actor the task. Permit only structural field/question words
-            # around a bound ID, rather than enumerating foreign actor names.
-            heading_words=set(re.findall(r'[A-Za-z][\w]*(?:-\d+)?',label[1].lower()))
-            ids={i.lower() for i in record_ids}
-            field_words=set('what which must should needs need to be checked check checks before after a the result is accepted accepting for of task assignment record facts status state step steps requirement requirements evidence decision identity source scope constraint compliance match and recorded known current verified next safe execution hold uncertainties update'.split())
-            bound_heading=bool(heading_words & ids) and heading_words <= field_words | ids
-            if bound_heading:record_subject=True
-            if not structural and not bound_heading:
-                record_subject=False
-                return not bool(HOLD_CLAIM.search(plain))
-            plain=plain[label.end():]
+            if foreign_label(label,projects,WORKER_NAMES):record_subject=None
         identity='(?:'+'|'.join(re.escape(i) for i in sorted(record_ids))+')'
         subject=r'(?:(?:task|assignment|record)\s+)?'+identity
         nominal=r'(?:the|this|that)\s+(?:(?:supplied|reported|fictional|hypothetical)\s+)?(?:task|assignment|record)'
-        predicate=r'(?:(?:is|was|remains?|stays?)\b\s*)?(?:(?:still|explicitly|currently)\b\s*)?'
-        for clause in re.split(r';|\b(?:and|but|yet|however)\b',plain,flags=re.I):
+        predicate=r'(?:(?:is|was|remains?|stays?)\b\s*)?(?:(?:still|explicitly|currently)\b\s*)?(?:(?:recorded|reported|described|listed|marked)\s+as\s*)?'
+        accepted=True
+        for clause in re.split(r'[.!?;]\s*|\b(?:and|but|yet|however)\b',plain,flags=re.I):
             # A new named app/worker/real-world subject cannot inherit a
             # fictional record's state, including after a conjunction.
             if projects(clause) or re.search(r'\b(?:'+ '|'.join(re.escape(n) for n in WORKER_NAMES)+r'|your|our|my|actual|real|this chat|this conversation)\b',clause,re.I):
-                record_subject=False
-                if HOLD_CLAIM.search(clause):return False
+                record_subject=None
+                if HOLD_CLAIM.search(clause):accepted=False
                 continue
             clean_clause=re.sub(r'^\s*(?:In the (?:supplied|reported|fictional|hypothetical) (?:record|case|scenario),?\s*|(?:Because|While|Whereas)\s+)','',clause,flags=re.I).strip()
             for claim in HOLD_CLAIM.finditer(clean_clause):
                 prefix=clean_clause[:claim.start()].strip()
                 suffix=clean_clause[claim.end():].strip()
-                identified=bool(re.fullmatch(subject+r'\s*'+predicate,prefix,re.I))
+                identified=re.fullmatch(subject+r'\s*'+predicate,prefix,re.I)
                 described=bool(re.fullmatch(nominal+r'\s*'+predicate,prefix,re.I))
                 anaphor=record_subject and bool(re.fullmatch(r'(?:it|its (?:status|state)|(?:the|this|that) (?:status|state))\s*'+predicate,prefix,re.I))
                 inherited=record_subject and bool(re.fullmatch(predicate,prefix,re.I))
@@ -605,26 +593,56 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 # "the hold on the backup service" cannot borrow this scope.
                 noun=bool(re.fullmatch(r'(?:the|this|that|earlier|previous)(?:\s+(?:earlier|previous|existing|current))?\s+hold',claim[0],re.I))
                 governing=bool(re.fullmatch(r'(?:(?:maintain|keep|preserve)\s*|(?:(?:obtain|require|seek)\s+)?(?:verification|confirmation|evidence)\s+that\s*|(?:first\s+)?(?:verify|check|confirm)\s+(?:that|whether)\s*)?',prefix,re.I))
-                explicit_object=bool(re.match(r'(?:on|for|in)\s+'+subject+r'\b',suffix,re.I))
-                object_ok=not re.match(r'(?:on|for|in)\b',suffix,re.I) or explicit_object
-                noun_reference=(record_subject or explicit_object) and noun and governing and object_ok
-                if not (identified or described or anaphor or inherited and not noun or noun_reference):return False
-                record_subject=True
+                # Requirements describe evidence still needed; they do not
+                # assert that a permission change actually occurred. The
+                # separate change guard checks the entire original unit.
+                prerequisite=bool(re.search(r'\b(?:must|should|needs? to|is required to)\b',prefix,re.I)
+                    and re.search(r'\b(?:before|after)\s+(?:lifting|clearing|releasing)\s*$',prefix,re.I)
+                    and not foreign_label(prefix,projects,WORKER_NAMES))
+                explicit_object=bool(re.fullmatch(r'(?:on|for|in)\s+'+subject+r'(?:\s*(?:[,;]|(?:until|while|before|after)\b).*)?\s*[.!?]*',suffix,re.I))
+                state_modifier=bool(re.match(r'in\s+(?:place|force|effect)\b(?!\s+(?:on|for|in)\b)',suffix,re.I))
+                object_ok=not re.match(r'(?:on|for|in)\b',suffix,re.I) or explicit_object or state_modifier
+                noun_reference=(record_subject or explicit_object) and noun and (governing or prerequisite) and object_ok
+                if not (identified or described or anaphor or inherited and not noun or noun_reference):
+                    accepted=False
+                    record_subject=None
+                elif identified:
+                    record_subject=next(i for i in bindings if re.search(r'\b'+re.escape(i)+r'\b',prefix,re.I))
+                elif explicit_object:
+                    record_subject=next(i for i in bindings if re.search(r'\b'+re.escape(i)+r'\b',suffix,re.I))
             if not HOLD_CLAIM.search(clean_clause):
                 # Coordinated predicates may share an explicit preceding
                 # record subject, but not a different service's subject.
-                if re.search(r'(?:^|\bwhereas\s+)'+subject+r'\b',clean_clause,re.I):record_subject=True
-                elif re.search(r'\b(?:service|worker|reviewer|project|process|system|app|host)\s+(?:is|was|remains|has)\b',clean_clause,re.I):record_subject=False
-        return True
+                explicit=re.search(r'(?:^|\bwhereas\s+)'+subject+r'\s+(?:is|was|are|were|remains?|stays?|has|have|requires?|needs?|must|should|may|can|could|will)\b',clean_clause,re.I)
+                if explicit:record_subject=next(i for i in bindings if re.search(r'\b'+re.escape(i)+r'\b',explicit[0],re.I))
+                elif foreign_subject(clean_clause,projects,WORKER_NAMES):record_subject=None
+        return accepted
     kept=[]
+    decisions=[];offset=0
     for part in sentences:
         # Track intervening subjects even when a sentence has no hold claim.
         # Otherwise "a service is offline. It is on hold" could inherit the
         # fictional task's referent across the first sentence's short circuit.
+        context_record=record_subject
         record_hold=attributed_record_hold(part)
-        if not asserted_permission_change(part) and (not HOLD_CLAIM.search(part) or
-                held_scope_question(part) or saved_hold_reference(part) or record_hold):
+        changed=asserted_permission_change(part)
+        accepted=not changed and (not HOLD_CLAIM.search(part) or
+                held_scope_question(part) or saved_hold_reference(part) or record_hold)
+        if accepted:
             kept.append(part)
+        decisions.append(receipt(part,offset=offset,accepted=bool(accepted),
+            reason='unsupported_permission_change' if changed else 'supported_reference_or_nonclaim' if accepted else 'unbound_hold_claim',
+            subject=record_subject,bindings=bindings))
+        decisions[-1].update(context_record=context_record,context_source_bindings=bindings.get(context_record,[]))
+        offset+=len(part)
+    if conversation and (reported or len(kept)!=len(sentences)):
+        message=conversation.get('messages',[])[-1:]
+        if message and message[0].get('role')=='assistant':
+            import hashlib
+            message[0]['authority_review']=dict(partial=len(kept)!=len(sentences),units=decisions,
+                evaluated_input_sha256=hashlib.sha256(content.encode()).hexdigest(),
+                stage='hold_and_permission_after_dispatch_and_provider_filters',
+                scope='Reported-record and permission delivery checks; no execution authority')
     if len(kept) != len(sentences):
         content = "".join(kept).strip()
         # Only the saved state may explain an operational hold.
