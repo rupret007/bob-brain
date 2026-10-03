@@ -16,6 +16,8 @@ PATHS += ('webchat/bob_gaps.py',)
 PATHS += ('webchat/api_call.py',)
 PATHS += ('webchat/receiver_evidence.py',)
 PATHS += ('webchat/project_context.py', 'webchat/memory_store.py')
+PATHS += ('webchat/project_reports.py', 'state/report_contract.py', 'state/report_artifacts.py',
+          'services/subscription_report.py', 'services/command.py')
 
 
 def fingerprint(root, suite):

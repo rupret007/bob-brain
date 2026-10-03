@@ -79,6 +79,8 @@ def launch(row):
 
 def candidates(row, health):
     order = list(task_queue.worker_order(row["kind"]))
+    if row.get('report_contract'):
+        order = [lane for lane in order if lane in row['report_contract']['permitted_workers']]
     preferred = row["requested_worker"]
     if preferred in order:
         order.remove(preferred)

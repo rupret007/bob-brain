@@ -308,6 +308,18 @@ class TaskDispatch:
         rows = [row for row in task_queue.tasks(self.root).values()
                 if row.get('conversation_id') == conversation['id']]
         selected = next((row for row in rows if row['id'] == match[1]), None) if match[1] else max(rows, key=lambda row:row['created_at'], default=None)
+        pending = [m for m in conversation['messages'] if
+                   m.get('dispatch_intent', {}).get('report_contract') and not m.get('task_id')]
+        pending = [m for m in pending if not match[1] or
+                   m['dispatch_intent']['report_contract']['task_id'] == match[1]]
+        if pending and (match[1] or selected is None or pending[-1].get('created_at', 0) > selected['created_at']):
+            saved = pending[-1]
+            intent = saved.pop('dispatch_intent')
+            saved.update(cancelled_dispatch_intent=intent, content='This held report assignment was cancelled before dispatch.')
+            conversation.get('_report_inputs', {}).pop(intent['request_id'], None)
+            if (conversation.get('held_job') or {}).get('report_contract') == intent['report_contract']:
+                conversation.pop('held_job', None)
+            return self.intent_reply(conversation, 'Cancelled the held report assignment. No execution started; resuming work will not recreate it.')
         if selected is None:
             return self.intent_reply(conversation, 'There is no matching task in this conversation to cancel.')
         row = task_queue.cancel_user_task(self.root, conversation['id'], selected['id'])
@@ -323,19 +335,24 @@ class TaskDispatch:
     def submit_max_task(self, conversation, description, request_id):
         return self.submit_task(conversation, description, request_id, worker="max")
 
-    def submit_task(self, conversation, description, request_id, worker="auto", *, expected_code_identity=None, attempt_limit=None):
+    def submit_task(self, conversation, description, request_id, worker="auto", *, expected_code_identity=None, attempt_limit=None, report_contract=None, report_inputs=None):
         from app import hard_rule_refusal
         if conversation.get('answer_focus'):
             conversation['answer_focus'].update(origin=None, corrections=[])
         identifier = conversation["id"]
         message = conversation["messages"][-1]
+        held_report = conversation.get('held_job') or {}
+        if (report_contract is None and held_report.get('prompt') == description and
+                held_report.get('worker') == worker and held_report.get('report_contract')):
+            report_contract = held_report['report_contract']
+            attempt_limit = held_report.get('attempt_limit') if attempt_limit is None else attempt_limit
         # parse_start's normalized lane description preserves routing across
         # both the legacy queue and the durable dispatcher.
         lane = re.match(r"Lane: (codex|cursor-agent|cursor|claude|gemini|minimax|grok)\n(.+)", description, re.S)
-        if lane:
+        if lane and report_contract is None:
             worker, description = lane[1], lane[2]
         routed_prompt, routed_worker = parse_work(description)
-        if routed_worker != "auto":
+        if routed_worker != "auto" and report_contract is None:
             description, worker = routed_prompt, routed_worker
         held = conversation.get('held_job') or {}
         if held.get('prompt') == description and held.get('worker') == worker:
@@ -343,6 +360,29 @@ class TaskDispatch:
                 attempt_limit = held.get('attempt_limit')
             if expected_code_identity is None:
                 expected_code_identity = held.get('expected_code_identity')
+            if report_contract is None:
+                report_contract = held.get('report_contract')
+        if report_contract is not None:
+            # Resume the original accepted assignment, not the new chat turn.
+            original_request = report_contract.get('authorization_request_id', request_id)
+            try:
+                from report_contract import validate
+                report_contract = validate(report_contract, conversation_id=identifier,
+                                           request_id=original_request, prompt=description,
+                                           worker=worker, attempt_limit=attempt_limit)
+            except ValueError as exc:
+                return self.intent_reply(conversation, str(exc))
+            if report_inputs is not None:
+                import report_artifacts
+                report_artifacts.validate_inputs(report_contract, report_inputs)
+                conversation.setdefault('_report_inputs', {})[original_request] = report_inputs
+            if original_request != request_id:
+                original = next((m for m in conversation['messages'] if
+                                 m.get('dispatch_intent', {}).get('report_contract') == report_contract), None)
+                if original is None:
+                    return self.intent_reply(conversation, 'The original report assignment is unavailable. No replacement task was created.')
+                conversation.pop('held_job', None)
+                return self.intent_reply(conversation, 'Resuming the original saved report assignment; its owner, inputs and one-attempt limit are unchanged.', reconcile=True)
         state = state_for(conversation)
         names = project_targets(description, state)
         scopes = blocked_scopes(state, names)
@@ -352,6 +392,10 @@ class TaskDispatch:
                 conversation['held_job']['attempt_limit'] = attempt_limit
             if expected_code_identity is not None:
                 conversation['held_job']['expected_code_identity'] = expected_code_identity
+            if report_contract is not None:
+                conversation['held_job']['report_contract'] = report_contract
+                message['dispatch_intent'] = dict(prompt=description, worker=worker, kind='bounded-report',
+                                                 request_id=request_id, attempt_limit=1, report_contract=report_contract)
             message.update(status="done", provider="dispatcher", content=hold_reply(scopes))
             self.save(conversation)
             self.conversations[identifier] = conversation
@@ -360,13 +404,13 @@ class TaskDispatch:
             task_queue.validate_attempt_limit(attempt_limit)
             publish_project = None
             draft_pr = False
-            maximum = worker == "max"
-            project_batch = len(names) >= 2
+            maximum = worker == "max" and report_contract is None
+            project_batch = len(names) >= 2 and report_contract is None
             if attempt_limit is not None and (maximum or project_batch):
                 raise ValueError("An attempt limit requires a single task, not a task group")
             worker = "auto" if maximum else task_queue.worker_name(worker)
             kind = task_kind(max_mode.MAX_MODE.sub("", description).strip(" :,-\n") if maximum else description)
-            kind = normalize_kind(worker, kind, description)
+            kind = 'bounded-report' if report_contract is not None else normalize_kind(worker, kind, description)
             if not maximum:
                 task_queue.validate_worker(worker, "local" if worker == "mini" else kind)
             refusal = hard_rule_refusal(description)
@@ -384,7 +428,7 @@ class TaskDispatch:
             if project_batch:
                 goal, subtasks = description, project_plan(self.root, description, names, worker)
                 kind = subtasks[0]["kind"]
-            elif names and (PUSH.match(command(description)) or project_start(description)):
+            elif report_contract is None and names and (PUSH.match(command(description)) or project_start(description)):
                 package = project_plan(self.root, description, names, worker)[0]
                 description, worker, kind = package["prompt"], package["worker"], package["kind"]
                 publish_project = package.get("publish_project")
@@ -403,6 +447,8 @@ class TaskDispatch:
             intent['expected_code_identity'] = expected_code_identity
         if attempt_limit is not None:
             intent['attempt_limit'] = attempt_limit
+        if report_contract is not None:
+            intent['report_contract'] = report_contract
         if maximum or project_batch:
             intent.update(goal=goal, subtasks=subtasks)
         if project_batch:
@@ -436,6 +482,15 @@ class TaskDispatch:
                             changed = True
                         continue
                     try:
+                        if intent.get('report_contract'):
+                            import report_artifacts
+                            sources = value.get('_report_inputs', {}).get(intent['request_id'])
+                            if sources is not None:
+                                report_artifacts.save_inputs(self.root, intent['report_contract'], sources)
+                                value['_report_inputs'].pop(intent['request_id'])
+                                changed = True
+                            else:
+                                report_artifacts.load_inputs(self.root, intent['report_contract'])
                         if intent.get("subtasks"):
                             rows = max_mode.enqueue(self.root, identifier, intent,
                                                     permission_file=self.state / (identifier + '.json'))
@@ -455,7 +510,8 @@ class TaskDispatch:
                                                  permission_file=self.state / (identifier + '.json'),
                                                  project_scopes=intent.get('assignment_projects') or project_targets(intent['prompt'], state),
                                                  expected_code_identity=intent.get('expected_code_identity'),
-                                                 attempt_limit=intent.get('attempt_limit'))
+                                                 attempt_limit=intent.get('attempt_limit'),
+                                                 report_contract=intent.get('report_contract'))
                         message.update(task_id=row["id"], status="done", provider="dispatcher",
                                        content=task_receipt(row),
                                        action_card={"id": message["request_id"], "state": "queued", "executable": False,
@@ -533,6 +589,10 @@ class TaskDispatch:
                                                   content=self.redact(content), created_at=time.time(),
                                                   task_status=row["status"], claimed_at=row.get("claimed_at"),
                                                   started_at=row.get("started_at"), finished_at=row["finished_at"]))
+                    if row.get('report_contract'):
+                        contract = row['report_contract']
+                        value['messages'][-1]['project_dependencies'] = [dict(
+                            project_id=contract['goal_id'].removeprefix('project-'), revision=contract['goal_revision'])]
                     for message in value["messages"]:
                         if message.get("task_id") == row["id"] and message.get("action_card"):
                             message["action_card"].update(state="done" if success else "blocked", worker=row["worker"])

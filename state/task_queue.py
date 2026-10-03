@@ -166,6 +166,9 @@ def tasks(root):
 
 
 def worker_order(kind):
+    if kind == 'bounded-report':
+        from report_contract import WORKERS
+        return WORKERS
     if kind in REPORT_KINDS:
         return ("gemini",) if kind == "research" else (("gemini", "minimax") if kind in ("audit", "planning") else ("minimax", "gemini"))
     return {"coding": ("codex", "cursor"), "artifact": ("codex", "cursor", "claude"), "local": ("mini",),
@@ -196,17 +199,23 @@ def validate_attempt_limit(attempt_limit):
 def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="analysis", source_file=None,
             group_id=None, group_size=None, group_index=None, group_goal=None, title=None, local_suite=None,
             publish_project=None, draft_pr=False, source_job_id=None, permission_file=None, project_scopes=None,
-            expected_code_identity=None, attempt_limit=None):
+            expected_code_identity=None, attempt_limit=None, report_contract=None):
     validate_attempt_limit(attempt_limit)
     worker = worker_name(worker)
     if worker == "mini":
         kind = "local"
     kind = normalize_kind(worker, task_kind(kind, prompt), prompt)
-    if kind not in ("analysis", "inspection", "coding", "artifact", "local", *REPORT_KINDS) or not prompt.strip():
+    if kind not in ("analysis", "inspection", "coding", "artifact", "local", "bounded-report", *REPORT_KINDS) or not prompt.strip():
         raise ValueError("Task needs a description and a supported kind")
     if kind == "artifact" and not file_request(prompt):
         raise ValueError("Small file tasks require an explicit text and /tmp file destination")
     validate_worker(worker, kind)
+    if report_contract is not None or kind == 'bounded-report':
+        from report_contract import validate
+        if kind != 'bounded-report' or any((group_id, publish_project, draft_pr, local_suite, expected_code_identity)):
+            raise ValueError('A bounded report must be one scoped report task, without other effects')
+        report_contract = validate(report_contract, conversation_id=conversation_id, request_id=request_id,
+                                   prompt=prompt, worker=worker, attempt_limit=attempt_limit)
     if publish_project is not None and (kind != "coding" or publish_project not in ("WebJam", "AdoptIQ", "StoryBoard", "Fantasy Football", "Shelf", "Web Bob")):
         raise ValueError("Draft publication requires an explicit coding project")
     if draft_pr and not publish_project:
@@ -228,6 +237,8 @@ def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="a
                 raise ValueError('This request ID belongs to a different source revision')
             if row.get('attempt_limit') != attempt_limit:
                 raise ValueError('This request ID already has a different attempt limit')
+            if row.get('report_contract') != report_contract:
+                raise ValueError('This request ID already has a different report contract')
             if permission_file:
                 if row.get('permission_file') and (row['permission_file'] != str(permission_file)
                         or row.get('project_scopes', []) != list(project_scopes or [])):
@@ -252,6 +263,7 @@ def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="a
                                  permission_file=str(permission_file) if permission_file else None,
                                  project_scopes=list(project_scopes or []),
                                  expected_code_identity=expected_code_identity,
+                                 report_contract=report_contract,
                                  attempt_limit=attempt_limit, tried_workers=[],
                                  max_attempts=attempt_limit if attempt_limit is not None else max(MAX_ATTEMPTS, len(worker_order(kind))),
                                  worker=None, claim_token=None, lease_until=0, retry_at=0), "enqueued")
@@ -320,11 +332,15 @@ def claim(root, worker, now=None, *, identifier=None, allow_fallback=False, limi
                 continue
             if worker not in worker_order(row["kind"]):
                 continue
+            if row.get('report_contract') and worker not in row['report_contract']['permitted_workers']:
+                continue
             if row.get("group_id") and not group_complete([r for r in rows.values() if r.get("group_id") == row["group_id"]]):
                 continue  # Saved intent repairs an interrupted multi-row append before dispatch.
             row.update(status="claimed", worker=worker, claim_token=uuid.uuid4().hex,
                        claimed_at=now, lease_until=now + LEASE_SECONDS, attempts=row["attempts"] + 1,
                        pid=None, started_at=None, execution_started_at=None, error=None)
+            if row.get('report_contract'):
+                row['execution_deadline'] = now + row['report_contract']['timeout_seconds']
             return _append(path, row, "claimed", now)
     return None
 
@@ -392,6 +408,28 @@ def recover(root, worker_alive, now=None):
                 row["finished_at"] = now
             changed.append(_append(path, row, "recovered", now))
     return changed
+
+
+def publish_report(root, identifier, token, save_artifact, **fields):
+    """Fence the bounded report's sole effect and completion under one lock.
+
+    Cancellation cannot race a file publication. An interrupted write is not a
+    completed task, and one-attempt recovery never reruns the provider.
+    """
+    with locked(root) as path:
+        row = _read(path).get(identifier)
+        now = time.time()
+        if (not row or row['status'] not in ACTIVE or row.get('claim_token') != token or
+                row.get('lease_until', 0) <= now or row.get('execution_deadline', 0) <= now):
+            return None
+        if not row.get('report_contract') or not fields.get('result') or not fields.get('result_sha256'):
+            raise ValueError('Only a complete bounded report can use artifact publication')
+        save_artifact()
+        now = time.time()
+        if now >= row['execution_deadline']:
+            raise RuntimeError('The report deadline expired during artifact verification')
+        row.update(fields, status='succeeded', finished_at=now, heartbeat_at=now, lease_until=0)
+        return _append(path, row, 'succeeded', now)
 
 
 def delivered(root, identifier, message_id):

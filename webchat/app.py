@@ -347,7 +347,7 @@ class Chat(TaskDispatch):
 
     def public(self, value):
         excluded = {"_coordination_outbox", "_coordination_excluded", "_coordination_prepared_batches", "codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job",
-                    "pending_memory", "pending_memory_id", "pending_memory_removal", "_project_edit", "_project_removal", "_project_intent"}
+                    "pending_memory", "pending_memory_id", "pending_memory_removal", "_project_edit", "_project_removal", "_project_intent", "_report_inputs"}
         # Extensions never see core-private state or mutable conversation objects.
         filtered = {k: copy.deepcopy(v) for k, v in value.items() if k not in excluded}
         public = {k: v for k, v in self.texting.public(filtered).items() if k not in excluded}
@@ -736,6 +736,10 @@ class Chat(TaskDispatch):
                 cancelled_task = self.cancel_task_turn(conversation, text)
                 if cancelled_task is not None:
                     return cancelled_task
+                from project_reports import handle as project_report_turn
+                report_reply = project_report_turn(self, conversation, text, request_id)
+                if report_reply is not None:
+                    return report_reply
                 from self_improvement import handle as improvement_turn
                 improvement = improvement_turn(self, conversation, text, request_id)
                 if improvement is not None:

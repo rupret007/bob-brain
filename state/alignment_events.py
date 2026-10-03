@@ -270,6 +270,12 @@ def record_task_result(root: Path, row: dict, redact=lambda text:text) -> int:
     record.update(accepted_result=accepted, acceptance_method=acceptance.get('method'),
                   result_excerpt=result[:1500], error=row.get('error'),
                   artifact_verification='Use the saved result and acceptance records; this projection does not reinspect files.')
+    if row.get('report_contract'):
+        contract = row['report_contract']
+        record.pop('result_excerpt', None)
+        record.update(goal_id=contract['goal_id'], goal_revision=contract['goal_revision'],
+                      contract_sha256=contract['contract_sha256'],
+                      result_access='Private report; inspect explicitly against current owner context.')
     record = json.loads(redact(json.dumps(record, ensure_ascii=False)))
     return append_event(root, actor='web-bob', kind='task-result', event_id='task-result:' + row['id'],
                         summary='Task ' + row['id'] + ': ' + row['status'] +

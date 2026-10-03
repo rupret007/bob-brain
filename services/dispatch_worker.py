@@ -132,6 +132,11 @@ def execute(identifier, token):
 
             heartbeat = threading.Thread(target=renew, daemon=True)
             heartbeat.start()
+            if row['kind'] == 'bounded-report':
+                import subscription_report
+                result = subscription_report.execute(ROOT, row, token, redact)
+                stopped.set()
+                return result
             review = (pr_evidence.load(row["prompt"], project_catalog())
                       if row["kind"] in ("analysis", "review") else None)
             folder = CONDUCTOR / "state/task-runs" / identifier
@@ -307,7 +312,10 @@ def execute(identifier, token):
             return 0 if result else 1
     except BlockingIOError:
         if owns_task:
-            task_queue.transition(ROOT, identifier, token, "busy", error="Waiting for the shared worker lane")
+            current = task_queue.tasks(ROOT).get(identifier, {})
+            started = bool(current.get('execution_started_at'))
+            task_queue.transition(ROOT, identifier, token, 'retry' if started else 'busy',
+                                  error='Execution interrupted by an I/O failure' if started else 'Waiting for the shared worker lane')
         return 0
     except ResultRejected as exc:
         message = redact(str(exc))[:1500]
