@@ -427,6 +427,20 @@ class IntentTests(Fixture):
         answer = lambda content: enforce(self.root, 'Help choose the report scope for Web Bob.',
                                         dict(provider='gemini', content=content), value)
         self.assertIn(question, answer('The report can compare saved evidence.\n\n' + question))
+        for labelled in (
+            '* **Audit Data Boundary:** When you release the hold, should the Web Bob report inspect saved event logs or static fixtures?',
+            '- __Remaining choice:__ Before you lift the hold, could the Web Bob report compare both evidence sources?',
+            '1. **Scope:** Would the Web Bob report cover both sources after you lift the hold?',
+        ):
+            with self.subTest(labelled=labelled):
+                self.assertEqual(answer(labelled),labelled)
+                self.assertNotIn('WebJam', answer(labelled.replace('Web Bob','WebJam')))
+                for extra in (' I cleared the hold.', ' I queued the report.', ' webchat-'+'c'*32):
+                    self.assertNotIn(extra.strip(),answer(labelled+extra))
+        bad_label='* **I cleared the hold:** Should the Web Bob report inspect saved logs?'
+        self.assertNotIn('I cleared the hold',answer(bad_label))
+        bad_label='* **I queued the report:** Should the Web Bob report inspect saved logs after you lift the hold?'
+        self.assertNotIn('I queued the report',answer(bad_label))
         self.assertNotIn('WebJam', answer(question.replace('Web Bob', 'WebJam')))
         self.assertNotIn('I queued', answer(question + ' I queued the report task.'))
         self.assertNotIn('lifted', answer('The hold is lifted; which evidence scope should the Web Bob report inspect first?'))

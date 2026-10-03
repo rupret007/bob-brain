@@ -13,6 +13,46 @@ import task_queue
 
 
 class PersistentConversationTests(SessionFixture):
+    def test_qualification_purpose_and_denied_assumption_are_not_dispatch(self):
+        from dispatch_receipts import claims_dispatch
+        allowed=(
+            'If we evaluate another route, we will run a bounded comparison to ensure reasoning depth meets the standard.',
+            'Dot cannot assume background work has already started, nor that ownership is active until acceptance.',
+            'A receipt does not establish that your assigned task has already been queued.',
+            'The checkpoint cannot prove background work is currently running.',
+        )
+        for content in allowed:
+            with self.subTest(content=content):
+                self.assertFalse(claims_dispatch(content))
+                self.assertEqual(enforce(self.root,'Explain the proposal.',dict(provider='gemini',content=content)),content)
+                for extra in (' I queued the review.', ' We will ensure Claude stays busy.',
+                              ' Receipt: webchat-'+'a'*32):
+                    self.assertTrue(claims_dispatch(content+extra),content+extra)
+        for content in (
+            'We will ensure Claude stays busy.',
+            'We will inspect the report and ensure Claude stays busy.',
+            'We will inspect the report and will ensure Claude stays busy.',
+            'We will inspect the report and then ensure Claude stays busy.',
+            'We will inspect the log to understand the failure and will ensure Claude stays busy.',
+            'Work has already started.',
+            'Dot cannot assume background work has already started, but it has now been queued.',
+            'Dot cannot assume background work has already started, but has been queued.',
+            'Dot cannot assume background work has already started, but is now in progress.',
+            'Dot cannot assume background work has already started, but it is now running.',
+            'Dot cannot assume background work has already started, but is currently working.',
+            'Dot cannot assume background work has already started, but has been picked up.',
+            'Dot cannot assume background work has already started; it is now running.',
+            'Dot cannot assume background work has already started — it is now working.',
+            'A receipt does not establish that your assigned task has already been queued, but has now been dispatched.',
+        ):
+            self.assertTrue(claims_dispatch(content),content)
+        progress='Dot cannot assume background work has already started, but is now in progress.'
+        self.assertTrue(claims_dispatch(progress,reference='Explain the proposed review.'))
+        for modal in ('may','might','could'):
+            uncertain='The evidence does not prove background work has started, but it '+modal+' be running.'
+            self.assertFalse(claims_dispatch(uncertain),uncertain)
+            self.assertTrue(claims_dispatch(uncertain[:-1]+', and it is now working.'))
+
     def test_proposals_and_queue_nouns_do_not_excuse_later_actual_effects(self):
         from dispatch_receipts import claims_dispatch
         for prose in ('We can safely delegate bounded reviews.',

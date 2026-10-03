@@ -464,10 +464,13 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         # Preserve that question, not arbitrary model status or permission
         # claims; the ordinary effect guard has already run above.
         mentioned=projects(part)
-        question=part.strip().lstrip('*- ').strip()
+        question=re.sub(r'^\s*(?:[-*+]\s+|\d+[.)]\s+)?', '', part).strip()
+        # Normalize a bounded Markdown label for recognition only. Every
+        # effect/permission check still sees the original, including its label.
+        question=re.sub(r'^(?:\*\*[^*\n!?]{1,64}:\*\*|__[^_\n!?]{1,64}:__)\s*', '', question)
         asks_scope=re.fullmatch(r'(?:(?:when|if|before|once)\b[^,;!?]{0,180},\s*)?'
-                               r'(?:which|what)\b[^;!?]*\?',question,re.I)
-        return bool(scopes and asks_scope and not asserted_permission_change(question) and
+                               r'(?:which|what|should|could|would|can)\b[^;!?]*\?',question,re.I)
+        return bool(scopes and asks_scope and not asserted_permission_change(part) and
                     (not mentioned or all(blocked_scopes(state,[name]) for name in mentioned)))
     kept = [part for part in sentences if not asserted_permission_change(part) and
             (not HOLD_CLAIM.search(part) or held_scope_question(part))]

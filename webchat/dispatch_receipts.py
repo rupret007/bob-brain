@@ -20,6 +20,19 @@ ACTOR_PREDICATE = (r"(?:['’](?:ve|ll|d|m|re|s))?\s*(?:[*_]*\s*:\s*[*_]*\s*)?"
                    r"just|now|already|also|still|finally|[a-z]+ly|been|being|get|got)\s+){0,6}")
 CAUSATIVE = r'(?:(?:ask(?:ed)?|tell|told|instruct(?:ed)?|use[ds]?)\s+(?:Bob|'+WORKERS+r')\s+to\s+)'
 ACTOR_EFFECT = ACTOR + ACTOR_PREDICATE + r'(?:'+CAUSATIVE+r')?' + EFFECT + r"\b"
+# An undertaking governs its predicate. A purpose infinitive later in a
+# proposed comparison ("run a test to ensure ...") is not that undertaking.
+# Preserve coordinated promises rather than matching only the first verb.
+UNDERTAKING = r"(?:make sure|ensure|utiliz\w*|prioritiz\w*|keep [^.!?\n]{0,35}busy|maximize|adding work)"
+FUTURE_ACTOR = r"\b(?:I['’]ll|I will|we['’]ll|we will|the system (?:will|is))\s+"
+COMMITMENT = (FUTURE_ACTOR +
+              r"(?:(?:now|also|always|actively|definitely|certainly)\s+){0,3}"
+              r"(?:" + UNDERTAKING + r"|"
+              r"(?:(?!\b(?:to|if|when|unless)\b)[^.;!?\n]){1,100}"
+              r"\b(?:and|then|but|yet)\s+(?:will\s+)?"
+              r"(?:(?:now|also|always|actively|definitely|certainly)\s+){0,3}" + UNDERTAKING + r")|"
+              + FUTURE_ACTOR + r"[^.;!?\n]{0,160}\b(?:and|then|but|yet)\s+will\s+"
+              r"(?:(?:now|also|always|actively|definitely|certainly)\s+){0,3}" + UNDERTAKING)
 CLAIM = re.compile(
     ACTOR_EFFECT + r"|"
     + BARE_EFFECT + r"|"
@@ -27,8 +40,7 @@ CLAIM = re.compile(
     r"[^.!?\n]{0,30}\b" + EFFECT + r"\b|"
     r"\b(?:work|jobs?|tasks?|reviews?|audits?|tests?)\b[*_]*\s*:\s*[*_]*\s*"
     r"(?:(?:has|have|is|are|was|were|been|now|just|already)\s+){0,4}" + EFFECT + r"\b|"
-    r"\b(?:I['’]ll|I will|we['’]ll|we will|the system (?:will|is))\b[^.!?\n]{0,100}"
-    r"\b(?:make sure|ensure|utiliz|prioritiz|keep .{0,35}busy|maximize|adding work)|"
+    + COMMITMENT + r"|"
     r"\b" + WORKERS + r"\b[^.;!?\n]{0,45}\b(?:is|are) (?:now )?(?:working|running|busy|on it)\b|"
     r"\b(?:I['’]ve|I have|we['’]ve|we have) (?:put|got|set)\b[^.!?\n]{0,60}\b(?:working|busy|work|task|job)\b",
     re.I,
@@ -54,8 +66,9 @@ REFERENCE_TARGET = (r"\b(?:your|our|my)\s+(?:" + TARGET_MODIFIER + r"){0,4}(?:jo
                     r"(?:" + TARGET_MODIFIER + r"){1,4}(?:job|task)\b")
 ASSERTION_AUX = r"(?:is|are|was|were|has|have|had|be|been|being|will|would|shall|should|can|could|may|might|must|get|gets|got)"
 ASSERTION_ADVERB = r"(?:now|just|already|still|also|then|[a-z]+ly)"
+CONTINUATION_JOIN = r'(?:\b(?:and|then|but|yet)|[;–—])\s+'
 COORDINATED_EFFECT = re.compile(
-    r'(?:\b(?:and|then|but|yet)|[;–—])\s+'
+    CONTINUATION_JOIN +
     r'(?:(?:I|we|he|she|it|they)\s+)?'
     r'(?:(?:' + ASSERTION_AUX + r'|' + ASSERTION_ADVERB + r')\s+){0,4}' + EFFECT + r'\b', re.I)
 QUEUE_STATE = (r"in\s+(?:(?:a|an|the|my|your|our|this|that|[\w]+['’]s)\s+)?"
@@ -164,14 +177,26 @@ def unasserted_prose(prose):
             r'dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|'
             + PLACEMENT_VERB + r'|kick(?:ed|ing)? off|running|working|in progress|picked up)\b')
     denial = (r"\b(?:(?:does|do|did|would|could)(?: not|n['’]t)|cannot|can['’]t)\s+"
-              r"(?:prove|establish|show|confirm|mean|demonstrate|indicate)\b|"
+              r"(?:prove|establish|show|confirm|mean|demonstrate|indicate|assume)\b|"
               r"\bno (?:evidence|proof|record)\s+(?:shows?|proves?|establishes?|confirms?|that)\b|"
               r"\bnot that\b")
-    subject = (r'(?:(?:the|a|your|our|my|this|that)\s+)?(?:work|jobs?|tasks?|tests?)|'
+    subject = (r'(?:(?:the|a|your|our|my|this|that)\s+)?'
+               r'(?:(?:background|bounded|pending|requested|assigned)\s+){0,2}(?:work|jobs?|tasks?|tests?)|'
                r'I|we|Bob|' + WORKERS)
-    predicate = (r'\s+(?:that\s+)?(?:' + subject + r')\s+'
-                 r'(?:(?:has|have|had|is|are|was|were)\s+)?(?:been\s+)?' + verb)
-    prose = re.sub(r'(?:' + denial + ')' + predicate, 'unproven assertion', prose, flags=re.I)
+    proposition = (r'(?P<prefix>(?:' + denial + r')\s+(?:that\s+)?(?:' + subject + r')\s+)'
+                   r'(?:(?:has|have|had|is|are|was|were|been|being|already|now|currently|just)\s+){0,4}' + verb)
+    def denied_proposition(match):
+        end=re.search(r'[.!?\n]',prose[match.end():])
+        tail=prose[match.end():match.end()+end.start()] if end else prose[match.end():]
+        # Keep the subject when a later shared-subject affirmative needs it.
+        # Otherwise this immediate denied proposition is explanatory data;
+        # its complementizer ("not that work...") is not a deictic owner.
+        affirmative=re.compile(CONTINUATION_JOIN +
+                               r'(?:(?:it|they)\s+)?(?:(?:'+ASSERTION_AUX+r'|'+ASSERTION_ADVERB+r')\s+){0,4}'+verb,re.I)
+        if affirmative.search(tail):
+            return match['prefix']+'has no established action'
+        return 'unproven assertion'
+    prose = re.sub(proposition, denied_proposition, prose, flags=re.I)
     # Auxiliary negation belongs to this predicate only, not the sentence.
     prose = re.sub(r"\b(?:(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|should)"
                    r"(?: not|n['’]t)|cannot|won['’]t|can['’]t|shan['’]t)\s+"
@@ -364,7 +389,16 @@ def claims_dispatch(text, *, reference=''):
     inherited=inherited or bool(re.search(ACTOR,actor_prose,re.I) and completed_continuation.search(actor_prose))
     inherited=inherited or bool(re.search(r"\b(?:I|we)(?:['’]ll| will| have| did)\b",actor_prose,re.I) and causative_continuation.search(actor_prose))
     checked=dispatch_prose(text,reference=reference)
+    # The normalized denied subject may be shared by a later progress claim.
+    # The denial itself stays nonassertive; only its affirmative continuation
+    # is counted, with no exemption for reference prose.
+    progress_continuation=re.compile(CONTINUATION_JOIN + r'(?:(?:it|they)\s+)?'
+                                    r'(?:(?:is|are|was|were|has|have|had|been|being|be|will|must|'+ASSERTION_ADVERB+r')\s+){0,4}'
+                                    r'(?:running|working|in progress|picked up)\b',re.I)
+    denied_progress=any(progress_continuation.search(match['tail']) for match in re.finditer(
+        r'has no established action(?P<tail>[^.!?\n]*)',original,re.I))
     return bool(DIRECT_CLAIM.search(actor_prose) or JOB_ID.search(original) or inherited
+                or denied_progress
                 or claim.search(checked if reference else verbal_effects(checked)))
 
 

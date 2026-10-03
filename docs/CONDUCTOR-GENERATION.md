@@ -27,6 +27,10 @@ counter and bounded runtime; their internal requests and invoice charges may be
 unknown. Source restrictions, provider eligibility, deadlines, held assignments
 and replay identities survive restarts. Direct service calls observe the same
 private policy even when not reached through the conversation wrapper.
+Routine dispatcher refresh defers Cursor's native status command while a goal
+allowance is selected (or attribution is invalid). It records authentication as
+unverified instead of consuming repeated unassigned metadata invocations. A
+needed native capability check must be explicitly admitted under that allowance.
 
 Stop, hold, cancel, context correction and removal remain usable with expired
 or malformed generation settings. New generation and task dispatch fail closed.
