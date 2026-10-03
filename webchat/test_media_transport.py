@@ -56,9 +56,11 @@ class MediaTransportTests(unittest.TestCase):
             for text in ('Explain this term: conditional acceptance.', 'Compare the scores: 4 and 6.', 'Draft a friendly welcome.'):
                 conversation['messages'] = [dict(role='user', status='done', content=text)]
                 provider.call('gemini', provider.prompt(conversation), None, threading.Event())
-            self.assertEqual([p.get('thinking_budget') for p in captured], [None, None, 0])
-            self.assertEqual([p.get('thinking_level') for p in captured], ['high', 'high', None])
-            self.assertEqual([p['model_id'] for p in captured], ['gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-2.5-flash'])
+            conversation['messages'][-1].update(voice_call_id='call',voice_turn_id='turn')
+            provider.call('gemini', provider.prompt(conversation), None, threading.Event())
+            self.assertEqual([p.get('thinking_budget') for p in captured], [None, None, None, 0])
+            self.assertEqual([p.get('thinking_level') for p in captured], ['high', 'high', 'high', None])
+            self.assertEqual([p['model_id'] for p in captured], ['gemini-3.8-flash']*3+['gemini-2.5-flash'])
             self.assertTrue(all('Transport format:' not in p['system'] for p in captured))
             self.assertNotIn('bob-webchat-attachment', captured[0]['system'])
             for value in (-1, 100000, True, '1024'):

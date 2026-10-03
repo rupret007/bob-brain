@@ -1,8 +1,8 @@
 # Solo Web Bob releases
 
-Typed answer turns requiring reasoning or precise output use Gemini 3.8 Flash
+Typed conversational answer turns, including short contextual follow-ups, use Gemini 3.8 Flash
 with high thinking through the existing metered generateContent path. Ordinary,
-voice and image turns retain their checked Gemini 2.5 profile; this adds no tools.
+operational, voice and image turns retain their checked Gemini 2.5 profile; this adds no tools.
 The API uses native completed final text instead of asking the model to write
 XML transport tags. Short native answers are valid; empty, thought-only and
 truncated responses still fail. Legacy worker extraction is unchanged.

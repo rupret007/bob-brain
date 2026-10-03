@@ -625,10 +625,14 @@ class ProviderTests(Fixture):
         (folder / "HANDBACK-SUMMARY.md").write_text("# HANDBACK-SUMMARY\n\n## Running\n- council review\n")
         provider = self.provider()
         value = self.chat.conversations[self.identifier]
-        value["messages"] = [{"role": "user", "content": "hey", "status": "done"}]
+        value["messages"] = [{"role": "user", "content": "quick status?", "status": "done"}]
         prompt = provider.prompt(value, fast=True)
         self.assertIn("handoff-digest", prompt)
         self.assertIn("council review", prompt.lower())
+        value["messages"] = [{"role": "user", "content": "hey", "status": "done"}]
+        greeting = provider.prompt(value, fast=True)
+        self.assertNotIn("handoff-digest", greeting)
+        self.assertNotIn("council review", greeting.lower())
 
     def test_live_status_snapshot_builder_reads_jobs_and_lanes(self):
         from live_status_snapshot import build_live_status_snapshot
@@ -762,12 +766,18 @@ class ProviderTests(Fixture):
         (self.root / "bob-brain/memory/profile.md").write_text("Jeff's memory")
         value = self.chat.conversations[self.identifier]
         value["messages"] = [{"role": "user", "content": "turn-%02d" % i, "status": "done"} for i in range(25)]
+        value["messages"][-1]["content"] += ": From BOB-STATE: what is the current handoff?"
         prompt = self.provider().prompt(value)
         self.assertIn("Current hard rules", prompt)
         self.assertIn("Jeff's memory", prompt)
         self.assertNotIn("turn-04", prompt)
         self.assertIn("turn-05", prompt)
         self.assertIn("turn-24", prompt)
+        value["messages"][-1]["content"] = "turn-24"
+        ordinary = self.provider().prompt(value)
+        self.assertNotIn("Current hard rules", ordinary)
+        self.assertNotIn("Jeff's memory", ordinary)
+        self.assertIn("turn-24", ordinary)
 
     def test_parent_tokens_are_not_forwarded(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test", "CODEX_THREAD_ID": "parent", "CURSOR_API_KEY": "test", "GITHUB_TOKEN": "test"}):

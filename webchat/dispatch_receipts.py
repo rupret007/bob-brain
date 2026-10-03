@@ -17,7 +17,7 @@ CLAIM = re.compile(
     r"[^.!?\n]{0,30}\b" + EFFECT + r"\b|"
     r"\b(?:I['’]ll|I will|we['’]ll|we will|the system (?:will|is))\b[^.!?\n]{0,100}"
     r"\b(?:make sure|ensure|utiliz|prioritiz|keep .{0,35}busy|maximize|adding work)|"
-    r"\b" + WORKERS + r"\b.{0,45}\b(?:is|are) (?:now )?(?:working|running|busy|on it)\b|"
+    r"\b" + WORKERS + r"\b[^.;!?\n]{0,45}\b(?:is|are) (?:now )?(?:working|running|busy|on it)\b|"
     r"\b(?:I['’]ve|I have|we['’]ve|we have) (?:put|got|set)\b[^.!?\n]{0,60}\b(?:working|busy|work|task|job)\b",
     re.I,
 )
@@ -76,7 +76,7 @@ REFERENCE_EFFECT = re.compile(
     r"(?=[^.;!?\n]{0,120}\b(?:now|just|already|currently|today|here)\b)" + TARGET_PREDICATE, re.I)
 DIRECT_CLAIM = re.compile(
     r"\b(?:I|we|Bob|" + WORKERS + r")\b[^.!?\n]{0,90}\b" + EFFECT + r"\b|"
-    r"\b" + WORKERS + r"\b.{0,45}\b(?:is|are) (?:now )?(?:working|running|busy|on it)\b|"
+    r"\b" + WORKERS + r"\b[^.;!?\n]{0,45}\b(?:is|are) (?:now )?(?:working|running|busy|on it)\b|"
     r"\b(?:I['’]ve|I have|we['’]ve|we have) (?:put|got|set)\b[^.!?\n]{0,60}\b(?:working|busy|work|task|job)\b",
     re.I,
 )
@@ -133,6 +133,11 @@ def unasserted_prose(prose):
     its original wording. Contrast, coordination and punctuation end the scope;
     a disclaimer cannot shelter an appended action or receipt.
     """
+    # An exact zero-count noun phrase cannot acknowledge a positive effect.
+    # Replace only that phrase; preserve a following actor, ID or predicate.
+    prose = re.sub(r'\b(?:0|zero|no)\s+(?:(?:live|active|claimed|queued|running)\s+){0,3}'
+                   r'(?:workers?|jobs?|tasks?)\b(?:\(s\))?(?:\s+(?:running|queued|claimed))?',
+                   'no recorded items',prose,flags=re.I)
     # Match one immediate predicate, never a tail of arbitrary words. In
     # particular, EFFECT contains object-spanning forms such as create...job
     # that must not be used to erase the scope of a negation.

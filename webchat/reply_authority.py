@@ -14,7 +14,9 @@ DIRECT_QUEUE_CLAIM = re.compile(
     r"\b(?:codex|claude|cursor|gemini|minimax)(?:['’]s|\s+(?:is|has started))\s+(?:working|running|reviewing|fixing|on it)\b|"
     r"\b(?:codex|claude|cursor|gemini|minimax)\s+has\s+(?:your|the|this)\s+(?:[\w-]+\s+){0,6}(?:job|task|work|review)\b", re.I)
 QUEUE_CLAIM = re.compile(DIRECT_QUEUE_CLAIM.pattern + r"|"
-    r"\b(?:job|task|council|work)\b.{0,120}\b(?:created|queued|scheduled|launched|started|assigned|builder inbox|picked up|in progress|running)\b"
+    r"\b(?:job|task|council)\b[^.;!?\n]{0,120}\b(?:created|queued|scheduled|launched|started|assigned|builder inbox|picked up|in progress|running)\b"
+    r"(?!\s+(?:when|if|until)\b)|"
+    r"\bwork\s+(?:is|was|has been|is now)\s+(?:created|queued|scheduled|launched|started|assigned|picked up|in progress|running)\b"
     r"(?!\s+(?:when|if|until)\b)", re.I)
 NO_JOB_NOTICE = re.compile(
     r"\bno (?:server[- ]confirmed )?(?:jobs?|tasks?)\s+(?:(?:was|were|has been|are)\s+)?(?:created|queued|started|running)\b|"

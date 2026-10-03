@@ -33,6 +33,22 @@ so ordinary conversational answers can use it without loading the whole journal.
 Context is source data, never permission. Task ownership, holds and effects remain
 owned by the existing queue; the report/handoff contracts are separate work.
 
+The coordination direction is one conductor, exposed through Web Bob, with one
+accepted owner per assignment. A provider answers or executes its bounded task;
+it does not silently become another release owner or start competing work.
+Capability observations distinguish supported operations, authentication, reach,
+freshness, billing and unknown quota. Use more resources when their distinct work
+helps the objective; simultaneous activity alone is not progress. Quality evidence
+must support a route choice before it replaces an established capable route.
+
+This foundation uses the existing queue and journal, not a second scheduler.
+Bounded report work currently has one qualified adapter design (Claude); real
+subscription execution and report quality still need release-specific proof.
+Dot/Grok exports remain prepared and unaccepted until an actual receiver returns
+bound evidence. Acknowledging history does not execute it. Automatic native
+dispatch, continuously verified capacity and broad capability-based scheduling
+are not established by this milestone's local context or handoff contracts.
+
 Reuse review: Andrea's qualified83623dd8 source includes `grounded-memory.ts`
 (`reconcileGroundedMemory`, `buildGroundedContextBundle`) and
 `durable-work-continuity.ts`. Their useful semantics—explicit source types,

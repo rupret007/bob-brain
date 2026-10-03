@@ -5,6 +5,7 @@ and artifact verification is distinct from a human judgment of report quality.
 """
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -90,8 +91,57 @@ def subscription(env, row):
                 billing_limit='No included-only enforcement flag; actual invoice and extra-usage state unverified')
 
 
-def parse_events(result):
-    events, models, finals, initial = [], set(), [], []
+def zero_subagents(value):
+    if value is None:
+        return True
+    if not isinstance(value,dict):
+        return False
+    simple={'spawned','started_in_background','max_depth','spawned_by_subagents','completed','failed'}
+    nested={'requested':{'background','foreground','unset'},'killed':{'parent','user','system'},
+            'refused':{'depth_limit','concurrency_limit','budget'}}
+    if set(value)-simple-set(nested)-{'by_type'}:
+        return False
+    for key,item in value.items():
+        if key in simple:
+            if type(item) is not int or item!=0:return False
+        elif not isinstance(item,dict) or (key in nested and set(item)-nested[key]):
+            return False
+        elif any(type(count) is not int or count!=0 for count in item.values()):
+            return False
+    return True
+
+
+def rate_observation(info):
+    statuses={'allowed','allowed_warning','rejected'}
+    if not isinstance(info,dict) or info.get('status') not in statuses:
+        raise RuntimeError('Malformed report rate-limit observation')
+    # Quota observations have no tool semantics or acceptance authority.
+    # Preserve known safe fields only, with their actual units and unknowns.
+    result={'status':info['status']}
+    for key in ('resetsAt','overageResetsAt'):
+        if key in info:
+            if type(info[key]) is not int:raise RuntimeError('Malformed rate-limit time')
+            result[key]=info[key]
+    for key in ('utilization','surpassedThreshold'):
+        if key in info:
+            if type(info[key]) not in (int,float) or not math.isfinite(info[key]):raise RuntimeError('Malformed rate-limit count')
+            result[key]=info[key]
+    for key in ('isUsingOverage','overageInUse','rateLimitGraceActive','canUserPurchaseCredits','hasChargeableSavedPaymentMethod'):
+        if key in info:
+            if type(info[key]) is not bool:raise RuntimeError('Malformed rate-limit flag')
+            result[key]=info[key]
+    for key in ('rateLimitType','overageStatus','overageDisabledReason','limitScope','errorCode'):
+        if key in info:
+            if not isinstance(info[key],str) or len(info[key])>100:raise RuntimeError('Malformed rate-limit label')
+            result[key]=info[key]
+    return result
+
+
+def parse_events(result, *, events=None):
+    events = [] if events is None else events
+    models, finals, initial, rates = set(), [], [], []
+    # Retain all bounded decoded evidence before validation. A later rejected
+    # event must not erase an available final usage record from a failed job.
     for line in result.stdout.splitlines():
         if not line.strip():
             continue
@@ -102,19 +152,29 @@ def parse_events(result):
         if not isinstance(value, dict):
             raise RuntimeError('Report worker returned malformed event output')
         events.append(value)
+    for value in events:
         kind = value.get('type')
         if value.get('parent_tool_use_id') is not None:
             raise RuntimeError('Unexpected delegated/tool report event')
         if kind == 'system' and value.get('subtype') == 'init':
             initial.append(value)
             if (value.get('tools') != [] or value.get('mcp_servers') != [] or
-                    value.get('slash_commands') != [] or value.get('apiKeySource') != 'none'):
+                    value.get('slash_commands') != [] or value.get('apiKeySource') != 'none' or
+                    not (value.get('model')==MODEL or MODEL_ID.fullmatch(value.get('model','')))):
                 raise RuntimeError('The report CLI did not establish its restricted subscription route')
+        elif kind == 'system' and value.get('subtype') == 'thinking_tokens':
+            if (type(value.get('estimated_tokens')) is not int or value['estimated_tokens']<0 or
+                    type(value.get('estimated_tokens_delta')) is not int):
+                raise RuntimeError('Malformed report thinking progress')
+        elif kind == 'rate_limit_event':
+            rates.append(rate_observation(value.get('rate_limit_info')))
         elif kind == 'assistant':
             message = value.get('message') or {}
             models.add(message.get('model', ''))
             content = message.get('content')
-            if not isinstance(content, list) or any(block.get('type') not in ('text', 'thinking') for block in content):
+            if not isinstance(content, list) or any(not isinstance(block,dict) or
+                    block.get('type') not in ('text', 'thinking', 'redacted_thinking') or
+                    (block.get('type')=='redacted_thinking' and not isinstance(block.get('data'),str)) for block in content):
                 raise RuntimeError('Unexpected tool/content block in report worker output')
         elif kind == 'result':
             finals.append(value)
@@ -125,14 +185,15 @@ def parse_events(result):
     final = finals[0]
     if (final.get('subtype') != 'success' or final.get('is_error') is not False or
             final.get('num_turns') != 1 or final.get('permission_denials') or
-            final.get('subagent_stats') and any(final['subagent_stats'].values()) or
+            not zero_subagents(final.get('subagent_stats')) or
             not isinstance(final.get('result'), str) or not final['result'].strip()):
         raise RuntimeError('Report worker did not produce a successful one-turn result')
     usage = final.get('modelUsage')
     if not isinstance(usage, dict) or not usage or any(not MODEL_ID.fullmatch(m) for m in models | set(usage)):
         raise RuntimeError('An unapproved or unobserved report model was used')
     return final['result'].strip(), dict(requested_model=MODEL, requested_effort=EFFORT,
-        observed_models=sorted(models), model_usage=usage, usage=final.get('usage'),
+        observed_models=sorted(models), init_model=initial[0]['model'],model_usage=usage, usage=final.get('usage'),
+        rate_limit_observations=rates,rate_limit_scope='Reported observation, not an invoice or included-only guarantee',
         cli_estimated_cost_usd=final.get('total_cost_usd'), actual_charge_usd=None,
         no_model_tools_observed=True, internal_generation_attempts='not observable'), events
 
@@ -173,7 +234,7 @@ def execute(root, row, token, redact):
     try:
         with tempfile.TemporaryDirectory(prefix='webbob-report-') as cwd:
             result = run_input(argv, prompt, timeout=remaining(row), env=env, cwd=cwd)
-        answer, usage, events = parse_events(result)
+        answer, usage, _ = parse_events(result,events=events)
         answer = redact(answer)
         citations = check_report(answer, contract)
         remaining(row)

@@ -30,7 +30,7 @@ class ResourceInventoryTests(Fixture):
 
     def test_resource_questions_reach_reasoning_with_inventory_and_never_queue(self):
         for text in ('What resources are genuinely usable?', 'Which subscriptions can we use without reducing quality?',
-                     'How do we use our existing tools without paying twice?'):
+                     'How do we use our existing tools without paying twice?', 'What resources are available?'):
             with self.subTest(text=text):
                 self.assertTrue(capabilities.needs_grounding(text))
                 before=len(self.fake.calls)

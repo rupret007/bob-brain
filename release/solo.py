@@ -779,6 +779,7 @@ def checks(root, feature):
         commands['voice-availability-browser'] = [sys.executable, 'webchat/voice_availability_proof.py', '--output-dir', str(out / 'voice-availability-browser')]
         commands['jobs-results-browser'] = [sys.executable, 'webchat/jobs_results_proof.py', '--output-dir', str(out / 'jobs-results-browser')]
         commands['memory-removal-browser'] = [sys.executable, 'webchat/memory_removal_proof.py', '--output-dir', str(out / 'memory-removal-browser')]
+        commands['project-handoffs-browser'] = [sys.executable, 'webchat/project_handoffs_proof.py', '--output-dir', str(out / 'project-handoffs-browser')]
         commands['reply-lifecycle-browser'] = [sys.executable, 'webchat/reply_lifecycle_proof.py', '--output-dir', str(out / 'reply-lifecycle-browser')]
     for path in sorted((CODE / 'webchat').glob('test_*.mjs')):
         commands[path.stem] = ['node', str(path)]
@@ -851,7 +852,7 @@ def verify_checks(sha, feature, check_path):
     if ORDER.index(feature) >= ORDER.index('remaining'):
         required.add('remaining-browser')
     if feature == 'improve':
-        required.update(('cold-browser', 'startup-recovery-browser', 'voice-availability-browser', 'jobs-results-browser', 'reply-lifecycle-browser', 'memory-removal-browser'))
+        required.update(('cold-browser', 'startup-recovery-browser', 'voice-availability-browser', 'jobs-results-browser', 'reply-lifecycle-browser', 'memory-removal-browser', 'project-handoffs-browser'))
     if ORDER.index(feature) >= ORDER.index('bridge'):
         required.add('bridge-contract')
         require(check.get('andrea', {}).get('sha') == andrea_pin()['sha'], 'Andrea exact-tip evidence missing')

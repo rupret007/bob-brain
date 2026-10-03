@@ -27,7 +27,7 @@ ANSWER = ('# Readiness\nThe supplied module supports durable assignments. '
 
 
 def event_result():
-    rows = [dict(type='system', subtype='init', tools=[], mcp_servers=[], slash_commands=[], apiKeySource='none'),
+    rows = [dict(type='system', subtype='init', tools=[], mcp_servers=[], slash_commands=[], apiKeySource='none',model='claude-opus-fixture'),
             dict(type='assistant', message=dict(model='claude-opus-fixture', content=[dict(type='text', text=ANSWER)])),
             dict(type='result', subtype='success', is_error=False, num_turns=1, result=ANSWER,
                  permission_denials=[], modelUsage={'claude-opus-fixture': {'inputTokens':123,'outputTokens':89}},
@@ -136,6 +136,32 @@ class SubscriptionReportTests(unittest.TestCase):
         for rows in cases:
             with self.subTest(rows=rows),self.assertRaises(RuntimeError):worker.parse_events(process(rows))
         with self.assertRaises(RuntimeError):worker.check_report(ANSWER+' [source:unassigned.txt]',self.contract)
+
+    def test_installed_cli_metadata_preserves_restricted_one_turn_result(self):
+        rows=event_result()
+        rows[1]['message']['content'].insert(0,dict(type='redacted_thinking',data='opaque-uninterpreted-fixture'))
+        rows.insert(1,dict(type='system',subtype='thinking_tokens',estimated_tokens=20,estimated_tokens_delta=5))
+        rows.insert(2,dict(type='rate_limit_event',rate_limit_info=dict(status='allowed_warning',
+            utilization=1.1,isUsingOverage=False,overageDisabledReason='org_level_disabled')))
+        rows[-1]['subagent_stats']=dict(spawned=0,requested=dict(background=0,foreground=0,unset=0),
+            started_in_background=0,max_depth=0,spawned_by_subagents=0,completed=0,failed=0,
+            killed=dict(parent=0,user=0,system=0),refused=dict(depth_limit=0,concurrency_limit=0,budget=0),by_type={})
+        answer,evidence,_=worker.parse_events(process(rows))
+        self.assertEqual(answer,ANSWER)
+        self.assertEqual(evidence['init_model'],'claude-opus-fixture')
+        self.assertEqual(evidence['rate_limit_observations'][0]['utilization'],1.1)
+        self.assertIsNone(evidence['actual_charge_usd'])
+        for stats in (dict(spawned=1),dict(requested=dict(background=1)),dict(spawned=False),dict(unrecognized=0)):
+            bad=copy.deepcopy(rows);bad[-1]['subagent_stats']=stats
+            with self.subTest(stats=stats),self.assertRaises(RuntimeError):worker.parse_events(process(bad))
+
+    def test_failed_validation_retains_decoded_usage_without_acceptance(self):
+        rows=event_result();rows[0]['tools']=['Bash'];events=[]
+        with self.assertRaises(RuntimeError):worker.parse_events(process(rows),events=events)
+        self.assertEqual(events[-1]['total_cost_usd'],.04)
+        self.assertEqual(events[-1]['modelUsage'],rows[-1]['modelUsage'])
+        rows=event_result();rows[0]['model']='claude-sonnet-fixture'
+        with self.assertRaises(RuntimeError):worker.parse_events(process(rows))
 
     def test_private_artifacts_refuse_links_and_conflicting_duplicate_content(self):
         output=self.contract['output_relative']
