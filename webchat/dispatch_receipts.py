@@ -10,11 +10,17 @@ QUEUE_PLACEMENT = (PLACEMENT_VERB + r"\b[^.;!?\n]{0,70}\b(?:in(?:to)?|to)\s+"
 EFFECT = r"(?:start(?:ed|ing)?|creat(?:e|ed|ing)\b[^.!?\n]{0,60}\b(?:jobs?|tasks?)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|add(?:ed|ing)? work|put .{0,40} to work|kick(?:ed|ing)? off|" + QUEUE_PLACEMENT + r")"
 CLAUSE_START = r"(?:^|[.;!?\n–—]\s*|\b(?:and|then|but|yet)\s+)"
 BARE_EFFECT = CLAUSE_START + r"(?:queued|assigned|started|dispatched|launched|scheduled)\b"
+# Project IDs and paths are not speaking actors. A heading boundary also
+# cannot make an actor in that heading the subject of a later assignment.
+ACTOR = r"(?<![\w./-])(?:[_*]{1,2})?(?:I|we|Bob|" + WORKERS + r")(?:[_*]{1,2})?(?![\w/-])"
+ACTOR_EFFECT = ACTOR + r"(?:[*_]*\s*:\s*[*_]*\s*)?[^:.!?\n]{0,90}\b" + EFFECT + r"\b"
 CLAIM = re.compile(
-    r"\b(?:I|we|Bob|" + WORKERS + r")\b[^.!?\n]{0,90}\b" + EFFECT + r"\b|"
+    ACTOR_EFFECT + r"|"
     + BARE_EFFECT + r"|"
-    r"\b(?:work|jobs?|tasks?|reviews?|audits?|tests?)\b[^.!?\n]{0,80}\b(?:has|have|is|are|was|were|being|been)\b"
+    r"\b(?:work|jobs?|tasks?|reviews?|audits?|tests?)\b[^:.!?\n]{0,80}\b(?:has|have|is|are|was|were|being|been)\b"
     r"[^.!?\n]{0,30}\b" + EFFECT + r"\b|"
+    r"\b(?:work|jobs?|tasks?|reviews?|audits?|tests?)\b[*_]*\s*:\s*[*_]*\s*"
+    r"(?:(?:has|have|is|are|was|were|been|now|just|already)\s+){0,4}" + EFFECT + r"\b|"
     r"\b(?:I['’]ll|I will|we['’]ll|we will|the system (?:will|is))\b[^.!?\n]{0,100}"
     r"\b(?:make sure|ensure|utiliz|prioritiz|keep .{0,35}busy|maximize|adding work)|"
     r"\b" + WORKERS + r"\b[^.;!?\n]{0,45}\b(?:is|are) (?:now )?(?:working|running|busy|on it)\b|"
@@ -75,7 +81,7 @@ REFERENCE_EFFECT = re.compile(
     r"\b(?:the|a)\s+(?:(?:queued|running|started|scheduled|assigned|waiting)\s+){1,4}(?:job|task)\b"
     r"(?=[^.;!?\n]{0,120}\b(?:now|just|already|currently|today|here)\b)" + TARGET_PREDICATE, re.I)
 DIRECT_CLAIM = re.compile(
-    r"\b(?:I|we|Bob|" + WORKERS + r")\b[^.!?\n]{0,90}\b" + EFFECT + r"\b|"
+    ACTOR_EFFECT + r"|"
     r"\b" + WORKERS + r"\b[^.;!?\n]{0,45}\b(?:is|are) (?:now )?(?:working|running|busy|on it)\b|"
     r"\b(?:I['’]ve|I have|we['’]ve|we have) (?:put|got|set)\b[^.!?\n]{0,60}\b(?:working|busy|work|task|job)\b",
     re.I,
@@ -133,6 +139,13 @@ def unasserted_prose(prose):
     its original wording. Contrast, coordination and punctuation end the scope;
     a disclaimer cannot shelter an appended action or receipt.
     """
+    # Access to assigned inputs describes reach; 'assigned' is an adjective,
+    # not an act of assignment by the earlier named provider. Preserve every
+    # later predicate and receipt, including shared-subject actual effects.
+    prose = re.sub(r'\b(?P<prefix>(?:for|in|within|inside|from|through|access(?:es|ing)?(?:\s+to)?|'
+                   r'read(?:s|ing)?|inspect(?:s|ing)?)\s+)assigned'
+                   r'(?=\s+(?:worktrees?|repositories|repos?|files?|inputs?|evidence)\b)',
+                   lambda m: m['prefix']+' '*len('assigned'),prose,flags=re.I)
     # An exact zero-count noun phrase cannot acknowledge a positive effect.
     # Replace only that phrase; preserve a following actor, ID or predicate.
     prose = re.sub(r'\b(?:0|zero|no)\s+(?:(?:live|active|claimed|queued|running)\s+){0,3}'

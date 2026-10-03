@@ -8,15 +8,19 @@ import report_artifacts
 OBSERVATION = 'conductor/state/resource-inventory.json'
 MAX_AGE = 900
 ROUTES = {
-    'codex': dict(tasks=['local coding', 'scoped project jobs'], auth='ChatGPT login or separately billed API; inspect observed mode',
-                  reach='Assigned local worktrees through the existing executor', billing='ChatGPT plan allowance when authenticated with ChatGPT; credits may apply',
+    'codex': dict(tasks=['conversation', 'local coding', 'scoped project jobs'], auth='ChatGPT login or separately billed API; inspect observed mode',
+                  reach='Conversation uses the existing read-only CLI reply adapter with supplied context; local coding uses assigned worktrees through the separate executor',
+                  billing='ChatGPT plan allowance when authenticated with ChatGPT; credits may apply',
+                  conversation_quality='Supported conversation adapter; current comparative answer quality and remaining quota are not established by login',
                   report_adapter='No qualified tool-free bounded report adapter'),
-    'claude': dict(tasks=['bounded project reports', 'short reviews'], auth='claude.ai subscription login for bounded reports',
-                   reach='Supplied evidence only on bounded report route; server writes the assigned artifact',
+    'claude': dict(tasks=['explicitly selected conversation', 'bounded project reports', 'short reviews'], auth='claude.ai subscription login for bounded reports; inspect observed mode for other routes',
+                   reach='Existing explicit chat adapter; supplied evidence only on bounded report route, where the server writes the assigned artifact',
                    billing='Claude plan allowance; actual extra usage and invoice unverified',
                    report_adapter='One attempt, high effort, requested Opus family, no model tools; model identity checked'),
-    'cursor': dict(tasks=['local coding', 'scoped project jobs'], auth='Observe Cursor authenticated status; login alone does not prove funding route',
-                   reach='Assigned local worktrees through existing executor', billing='Cursor account; included versus on-demand usage unverified',
+    'cursor': dict(tasks=['conversation', 'local coding', 'scoped project jobs'], auth='Observe Cursor authenticated status; login alone does not prove funding route',
+                   reach='Existing CLI ask-mode conversation adapter with supplied context; assigned local worktrees through the separate executor',
+                   billing='Cursor account; included versus on-demand usage unverified',
+                   conversation_quality='Supported conversation adapter; no measured quality or capacity guarantee from authentication alone',
                    dependency='Reducing Cursor may reduce Grok Bot included allowance; verify linked account before changing plan'),
     'gemini': dict(tasks=['conversation', 'reasoning', 'voice', 'research', 'evidence reports'], auth='Funded Gemini API account',
                    reach='Configured Web Bob tools; bounded server evidence and approved actions', billing='Separately metered API; ledger charge/reservation is not account credit balance',
@@ -100,6 +104,10 @@ def observe(root, *, now=None):
               'A subscription-authenticated CLI and separately billed provider API are different routes. '
               'No paid subscription implies unlimited capacity or API entitlement. '
               'A login or remaining allowance is not proof of usable output quality. Do not quote stale balances as current. '
+              'Codex and Cursor support conversation as well as separate executor jobs; do not describe them as coding-only. '
+              'Distinguish conversation context, executor filesystem reach and the restricted report adapter. '
+              'Comparative strengths need measured evidence; do not infer worse or equivalent answers from billing or tool names. '
+              'Pacing can reduce pressure but cannot guarantee quota, prevent exhaustion or preserve answer quality. '
               'Credit units are not dollars. Never change plans or start workers because this question asks about resources. '
               'Prefer useful scoped work and preserved answer quality over simultaneous utilization.',
         recommendation='Provisional: preserve Gemini conversation quality and use qualified subscription workers for bounded work. '

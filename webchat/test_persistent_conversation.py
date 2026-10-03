@@ -136,3 +136,27 @@ class PersistentConversationTests(SessionFixture):
             self.assertEqual(enforce(self.root,'Continue the plan.',dict(provider='gemini',content=content)),content)
             for effect in (' I started the repair.', ' Claude is now working on the repair.', ' Work is now in progress.'):
                 self.assertNotEqual(enforce(self.root,'Continue the plan.',dict(provider='gemini',content=content+effect)),content+effect)
+
+    def test_identifier_headers_and_assigned_inputs_are_not_actor_dispatch(self):
+        from dispatch_receipts import claims_dispatch
+        answers=(
+            '**Review (`project-bob`, checkpoint 82):** Casey is the assigned owner for a proposed read-only review.',
+            '**Handoff (`project_codex`, checkpoint 82):** Casey is the assigned owner for a proposed read-only review.',
+            '**Codex review:** In this draft, Casey is assigned the bounded review.',
+            'Codex handles chat, reserving Cursor for assigned worktrees.',
+            'Local workers like Codex or Cursor access assigned files through their executor.',
+            'Codex has read access to assigned worktrees.',
+        )
+        for content in answers:
+            self.assertFalse(claims_dispatch(content),content)
+            self.assertEqual(enforce(self.root,'Explain the available approach.',dict(provider='gemini',content=content)),content)
+            for effect in (' I queued the follow-up task.', ' Codex started the repair.',
+                           ' Your repair task was assigned.', ' Codex: assigned the repair.',
+                           ' Job webchat-'+'a'*32+' is running.'):
+                self.assertTrue(claims_dispatch(content+effect),content+effect)
+        for claim in ('Bob assigned the review.', 'Web Bob queued the repair.',
+                      'Codex assigned worktrees to Cursor.', 'Codex: queued the review.',
+                      '**Codex:** queued the repair.', '**Codex**: queued the repair.',
+                      '**Bob:** assigned the review.', '_Gemini_: started the audit.',
+                      '**Review:** has been assigned.', 'Task: queued.'):
+            self.assertTrue(claims_dispatch(claim),claim)

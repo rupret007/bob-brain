@@ -12,6 +12,18 @@ import task_queue
 
 
 class ResourceInventoryTests(Fixture):
+    def test_supported_chat_routes_are_not_confused_with_executor_reach_or_quality(self):
+        observed={r['name']:r for r in inventory.observe(self.root)['resources']}
+        for name in ('codex','cursor'):
+            self.assertIn('conversation',observed[name]['tasks'])
+            self.assertIn('separate executor',observed[name]['reach'])
+            self.assertIsNone(observed[name]['observation']['quality_evidence'])
+            self.assertIsNone(observed[name]['observation']['remaining_usage'])
+        self.assertIn('explicitly selected conversation',observed['claude']['tasks'])
+        rules=inventory.observe(self.root)['rules']
+        self.assertIn('cannot guarantee quota',rules)
+        self.assertIn('do not infer worse or equivalent answers',rules)
+
     def test_unknown_and_stale_usage_are_not_promoted_to_current_capacity(self):
         data=inventory.observe(self.root,now=2000)
         self.assertTrue(all(r['observation']['freshness']=='unknown' for r in data['resources']))
