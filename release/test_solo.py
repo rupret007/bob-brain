@@ -10,6 +10,77 @@ import solo
 
 
 class CurrentModeReplayTests(unittest.TestCase):
+    def test_live_messaging_uses_only_health_and_the_protected_exact_thread(self):
+        folder=self.root/'conductor/webchat';folder.mkdir(parents=True)
+        bridge=folder/'andrea-bridge.json';bridge.write_text(json.dumps(dict(url='http://fixture',token='fixture')));bridge.chmod(0o600)
+        mapping=folder/'instinct.json';mapping.write_text(json.dumps(dict(chat_guid='iMessage;-;+12025550101',addresses=['+12025550101'])))
+        health=dict(ok=True,connected=True,paused=False,instinctReadOnly=True,sha=solo.andrea_pin()['sha'],deliveryProtocol=1)
+        gateway=Mock(spec=['exact_chat','messages'])
+        gateway.exact_chat.return_value=[dict(guid='iMessage;-;+12025550101',participants=[dict(address='+12025550101')])]
+        gateway.messages.return_value=[]
+        andrea=Mock(spec=['call']);andrea.call.return_value=health
+        with patch('texting.BlueBubbles',return_value=gateway),patch('texting.Andrea',return_value=andrea):
+            result=solo.live_messaging_reads(self.root,'improve')
+            self.assertEqual(len(result),2)
+            andrea.call.assert_called_once_with('health')
+            gateway.exact_chat.assert_called_once_with('iMessage;-;+12025550101')
+            gateway.messages.assert_called_once_with('iMessage;-;+12025550101')
+            for changed in ({},dict(chat_guid='other',addresses=['+12025550102'])):
+                mapping.write_text(json.dumps(changed))
+                with self.assertRaises(Exception):solo.live_messaging_reads(self.root,'improve')
+            mapping.write_text(json.dumps(dict(chat_guid='iMessage;-;+12025550101',addresses=['+12025550101'])))
+            for key,bad in (('sha','old'),('connected',False),('instinctReadOnly',False),('paused',True)):
+                andrea.call.return_value=dict(health,**{key:bad})
+                with self.assertRaises(Exception):solo.live_messaging_reads(self.root,'improve')
+
+    def test_live_remaining_replay_never_creates_reminders_or_reads_multiple_bands(self):
+        client=Mock();client.call.return_value={'reminders':[]}
+        def submit(client,cid,text):
+            if text in ('Karen QA status','band desk status'):
+                return {},dict(provider='teammates',content='Source: configured fixture')
+            self.assertEqual(text,'band desk digest for Fixture Band')
+            return {},dict(provider='teammates',content='Fixture digest',teammate_evidence=dict(all_read=True,band_reads=[dict(name='Fixture Band')]))
+        with patch.object(solo,'submit',side_effect=submit),patch('teammates.band_mappings',return_value=[dict(name='Fixture Band'),dict(name='Untouched')]):
+            checks=solo.remaining_replay(client,'fixture',self.root,real=True)
+        self.assertTrue(all(c['passed'] for c in checks))
+        client.call.assert_called_once_with('/api/reminders')
+
+    def test_live_memory_replay_reads_saved_bytes_without_proposals_or_capture(self):
+        from bob_gaps import profile_path
+        path=profile_path(self.root);path.parent.mkdir(parents=True,exist_ok=True);path.write_text('Keep owner memory.\n')
+        def submit(client,cid,text):
+            if text=='show my saved memories':
+                return {},dict(provider='memory',private_memory=True,content='Keep owner memory; not all profile or chat context')
+            self.assertEqual(text,'look up Python programming language')
+            return {},dict(provider='state',content='Python https://www.python.org/')
+        with patch.object(solo,'submit',side_effect=submit):
+            self.assertTrue(all(c['passed'] for c in solo.gaps_replay(Mock(),'fixture',self.root,real=True)))
+        self.assertEqual(path.read_text(),'Keep owner memory.\n')
+
+    def test_retained_delivery_requires_manifest_and_every_child_binding(self):
+        review=self.root/'conductor/reviews';review.mkdir(parents=True)
+        files={}
+        for name in ('phone_send','phone_return','owner_attestation'):
+            path=review/(name+'.json');path.write_text(json.dumps(dict(fixture=name)))
+            files[name]=dict(path=str(path),sha256=solo.digest(path))
+        proof=dict(status='PASS_OWNER_PHONE_DELIVERY',sha='historical',andrea_sha=solo.andrea_pin()['sha'],real_submissions=1,
+                   physical_receipt_without_retry=True,matching_return_read=True,synchronized_return_copy_not_used=True,
+                   evidence_hashes={k:v['sha256'] for k,v in files.items()})
+        phone=review/'phone.json';phone.write_text(json.dumps(proof));files['phone']=dict(path=str(phone),sha256=solo.digest(phone))
+        manifest=review/'manifest.json';manifest.write_text(json.dumps(dict(sha='historical',files=files)))
+        code=self.root/'code';(code/'release').mkdir(parents=True)
+        (code/'release/retained-delivery.json').write_text(json.dumps(dict(manifest=str(manifest.relative_to(self.root)),sha256=solo.digest(manifest))))
+        pin=solo.andrea_pin()
+        with patch.object(solo,'CODE',code),patch.object(solo,'andrea_pin',return_value=pin):
+            result=solo.retained_delivery_replay(self.root)[0]
+            self.assertEqual(result['source_sha'],'historical');self.assertEqual(result['real_texts_sent'],0)
+            for row in files.values():
+                path=Path(row['path']);before=path.read_bytes();path.write_bytes(before+b' ')
+                with self.assertRaises(Exception):solo.retained_delivery_replay(self.root)
+                path.write_bytes(before)
+            manifest.write_text(manifest.read_text()+' ')
+            with self.assertRaises(Exception):solo.retained_delivery_replay(self.root)
+
     def test_synthetic_children_cannot_inherit_real_generation_admission(self):
         env=dict(BOB_GENERATION_BUDGET='real-goal',BOB_GENERATION_BUDGET_ROOT='/real',
                  BOB_GENERATION_PURPOSE='controller',BOB_REQUIRE_GENERATION_BUDGET='1',

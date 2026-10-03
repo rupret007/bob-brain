@@ -57,7 +57,7 @@ PERMISSION_CHANGE = re.compile(
     r'\b(?:hold|permission|approval)\b[^,;!?]{0,30}'
     r'\b(?:is|was|has been|now|already)\s+(?:lifted|cleared|released|granted)\b|'
     r'\b(?:I|we|you)(?:[’\']ve|\s+have)?\s+(?:(?:already|now)\s+)?'
-    r'(?:lifted|cleared|released|granted)\s+(?:(?:the|your|our)\s+)?'
+    r'(?:lifted|cleared|released|granted)\s+(?:(?:the|your|our|my|real|actual|current|existing)\s+){0,3}'
     r'(?:hold|permission|approval)\b', re.I)
 PURE_GREETING = re.compile(r"(?:hi|hey|hello|good (?:morning|afternoon|evening))"
                            r"(?:[, ]+(?:bob|there))?[.!? ]*", re.I)
@@ -352,14 +352,36 @@ CRITICISM = re.compile(r"^(?:this|that|it|your (?:answer|reply|response|update))
                        r"^(?:do better|be more specific|try again|fix your (?:answer|reply))\b", re.I)
 
 
+def live_status_question(text, conversation=None):
+    """A status word inside requested prose is not a request to inspect the host."""
+    from answer_intent import conceptual, wants_answer, LIVE_REQUEST, live_observation
+    from conversation_focus import reference_scope
+    if not STATUS_QUESTION.search(text) or conceptual(text) or reference_scope(conversation,text):return False
+    if wants_answer(text) and not LIVE_REQUEST.search(text) and not live_observation(text):
+        # Preserve ordinary direct requests for the app's current status.
+        return bool(re.fullmatch(r'\s*(?:give|show|tell) me\s+(?:(?:a|the|brief|short|current|quick)\s+)*'
+                                 r'(?:status|update|status update)(?:\s+(?:please|now))?[.!?]*\s*',text,re.I))
+    return True
+
+
 def correcting_status(text, conversation):
     if not CRITICISM.search(text.strip()):
         return False
-    previous = [m["content"] for m in (conversation or {}).get("messages", []) if m["role"] == "user"]
-    if previous and previous[-1] == text:
-        previous.pop()
-    previous = [ask for ask in previous if not CRITICISM.search(ask)]
-    return bool(previous and STATUS_QUESTION.search(previous[-1]))
+    messages=(conversation or {}).get('messages',[])
+    previous=next((m for m in reversed(messages) if m.get('role')=='user'
+                   and m.get('content')!=text and not CRITICISM.search(m.get('content',''))),None)
+    if not previous:return False
+    replies=[m for m in messages if m.get('role')=='assistant' and
+             m.get('request_id')==previous.get('request_id')]
+    if not replies:
+        # Old callers without a completed answer have no mutable focus to trust.
+        return live_status_question(previous['content'])
+    answer=replies[-1];observed=answer.get('status_observation') or {}
+    from status_observation import snapshot_digest
+    return bool(observed.get('message_id')==answer.get('id') and
+                observed.get('request_id')==previous.get('request_id') and
+                observed.get('conversation_id')==(conversation or {}).get('id') and
+                observed.get('snapshot') and observed.get('snapshot_sha256')==snapshot_digest(observed['snapshot']))
 
 
 def operational_reply(root, provider, text="", *, observation=None, redact=lambda value: value):
@@ -402,7 +424,9 @@ def unperformed_restart(root, text):
 def enforce(root, text, answer, conversation=None, *, observation=None, redact=lambda value: value):
     content = answer["content"]
     from answer_intent import conceptual, wants_answer, LIVE_REQUEST
-    reference = conceptual(text)
+    from conversation_focus import reference_scope
+    reported=reference_scope(conversation,text)
+    reference = conceptual(text) or reported
     from worker_assignment import requested_workers
     blocked = dispatch_block(conversation)
     if requested_workers(text, conversation) and not blocked:
@@ -410,7 +434,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         return "I haven't assigned a worker from this reply. No new job was queued."
     state = state_for(conversation if conversation is not None else {})
     scopes = blocked_scopes(state, projects(text))
-    if HOLD_QUESTION.match(text.strip()):
+    if HOLD_QUESTION.match(text.strip()) and not reported:
         return hold_reply(scopes) if scopes else "There are no active conversation holds."
     from task_dispatch import CHAT_STYLE, PREAMBLE
     # A style preference calls for a simple acknowledgement, never a status
@@ -420,7 +444,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
     if PURE_GREETING.fullmatch(text.strip()):
         content = greeting_content(content)
     from resource_inventory import question as resource_question
-    if not reference and not resource_question(text) and (STATUS_QUESTION.search(text) or correcting_status(text, conversation)):
+    if not reference and not resource_question(text) and (live_status_question(text,conversation) or correcting_status(text, conversation)):
         return operational_reply(root, answer["provider"], text, observation=observation, redact=redact)
     else:
         from dispatch_receipts import claims_dispatch, dispatch_prose, reference_context, NO_DISPATCH
@@ -472,8 +496,28 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                                r'(?:which|what|should|could|would|can)\b[^;!?]*\?',question,re.I)
         return bool(scopes and asks_scope and not asserted_permission_change(part) and
                     (not mentioned or all(blocked_scopes(state,[name]) for name in mentioned)))
+    from conversation_focus import focus
+    record=focus(conversation or {}) if reported else None
+    record_ids=set(re.findall(r'\b[A-Za-z][\w]*-\d+\b',' '.join(
+        e.get('content','') for e in (record or {}).get('user_excerpts',[]))))
+    record_subject=False
+    def attributed_record_hold(part):
+        nonlocal record_subject
+        if not reported:return False
+        for clause in re.split(r';|\b(?:and|but|yet|however)\b',part,flags=re.I):
+            claim=HOLD_CLAIM.search(clause)
+            if not claim:continue
+            prefix=clause[:claim.start()].strip()
+            if re.search(r'\b(?:your|our|my|actual|real|this chat|this conversation)\b',clause,re.I):return False
+            subject=re.sub(r'^In the (?:supplied|reported|fictional|hypothetical) (?:record|case|scenario),?\s*','',prefix,flags=re.I)
+            identified=any(re.fullmatch(r'(?:task\s+)?'+re.escape(i)+r'(?:\s+(?:is|was))?\s*',subject,re.I) for i in record_ids)
+            described=bool(re.fullmatch(r'(?:the|this|that) (?:supplied|reported|fictional|hypothetical) (?:task|record)(?:\s+(?:is|was))?\s*',subject,re.I))
+            pronoun=record_subject and bool(re.match(r'^\s*(?:That|This) hold\b',clause,re.I))
+            if not (identified or described or pronoun):return False
+            record_subject=True
+        return True
     kept = [part for part in sentences if not asserted_permission_change(part) and
-            (not HOLD_CLAIM.search(part) or held_scope_question(part))]
+            (not HOLD_CLAIM.search(part) or held_scope_question(part) or attributed_record_hold(part))]
     if len(kept) != len(sentences):
         content = "".join(kept).strip()
         # Only the saved state may explain an operational hold.

@@ -78,6 +78,65 @@ def bridge_replay(root, cid, draft_id):
                  andrea_sha=health['sha'], passed=True, real_texts_sent=0)]
 
 
+def live_messaging_reads(root, feature):
+    """Bounded service observations; no recent-thread discovery or draft writes."""
+    from texting import Andrea, BlueBubbles, recipient
+    from instinct import Instinct
+    checks=[]
+    if ORDER.index(feature)>=ORDER.index('bridge'):
+        path=root/'conductor/webchat/andrea-bridge.json'
+        require(path.is_file() and not path.is_symlink() and not path.stat().st_mode&0o077,'Bridge config is not private')
+        cfg=json.loads(path.read_text())
+        health=Andrea(cfg['url'],cfg['token']).call('health')
+        require(health.get('ok') and health.get('connected') and health.get('paused') is False and
+                health.get('instinctReadOnly') is True and health.get('sha')==andrea_pin()['sha'] and
+                health.get('deliveryProtocol')==1,'Actual Andrea bridge health/revision failed')
+        checks.append(dict(check='actual Andrea exact-build read-only health',andrea_sha=health['sha'],
+                           observed_at=time.time(),passed=True,real_texts_sent=0,scope='live service observation'))
+    if ORDER.index(feature)>=ORDER.index('instinct'):
+        path=root/'conductor/webchat/instinct.json'
+        require(path.is_file() and not path.is_symlink() and path.stat().st_size<=65536,'Pinned Instinct mapping unavailable')
+        mapping=json.loads(path.read_text());guid=mapping.get('chat_guid')
+        require(isinstance(guid,str) and 0<len(guid)<=500,'Explicit Instinct thread pin required; discovery is not allowed')
+        gateway=BlueBubbles();chats=gateway.exact_chat(guid)
+        require(len(chats)==1,'Exact Instinct thread unavailable')
+        target=recipient(chats[0]);addresses={Instinct.address(a) for a in target['addresses']}
+        require(len(addresses)==1 and addresses.issubset({Instinct.address(a) for a in mapping.get('addresses',[])}),
+                'Pinned Instinct recipient differs from protected mapping')
+        messages=gateway.messages(guid)
+        require(isinstance(messages,list) and len(messages)<=30,'Instinct bounded read failed')
+        checks.append(dict(check='exact configured Instinct metadata and bounded messages read',passed=True,
+                           scope='live direct service read; product digest and confirmation controls are isolated',
+                           messages_read=len(messages),observed_at=time.time(),mapping_sha256=digest(path)))
+    return checks
+
+
+def retained_delivery_replay(root):
+    """Verify immutable consumed owner proof; never refresh, cancel or resend."""
+    pin=json.loads((CODE/'release/retained-delivery.json').read_text())
+    manifest_path=root/pin['manifest']
+    require(manifest_path.is_file() and not manifest_path.is_symlink() and
+            manifest_path.resolve().is_relative_to((root/'conductor/reviews').resolve()) and
+            digest(manifest_path)==pin['sha256'],'Retained delivery manifest changed')
+    manifest=json.loads(manifest_path.read_text());hashes={};records={}
+    for name in ('phone','phone_send','phone_return','owner_attestation'):
+        row=manifest['files'][name];path=Path(row['path'])
+        require(path.is_file() and not path.is_symlink() and path.resolve().is_relative_to((root/'conductor/reviews').resolve())
+                and digest(path)==row['sha256'],'Retained owner delivery evidence changed')
+        hashes[name]=row['sha256'];records[name]=json.loads(path.read_text())
+    proof=records['phone']
+    require(proof['status']=='PASS_OWNER_PHONE_DELIVERY' and proof['sha']==manifest['sha'] and
+            proof['andrea_sha']==andrea_pin()['sha'] and proof['real_submissions']==1 and
+            all(proof[k] is True for k in ('physical_receipt_without_retry','matching_return_read','synchronized_return_copy_not_used')),
+            'Retained owner delivery proof is incomplete')
+    require(all(proof['evidence_hashes'][k]==hashes[k] for k in ('phone_send','phone_return','owner_attestation')),
+            'Retained delivery child bindings differ')
+    return [dict(check='immutable consumed owner delivery/return proof retained',passed=True,
+                 scope='historical owner proof, freshly hash-verified; no fresh delivery claim',
+                 source_sha=manifest['sha'],manifest_sha256=pin['sha256'],evidence_sha256=hashes,
+                 real_texts_sent=0,additional_confirmations=0)]
+
+
 def run(argv, **kw):
     return subprocess.check_output([str(a) for a in argv], text=True, timeout=60, **kw).strip()
 
@@ -166,25 +225,36 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
         receipts.append(dict(prompt=prompt, request_id=answer['request_id'], provider=provider,
                              answer_sha256=hashlib.sha256(answer['content'].encode()).hexdigest(), passed=True))
     if real_reads:
-        # Real BlueBubbles reads; do not include thread content/addresses in evidence.
-        _, answer = submit(client, cid, 'texts')
-        require(answer.get('provider') == 'texting' and answer['content'].startswith('Recent text threads'),
-                'BlueBubbles live read failed')
-        receipts.append(dict(prompt='texts', provider='texting', passed=True,
-                             answer_sha256=hashlib.sha256(answer['content'].encode()).hexdigest()))
-    from texting import BlueBubbles
-    target = 'Alex Morgan'
-    if real_reads:
-        from instinct import Instinct
-        from texting import recipient
-        chats = BlueBubbles().chats()
-        protected = Instinct(None)
-        protected.bind_state(root / 'conductor/webchat')
-        protected.observe(chats)
-        choices = [c for c in chats if not protected.is_target(recipient(c)) and
-                   (ORDER.index(feature) < ORDER.index('bridge') or bridge_replay_target(c))]
-        require(bool(choices), 'No ordinary messaging thread available for no-send replay')
-        target = choices[0]['guid']
+        receipts.extend(live_messaging_reads(root, feature))
+    else:
+        receipts.extend(isolated_texting_controls(client, cid, root, feature))
+    if ORDER.index(feature) >= ORDER.index('gaps'):
+        receipts.extend(gaps_replay(client, cid, root, real=real_reads))
+    if ORDER.index(feature) >= ORDER.index('media'):
+        receipts.extend(media_replay(client, root, real=real_reads))
+    if ORDER.index(feature) >= ORDER.index('instinct'):
+        if not real_reads:
+            receipts.extend(instinct_replay(client, cid))
+    if ORDER.index(feature) >= ORDER.index('remaining'):
+        receipts.extend(remaining_replay(client, cid, root, real=real_reads))
+    if feature == 'improve':
+        receipts.extend(resources_replay(client, root, real=real_reads))
+        receipts.extend(sticky_greeting_replay(client, root, real=real_reads))
+        receipts.extend(capability_replay(client, cid, root))
+        receipts.extend(memory_removal_replay(client, cid, root, real=real_reads))
+        if real_reads:
+            receipts.extend(retained_delivery_replay(root))
+    from task_dispatch import task_queue
+    require(not any(r['conversation_id'] == cid for r in task_queue.tasks(root).values()), 'Replay queued work')
+    saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
+    require(not saved.get('_texting', {}).get('audit'), 'Replay attempted delivery')
+    return dict(all_pass=True, conversation_id=cid, checks=receipts, real_texts_sent=0, queued_workers=0)
+
+
+def isolated_texting_controls(client, cid, root, feature):
+    """Full confirmation/cancel controls against the isolated messaging server."""
+    receipts=[]
+    target='Alex Morgan'
     _, drafted = submit(client, cid, 'draft reply to ' + target + ': Web Bob no-send verification. Cancel this draft.')
     card = drafted.get('text_draft', {})
     require(card.get('state') == 'pending' and card.get('body') == 'Web Bob no-send verification. Cancel this draft.',
@@ -199,8 +269,6 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
     _, stale = submit(client, cid, token)
     require('already used, cancelled, or replaced' in stale['content'], 'Cancelled token was accepted')
     receipts.append(dict(check='exact draft, bare approval, cancel, stale token', passed=True))
-    if ORDER.index(feature) >= ORDER.index('bridge') and real_reads:
-        receipts.extend(bridge_replay(root, cid, card['id']))
     _, newer = submit(client, cid, 'draft reply to ' + target + ': Version interruption check. Do not send.')
     require(newer.get('text_draft', {}).get('state') == 'pending', 'Interruption-check draft failed')
     confirmation = newer['text_draft']['confirm_message']
@@ -208,26 +276,7 @@ def replay(client, root, sha, *, real_reads=False, feature='texting'):
     _, revoked = submit(client, cid, confirmation)
     require('already used, cancelled, or replaced' in revoked['content'], 'Version lookup retained stale text consent')
     receipts.append(dict(check='version lookup revokes previous text consent', passed=True))
-    if ORDER.index(feature) >= ORDER.index('gaps'):
-        receipts.extend(gaps_replay(client, cid, root, real=real_reads))
-    if ORDER.index(feature) >= ORDER.index('media'):
-        receipts.extend(media_replay(client, root, real=real_reads))
-    if ORDER.index(feature) >= ORDER.index('instinct'):
-        receipts.extend(instinct_replay(client, cid))
-    if ORDER.index(feature) >= ORDER.index('remaining'):
-        receipts.extend(remaining_replay(client, cid))
-    if feature == 'improve':
-        receipts.extend(resources_replay(client, root, real=real_reads))
-        receipts.extend(sticky_greeting_replay(client, root, real=real_reads))
-        receipts.extend(capability_replay(client, cid, root))
-        receipts.extend(memory_removal_replay(client, cid, root, real=real_reads))
-        if real_reads:
-            receipts.extend(delivered_notice_replay(client, root))
-    from task_dispatch import task_queue
-    require(not any(r['conversation_id'] == cid for r in task_queue.tasks(root).values()), 'Replay queued work')
-    saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
-    require(not saved.get('_texting', {}).get('audit'), 'Replay attempted delivery')
-    return dict(all_pass=True, conversation_id=cid, checks=receipts, real_texts_sent=0, queued_workers=0)
+    return receipts
 
 
 def verify_resource_clarification(answer):
@@ -544,37 +593,49 @@ def instinct_replay(client, cid):
                  answer_sha256=digest_hash, passed=True)]
 
 
-def remaining_replay(client, cid):
-    import uuid
-    body = 'Web Bob local reminder replay ' + uuid.uuid4().hex[:8]
-    _, saved = submit(client, cid, 'remind me to ' + body + ' in 1 second')
-    require(saved.get('provider') == 'reminders' and 'Reminder saved' in saved['content'], 'Reminder was not saved')
-    deadline = time.monotonic() + 10
-    while True:
-        history = client.call('/api/conversations/' + cid)
-        notices = [m for m in history['messages'] if m.get('reminder_notice') and body in m['content']]
-        if notices:
-            break
-        require(time.monotonic() < deadline, 'Due reminder did not reach chat through the background loop')
-        time.sleep(.2)
-    require(len(notices) == 1, 'Duplicate reminder delivery')
-    _, repeated = submit(client, cid, 'remind me every 1 minute to ' + body + ' recurring')
-    match = re.search(r'ID ([0-9a-f]{16})', repeated['content'])
-    require(match is not None, 'Recurring reminder did not save')
-    identifier = match[1]
-    _, cancelled = submit(client, cid, 'cancel reminder ' + identifier)
-    require('cancelled' in cancelled['content'], 'Recurring reminder cancellation failed')
-    rows = client.call('/api/reminders')['reminders']
-    require(next(r for r in rows if r['id'] == identifier)['state'] == 'cancelled', 'Cancellation was not durable')
+def remaining_replay(client, cid, root, *, real=False):
+    checks=[]
+    if real:
+        rows=client.call('/api/reminders')
+        require(isinstance(rows.get('reminders'),list),'Authenticated reminder store unavailable')
+        checks.append(dict(check='authenticated reminder listing; no reminder created or fired by replay',passed=True,scope='live read only'))
+    else:
+        import uuid
+        body = 'Web Bob local reminder replay ' + uuid.uuid4().hex[:8]
+        _, saved = submit(client, cid, 'remind me to ' + body + ' in 1 second')
+        require(saved.get('provider') == 'reminders' and 'Reminder saved' in saved['content'], 'Reminder was not saved')
+        deadline = time.monotonic() + 10
+        while True:
+            history = client.call('/api/conversations/' + cid)
+            notices = [m for m in history['messages'] if m.get('reminder_notice') and body in m['content']]
+            if notices:
+                break
+            require(time.monotonic() < deadline, 'Due reminder did not reach chat through the background loop')
+            time.sleep(.2)
+        require(len(notices) == 1, 'Duplicate reminder delivery')
+        _, repeated = submit(client, cid, 'remind me every 1 minute to ' + body + ' recurring')
+        match = re.search(r'ID ([0-9a-f]{16})', repeated['content'])
+        require(match is not None, 'Recurring reminder did not save')
+        identifier = match[1]
+        _, cancelled = submit(client, cid, 'cancel reminder ' + identifier)
+        require('cancelled' in cancelled['content'], 'Recurring reminder cancellation failed')
+        rows = client.call('/api/reminders')['reminders']
+        require(next(r for r in rows if r['id'] == identifier)['state'] == 'cancelled', 'Cancellation was not durable')
+        checks.append(dict(check='due reminder exactly once and durable recurring cancellation',passed=True,scope='isolated staging'))
     for command in ('Karen QA status', 'band desk status'):
         _, answer = submit(client, cid, command)
         require(answer.get('provider') == 'teammates' and 'Source:' in answer['content'], 'Teammate status lacks its source')
-    _, digest = submit(client, cid, 'band desk digest')
+    from teammates import band_mappings
+    mappings=band_mappings(root)
+    require(bool(mappings),'No configured Band Desk thread available')
+    name=mappings[0]['name']
+    require(0<len(name)<=100 and not any(c in name for c in '\r\n'),'Invalid configured Band Desk name')
+    _, digest = submit(client, cid, 'band desk digest for '+name)
     evidence = digest.get('teammate_evidence', {})
     require(digest.get('provider') == 'teammates' and evidence.get('all_read') is True and
-            bool(evidence.get('band_reads')), 'Configured Band Desk read failed')
-    return [dict(check='real due reminder, exactly once, repeating cancellation, sourced Karen/Band Desk status and read-only digest',
-                 passed=True, answer_sha256=hashlib.sha256(digest['content'].encode()).hexdigest())]
+            len(evidence.get('band_reads',[]))==1 and evidence['band_reads'][0]['name']==name, 'Bounded configured Band Desk read failed')
+    return checks+[dict(check='sourced Karen/Band Desk status and one configured read-only digest',
+                 passed=True, scope='live bounded product read' if real else 'isolated staging',answer_sha256=hashlib.sha256(digest['content'].encode()).hexdigest())]
 
 
 def gaps_replay(client, cid, root, *, real):
@@ -582,41 +643,48 @@ def gaps_replay(client, cid, root, *, real):
     fact = 'Instinct may digest and flag bills, security and appointments, and draft replies, but must never send.'
     base = root / 'bob-brain/memory/profile.md'
     original_hash = digest(base) if base.exists() else None
-    _, proposal = submit(client, cid, 'remember that ' + fact)
-    require(proposal.get('action_card', {}).get('state') == 'confirm', 'Memory lacks confirmation')
-    _, saved = submit(client, cid, 'yes, save memory proposal ' + proposal['action_card']['proposal_id'])
-    require(saved.get('action_card', {}).get('state') == 'done' and fact.rstrip('.') in profile_path(root).read_text(),
-            'Confirmed memory was not persisted')
-    require((digest(base) if base.exists() else None) == original_hash, 'Memory modified main checkout')
-    from memory_store import read_memory
-    import stat
-    require(fact.rstrip('.') in read_memory(root)['text'], 'Private memory reader did not recover saved fact')
-    require(stat.S_IMODE(profile_path(root).stat().st_mode) == 0o600 and
-            stat.S_IMODE(profile_path(root).parent.stat().st_mode) == 0o700,
-            'Memory file/directory permissions are not private')
-    saved_hash = digest(profile_path(root))
-    _, repeated = submit(client, cid, 'remember that ' + fact)
-    require(repeated.get('action_card', {}).get('state') == 'confirm', 'Repeated memory lacks confirmation')
-    _, confirmed = submit(client, cid, 'yes, save memory proposal ' + repeated['action_card']['proposal_id'])
-    require(confirmed.get('action_card', {}).get('state') == 'done' and
-            digest(profile_path(root)) == saved_hash, 'Repeated confirmed memory changed saved bytes')
+    private_path=profile_path(root)
+    private_before=private_path.read_bytes() if private_path.exists() else None
+    if not real:
+        _, proposal = submit(client, cid, 'remember that ' + fact)
+        require(proposal.get('action_card', {}).get('state') == 'confirm', 'Memory lacks confirmation')
+        _, saved = submit(client, cid, 'yes, save memory proposal ' + proposal['action_card']['proposal_id'])
+        require(saved.get('action_card', {}).get('state') == 'done' and fact.rstrip('.') in profile_path(root).read_text(),
+                'Confirmed memory was not persisted')
+        require((digest(base) if base.exists() else None) == original_hash, 'Memory modified main checkout')
+        from memory_store import read_memory
+        import stat
+        require(fact.rstrip('.') in read_memory(root)['text'], 'Private memory reader did not recover saved fact')
+        require(stat.S_IMODE(profile_path(root).stat().st_mode) == 0o600 and
+                stat.S_IMODE(profile_path(root).parent.stat().st_mode) == 0o700,
+                'Memory file/directory permissions are not private')
+        saved_hash = digest(profile_path(root))
+        _, repeated = submit(client, cid, 'remember that ' + fact)
+        require(repeated.get('action_card', {}).get('state') == 'confirm', 'Repeated memory lacks confirmation')
+        _, confirmed = submit(client, cid, 'yes, save memory proposal ' + repeated['action_card']['proposal_id'])
+        require(confirmed.get('action_card', {}).get('state') == 'done' and
+                digest(profile_path(root)) == saved_hash, 'Repeated confirmed memory changed saved bytes')
     _, inspected = submit(client, cid, 'show my saved memories')
     require(inspected.get('provider') == 'memory' and inspected.get('private_memory') is True and
-            fact.rstrip('.') in inspected['content'] and 'not all profile or chat context' in inspected['content'] and
+            (real or fact.rstrip('.') in inspected['content']) and 'not all profile or chat context' in inspected['content'] and
             not inspected.get('attempts'), 'Memory inspection must read saved facts directly without model inference')
+    if real:
+        require((private_path.read_bytes() if private_path.exists() else None)==private_before,'Live inspection changed private memory')
+    require((digest(base) if base.exists() else None)==original_hash,'Memory changed main checkout')
     _, search = submit(client, cid, 'look up Python programming language')
     require(search['provider'] == 'state' and 'python' in search['content'].lower() and 'https://' in search['content'],
             'Web research lacked a supported answer/source')
-    _, shot = submit(client, cid, 'take a screenshot')
-    match = re.search(r'/api/captures/([0-9a-f]{16})', shot['content'])
-    require(match is not None, 'Screenshot capture failed')
-    import urllib.request
-    raw = client.open(urllib.request.Request(client.url + match[0], headers={'Origin': client.url}), parse=False)
-    require(raw.startswith(b'\x89PNG\r\n\x1a\n'), 'Authenticated screenshot is not PNG')
-    return [dict(check='confirmed private memory overlay; bounded direct private inspection; owner-only permissions; main unchanged', passed=True),
-            dict(check='separate confirmation of the same dated fact preserves saved memory bytes', passed=True),
-            dict(check='web research with source', real_network=real, passed=True),
-            dict(check='authenticated screenshot PNG', real_capture=real, sha256=hashlib.sha256(raw).hexdigest(), passed=True)]
+    checks=[dict(check='private memory inspection without mutation' if real else 'confirmed private memory overlay and repeat confirmation',passed=True,scope='live read only' if real else 'isolated staging'),
+            dict(check='web research with source',real_network=real,passed=True)]
+    if not real:
+        _, shot = submit(client,cid,'take a screenshot')
+        match=re.search(r'/api/captures/([0-9a-f]{16})',shot['content'])
+        require(match is not None,'Screenshot fixture capture failed')
+        import urllib.request
+        raw=client.open(urllib.request.Request(client.url+match[0],headers={'Origin':client.url}),parse=False)
+        require(raw.startswith(b'\x89PNG\r\n\x1a\n'),'Authenticated capture fixture is not PNG')
+        checks.append(dict(check='authenticated screenshot fixture PNG',real_capture=False,sha256=hashlib.sha256(raw).hexdigest(),passed=True))
+    return checks
 
 
 def media_replay(client, root, *, real):

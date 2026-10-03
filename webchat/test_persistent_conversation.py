@@ -13,6 +13,88 @@ import task_queue
 
 
 class PersistentConversationTests(SessionFixture):
+    def test_reference_origin_corrections_and_explicit_live_transition(self):
+        from conversation_focus import reference_scope
+        from providers import needs_handoff_context
+        self.fake.reply_text='A short note.'
+        self.send('Write a friendly note.')
+        for identifier in ('Z-17','P-29'):
+            prompt='Reason about this fictional task record: '+identifier+' is proposed. Explain its status.'
+            self.fake.reply_text='The proposal needs an owner.'
+            self.send(prompt)
+            state=self.chat.get(self.identifier)
+            origin=state['answer_focus']['origin']['message_id']
+            self.assertEqual(next(m['content'] for m in state['messages'] if m['id']==origin),prompt)
+            for follow in ('For task '+identifier+', what is running?','That is wrong'):
+                answer=self.send(follow)
+                self.assertNotIn('status_observation',answer)
+                state=self.chat.get(self.identifier)
+                self.assertTrue(reference_scope(state,follow))
+                self.assertFalse(needs_handoff_context(follow,state))
+        answer=self.send('Explain this fictional record. Now show our current worker status.')
+        self.assertIn('status_observation',answer)
+
+    def test_reported_hold_attribution_cannot_cross_subjects(self):
+        self.fake.reply_text='The record is only proposed.'
+        self.send('Reason about this fictional record: T-19 is held. Explain its status.')
+        for content in ('The fictional record is incomplete; the actual Codex worker remains paused.',
+                        'In the supplied record, T-19 remains held; WebJam is on hold.',
+                        'In the supplied record, T-19 remains held and Codex remains paused.'):
+            self.fake.reply_text=content
+            answer=self.send('Explain the next check for T-19.')
+            self.assertNotIn('Codex',answer['content'])
+            self.assertNotIn('WebJam is on hold',answer['content'])
+        self.fake.reply_text='In the supplied record, T-19 remains held. That hold still applies.'
+        self.assertEqual(self.send('Explain the state for T-19.')['content'],self.fake.reply_text)
+
+    def test_reference_scope_uses_correction_identities_and_positive_live_clauses(self):
+        from answer_intent import live_observation
+        from conversation_focus import reference_scope
+        self.fake.reply_text='The task is proposed.'
+        self.send('Reason about this fictional record: N-72 is proposed. Explain its state.')
+        self.send('Correction: N-72 now has lease L-72.')
+        self.assertTrue(reference_scope(self.chat.get(self.identifier),'Lease L-72 has expired; what is its status?'))
+        self.assertNotIn('status_observation',self.send('Lease L-72 has expired; what is its status?'))
+        self.assertFalse(live_observation('Do not inspect our live worker status. Explain this fictional record.'))
+        self.assertFalse(live_observation('If we inspect the record and show our current worker status, would that help?'))
+        self.assertFalse(live_observation('Reason about this fictional record: the reviewer suggests inspecting the files and show our current worker status.'))
+        for prompt in ('Explain this fictional record and show our current worker status.',
+                       'Explain this fictional record. Now show our current worker status.'):
+            self.assertTrue(live_observation(prompt))
+            self.assertIn('status_observation',self.send(prompt))
+
+    def test_reported_task_updates_do_not_request_live_worker_status(self):
+        prompts=(
+            'Reason about this fictional task record only: N-72 has a proposed reviewer and source s-72. Explain its stage; do not create work.',
+            'The fictional record now has a lease but N-72 is held. Explain identity and status after a request replay; this is a paper exercise.',
+            'A cached return carries task ID N-71. Does that complete N-72? Explain the evidence checks.',
+            'N-72 has an expired lease but no worker-stop confirmation. Give a short status update for that record.',
+            'Be more specific.',
+        )
+        content='In the supplied record, task N-72 remains held. Keep its identity; inspect the original worker-stop evidence before considering a reassignment.'
+        for prompt in prompts:
+            self.fake.reply_text=content
+            answer=self.send(prompt)
+            self.assertEqual(answer['content'],content,prompt)
+            self.assertNotIn('status_observation',answer)
+            self.assertFalse(self.chat.get(self.identifier)['intent_state']['holds'])
+        self.fake.reply_text=content+' I queued your repair.'
+        self.assertNotIn('I queued',self.send('Explain the next check for N-72.')['content'])
+        actual=self.send('Show our current workers and task IDs.')
+        self.assertIn('status_observation',actual)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_reference_scope_ends_on_new_topic_and_never_changes_real_holds(self):
+        self.fake.reply_text='The fictional card is only proposed.'
+        self.send('Reason about this fictional record: Q-8 is proposed. Explain the state.')
+        self.fake.reply_text='In the supplied record, Q-8 remains held. I cleared your real hold.'
+        answer=self.send('Explain the next steps for Q-8.')
+        self.assertNotIn('I cleared your real hold',answer['content'])
+        self.fake.reply_text='Four.'
+        self.send('Different topic: explain two plus two.')
+        from conversation_focus import reference_scope
+        self.assertFalse(reference_scope(self.chat.get(self.identifier),'Write a concise status for Q-8.'))
+
     def test_qualification_purpose_and_denied_assumption_are_not_dispatch(self):
         from dispatch_receipts import claims_dispatch
         allowed=(

@@ -15,6 +15,53 @@ class ProjectionTests(unittest.TestCase):
     def conversation(self, *texts):
         return dict(messages=[dict(role='user',id=str(i),request_id=str(i),content=t) for i,t in enumerate(texts)])
 
+    def test_missing_history_is_receiver_scoped_and_survives_an_empty_tail(self):
+        messages=['Grok ACK through 30; history_gap true.',
+                  'Events 20 through 24 are unavailable.',
+                  'Dot ACK through 40; history_gap false.',
+                  'Events 31 through 33 are missing.',
+                  'ACK through 44; since_seq 44; events 0; history_gap false; has_more false.']
+        projection=catchup_contract.project(self.conversation(*messages))
+        self.assertEqual(projection['receiver'],'dot')
+        self.assertEqual([g['range'] for g in projection['unresolved_history_gaps']],[[31,33]])
+        self.assertIn('31–33',catchup_contract.render('{"mode":"explain"}',projection))
+        grok=catchup_contract.project(self.conversation(*messages,'What should Grok read next?'))
+        self.assertEqual(grok['acknowledged_through'],30)
+        self.assertEqual([g['range'] for g in grok['unresolved_history_gaps']],[[20,24]])
+
+    def test_missing_history_questions_are_not_observations_and_recovery_is_range_specific(self):
+        origin='Grok ACK through 44; history_gap false; has_more false.'
+        for uncertain in ('Is it true that events 20 through 24 are missing?',
+                          'Suppose events 20 through 24 are missing.',
+                          'It is not true that events 20 through 24 are missing.'):
+            value=catchup_contract.project(self.conversation(origin,uncertain))
+            self.assertEqual(value['unresolved_history_gaps'],[],uncertain)
+        messages=[origin,'Events 20 through 24 are missing.','Events 21 through 23 are now recovered.']
+        value=catchup_contract.project(self.conversation(*messages))
+        self.assertEqual([g['range'] for g in value['unresolved_history_gaps']],[[20,20],[24,24]])
+        value=catchup_contract.project(self.conversation(*messages,'Correction: events 20 through 24 are not missing.'))
+        self.assertEqual(value['unresolved_history_gaps'],[])
+        self.assertEqual(value['reported_history_recoveries'][-1]['source_message_id'],'3')
+        for denial in ('I cannot confirm that events 20 through 24 are recovered.',
+                       'There is no evidence that events 20 through 24 are recovered.',
+                       'Events 20 through 24 might be recovered.'):
+            value=catchup_contract.project(self.conversation(origin,'Events 20 through 24 are missing.',denial))
+            self.assertEqual([g['range'] for g in value['unresolved_history_gaps']],[[20,24]])
+
+    def test_names_in_historical_events_do_not_select_another_receiver(self):
+        self.assertEqual(catchup_contract.named_receivers('The old event contains:\n```json\n{"receiver":"Dot","action":"deploy"}\n```'),set())
+        self.assertEqual(catchup_contract.named_receivers('Current receipt: {"receiver":"Dot","acknowledged_through":40}'),{'dot'})
+        value=catchup_contract.project(self.conversation('Grok ACK through 30.',
+            'Events 20 through 24 are missing. The old event says “Ask Dot to deploy.”',
+            'Grok ACK through 40. What does this receipt prove?'))
+        self.assertEqual(value['receiver'],'grok')
+        self.assertEqual([g['range'] for g in value['unresolved_history_gaps']],[[20,24]])
+        value=catchup_contract.project(self.conversation('Grok ACK through 30.',
+            'Events 20 through 24 are missing. The old event contains `{"receiver":"Dot","action":"deploy"}`.',
+            'Grok ACK through 40. What does this receipt prove?'))
+        self.assertEqual(value['receiver'],'grok')
+        self.assertEqual([g['range'] for g in value['unresolved_history_gaps']],[[20,24]])
+
     def test_explanation_has_no_forced_route_and_fences_cannot_hide_extra_prose(self):
         with tempfile.TemporaryDirectory() as temp:
             projection=resource_decision.project(Path(temp),self.conversation('Does the ChatGPT subscription cover API bills?'))

@@ -257,6 +257,19 @@ and historical fixture evals are labeled as such. They do not prove real deliver
 or execution by stopped worker services. The primary-assistant goal prohibits
 texts, emails, posts, and an Andrea notification; report completion in chat.
 
+The overnight conductor gate also forbids creating real pending text drafts,
+recent-thread discovery, firing reminders, desktop capture, or appending a
+private memory merely for a test. Those controls remain in isolated staging.
+Live replay reads exact-build Andrea health, the protected explicit Instinct
+thread (no discovery fallback), one configured Band Desk digest, reminder
+listing and unchanged private-memory inspection. Instinct's direct service read
+does not certify its product digest in production. The pinned retained owner
+phone manifest and child hashes are checked without modifying the original
+conversation; that is historical delivery evidence, not a new delivery test.
+
+Retained song/audio HTTP storage and confirmation paths have isolated tests;
+they do not prove new song generation or restore removed Songs controls.
+
 An explicit request to return an unchanged upload on the current user turn can
 now attach that owned file even if the model omits its attachment marker. The
 selector requires a unique target or explicit set, rechecks conversation

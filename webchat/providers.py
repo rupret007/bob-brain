@@ -289,10 +289,12 @@ HANDOFF_CONTEXT_RE = re.compile(
 )
 
 
-def needs_handoff_context(text: str) -> bool:
+def needs_handoff_context(text: str, conversation=None) -> bool:
     """Short phone asks about Bob ledger still need full brain + handback snapshots."""
     from answer_intent import conceptual
-    return bool(HANDOFF_CONTEXT_RE.search(text or "") and not conceptual(text or ""))
+    from conversation_focus import reference_scope
+    return bool(HANDOFF_CONTEXT_RE.search(text or "") and not conceptual(text or "")
+                and not reference_scope(conversation,text or ""))
 
 
 def observed_api_cap(name):
@@ -700,7 +702,7 @@ class Providers:
             except (ValueError, FileNotFoundError, OSError):
                 attachment_note = "[One or more attachments could not be loaded.]"
                 self.current_call.media_warnings = ["One or more attachments could not be loaded. Please reattach them."]
-        if fast and needs_handoff_context(last_user):
+        if fast and needs_handoff_context(last_user,conversation):
             fast = False
         from conversation_focus import focus, answer_only, OPERATIONAL, needs_permission_facts
         from capabilities import needs_grounding, grounding, GROUNDING_RULES
@@ -710,15 +712,16 @@ class Providers:
         capability_question = needs_grounding(last_user) or resource_context(conversation)
         progress = conversation.get('improvement_goal') or {}
         suspended = progress.get('suspended_by') or {}
-        from reply_authority import dispatch_block, STATUS_QUESTION
+        from reply_authority import dispatch_block, live_status_question
         from answer_intent import conceptual
+        from conversation_focus import reference_scope
         from chat_intent import command, HOLD, RELEASE, LIFT
         from task_dispatch import parse_work
         control = command(last_user)
-        operational = (needs_handoff_context(last_user) or
-                       bool(parse_work(last_user, conversation=conversation)[0] and not conceptual(last_user)) or
+        operational = (needs_handoff_context(last_user,conversation) or
+                       bool(parse_work(last_user, conversation=conversation)[0] and not conceptual(last_user) and not reference_scope(conversation,last_user)) or
                        bool(HOLD.match(control) or RELEASE.match(control) or LIFT.match(control)) or
-                       bool(STATUS_QUESTION.search(last_user) and not conceptual(last_user) and not resource_question(last_user)))
+                       bool(live_status_question(last_user,conversation) and not resource_question(last_user)))
         # The server has already resolved actions, memory, holds and status.
         # Ordinary questions and terse follow-ups are substantive answers even
         # without a recognized imperative. Do not fill them with worker health.
@@ -858,7 +861,7 @@ class Providers:
                  'or ask for a topic that is already present. If a material choice is still '
                  'missing, ask one specific question about the current topic.\n') if suspended else ''
         from answer_intent import conceptual
-        reference = conceptual(last_user)
+        reference = conceptual(last_user) or reference_scope(conversation,last_user)
         policy = REFERENCE_RULES if answer_context and reference else ANSWER_RULES if answer_context else RULES
         self.current_call.instructions = policy + scope
         if project:
@@ -1096,7 +1099,7 @@ class Providers:
             return order
         from conversation_focus import answer_only
         if self.short_request(conversation) or (answer_only(conversation, last_user.get('content', ''))
-                                               and not needs_handoff_context(last_user.get('content', ''))):
+                                               and not needs_handoff_context(last_user.get('content', ''),conversation)):
             return self.available_fast_order(conversation)
         return ORDER
 

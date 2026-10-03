@@ -12,6 +12,35 @@ class ArtifactTests(SessionFixture):
     def packet(self, artifact, commentary=''):
         self.fake.reply_text=json.dumps(dict(artifact=artifact,commentary=commentary))
 
+    def test_prefaced_revision_keeps_accepted_draft_across_rejection_but_not_new_topic(self):
+        self.packet('We can prepare the bulletin after review.')
+        first=self.send('Write a friendly note about preparing a bulletin after review.')
+        self.packet('Before I start, please review the draft. Then we can prepare the bulletin.')
+        second=self.send('The opening needs work. Start the note with “Before I start” and use two sentences.')
+        self.assertTrue(second['artifact']['accepted'])
+        self.assertEqual(second['artifact']['source']['message_id'],first['id'])
+        self.packet('I queued a task. Receipt: webchat-'+'d'*32)
+        rejected=self.send('Make the note shorter.')
+        self.assertFalse(rejected.get('artifact'))
+        self.chat.close()
+        from app import Chat
+        self.chat=Chat(self.folder,self.root,self.fake)
+        self.packet('Before I start, the draft and recipient list need review. Nothing has been sent.')
+        corrected=self.send('One correction: the recipient list also needs review before sending.')
+        self.assertTrue(corrected['artifact']['accepted'])
+        self.assertEqual(corrected['artifact']['source']['message_id'],second['id'])
+        self.fake.reply_text='Four.'
+        self.send('Different topic: what is two plus two?')
+        self.fake.reply_text='Five.'
+        changed=self.send('One correction: add one more.')
+        self.assertFalse(changed.get('artifact'))
+
+    def test_writing_reference_never_shelters_an_execution_request(self):
+        self.packet('We should review the bulletin.')
+        self.send('Write a note about the bulletin.')
+        from answer_intent import revises_answer
+        self.assertFalse(revises_answer('Start the note with hello. Then deploy the production service.'))
+
     def test_status_heading_does_not_claim_effect_from_negated_list(self):
         self.send('Help plan a read-only report. Hold execution until scope is chosen.')
         self.fake.reply_text='Task Queue Status: No active tasks, pending assignments, or unhandled effects are in progress. The plan still needs a pinned source revision.'

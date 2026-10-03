@@ -44,6 +44,11 @@ def derive(conversation, redact, root=None):
     request = instructions(command(text))
     kind, source = 'answer', None
     previous = next((m for m in reversed(messages[:-1]) if m.get('role')=='assistant' and m.get('status')=='done'), None)
+    if previous and previous.get('_reply_contract',{}).get('kind')=='writing' and not previous.get('artifact',{}).get('accepted'):
+        focus=conversation.get('answer_focus',{})
+        allowed={ref.get('request_id') for ref in [focus.get('origin') or {},*focus.get('corrections',[])]}
+        previous=next((m for m in reversed(messages[:-1]) if m.get('role')=='assistant' and
+                       m.get('artifact',{}).get('accepted') and m.get('request_id') in allowed),None)
     eligible = not (requires_execution(text) or requires_research(text) or user.get('voice_call_id') or
                     reply.get('dispatch_blocked') or conceptual(text))
     if eligible:

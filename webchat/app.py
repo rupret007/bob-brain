@@ -953,13 +953,14 @@ class Chat(TaskDispatch):
                 if not state_ledger._DRILL_NOISE_RE.search(text):
                     state_ledger.record_webchat_turn(ledger, ask=text, provider="inbox", request_id=request_id)
                 return self.public(conversation)
-            from reply_authority import HOLD_QUESTION, STATUS_QUESTION
+            from reply_authority import HOLD_QUESTION, live_status_question
             from answer_intent import conceptual
+            from conversation_focus import reference_scope
             from resource_inventory import question as resource_question
-            if HOLD_QUESTION.match(text):
+            if HOLD_QUESTION.match(text) and not reference_scope(conversation,text):
                 scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
                 return self.intent_reply(conversation, chat_intent.hold_reply(scopes) if scopes else "There are no active conversation holds.")
-            if ledger == self.root and STATUS_QUESTION.search(text) and not conceptual(text) and not resource_question(text):
+            if ledger == self.root and live_status_question(text,conversation) and not resource_question(text):
                 return self.status_reply(conversation, text)
             if ledger == self.root:
                 try:
@@ -989,7 +990,7 @@ class Chat(TaskDispatch):
                             commits=[], confirmations=[], refusals=[], open_items=[], request_id=request_id)
                 state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
                 return self.public(conversation)
-            local_status = state_ledger.try_status_reply(ledger, text) if provider == "auto" and not conceptual(text) and not resource_question(text) else None
+            local_status = state_ledger.try_status_reply(ledger, text) if provider == "auto" and live_status_question(text,conversation) and not resource_question(text) else None
             if local_status:
                 conversation["messages"][-1].update(status="done", content=local_status, provider="state")
                 self.save(conversation)

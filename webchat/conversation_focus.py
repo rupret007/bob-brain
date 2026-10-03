@@ -7,7 +7,7 @@ import re
 from answer_intent import conceptual, wants_answer, revises_answer
 from chat_intent import command, projects
 
-CORRECTION = re.compile(r'^(?:actually|correction|oops|my mistake|no|instead|i meant|that is the wrong|'
+CORRECTION = re.compile(r'^(?:(?:(?:one|another|a|the)\s+)?correction|actually|oops|my mistake|no|instead|i meant|that is the wrong|'
                         r'(?:less|more) (?:formal|casual|friendly|concise|detailed|technical|playful|serious)|'
                         r'(?:make|keep) (?:it|that|this|these|those|the (?:point|meaning|message|intent|tone|wording|first|second|third|fourth|fifth|last))|rewrite|revise|shorten|expand|'
                         r'rephrase|use .{0,40} instead|change .{0,40} to|'
@@ -19,6 +19,29 @@ OPERATIONAL = re.compile(r'\b(?:our|my|live|current) (?:workers?|jobs?|services?
                          r'\b(?:disk|storage|handoff|handback|bob-state|memory|remember|profile)\b', re.I)
 
 
+def reference_scope(conversation, text):
+    """User-source evidence scope, never permission or model-supplied state."""
+    from answer_intent import instructions, requires_execution, live_observation, REPORTED, TOPIC_CHANGE
+    request=instructions(text)
+    if TOPIC_CHANGE.match(request) or requires_execution(text) or live_observation(text):return False
+    if REPORTED.search(request):return True
+    state=(conversation or {}).get('answer_focus',{})
+    origin=state.get('origin') or {}
+    source=next((m for m in (conversation or {}).get('messages',[]) if m.get('role')=='user'
+                 and m.get('request_id',m.get('id'))==origin.get('request_id') and m.get('id')==origin.get('message_id')),None)
+    if not state.get('reference') or not source:return False
+    refs=[origin,*state.get('corrections',[])]
+    body=' '.join(m.get('content','') for m in (conversation or {}).get('messages',[]) if m.get('role')=='user'
+                  and any(m.get('id')==r.get('message_id') and m.get('request_id',m.get('id'))==r.get('request_id') for r in refs))
+    identities=set(re.findall(r'\b[A-Za-z][\w]*-\d+\b',body))
+    receipt_domain=r'\b(?:receipt|ACK|acknowledg\w*|since_seq|through_seq|events?|cursor|receiver|page)\b'
+    return bool(correction(text) or CONTINUE.match(request) or
+                re.match(r'^(?:be more specific|try again|tell me more)\b',request,re.I) or
+                any(re.search(r'(?<!\w)'+re.escape(i)+r'(?!\w)',request) for i in identities) or
+                re.search(receipt_domain,body,re.I) and re.search(receipt_domain,request,re.I) or
+                re.search(r'\b(?:that|this|the) (?:record|case|scenario|evidence)\b',request,re.I))
+
+
 def correction(text):
     from answer_intent import instructions, requires_execution, requires_research, ARTIFACT_OPERATION, RETRIEVAL_TARGET, LIVE_REQUEST
     original = command(text)
@@ -26,7 +49,8 @@ def correction(text):
     returning = (RETURN.match(request) and not requires_execution(original) and not requires_research(original)
                  and not ARTIFACT_OPERATION.search(request) and not RETRIEVAL_TARGET.search(request)
                  and not LIVE_REQUEST.search(request))
-    return bool(CORRECTION.match(command(text)) or revises_answer(text) or returning)
+    from reply_authority import CRITICISM
+    return bool(CORRECTION.match(command(text)) or CRITICISM.search(request) or revises_answer(text) or returning)
 
 
 def needs_permission_facts(text):
@@ -73,15 +97,33 @@ def update(conversation, message):
     text = command(message.get('content', ''))
     reference = dict(message_id=message.get('id'), request_id=identifier)
     named_projects = projects(text)
+    reported=reference_scope(conversation,text)
+    was_reported=state.get('reference',False)
     if named_projects and not set(named_projects).issubset(state.get('projects', [])) and not CONTINUE.match(text):
         # A newly named project cannot revise an unrelated answer origin.
         # The current turn may establish its own focus below.
         state.update(origin=None, corrections=[], projects=named_projects)
+    if reported:
+        from answer_intent import REPORTED, instructions
+        origin=state.get('origin') or {}
+        source=next((m for m in conversation.get('messages',[]) if m.get('role')=='user'
+                     and m.get('id')==origin.get('message_id')
+                     and m.get('request_id',m.get('id'))==origin.get('request_id')),{})
+        old_ids=set(re.findall(r'\b[A-Za-z][\w]*-\d+\b',source.get('content','')))
+        new_ids=set(re.findall(r'\b[A-Za-z][\w]*-\d+\b',text))
+        continuing=bool(state.get('origin') and was_reported and
+                        (not REPORTED.search(instructions(text)) or correction(text) or
+                         (old_ids & new_ids and not re.search(r'\b(?:new|another|different)\s+(?:fictional\s+|reported\s+)?(?:record|case|scenario)\b',text,re.I))))
+        state['reference']=True
+        if continuing:state['corrections']=(state['corrections']+[reference])[-6:]
+        else:state.update(origin=reference,corrections=[],projects=named_projects)
+        return
+    state['reference']=False
     if state['origin'] and correction(text):
         state['corrections'] = (state['corrections'] + [reference])[-6:]
         if named_projects:
             state['projects'] = named_projects
-    elif wants_answer(text) and (not conceptual(text) or not state['origin']):
+    elif (wants_answer(text) or reported) and (not conceptual(text) or not state['origin']):
         state.update(origin=reference, corrections=[], projects=named_projects)
 
 
@@ -126,5 +168,5 @@ def answer_only(conversation, text):
     followup = conversation.get('answer_focus', {}).get('origin') and (
         correction(text) or CONTINUE.match(text) or RESOURCES.fullmatch(text.rstrip(' .!?')))
     return bool(not requires_execution(text) and not requires_research(text)
-                and (not OPERATIONAL.search(text) or conceptual(text))
-                and (wants_answer(text) or conceptual(text) or followup))
+                and (not OPERATIONAL.search(text) or conceptual(text) or reference_scope(conversation,text))
+                and (wants_answer(text) or conceptual(text) or reference_scope(conversation,text) or followup))
