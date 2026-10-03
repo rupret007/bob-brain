@@ -353,15 +353,58 @@ CRITICISM = re.compile(r"^(?:this|that|it|your (?:answer|reply|response|update))
 
 
 def live_status_question(text, conversation=None):
-    """A status word inside requested prose is not a request to inspect the host."""
-    from answer_intent import conceptual, wants_answer, LIVE_REQUEST, live_observation
+    """Require a request to observe, not an operational noun in an instruction.
+
+    Use the same classification before generation and before delivery. Quoted,
+    conditional and prohibited observations cannot select a server reply.
+    """
+    from answer_intent import conceptual, instructions, request_clauses, live_observation
     from conversation_focus import reference_scope
-    if not STATUS_QUESTION.search(text) or conceptual(text) or reference_scope(conversation,text):return False
-    if wants_answer(text) and not LIVE_REQUEST.search(text) and not live_observation(text):
-        # Preserve ordinary direct requests for the app's current status.
-        return bool(re.fullmatch(r'\s*(?:give|show|tell) me\s+(?:(?:a|the|brief|short|current|quick)\s+)*'
-                                 r'(?:status|update|status update)(?:\s+(?:please|now))?[.!?]*\s*',text,re.I))
-    return True
+    if conceptual(text) or reference_scope(conversation,text):return False
+    target = r'(?:workers?|models?|LLMs?|jobs?|tasks?|services?|resources?|queue|system|status)'
+    # A dash inside an antecedent does not turn its consequent into a new
+    # unconditional request. Sentence boundaries can start a fresh request.
+    parts=[]
+    for sentence in re.split(r'[.!?;]\s+|\n+',instructions(text)):
+        first=request_clauses(sentence)
+        if not first:continue
+        if re.match(r"^(?:if|unless|until|when|once|before|suppose|imagine|do not|don['’]t|never|without)\b",first[0],re.I):continue
+        if re.search(r'\b(?:only if|unless|until|once|provided that)\b',sentence,re.I):continue
+        head=re.split(r'\b(?:and|but|then)\b',sentence,maxsplit=1,flags=re.I)[0]
+        if re.search(r'\b(?:if|when)\b|\bafter\s+(?:I|we|you|they|it|he|she)\b',head,re.I):continue
+        parts.extend(first)
+    for part in parts:
+        part=re.sub(r'^no[, ]+((?:is|are|what|which|how)\b)',r'\1',part,flags=re.I)
+        part=re.sub(r'^(?:I|we)\s+(?:want|need)\s+to\s+(?:also\s+)?(?:know|see)\s+', '',part,flags=re.I)
+        if re.match(r"^(?:if|unless|until|when|once|before|suppose|imagine|do not|don['’]t|never|without)\b",part,re.I):
+            continue
+        from answer_intent import ANSWER
+        observe = re.match(r'^(?:check|show|inspect|tell me)\b',part,re.I)
+        separate_directive = ANSWER.match(part) and not re.search(r'\b(?:whether|if|how to)\b',part,re.I)
+        if (observe or separate_directive) and live_observation(part):return True
+        if not STATUS_QUESTION.search(part):continue
+        # Short direct observations can carry presentation constraints, but
+        # field lists and requested status-report prose are not observations.
+        if re.fullmatch(r'(?:(?:current|live|brief|quick)\s+)*(?:(?:service|disk|storage)\s+status|'
+                        r'status(?: update)?|diagnostics?|resources? (?:usage|utilization|availability|health))'
+                        r'(?:\s+(?:with|without)\s+[^.!?]+)?(?:[, ]+please)?[.!? ]*',part,re.I):return True
+        if re.fullmatch(r'(?:give|show|tell) me\s+(?:(?:a|the|brief|short|current|quick)\s+)*'
+                        r'(?:status|update|status update)(?:\s+(?:please|now))?[.!?]*',part,re.I):return True
+        if re.match(r'^what(?:[\'’]s| is)\s+(?:(?:the|our|my|current|live)\s+)*'
+                    r'(?:[\w-]+\s+){0,3}status\b',part,re.I):return True
+        if re.match(r'^(?:what(?:[\'’]s| is| are)|which|who(?:[\'’]s| is))\s+'
+                    r'(?:(?:the|our|my|current|live)\s+)*(?:status|running|moving|happening|going on|'
+                    r'working on what|answering|responding|'+target+r')\b',part,re.I):return True
+        if re.match(r'^what are you working on\b',part,re.I):return True
+        names=r'(?:Gemini|MiniMax|Codex|Claude|Cursor)'
+        if re.fullmatch(r'what about '+names+r'(?:\s*(?:,|and|or|&)\s*'+names+r')*[.!? ]*',part,re.I):return True
+        if re.match(r'^how(?:[\'’]s| is| are| we)?\s+(?:(?:the|our|my)\s+)?'
+                    r'(?:everything|it going|we doing|'+target+r')\b',part,re.I):return True
+        if re.match(r'^(?:is|are)\s+(?:(?:the|our|my|current|live)\s+)*'
+                    r'(?:it|anything|everything|things|work|'+target+r'|Gemini|MiniMax|Codex|Claude|Cursor)\b'
+                    r'.{0,60}\b(?:going|moving|running|making progress|being performed|healthy|failing|working)\b',part,re.I):return True
+        if re.match(r'^(?:are we|we) using\b|^(?:any|making) progress\b|^works? on all (?:workers|models|LLMs)\b',part,re.I):return True
+    return False
 
 
 def correcting_status(text, conversation):
@@ -371,6 +414,9 @@ def correcting_status(text, conversation):
     previous=next((m for m in reversed(messages) if m.get('role')=='user'
                    and m.get('content')!=text and not CRITICISM.search(m.get('content',''))),None)
     if not previous:return False
+    # A valid receipt proves what was observed, not that the old routing was
+    # appropriate. Do not perpetuate a wrongly classified owner request.
+    if not live_status_question(previous.get('content','')):return False
     replies=[m for m in messages if m.get('role')=='assistant' and
              m.get('request_id')==previous.get('request_id')]
     if not replies:
@@ -539,6 +585,47 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                     label=re.fullmatch(r'\s*(?:\*\*)?releasing\s*',prefix,re.I) and re.match(r'\s*\*\*?:|\s*:\*\*',suffix)
                     simple=not prefix.strip(' *\n') and re.match(r'\s+(?:remains?\s+(?:active|in place)|still applies)[.!?\s]*$',suffix,re.I)
                     if label or simple:continue
+                    # A dependent prepositional reference names the existing
+                    # constraint; it does not assert a new hold or release.
+                    incidental = re.search(r'\b(?:under|within|during|subject to)\s*$',prefix,re.I)
+                    target = re.match(r'\s+(?:on|for|in)\s+(.+)',suffix,re.I)
+                    tail = suffix
+                    if target:
+                        bound = next((re.match(re.escape(name)+r'\b',target[1],re.I)
+                                      for name in mentioned if blocked_scopes(state,[name]) and
+                                      re.match(re.escape(name)+r'\b',target[1],re.I)),None)
+                        if not bound:return False
+                        tail = target[1][bound.end():]
+                    # A relative clause changes what is asserted about the
+                    # hold. A declarative 'X remains under' asserts its subject
+                    # is held; neither is just an incidental reference.
+                    reference_tail = (not tail.strip(' .!?\n') or
+                                      re.fullmatch(r'\s+before\s+\w+ing\b[^,;.!?]*[.!?\s]*',tail,re.I))
+                    from claim_scope import DIRECTIVE, QUESTION, plain
+                    preparing = DIRECTIVE.match(plain(prefix)) or QUESTION.match(plain(prefix))
+                    # Coordination of objects may leave a relative noun phrase
+                    # after "and" ("files and checks you want examined"). It
+                    # retains its question/directive governor, not a new actor.
+                    relative_object = (DIRECTIVE.match(plain(part)) or QUESTION.match(plain(part))) and re.match(
+                        r'^\s*(?:[\w-]+\s+){1,4}(?:you|we)\s+(?:want|need|choose)\b',plain(prefix),re.I)
+                    predicate_prefix=prefix[:incidental.start()] if incidental else ''
+                    asserted_subject=re.search(r'\b(?:is|are|was|were|has|have|remains?|stays?|falls?)\b\s*'
+                                               r'(?:[\w-]+\s+){0,3}$',predicate_prefix,re.I)
+                    from assertion_scope import nonasserted
+                    from claim_scope import CONNECTOR, ASSERTED_LINK
+                    links=[m for m in CONNECTOR.finditer(predicate_prefix)
+                           if ASSERTED_LINK.fullmatch(m[0].strip(' ,'))]
+                    local_prefix=predicate_prefix[links[-1].end():] if links else predicate_prefix
+                    uncertain = nonasserted(local_prefix,'held',sentence_start=True)
+                    # An introductory bound PP may precede its actual check.
+                    # Check that remaining instruction separately for effects.
+                    introductory = incidental and not prefix[:incidental.start()].strip(' *\n')
+                    following = re.match(r'\s*,\s*(.+)',tail,re.S)
+                    preposed = introductory and following and DIRECTIVE.match(plain(following[1]))
+                    if (incidental and (not asserted_subject or uncertain) and
+                            ((reference_tail and (preparing or relative_object)) or preposed) and
+                            not foreign_subject(clause,projects,WORKER_NAMES)):
+                        continue
                     return False
                 subject=re.split(r'[,;:]',prefix)[-1].strip(' *\n')
                 named=projects(match[0]) or projects(subject)

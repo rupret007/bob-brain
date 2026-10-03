@@ -101,31 +101,25 @@ def _quoted_source(text, source):
 
 
 def violations(content, *, source='', trusted_facts=(), artifact=False):
+    from claim_scope import clauses, disposition
     findings = []
     trusted = {_plain(value).strip() for value in trusted_facts}
     quoted = _quoted_source(content, source)
     technical_artifact = bool(TECHNICAL.search(content + '\n' + source))
-    for part in CLAUSE.finditer(content):
-        original = part[0]
+    for part in clauses(quoted):
+        original = content[part.start:part.end]
         if _plain(original).strip() in trusted:
             continue
-        text = _plain(quoted[part.start():part.end()])
+        text = part.text
         if artifact and not technical_artifact:
             continue
-        boundaries = [0, *(m.end() for m in CONTRAST.finditer(text)), len(text)]
-        proposed = bool(IMPERATIVE.match(text))
         categories = set()
-        for begin, end in zip(boundaries, boundaries[1:]):
-            clause = text[begin:end]
-            if begin:
-                # Only adjacent coordinated directives share an imperative
-                # governor. A contrast or a new subject ends that scope;
-                # subsequent bare predicates cannot borrow it back.
-                coordinated = bool(re.search(r'(?:,|\band)\s*$', text[:begin], re.I))
-                proposed = proposed and coordinated and bool(IMPERATIVE.match(clause))
+        claims = []
+        for clause in (text,):
             for kind, objects in OUTCOMES.items():
                 targets = list(objects.finditer(clause))
-                if not targets:
+                labelled = bool(objects.search(part.label))
+                if not targets and not labelled:
                     continue
                 for predicate in ASSURANCE.finditer(clause):
                     # Acquisition is a different operation from metered use.
@@ -143,44 +137,70 @@ def violations(content, *, source='', trusted_facts=(), artifact=False):
                         # Configuration/evidence availability is a different
                         # object from charges or a guaranteed performance outcome.
                         continue
-                    governing_proposal = begin > 0 and proposed
-                    if _nonasserted(clause[:predicate.start()], predicate[0], clause, sentence_start=begin==0 or governing_proposal):
+                    if disposition(part, predicate.start(), predicate.end(), predicate[0]):
                         continue
                     # A predicate must govern an outcome in this clause. A cost
                     # noun before "without buying" cannot change that operation.
-                    if any(t.start() >= predicate.end() for t in targets) or re.search(
+                    if labelled or any(t.start() >= predicate.end() for t in targets) or re.search(
                             r'\b(?:is|are|stays?|remains?|will be)\s*$', clause[:predicate.start()], re.I):
                         categories.add(kind)
+                        claims.append(dict(start=part.start+predicate.start(), end=part.start+predicate.end(),
+                                           category=kind, disposition='asserted_without_support'))
             if TEST.search(clause):
                 for mode in MODE.finditer(clause):
-                    if not _nonasserted(clause[:mode.start()], mode[0], clause, sentence_start=begin==0):
+                    if not disposition(part, mode.start(), mode.end(), mode[0]):
                         categories.add('operation_mode')
+                        claims.append(dict(start=part.start+mode.start(), end=part.start+mode.end(),
+                                           category='operation_mode', disposition='asserted_without_support'))
             if ABSENCE.search(text) and PERSISTENCE.search(clause):
                 for predicate in CAUSE.finditer(clause):
-                    if not _nonasserted(clause[:predicate.start()], predicate[0], clause, sentence_start=begin==0):
+                    if not disposition(part, predicate.start(), predicate.end(), predicate[0]):
                         categories.add('diagnostic_cause')
+                        claims.append(dict(start=part.start+predicate.start(), end=part.start+predicate.end(),
+                                           category='diagnostic_cause', disposition='asserted_without_support'))
         if categories:
-            findings.append(dict(start=part.start(), end=part.end(), categories=sorted(categories),
+            findings.append(dict(start=part.start, end=part.end, categories=sorted(categories), claims=claims,
                 sha256=hashlib.sha256(original.encode()).hexdigest(), reason='conclusion_exceeds_available_support'))
     return findings
 
 
 def deliver(content, *, source='', trusted_facts=(), artifact=False):
-    """Keep the remainder verbatim and expose replaced unsupported claims.
+    """Preserve independent content and expose replaced unsupported claims.
 
     This is a partial answer, not a silent certification or a repaired model
-    quotation. Resource packets retain their stricter dependency handling.
+    quotation. Close broken clause joins without altering unaffected units.
+    Resource packets retain their stricter dependency handling.
     """
     findings = violations(content, source=source, trusted_facts=trusted_facts, artifact=artifact)
     if not findings:
         return content, []
-    parts = []; position = 0; explained = set()
+    parts = []; position = 0
+    connector = re.compile(r'(?:,?\s*\b(?:and|or|but|yet|however|therefore|thus|so|then|because|since|now that|given that|which|that)\b\s*|,\s*)$',re.I)
+    leading = re.compile(r'^\s*(?:,?\s*\b(?:and|or|but|yet|however|therefore|thus|so|then)\b\s*|[,;]\s*)',re.I)
+    def remainder(value):
+        # A rejected clause cannot leave its join word attached to the next
+        # independently checked instruction.
+        return leading.sub('',value,count=1) if position else value
     for finding in findings:
-        parts.append(content[position:finding['start']])
+        before = remainder(content[position:finding['start']])
+        join = connector.search(before)
+        if join:
+            before = before[:join.start()].rstrip()
+            # An antecedent without its consequent is not a useful standalone
+            # claim. Preserve any preceding list marker, heading or sentence.
+            antecedent = re.search(r'(?:^|(?<=[.!?])\s+|\n)(\s*(?:if|unless|until|when|once|before)\b[^.!?\n]*)$',before,re.I)
+            if antecedent:
+                before = before[:antecedent.start(1)]
+            elif before.strip() and before[-1] not in '.!?:':
+                from claim_scope import QUESTION, plain
+                last = re.split(r'[.!?]\s+|\n',plain(before))[-1]
+                before += '?' if QUESTION.match(last) else '.'
+        parts.append(before)
+        if before.strip() and before[-1] in '.!?':parts.append('\n')
+        marker = re.match(r'^\s*(?:[-*+]\s+|\d+[.)]\s+)',content[finding['start']:finding['end']])
+        if marker:parts.append(marker[0])
         for category in finding['categories']:
-            if category not in explained:
-                parts.append(' [Unverified claim withheld] ' + QUALIFICATIONS[category] + '\n')
-                explained.add(category)
+            parts.append(' [Unverified claim withheld] ' + QUALIFICATIONS[category] + '\n')
         position = finding['end']
-    parts.append(content[position:])
+    parts.append(remainder(content[position:]))
     return ''.join(parts).strip(), findings

@@ -1,0 +1,17 @@
+We’re coordinating three existing projects toward a reliable Rad Dad beta experience: Band Lab is the entrance, Turdanoid owns the six games, and WebJam owns collaborative music/art sessions.
+
+My dot has started an ownership/access check followed by scoped implementation. Before starting anything, read the existing BOB-HANDOFF.md and shared coordination records. Preserve current owners and active work. Codex still owns the Web Bob release.
+
+Current goals:
+
+1. Rad Dad: resolve the existing Continue/recency work, prove mobile navigation and saved-session behavior, and reconcile the live unlisted lab with the production build rules.
+2. Turdanoid: finish the existing six-game feel pass, clear lint and required tests, verify actual gameplay and save compatibility, then supply a versioned handoff for the lab.
+3. WebJam: build on the delivered Paint Along / Play Along work and close real-session acceptance gaps without duplicating existing features or another owner’s work.
+
+Use one owner per task and one shared record of scope, branch/PR, exact commit, status, evidence and next handoff. Before changing code, claim an available task through the established coordination protocol. If access or ownership is unclear, report it instead of starting a competing implementation. Don’t overwrite another agent’s journal entries or assume a stale claim is free.
+
+Quality bar: preserve user data; test the actual final build; cover interrupted/repeated flows, mobile/accessibility and real-world behavior. Clearly distinguish PASS, FAIL and NOT RUN. Green tests alone do not prove good feel or physical audio performance.
+
+Use existing subscriptions and avoid duplicate work or unapproved API charges. No merges, releases, production deployment, credential/security changes or purchases without the required approval.
+
+Shared-journal write access and automatic cross-agent synchronization are still being verified. This summary does not mean all three agents are already connected.

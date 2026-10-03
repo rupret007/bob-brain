@@ -11,18 +11,20 @@ from resource_capabilities import ROUTES, supports
 
 
 def question(text):
-    from answer_intent import instructions
+    from answer_intent import instructions, request_clauses
     value=instructions(text).strip()
-    from reply_authority import STATUS_QUESTION
-    if (STATUS_QUESTION.search(value) and
-            re.search(r'\b(?:status|health|healthy|doing|using|utilization|going|running|failing|errors?)\b',value,re.I)):
+    from reply_authority import live_status_question
+    if live_status_question(value):
         return False
-    general = (re.match(r'^(?:(?:ok|okay)[,. ]+)?(?:what|which|how|can we|do we|are there)\b',value,re.I) and
-               re.search(r'\b(?:resources?|subscriptions?|allowances?|paid (?:tools|plans)|billing|existing (?:tools|plans))\b',value,re.I) and
-               not re.search(r'\b(?:doing|using|utilization|usage|going|running|health)\b',value,re.I))
-    provider = (re.search(r'\b(?:ChatGPT|OpenAI|Codex|Claude|Cursor|Gemini|Grok|MiniMax|Dot)\b',value,re.I) and
+    parts = request_clauses(value)
+    general = any(re.match(r'^(?:(?:ok|okay)[,. ]+)?(?:what|which|how|can we|do we|are there)\b',part,re.I) and
+               re.search(r'\b(?:resources?|subscriptions?|allowances?|paid (?:tools|plans)|billing|existing (?:tools|plans))\b',part,re.I) and
+               not re.search(r'\b(?:doing|using|utilization|usage|going|running|health)\b',part,re.I) for part in parts)
+    provider = any(re.search(r'\b(?:ChatGPT|OpenAI|Codex|Claude|Cursor|Gemini|Grok|MiniMax|Dot)\b',part,re.I) and
                 re.search(r'\b(?:subscriptions?|Pro|plans?|pay|paid|free|API|logged in|login|quota|allowance|'
-                          r'credits?|balance|capacity|available|unavailable|access|read files|use .{0,30}everything)\b',value,re.I))
+                          r'credits?|balance|capacity|available|unavailable|access to|read files|'
+                          r'(?:can|cannot|could|could not) (?:read|access)|(?:have|has) (?:local |file )?access|'
+                          r'use .{0,30}everything)\b',part,re.I) for part in parts)
     return bool(general or provider)
 
 

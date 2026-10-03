@@ -122,29 +122,24 @@ def model_evidence(projection):
 def safe_reasoning(text):
     """Bounded assertion checks; evidence links cannot excuse adjacent claims.
 
-    This is not a proof of arbitrary factual correctness. Only a directly
-    negated assertion is exempt; unknowns elsewhere do not validate a promise.
+    This is not a proof of arbitrary factual correctness. Questions, proposals
+    and denials retain local scope; they cannot validate a sibling promise.
     """
     from reply_contract import safe_artifact
-    from assertion_scope import nonasserted, DIRECT_DENIAL
+    from claim_scope import clauses, disposition
     from claim_evidence import violations
     prose=FACT_TOKEN.sub('',text)
     if not safe_artifact(prose) or violations(prose):return False
     guarantee=re.compile(r"\b(?:guarantee[ds]?|unlimited|free|zero[- ]cost|no (?:extra |additional )?(?:costs?|charges?)|same quality|equal quality|equivalent (?:quality|answers)|(?:quality|quota|allowance) (?:is|stays|remains) (?:protected|unchanged)|(?:preserve[ds]?|protect(?:s|ed)?|maintain(?:s|ed)?|(?:is|are|was|were|will be) (?:preserving|protecting|maintaining)) (?:the |your )?(?:quality|quota|allowance)|(?:avoid|prevent)(?:s|ed|ing)? (?:quota exhaustion|exhaustion|rate limits?|extra charges)|will not (?:cost|exhaust|run out)|won[’']t (?:cost|exhaust|run out))\b",re.I)
     observed=re.compile(r"\b(?:I|we|Codex|Claude|Cursor|Gemini|MiniMax)(?:['’]ve| have)? (?:checked|verified|confirmed|inspected|tested|read)\b|\b(?:can|could|will) (?:already |now )?(?:read|access|open) (?:all |your |the |those |needed |project )*(?:files?|repository|repo)\b|\b(?:remaining|available) (?:quota|allowance|credits?) (?:is|are)\b",re.I)
     protected=re.compile(r'\b(?:quality|quota|allowance|continuity)\s+(?:is|are|stay|stays|remain|remains)\s+(?:protected|unchanged)\b',re.I)
-    clauses=re.split(r'((?<=[.!?])\s+|[,;\n]|\b(?:and|but|however|therefore|so|thus|although|yet|whereas|because|since)\b)',prose,flags=re.I)
-    for index in range(0,len(clauses),2):
-        clause=clauses[index]
-        sentence_start=index==0 or (clauses[index-1].isspace() and clauses[index-2].rstrip().endswith(('.','!','?')))
+    for statement in clauses(prose):
+        clause=statement.text
         for match in (*guarantee.finditer(clause), *protected.finditer(clause)):
-            prefix=clause[:match.start()]
-            # A test/comparison noun never establishes a guarantee. Negation
-            # must attach to that promise itself, not an unrelated condition.
-            if not nonasserted(prefix,match[0],sentence_start=sentence_start):
+            if not disposition(statement,match.start(),match.end(),match[0]):
                 return False
         for match in observed.finditer(clause):
-            if not DIRECT_DENIAL.search(clause[:match.start()]):return False
+            if not disposition(statement,match.start(),match.end(),match[0]):return False
     return True
 
 

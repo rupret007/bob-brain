@@ -386,9 +386,19 @@ class HTTPTests(Fixture):
         self.login()
         with patch("live_status_snapshot._screen_sessions", return_value=SCREENS), \
                 patch("live_status_snapshot.process_table", return_value=parse_processes(PS)):
-            for text in ("The hold is lifted. Bob already started WebJam #161, AdoptIQ #26, StoryBoard #47, and Shelf #10 on Claude, "
-                         "so don't start duplicates. For anything new, use start a job: plus the task. When I ask for status, give it in plain words from the real queue.",
-                         "Ok great is it moving along now?"):
+            # This establishes context and a future preference. It does not
+            # itself ask for a current observation or authorize new work.
+            context = ("The hold is lifted. Bob already started WebJam #161, AdoptIQ #26, StoryBoard #47, and Shelf #10 on Claude, "
+                       "so don't start duplicates. For anything new, use start a job: plus the task. When I ask for status, give it in plain words from the real queue.")
+            code, _, _ = self.request("POST", "/api/messages", dict(conversation_id=self.identifier,
+                message=context, request_id=str(uuid.uuid4())))
+            self.assertEqual(code, 202)
+            self.wait()
+            contextual = self.chat.history(self.identifier)["messages"][-1]
+            self.assertEqual(contextual["content"], "A saved reply.")
+            self.assertNotIn("status_observation", contextual)
+            self.assertEqual(len(self.fake.calls), 1)
+            for text in ("Ok great is it moving along now?", "Status?"):
                 code, _, body = self.request("POST", "/api/messages", dict(conversation_id=self.identifier,
                     message=text, request_id=str(uuid.uuid4())))
                 self.assertEqual(code, 202)
@@ -399,7 +409,7 @@ class HTTPTests(Fixture):
                 self.assertNotIn("running for", answer["content"])
                 self.assertNotIn("start a job:", answer["content"])
                 self.assertNotIn("None", answer["content"])
-        self.assertEqual(self.fake.calls, [])
+        self.assertEqual(len(self.fake.calls), 1)
         self.assertFalse((self.root / "conductor/state/queue.jsonl").exists())
 
     def test_tailnet_origin_and_secure_cookie(self):
