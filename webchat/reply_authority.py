@@ -564,8 +564,13 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
             structural=re.fullmatch(r'(?:(?:recorded|known|current|verified|next|safe|execution|hold|identity|source|scope|constraint|and)\s+)*(?:facts|status|state|steps?|checks?|requirements?|evidence|decision|uncertainties|match|compliance)',label[1],re.I)
             # A heading can explicitly return to the bound task after a
             # historical result. Keep that referent for subsequent fields.
-            foreign_heading=projects(label[1]) or re.search(r'\b(?:'+ '|'.join(re.escape(n) for n in WORKER_NAMES)+r'|service|worker|project|process|system|app|host)\b',label[1],re.I)
-            bound_heading=not foreign_heading and any(re.search(r'\b'+re.escape(i)+r'\b',label[1]) for i in record_ids)
+            # An ID appearing in an arbitrary actor's heading does not make
+            # that actor the task. Permit only structural field/question words
+            # around a bound ID, rather than enumerating foreign actor names.
+            heading_words=set(re.findall(r'[A-Za-z][\w]*(?:-\d+)?',label[1].lower()))
+            ids={i.lower() for i in record_ids}
+            field_words=set('what which must should needs need to be checked check checks before after a the result is accepted accepting for of task assignment record facts status state step steps requirement requirements evidence decision identity source scope constraint compliance match and recorded known current verified next safe execution hold uncertainties update'.split())
+            bound_heading=bool(heading_words & ids) and heading_words <= field_words | ids
             if bound_heading:record_subject=True
             if not structural and not bound_heading:
                 record_subject=False

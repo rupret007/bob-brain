@@ -107,6 +107,8 @@ class PersistentConversationTests(SessionFixture):
             'Codex: Its status is on hold.',
             'The backup service: Its status is on hold.',
             'Codex for K-63: Its status is on hold.',
+            'External reviewer for K-63: Its status is on hold.',
+            'Backup daemon for K-63: Its status is on hold.',
             'Evidence that the hold was lifted is required and has now been received.',
         ):
             with self.subTest(content=content):
