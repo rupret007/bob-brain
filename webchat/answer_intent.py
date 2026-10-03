@@ -11,8 +11,9 @@ ANSWER = re.compile(r'^(?:write|draft|compose|summari[sz]e|compare|analy[sz]e|ex
                     r'calculate|evaluate|grade|score|research|review|plan|'
                     r'(?:give|show|offer|provide) me|(?:talk|walk) me through|'
                     r'suggest|brainstorm|outline|make sense of|choose|decide|clarify|simplify)\b', re.I)
-REVISION = re.compile(r'^(?:make|keep|rewrite|revise|shorten|expand|rephrase)\b.{0,70}\b'
-                      r'(?:reply|replies|answer|explanation|paragraph|poem|story|draft|wording|summary)\b', re.I)
+REVISION = re.compile(r'^(?:make|keep|rewrite|revise|shorten|expand|rephrase|update|edit)\b.{0,70}\b'
+                      r'(?:reply|replies|answer|explanation|paragraph|poem|story|draft|wording|summary|handoff|brief)\b'
+                      r'(?!\s+(?:service|app|application|script|database|configuration)\b)', re.I)
 COMMUNICATION_REVISION = re.compile(r'^(?:make|keep)\b.{0,70}\b'
                                     r'(?:reasoning|recommendations?|criteria|rules?|options?|tradeoffs?|decisions?|instructions?)\b'
                                     r'.{0,50}\b(?:clear(?:er)?|simple(?:r)?|easy|easier|understandable|concise|'

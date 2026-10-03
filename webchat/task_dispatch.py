@@ -20,7 +20,7 @@ WORK = re.compile(
     r"^" + POLITE +
     r"(?:plan|grade|score|evaluate|review|analy[sz]e|audit|research|investigate|inspect|check|compare|summari[sz]e|calculate|"
     r"read|open|save|append|write|draft|create|build|implement|fix|repair|debug|test|trace|update|refactor|add|remove|"
-    r"diagnose|figure out|find out|look into|work on|improve|make)\b.*", re.I | re.S)
+    r"diagnose|figure out|find out|look into|work on|improve|make|edit|modify)\b.*", re.I | re.S)
 ROUTED = re.compile(r"^" + POLITE + r"(?:have|get|ask|use|assign(?:\s+to)?|delegate(?:\s+to)?)\s+"
                     r"(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\b\s*(?:to\b|[:,])?\s*(.*)$", re.I | re.S)
 PREFIX = re.compile(r"^(?:worker\s*[:=]\s*)?(codex|claude|cursor-agent|cursor|gemini|minimax|mini|grok)\s*:\s*(.+)$", re.I | re.S)

@@ -53,3 +53,12 @@ class ResourceInventoryTests(Fixture):
         self.assertTrue(self.fake.calls)
         self.assertFalse(task_queue.tasks(self.root))
         self.assertNotIn('_project_handoffs',self.chat.get(self.identifier))
+        self.chat.submit(self.identifier,"Dot says journal writes were denied. Does that prove coordination?",str(uuid.uuid4()));self.wait()
+        before=len(self.fake.calls)
+        self.chat.submit(self.identifier,'Update the handoff with that limitation and a concrete next step.',str(uuid.uuid4()));self.wait()
+        self.assertEqual(len(self.fake.calls),before+1)
+        self.assertFalse(task_queue.tasks(self.root))
+        from task_dispatch import parse_work
+        for instruction in ('Update webchat/handoff.py to validate source hashes',
+                            'Edit the handoff and then save a file in /tmp/handoff.md'):
+            self.assertIsNotNone(parse_work(instruction)[0])
