@@ -73,11 +73,29 @@ def policy_check(env, timeout):
             raise RuntimeError('Claude managed preferences could not be verified')
 
 
-def subscription(env, row):
-    policy_check(env, remaining(row))
-    result = run(['claude', '--restricted', '--safe-mode', 'auth', 'status', '--json'],
-                 cwd=env.get('TMPDIR', '/tmp'), env=env, capture_output=True, text=True,
-                 timeout=min(15, remaining(row)))
+def subscription(env, row, admission_env=None):
+    import generation_budget
+    def time_left():
+        ref=generation_budget.attribution(admission_env)
+        if ref:
+            selected=generation_budget.selection(ref['root'],ref['id'])
+            seconds=min(remaining(row),selected['deadline']-time.time()-10)
+            if seconds<=0:raise RuntimeError('Goal deadline leaves no authentication cleanup time')
+            return seconds
+        return remaining(row)
+    policy_check(env,time_left())
+    metadata_env=dict(admission_env or os.environ)
+    metadata_env.pop('BOB_GENERATION_TASK_ID',None)
+    metadata_env['BOB_GENERATION_CONTEXT']='report-auth:'+row['id']
+    receipt=generation_budget.reserve('claude',kind='native',env=metadata_env)
+    completed=False
+    try:
+        result = run(['claude', '--restricted', '--safe-mode', 'auth', 'status', '--json'],
+                     cwd=env.get('TMPDIR', '/tmp'), env=env, capture_output=True, text=True,
+                     timeout=min(15,time_left()))
+        completed=True
+    finally:
+        generation_budget.settle(receipt,None,status='metadata_completed' if completed else 'metadata_failed_or_interrupted')
     try:
         value = json.loads(result.stdout)
         if (result.returncode or not value.get('loggedIn') or value.get('authMethod') != 'claude.ai' or
@@ -219,7 +237,6 @@ def execute(root, row, token, redact):
     remaining(row)
     budget.check('claude')
     env = {name: os.environ[name] for name in ENV_NAMES if name in os.environ}
-    provenance = subscription(env, row)
     prompt = (RULES + '\n\nASSIGNMENT:\n' + contract['scope'] + '\nDELIVERABLE:\n' +
               contract['expected_deliverable'] + '\n\nEVIDENCE SNAPSHOT:\n' + canonical(sources))
     current_context(root, contract)
@@ -233,6 +250,7 @@ def execute(root, row, token, redact):
     admission_env = generation_budget.bound_environment(bound, os.environ)
     from build_info import BUILD
     admission_env['BOB_GENERATION_SOURCE_SHA'] = BUILD['sha']
+    provenance = subscription(env,row,admission_env)
     admission_env['BOB_GENERATION_TASK_ID'] = row['id']
     native_receipt = generation_budget.reserve('claude', kind='native', env=admission_env)
     # Existing permission/claim fence is checked immediately before generation.

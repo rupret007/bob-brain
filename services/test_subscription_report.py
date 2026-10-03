@@ -17,6 +17,7 @@ import report_artifacts
 import report_contract
 import project_context
 import task_queue
+import generation_budget
 from command import run_input
 
 ANSWER = ('# Readiness\nThe supplied module supports durable assignments. '
@@ -37,6 +38,43 @@ def event_result():
 
 def process(rows=None, code=0):
     return subprocess.CompletedProcess(['fixture'], code, '\n'.join(json.dumps(r) for r in (rows or event_result())), '')
+
+
+class AuthenticationAdmissionTests(unittest.TestCase):
+    def test_metadata_invocation_is_counted_separately_and_exhaustion_stops_cli(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);folder=root/'conductor/state/generation-budgets';folder.mkdir(parents=True)
+            path=folder/'auth-proof.json'
+            value=dict(schema=1,id='auth-proof',status='active',deadline=time.time()+600,phase='product',providers=['claude'],calls={},
+                       limits=dict(api_usd=1,reserve_usd=0,direct_attempts=1,reserve_attempts=0,native_invocations=1,product_jobs=1))
+            generation_budget.atomic(path,value)
+            env=dict(BOB_GENERATION_BUDGET='auth-proof',BOB_GENERATION_BUDGET_ROOT=str(root),BOB_GENERATION_PURPOSE='product',BOB_GENERATION_TASK_ID='report-task')
+            row=dict(id='report-task',execution_deadline=time.time()+900)
+            result=subprocess.CompletedProcess([],0,json.dumps(dict(loggedIn=True,authMethod='claude.ai',apiProvider='firstParty',subscriptionType='pro')),'')
+            with patch.object(worker,'policy_check'),patch.object(worker,'run',return_value=result) as run:
+                self.assertEqual(worker.subscription(dict(HOME=temp),row,env)['plan'],'pro')
+                calls=json.loads(path.read_text())['calls'];self.assertEqual(len(calls),1)
+                receipt=next(iter(calls.values()));self.assertIsNone(receipt['task_id']);self.assertEqual(receipt['context'],'report-auth:report-task')
+                with self.assertRaises(generation_budget.AdmissionDenied):worker.subscription(dict(HOME=temp),row,env)
+                self.assertEqual(run.call_count,1)
+
+    def test_goal_deadline_limits_policy_and_auth_and_auth_failure_is_retained(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);folder=root/'conductor/state/generation-budgets';folder.mkdir(parents=True);path=folder/'auth-proof.json'
+            value=dict(schema=1,id='auth-proof',status='active',deadline=time.time()+13,phase='product',providers=['claude'],calls={},
+                       limits=dict(api_usd=1,reserve_usd=0,direct_attempts=1,reserve_attempts=0,native_invocations=2,product_jobs=1))
+            generation_budget.atomic(path,value)
+            env=dict(BOB_GENERATION_BUDGET='auth-proof',BOB_GENERATION_BUDGET_ROOT=str(root),BOB_GENERATION_PURPOSE='product')
+            row=dict(id='report-task',execution_deadline=time.time()+900)
+            with patch.object(worker,'policy_check') as policy,patch.object(worker,'run',side_effect=subprocess.TimeoutExpired('fixture',1)) as run:
+                with self.assertRaises(subprocess.TimeoutExpired):worker.subscription(dict(HOME=temp),row,env)
+                self.assertLessEqual(policy.call_args.args[1],3)
+                self.assertLessEqual(run.call_args.kwargs['timeout'],3)
+            self.assertEqual(next(iter(json.loads(path.read_text())['calls'].values()))['status'],'metadata_failed_or_interrupted')
+            value['deadline']=time.time()-1;generation_budget.atomic(path,value)
+            with patch.object(worker,'policy_check') as policy,patch.object(worker,'run') as run:
+                with self.assertRaises(generation_budget.AdmissionDenied):worker.subscription(dict(HOME=temp),row,env)
+                policy.assert_not_called();run.assert_not_called()
 
 
 class SubscriptionReportTests(unittest.TestCase):

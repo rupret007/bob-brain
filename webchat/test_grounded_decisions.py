@@ -18,7 +18,7 @@ class ProjectionTests(unittest.TestCase):
     def test_explanation_has_no_forced_route_and_fences_cannot_hide_extra_prose(self):
         with tempfile.TemporaryDirectory() as temp:
             projection=resource_decision.project(Path(temp),self.conversation('Does the ChatGPT subscription cover API bills?'))
-            packet=json.dumps(dict(answer='No. [fact:openai_api_billing] The login route is the key distinction.',resource=None,steps=[]))
+            packet=json.dumps(dict(answer='No. ChatGPT Pro does not pay for API calls. [fact:openai_api_billing] The login route is the key distinction.',resource=None,steps=[]))
             for raw in (packet,'```json\n'+packet+'\n```'):
                 answer,decision=resource_decision.render(raw,projection)
                 self.assertTrue(answer.startswith('No. ChatGPT Pro does not'))
@@ -40,12 +40,20 @@ class ProjectionTests(unittest.TestCase):
                           'Quota is unknown and this guarantees equal quality.',
                           'It is not free and it is unlimited.',
                           'I have not checked quota and I inspected your files.',
+                          'This test guarantees equal quality.',
+                          'Our comparison guarantees no extra charges.',
+                          'Without a new subscription we guarantee the same quality.',
+                          'We are not changing plans since this route is free.',
+                          'Rather than wait this route provides equal quality.',
                           'Pacing prevents rate limits.', 'I inspected your files.',
                           'We can read your project files.', 'I queued your task.'):
                 with self.subTest(claim=claim),self.assertRaises(ValueError):
                     resource_decision.render(json.dumps(dict(answer='[fact:codex.observation] '+claim,resource=None,steps=[])),projection)
             for clause in ('Login does not guarantee equal quality.', 'That is not free.',
-                           'Pacing cannot prevent rate limits.', 'File access is unverified.'):
+                           'Pacing cannot prevent rate limits.', 'File access is unverified.',
+                           'Paying for a subscription does not make API requests free.',
+                           'Compare the outputs rather than assuming equal quality.',
+                           'We cannot assume this provider produces equivalent answers.'):
                 answer,_=resource_decision.render(json.dumps(dict(answer=clause+' [fact:codex.observation]',resource=None,steps=[])),projection)
                 self.assertIn(clause,answer)
 
@@ -56,7 +64,7 @@ class ProjectionTests(unittest.TestCase):
             self.assertIn('begin with',answer)
             projection=resource_decision.project(Path(temp),self.conversation('Our Codex subscription cannot read the needed project files.', 'What next?'))
             answer,_=resource_decision.render(json.dumps(dict(answer='[fact:codex.reach] Define a short evidence checklist first.',resource=None,steps=[])),projection)
-            self.assertIn('files are still missing',answer)
+            self.assertIn('inputs unavailable',answer)
             restored=resource_decision.project(Path(temp),self.conversation('Our Codex subscription cannot read the needed project files.',
                 'Correction: the files are now available.'))
             self.assertNotIn('missing_inputs',restored['facts'])
@@ -157,7 +165,7 @@ class ProjectionTests(unittest.TestCase):
 
 class DeliveredTests(SessionFixture):
     def test_direct_answer_preserved_and_bad_answer_never_selects_default_worker(self):
-        self.fake.reply_text=json.dumps(dict(answer='No. [fact:openai_api_billing]',resource=None,steps=[]))
+        self.fake.reply_text=json.dumps(dict(answer='No. ChatGPT Pro does not pay for API calls. [fact:openai_api_billing]',resource=None,steps=[]))
         answer=self.send('Does ChatGPT Pro pay for OpenAI API usage?')
         self.assertIn('does not pay',answer['content'])
         self.assertIsNone(answer['resource_decision']['resource'])

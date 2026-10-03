@@ -17,9 +17,10 @@ ACTIONABLE = tuple(name for name in ROUTES if supports(name,'conversation'))
 STEPS = ('qualify_chat','prepare_report','provide_inputs','inspect_allowance','keep_current','review_dependency')
 RULES = '''Answer the current question directly, including disagreement when warranted.
 Return one JSON object with exactly answer, resource, steps. answer is natural
-prose composed for this turn, not a routing receipt. Insert server-owned facts
-as [fact:ID] using the supplied facts map; use at least one relevant fact. Explain
-tradeoffs and reasoning in your own words around those facts. Do not restate
+prose composed for this turn, not a routing receipt. Write the complete answer
+in your own words and cite its evidence as [fact:ID] from the supplied facts
+map; use at least one relevant citation. These references identify evidence;
+they are not sentence placeholders. Explain the tradeoffs and reasoning. Do not restate
 unknown account facts as verified or infer guarantees from login, pacing or price.
 resource is null when no provider is selected, or codex/cursor/claude/gemini/minimax
 for a recommendation. steps is an empty list or up to three distinct
@@ -48,7 +49,7 @@ def facts(inventory, *, missing=False):
         'manual_handoff': 'Dot and Grok have prepared handoff paths, but no verified automatic Web Bob push/acceptance interface. Preparation alone does not establish native execution.',
     }
     if missing:
-        result['missing_inputs']='The needed project files are still missing. A bounded evidence snapshot can make the next task useful; without it, project-specific findings cannot be verified.'
+        result['missing_inputs']='With the needed project inputs unavailable, project-specific conclusions remain unverified. The cause of missing access is not established; obtain a bounded evidence snapshot through a supported permitted read or owner-supplied material.'
     for item in inventory['resources']:
         name=item['name'];obs=item['observation'];fresh=obs.get('freshness')=='recent'
         result[name+'.reach']=item['reach']
@@ -81,12 +82,20 @@ def safe_reasoning(text):
     if not safe_artifact(prose):return False
     guarantee=re.compile(r"\b(?:guarantee[ds]?|unlimited|free|zero[- ]cost|no (?:extra |additional )?(?:costs?|charges?)|same quality|equal quality|equivalent (?:quality|answers)|(?:quality|quota|allowance) (?:is|stays|remains) (?:protected|unchanged)|(?:preserv|protect|maintain)(?:e[ds]?|ing) (?:the |your )?(?:quality|quota|allowance)|(?:avoid|prevent)(?:s|ed|ing)? (?:exhaustion|rate limits?|extra charges)|will not (?:cost|exhaust|run out)|won[’']t (?:cost|exhaust|run out))\b",re.I)
     observed=re.compile(r"\b(?:I|we|Codex|Claude|Cursor|Gemini|MiniMax)(?:['’]ve| have)? (?:checked|verified|confirmed|inspected|tested|read)\b|\b(?:can|could|will) (?:already |now )?(?:read|access|open) (?:all |your |the |those |needed |project )*(?:files?|repository|repo)\b|\b(?:remaining|available) (?:quota|allowance|credits?) (?:is|are)\b",re.I)
-    negation=re.compile(r"\b(?:cannot|can['’]t|does not|doesn['’]t|is not|isn['’]t|not|no proof of|no evidence of|no)\s+(?:(?:be|a|any|necessarily|guarantee|establish|imply|prove)\s+){0,3}$",re.I)
-    for clause in re.split(r'(?<=[.!?])\s+|[;\n]|\b(?:and|but|however|therefore|so|thus|although|yet|whereas)\b',prose,flags=re.I):
+    direct_denial=re.compile(r"\b(?:cannot|can['’]t|does not|doesn['’]t|is not|isn['’]t|not|no)\s+(?:(?:be|a|any|necessarily|ever|actually|guarantee|establish|imply|prove)\s+){0,3}$",re.I)
+    scoped_denial=re.compile(r"\b(?:cannot assume|can['’]t assume|(?:does not|doesn['’]t) (?:make|imply|establish|prove)|no proof of|no evidence of|rather than (?:assuming|inferring)|without (?:assuming|claiming|promising))\b(?:(?!\b(?:guarantee[ds]?|ensures?|therefore|since|because)\b)[^,;:.!?]){0,90}$",re.I)
+    inquiry=re.compile(r'\b(?:whether|to (?:check|test|compare|assess|verify|measure|evaluate|qualify)|(?:should|must|need to) (?:check|test|compare|assess|verify|measure|evaluate|qualify))\b[^,;:.!?]{0,70}$',re.I)
+    for clause in re.split(r'(?<=[.!?])\s+|[,;\n]|\b(?:and|but|however|therefore|so|thus|although|yet|whereas|because|since)\b',prose,flags=re.I):
         for match in guarantee.finditer(clause):
-            if not negation.search(clause[:match.start()]):return False
+            prefix=clause[:match.start()]
+            # A test/comparison noun never establishes a guarantee. Negation
+            # must attach to that promise itself, not an unrelated condition.
+            if match[0].lower().startswith('guarantee'):
+                if not direct_denial.search(prefix):return False
+            elif not (direct_denial.search(prefix) or scoped_denial.search(prefix) or inquiry.search(prefix)):
+                return False
         for match in observed.finditer(clause):
-            if not negation.search(clause[:match.start()]):return False
+            if not direct_denial.search(clause[:match.start()]):return False
     return True
 
 
@@ -175,7 +184,21 @@ def render(raw, projection):
         known=projection.get('facts') or facts(projection['inventory'],missing=projection['missing_inputs'])
         if not tokens or any(t not in known for t in tokens) or not safe_reasoning(value['answer']):
             raise ValueError('Ungrounded answer composition')
-        content=FACT_TOKEN.sub(lambda m:known[m[1]],value['answer']).strip()
+        bare=FACT_TOKEN.sub('',value['answer']).strip(' .,:;\n')
+        if not bare:
+            content='\n\n'.join(known[t] for t in dict.fromkeys(tokens))
+        else:
+            links={'openai_api_billing':'[OpenAI pricing](https://learn.chatgpt.com/docs/pricing)',
+                   'subscription_scope':'[OpenAI pricing](https://learn.chatgpt.com/docs/pricing)'}
+            linked=set()
+            def citation(match):
+                link=links.get(match[1],'')
+                if link in linked:return ''
+                linked.add(link);return link
+            content=FACT_TOKEN.sub(citation,value['answer']).strip()
+            content=re.sub(r' +([.,;:])',r'\1',content)
+            content=re.sub(r' {2,}',' ',content)
+        if not content:raise ValueError('Empty composed answer')
         resource=value['resource']
         if resource is None:
             steps=value['steps']
@@ -183,17 +206,17 @@ def render(raw, projection):
                     any(not isinstance(s,str) or s not in ('provide_inputs','inspect_allowance','keep_current','review_dependency') for s in steps) or
                     len(set(steps))!=len(steps)):
                 raise ValueError('Invalid general advice steps')
-            if projection['missing_inputs'] and 'missing_inputs' not in tokens:
+            if projection['missing_inputs']:
                 content+='\n\n'+known['missing_inputs']
-            return content,dict(resource=None,steps=steps,fact_ids=tokens,execution_started=False,model_proposal_accepted=True)
+            return content,dict(resource=None,steps=steps,fact_ids=tokens,execution_started=False,model_proposal_accepted=True,acceptance_scope='schema and bounded claim checks; not semantic certification')
         validate_route(resource,value['steps'],projection,empty=True)
         decision=dict(resource=resource,missing_inputs=projection['missing_inputs'],scenario=projection['scenario'],
                       execution_started=False,observation_time=projection['inventory']['observed_at'])
-        if projection['missing_inputs'] and 'missing_inputs' not in tokens:
+        if projection['missing_inputs']:
             content+='\n\n'+known['missing_inputs']
-        if resource+'.observation' not in tokens:
+        if resource in ('codex','claude','cursor'):
             content+='\n\n'+known[resource+'.observation']
-        decision.update(steps=value['steps'],fact_ids=tokens,model_proposal_accepted=True)
+        decision.update(steps=value['steps'],fact_ids=tokens,model_proposal_accepted=True,acceptance_scope='schema and bounded claim checks; not semantic certification')
         return content,decision
     if not isinstance(value,dict) or set(value)!= {'resource','steps'}:
         raise ValueError('Invalid resource decision')

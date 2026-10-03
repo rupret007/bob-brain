@@ -12,6 +12,15 @@ class ArtifactTests(SessionFixture):
     def packet(self, artifact, commentary=''):
         self.fake.reply_text=json.dumps(dict(artifact=artifact,commentary=commentary))
 
+    def test_status_heading_does_not_claim_effect_from_negated_list(self):
+        self.send('Help plan a read-only report. Hold execution until scope is chosen.')
+        self.fake.reply_text='Task Queue Status: No active tasks, pending assignments, or unhandled effects are in progress. The plan still needs a pinned source revision.'
+        answer=self.send('Include source identity and the largest gaps. No changes.')
+        self.assertIn('pinned source revision',answer['content'])
+        self.fake.reply_text='Task Queue Status: I queued your task.'
+        answer=self.send('Include the next planning step.')
+        self.assertNotIn('I queued your task.',answer['content'])
+
     def test_whole_fenced_packet_is_a_draft_but_appended_claim_is_not(self):
         packet=json.dumps(dict(artifact='Before we start, let’s finish the current workflow.',commentary=''))
         self.fake.reply_text='```json\n'+packet+'\n```'
