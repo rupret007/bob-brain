@@ -136,7 +136,7 @@ def deliver(root, text, answer, conversation, *, observation, redact):
     if contract and contract['kind']=='resource_advice' and contract['user_sha256']==digest(text):
         import resource_decision
         try:
-            content, decision=resource_decision.render(raw,contract['resource_projection'])
+            content, decision=resource_decision.render(raw,contract['resource_projection'],root=root)
         except (ValueError,TypeError,KeyError):
             projection=contract['resource_projection']
             facts=projection.get('facts') or resource_decision.facts(projection['inventory'],missing=projection['missing_inputs'])

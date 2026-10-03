@@ -51,3 +51,12 @@ charged to the shared goal and may conservatively consume the standalone HTTP
 ceiling too. Native voice sessions retain their separately disclosed billing
 uncertainty. No metadata check or unit test proves a real executor result or
 comparative conversational quality.
+
+Resource advice composes standalone server evidence statements with proposed
+reasoning. The evidence namespace includes only projected current owner facts,
+attributed to their source/revision rather than treated as operational authority.
+Unavailable routes constrain both structured recommendations and bounded prose
+checks. If reasoning fails, only complete evidence statements survive, with an
+explicit incomplete-answer notice and rejected-block receipts; no proposal is
+accepted. These checks do not certify arbitrary semantic truth. Delivered-answer
+evaluation and actual completed product work remain separate required evidence.

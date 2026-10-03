@@ -14,18 +14,23 @@ from resource_capabilities import ROUTES, CAPABILITIES, supports, BILLING_FACTS
 RESOURCE_NAMES = r'\b(?:'+'|'.join(ROUTES)+r')\b'
 ACTIONABLE = tuple(name for name in ROUTES if supports(name,'conversation'))
 
-STEPS = ('qualify_chat','prepare_report','provide_inputs','inspect_allowance','keep_current','review_dependency')
+STEPS = ('qualify_chat','prepare_report','provide_inputs','inspect_allowance','keep_current','preserve_standard','review_dependency')
 RULES = '''Answer the current question directly, including disagreement when warranted.
 Return one JSON object with exactly answer, resource, steps. answer is natural
-prose composed for this turn, not a routing receipt. Write the complete answer
-in your own words and cite its evidence as [fact:ID] from the supplied facts
-map; use at least one relevant citation. These references identify evidence;
-they are not sentence placeholders. Explain the tradeoffs and reasoning. Do not restate
-unknown account facts as verified or infer guarantees from login, pacing or price.
+conversation composed as an ordered array of standalone paragraph blocks.
+Each block has exactly one key: {"fact":"ID"} selects a complete statement from
+the supplied facts map, or {"reasoning":"text"} gives a useful proposed next
+step, question, tradeoff or conditional explanation. Use at least one fact block,
+and only the few facts needed to answer this turn. The server renders fact blocks
+verbatim; never build a sentence around a fact ID or put citation tokens in prose.
+Use fact blocks for capability, availability, billing, access, quality evidence
+and owner priorities. Do not paraphrase those as new factual claims in reasoning.
+Owner facts are attributed statements, not verified operations or authority.
+Reasoning should advance the discussion using these facts, not repeat their caveats.
+Do not infer guarantees from login, pacing, price or retention of a configuration.
 resource is null when no provider is selected, or codex/cursor/claude/gemini/minimax
 for a recommendation. steps is an empty list or up to three distinct
-choices: qualify_chat, prepare_report, provide_inputs, inspect_allowance,
-keep_current, review_dependency. Describe the useful proposed next step in answer;
+choices from allowed_steps. Describe the useful proposed next step in answer;
 these fields neither start it nor change routing. prepare_report supports Claude
 only; qualify_chat needs a selected provider. General inspection/preparation
 steps do not require a provider selection. A billing premise needs an answer, not an
@@ -41,6 +46,11 @@ not turn a chat adapter's tool boundary into a denial of its scoped executor.
 Not buying another plan is distinct from incurring no charges: a comparison uses
 allowance and may trigger extra usage under unknown account settings. Preparing
 inputs or checking settings is not evidence that future generation is cost-free.
+Preserve the quality standard and comparison criteria during an outage; that does
+not keep an unavailable route running. If no available route is qualified, prepare
+inputs and a bounded comparison, naming what must be checked before generation.
+The cause of missing input access is unknown: adapter boundaries are possibilities,
+not an established diagnosis. Give a feasible preparation step now.
 Return JSON only, without fences or trailing commentary.
 '''
 
@@ -53,7 +63,7 @@ def facts(inventory, *, missing=False):
         'openai_api_billing': BILLING_FACTS['openai_api_billing'],
         'subscription_scope': BILLING_FACTS['subscription_scope'],
         'route_boundaries': 'Web Bob supports BOTH Codex/Cursor conversation adapters using supplied context AND their separate scoped executors for assigned local file/coding work. Tool limits apply to the named adapter, not the whole resource. Voice and images require their own supported operation. Signing in does not make routes interchangeable or authorize file work.',
-        'quality_bar': 'Keep the qualified answer route and its reasoning settings until a representative comparison establishes the alternative’s quality. A cheaper price or successful login does not establish equivalent answers.',
+        'quality_bar': 'Preserve the answer-quality standard and reasoning requirements. A representative comparison must qualify an alternative before changing the default. A cheaper price or successful login does not establish equivalent answers. Keeping a configuration does not establish that its provider is currently usable.',
         'capacity_and_pacing': 'Pacing may reduce demand; it cannot establish remaining allowance or prevent quota exhaustion. Capacity and extra-usage settings need current observations before admission.',
         'purchase_vs_usage': 'An existing subscription avoids purchasing another plan; it does not establish that another model invocation has no incremental charge. Extra-usage settings and remaining allowance are unverified until observed. Prepare evidence and inspect settings before admitting a comparison.',
         'manual_handoff': 'Dot and Grok have prepared handoff paths, but no verified automatic Web Bob push/acceptance interface. Preparation alone does not establish native execution.',
@@ -95,6 +105,9 @@ def model_evidence(projection):
     """
     return {**{k:projection[k] for k in ('requested_view','requested_resources','allowed_resources',
                                        'scenario','missing_inputs','unavailable','facts')},
+            'allowed_steps':projection.get('allowed_steps',list(STEPS)),
+            'current_route':projection.get('current_route'),
+            'owner_context':projection.get('owner_context'),
             'supported_operations':{name:sorted(values) for name,values in CAPABILITIES.items()},
             'observed_at':projection['inventory']['observed_at'],
             'authority':'Evidence for advice only; neither provider selection nor execution authorization.'}
@@ -107,38 +120,31 @@ def safe_reasoning(text):
     negated assertion is exempt; unknowns elsewhere do not validate a promise.
     """
     from reply_contract import safe_artifact
+    from assertion_scope import nonasserted, DIRECT_DENIAL
     prose=FACT_TOKEN.sub('',text)
     if not safe_artifact(prose):return False
     guarantee=re.compile(r"\b(?:guarantee[ds]?|unlimited|free|zero[- ]cost|no (?:extra |additional )?(?:costs?|charges?)|same quality|equal quality|equivalent (?:quality|answers)|(?:quality|quota|allowance) (?:is|stays|remains) (?:protected|unchanged)|(?:preserve[ds]?|protect(?:s|ed)?|maintain(?:s|ed)?|(?:is|are|was|were|will be) (?:preserving|protecting|maintaining)) (?:the |your )?(?:quality|quota|allowance)|(?:avoid|prevent)(?:s|ed|ing)? (?:quota exhaustion|exhaustion|rate limits?|extra charges)|will not (?:cost|exhaust|run out)|won[’']t (?:cost|exhaust|run out))\b",re.I)
     observed=re.compile(r"\b(?:I|we|Codex|Claude|Cursor|Gemini|MiniMax)(?:['’]ve| have)? (?:checked|verified|confirmed|inspected|tested|read)\b|\b(?:can|could|will) (?:already |now )?(?:read|access|open) (?:all |your |the |those |needed |project )*(?:files?|repository|repo)\b|\b(?:remaining|available) (?:quota|allowance|credits?) (?:is|are)\b",re.I)
-    direct_denial=re.compile(r"\b(?:cannot|can['’]t|does not|doesn['’]t|is not|isn['’]t|not|no)\s+(?:(?:be|a|an|any|necessarily|ever|actually|guarantee|establish|imply|prove)\s+){0,3}$",re.I)
-    scoped_denial=re.compile(r"\b(?:cannot assume|can['’]t assume|(?:does not|doesn['’]t) (?:make|imply|establish|prove)|no proof of|no evidence of|rather than (?:assuming|inferring)|without (?:assuming|claiming|promising))\b(?:(?!\b(?:guarantee[ds]?|ensures?|therefore|since|because)\b)[^,;:.!?]){0,90}$",re.I)
-    inquiry=re.compile(r'\b(?:whether|to (?:check|test|compare|assess|verify|measure|evaluate|qualify)|(?:should|must|need to) (?:check|test|compare|assess|verify|measure|evaluate|qualify))\b[^,;:.!?]{0,70}$',re.I)
-    contrast=re.compile(r'\brather than\s+(?:(?:being|offering|providing|an?|any|completely|truly)\s+){0,3}$',re.I)
+    protected=re.compile(r'\b(?:quality|quota|allowance|continuity)\s+(?:is|are|stay|stays|remain|remains)\s+(?:protected|unchanged)\b',re.I)
     clauses=re.split(r'((?<=[.!?])\s+|[,;\n]|\b(?:and|but|however|therefore|so|thus|although|yet|whereas|because|since)\b)',prose,flags=re.I)
     for index in range(0,len(clauses),2):
         clause=clauses[index]
         sentence_start=index==0 or (clauses[index-1].isspace() and clauses[index-2].rstrip().endswith(('.','!','?')))
-        for match in guarantee.finditer(clause):
+        for match in (*guarantee.finditer(clause), *protected.finditer(clause)):
             prefix=clause[:match.start()]
             # A test/comparison noun never establishes a guarantee. Negation
             # must attach to that promise itself, not an unrelated condition.
-            if match[0].lower().startswith('guarantee'):
-                if not (direct_denial.search(prefix) or scoped_denial.search(prefix)):return False
-            elif (sentence_start and re.match(r'^(?:preserve|protect|maintain) ',match[0],re.I) and
-                  re.fullmatch(r'\s*(?:to\s+)?',prefix,re.I)):
-                continue  # Imperative/topic objective, not an asserted outcome.
-            elif not (direct_denial.search(prefix) or scoped_denial.search(prefix) or contrast.search(prefix) or inquiry.search(prefix)):
+            if not nonasserted(prefix,match[0],sentence_start=sentence_start):
                 return False
         for match in observed.finditer(clause):
-            if not direct_denial.search(clause[:match.start()]):return False
+            if not DIRECT_DENIAL.search(clause[:match.start()]):return False
     return True
 
 
 def validate_route(resource,steps,projection,*,empty=False):
     if (resource not in ACTIONABLE or not isinstance(steps,list) or
             not (0 if empty else 1)<=len(steps)<=3 or
-            any(not isinstance(s,str) or s not in STEPS for s in steps) or len(set(steps))!=len(steps)):
+            any(not isinstance(s,str) or s not in projection.get('allowed_steps',STEPS) for s in steps) or len(set(steps))!=len(steps)):
         raise ValueError('Invalid resource decision')
     if (resource not in projection.get('allowed_resources',ACTIONABLE) or resource in projection['unavailable'] or
             'prepare_report' in steps and not supports(resource,'bounded-report')):
@@ -193,18 +199,129 @@ def project(root, conversation):
                 names.intersection_update(ACTIONABLE)
                 if names:restricted=names
     inventory=resource_inventory.observe(root)
-    return dict(version=2,inventory=inventory,facts=facts(inventory,missing=missing),
+    known=facts(inventory,missing=missing)
+    previous=next((m for m in reversed(conversation.get('messages',[]))
+                   if m.get('role')=='assistant' and m.get('status')=='done' and m.get('provider') in ACTIONABLE),None)
+    selected=conversation.get('preferred_provider')
+    route=selected if selected in ACTIONABLE else previous.get('provider') if previous else None
+    current_route=dict(name=route,source='selected preference' if selected in ACTIONABLE else
+                       'last completed reply' if previous else 'unknown',
+                       unavailable=route in unavailable if route else None,
+                       establishes='Route identity only; no health, remaining allowance or quality certification')
+    allowed_steps=list(STEPS)
+    if unavailable and (not route or route in unavailable):
+        allowed_steps.remove('keep_current')
+    if unavailable:
+        label='In the supplied scenario' if re.search(r'\b(?:suppose|scenario|what if)\b',source,re.I) else 'According to the current supplied constraints'
+        known['availability']=label+', '+', '.join(sorted(unavailable))+' '+('is' if len(unavailable)==1 else 'are')+' unavailable. Preserve the quality standard, but do not depend on an unavailable route for generation. Prepare evidence and qualify an available candidate before switching; no alternative is qualified by subscription ownership alone.'
+    owner_context=None
+    import project_context
+    owner=project_context.projection(root,conversation,latest)
+    if owner and owner.get('available') and not owner.get('omitted'):
+        owner_context={k:owner[k] for k in ('project_id','revision','source_path')}
+        owner_context['facts']={}
+        for fact in owner.get('facts',[]):
+            fid='owner.'+fact['id'].replace('-','_')
+            known[fid]='Owner-saved '+fact['kind']+' for '+owner['name']+': '+fact['value']+' (Owner statement; not verified operations or execution authority.)'
+            owner_context['facts'][fid]=dict(fact_id=fact['id'],revision=fact['revision'],
+                source=fact['source'],value_sha256=hashlib.sha256(fact['value'].encode()).hexdigest())
+    return dict(version=3,inventory=inventory,facts=known,current_route=current_route,
+        allowed_steps=allowed_steps,owner_context=owner_context,
         owner_sources=[dict(request_id=m['request_id'],sha256=hashlib.sha256(m['text'].encode()).hexdigest()) for m in scope],
         requested_view=view,requested_resources=named,allowed_resources=sorted(restricted) if restricted else list(ACTIONABLE),
         scenario=bool(re.search(r'\b(?:suppose|scenario|what if)\b',source,re.I)),
         missing_inputs=missing,unavailable=sorted(unavailable))
 
 
-def render(raw, projection):
+def feasible_reasoning(text, projection):
+    """Bounded checks against this turn's explicit unavailable/missing evidence.
+
+    A valid grammatical proposal can still violate its evidence constraints.
+    This does not certify other causal or capability statements as true.
+    """
+    clauses=re.split(r'[.;!\n]|\b(?:but|however|yet)\b',text,flags=re.I)
+    for clause in clauses:
+        for name in projection['unavailable']:
+            targets=list(re.finditer(r'\b(?:use|using|run|running|keep|choose|pick|continue with|switch to)\s+'
+                             r'(?:(?:the|our|existing|current)\s+)?'+re.escape(name)+r'\b',clause,re.I))
+            for index,target in enumerate(targets):
+                prefix=clause[:target.start()];suffix=clause[target.end():targets[index+1].start() if index+1<len(targets) else len(clause)]
+                denied=re.search(r"\b(?:not|never|cannot|can't|don't)\s*$",prefix,re.I)
+                condition=(r'\b(?:after|once|when|if)\s+(?:(?:it|'+re.escape(name)+r')\s+)?'
+                           r'(?:(?:is|becomes|has been)\s+)?(?:restored|available|funded|recovered)\b')
+                future=(re.search(condition+r',\s*(?:(?:then|please)\s+){0,2}$',prefix,re.I) or
+                        re.match(r'^\s*(?:(?:active|running)\s+)?(?:(?:for|to)\s+'
+                                 r'(?:(?!\b(?:and|but|yet|while|then)\b)[^,;.!?]){1,50}?)?\s*(?:only\s+)?'+condition,suffix,re.I))
+                if not denied and not future:return False
+        if 'keep_current' not in projection.get('allowed_steps',STEPS):
+            keep=re.search(r'\b(?:keep|continue|retain|maintain|use|using|run|running)\b'
+                           r'[^,!?]{0,50}\b(?:current|qualified|existing)\b[^,!?]{0,30}'
+                           r'\b(?:route|provider|model)\b[^,!?]{0,25}\b(?:active|running|generating|answering)\b',clause,re.I)
+            if keep and not re.search(r"\b(?:not|never|cannot|can't|don't)\s*$",clause[:keep.start()],re.I):return False
+        if projection['missing_inputs']:
+            for cause in re.finditer(r'\b(?:reflects|stems from|is caused by|is due to|because|means|is blocked by|is denied by)\b',clause,re.I):
+                if not (re.search(r'\b(?:access|files?|inputs?|limitation)\b',clause,re.I) and re.search(
+                    r'\b(?:adapter|chat|sandbox|permissions?|credentials?|login)\b',clause[cause.end():],re.I)):
+                    continue
+                prefix=clause[:cause.start()]
+                interrogative=(re.match(r'^\s*(?:could|might|can|is|does|would|was|are)\b',clause,re.I) and
+                               clause.rstrip().endswith('?') and not re.search(r'\b(?:now that|given|since|and)\b',prefix,re.I))
+                uncertain=re.search(r"\b(?:may|might|could|possibly|perhaps|not|doesn't|does not)\s*(?:be\s+)?$",prefix,re.I)
+                inquiry=re.search(r'\b(?:if|whether)\b[^,;:.!?]{0,80}$',prefix,re.I)
+                if not (interrogative or uncertain or inquiry):return False
+    return True
+
+
+def compose_blocks(blocks, known, projection):
+    """Select complete evidence statements and independent proposed reasoning.
+
+    Rejected prose is observable partial delivery. A surviving fact is never
+    stitched into the grammatical position of rejected model prose.
+    """
+    if not 1<=len(blocks)<=8:
+        raise ValueError('Invalid answer blocks')
+    content=[];tokens=[];rejected=[];reasoning=[]
+    for index,block in enumerate(blocks):
+        if not isinstance(block,dict) or len(block)!=1:
+            raise ValueError('Invalid answer block schema')
+        if set(block)=={'fact'}:
+            fid=block['fact']
+            if not isinstance(fid,str) or fid not in known:
+                raise ValueError('Unknown answer fact')
+            tokens.append(fid)
+            if known[fid] not in content:content.append(known[fid])
+        elif set(block)=={'reasoning'}:
+            prose=block['reasoning']
+            if not isinstance(prose,str) or not 1<=len(prose)<=2500 or '[fact:' in prose:
+                raise ValueError('Invalid reasoning block')
+            reasoning.append(dict(index=index,sha256=hashlib.sha256(prose.encode()).hexdigest()))
+            if not safe_reasoning(prose) or not feasible_reasoning(prose,projection):
+                rejected.append(dict(index=index,reason='unsupported_assertion',sha256=hashlib.sha256(prose.encode()).hexdigest()))
+            else:
+                content.append(prose)
+        else:
+            raise ValueError('Unknown answer block type')
+    if not tokens or sum(len(p) for p in content)>10000:
+        raise ValueError('Answer evidence or size invalid')
+    if rejected:
+        failed={r['index'] for r in rejected}
+        rejected.extend(dict(row,reason='composition_incomplete') for row in reasoning if row['index'] not in failed)
+        content=['Part of the proposed reasoning could not be verified; this answer is incomplete. The supported facts are below.']
+        content.extend(known[t] for t in dict.fromkeys(tokens))
+    return '\n\n'.join(content),tokens,rejected
+
+
+def render(raw, projection, *, root=None):
     """Compose grounded facts and checked reasoning; advice creates no effects."""
     value=parse(raw)
     modern=isinstance(value,dict) and set(value)=={'answer','resource','steps'}
     if not modern and projection.get('requested_view') in ('comparison','inventory'):
+        # The empty packet is the historical inventory request. Other packets
+        # must pass the same legacy schema and constraint gate before rendering.
+        if value!={}:
+            if not isinstance(value,dict) or set(value)!={'resource','steps'}:
+                raise ValueError('Invalid resource decision')
+            validate_route(value['resource'],value['steps'],projection)
         names=projection.get('requested_resources') or list(ROUTES)
         rows=['| Resource | Supported use | Billing / evidence |','|---|---|---|']
         for item in projection['inventory']['resources']:
@@ -214,15 +331,29 @@ def render(raw, projection):
             rows.append('| '+item['name'].title()+' | '+', '.join(item['tasks'])+' | '+auth+item['billing']+' |')
         return '\n'.join(rows)+'\n\nThese are supported routes, not a verified subscription invoice. Login alone establishes neither remaining capacity nor comparative answer quality; use a matched task before changing the default.',dict(view=projection['requested_view'],execution_started=False)
     if modern:
-        if not isinstance(value['answer'],str) or not 1<=len(value['answer'])<=7000:
+        blocked=isinstance(value['answer'],list)
+        if not blocked and (not isinstance(value['answer'],str) or not 1<=len(value['answer'])<=7000):
             raise ValueError('Invalid answer composition')
-        tokens=FACT_TOKEN.findall(value['answer'])
         known=projection.get('facts') or facts(projection['inventory'],missing=projection['missing_inputs'])
-        if (not tokens or any(t not in known for t in tokens) or
-                '[fact:' in FACT_TOKEN.sub('',value['answer']) or not safe_reasoning(value['answer'])):
+        rejected=[]
+        if blocked:
+            content,tokens,rejected=compose_blocks(value['answer'],known,projection)
+        else:
+            tokens=FACT_TOKEN.findall(value['answer'])
+        if not blocked and (not tokens or any(t not in known for t in tokens) or
+                '[fact:' in FACT_TOKEN.sub('',value['answer']) or not safe_reasoning(value['answer']) or
+                not feasible_reasoning(value['answer'],projection)):
             raise ValueError('Ungrounded answer composition')
-        bare=FACT_TOKEN.sub('',value['answer']).strip(' .,:;\n')
-        if not bare:
+        owner=projection.get('owner_context')
+        if root is not None and owner and any(t.startswith('owner.') for t in tokens):
+            import project_context
+            current=project_context.read(root)['projects'].get(owner['project_id'])
+            if not current or current['revision']!=owner['revision']:
+                raise ValueError('Owner context changed during composition')
+        bare=FACT_TOKEN.sub('',value['answer']).strip(' .,:;\n') if not blocked else None
+        if blocked:
+            pass
+        elif not bare:
             content='\n\n'.join(known[t] for t in dict.fromkeys(tokens))
         else:
             links={'openai_api_billing':'[OpenAI pricing](https://learn.chatgpt.com/docs/pricing)',
@@ -236,24 +367,30 @@ def render(raw, projection):
             content=re.sub(r' +([.,;:])',r'\1',content)
             content=re.sub(r' {2,}',' ',content)
         if not content:raise ValueError('Empty composed answer')
+        if projection['unavailable'] and (not blocked or 'availability' not in tokens):
+            content+='\n\n'+known['availability']
         resource=value['resource']
         if resource is None:
             steps=value['steps']
             if (not isinstance(steps,list) or len(steps)>3 or
-                    any(not isinstance(s,str) or s not in ('provide_inputs','inspect_allowance','keep_current','review_dependency') for s in steps) or
+                    any(not isinstance(s,str) or s not in ('provide_inputs','inspect_allowance','keep_current','preserve_standard','review_dependency') or
+                        s not in projection.get('allowed_steps',STEPS) for s in steps) or
                     len(set(steps))!=len(steps)):
                 raise ValueError('Invalid general advice steps')
-            if projection['missing_inputs']:
+            if projection['missing_inputs'] and (not blocked or 'missing_inputs' not in tokens):
                 content+='\n\n'+known['missing_inputs']
-            return content,dict(resource=None,steps=steps,fact_ids=tokens,execution_started=False,model_proposal_accepted=True,acceptance_scope='schema and bounded claim checks; not semantic certification')
+            return content,dict(resource=None,steps=steps if not rejected else [],fact_ids=tokens,execution_started=False,model_proposal_accepted=not rejected,
+                partial=bool(rejected),rejected_blocks=rejected,acceptance_scope='schema and bounded claim checks; not semantic certification')
         validate_route(resource,value['steps'],projection,empty=True)
         decision=dict(resource=resource,missing_inputs=projection['missing_inputs'],scenario=projection['scenario'],
                       execution_started=False,observation_time=projection['inventory']['observed_at'])
-        if projection['missing_inputs']:
+        if projection['missing_inputs'] and (not blocked or 'missing_inputs' not in tokens):
             content+='\n\n'+known['missing_inputs']
         if resource in ('codex','claude','cursor'):
             content+='\n\n'+known[resource+'.observation']
-        decision.update(steps=value['steps'],fact_ids=tokens,model_proposal_accepted=True,acceptance_scope='schema and bounded claim checks; not semantic certification')
+        decision.update(steps=value['steps'],fact_ids=tokens,model_proposal_accepted=not rejected,
+                        partial=bool(rejected),rejected_blocks=rejected,acceptance_scope='schema and bounded claim checks; not semantic certification')
+        if rejected:decision.update(resource=None,steps=[])
         return content,decision
     if not isinstance(value,dict) or set(value)!= {'resource','steps'}:
         raise ValueError('Invalid resource decision')
@@ -279,6 +416,8 @@ def render(raw, projection):
         parts.append('check '+name+'’s current sign-in, remaining allowance and extra-usage settings before admitting a bounded task. ')
     elif first=='review_dependency':
         parts.append('check the linked Cursor/Grok allowance and actual use before changing a subscription. ')
+    elif first=='preserve_standard':
+        parts.append('preserve the answer-quality criteria and prepare evidence for a bounded comparison before changing the default. ')
     elif first=='provide_inputs':
         parts.append('prepare the relevant files, current constraints and acceptance criteria for one bounded '+name+' task. ')
     else:

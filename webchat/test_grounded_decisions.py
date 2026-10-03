@@ -57,6 +57,9 @@ class ProjectionTests(unittest.TestCase):
                           'This route maintains quality.',
                           'Pacing will reduce demand and preserve quality.',
                           'Pacing prevents rate limits.', 'I inspected your files.',
+                          'We keep the configuration so quality and continuity remain protected.',
+                          'If the subscription is active this route is free.',
+                          'This route is proven to protect quality.',
                           'We can read your project files.', 'I queued your task.'):
                 with self.subTest(claim=claim),self.assertRaises(ValueError):
                     resource_decision.render(json.dumps(dict(answer='[fact:codex.observation] '+claim,resource=None,steps=[])),projection)
@@ -75,6 +78,81 @@ class ProjectionTests(unittest.TestCase):
                            'Preserve quality by comparing outputs first.'):
                 answer,_=resource_decision.render(json.dumps(dict(answer=clause+' [fact:codex.observation]',resource=None,steps=[])),projection)
                 self.assertIn(clause,answer)
+
+    def test_composed_facts_and_proposals_preserve_scope_and_rejection_evidence(self):
+        with tempfile.TemporaryDirectory() as temp:
+            projection=resource_decision.project(Path(temp),self.conversation('Can our Codex subscription replace the API route?'))
+            for reasoning in ('Compare results to protect quality.',
+                              'Wait until a representative comparison establishes the same quality bar.',
+                              'An allowance does not mean usage is unlimited or free from incremental charges.'):
+                blocks=[dict(fact='purchase_vs_usage'),dict(reasoning=reasoning)]
+                answer,decision=resource_decision.render(json.dumps(dict(answer=blocks,resource=None,steps=['inspect_allowance'])),projection)
+                self.assertIn(reasoning,answer);self.assertFalse(decision['partial'])
+            for bad in ('Our comparison guarantees equal quality.',
+                        'Check the limits to protect quality, and our allowance is protected.',
+                        'It does not mean usage is unlimited, but this route is free.',
+                        'I queued your task.'):
+                blocks=[dict(fact='purchase_vs_usage'),dict(reasoning=bad)]
+                answer,decision=resource_decision.render(json.dumps(dict(answer=blocks,resource=None,steps=[])),projection)
+                self.assertNotIn(bad,answer);self.assertTrue(decision['partial'])
+                self.assertFalse(decision['model_proposal_accepted']);self.assertEqual(decision['rejected_blocks'][0]['index'],1)
+                self.assertIn('answer is incomplete',answer)
+            for blocks in ([dict(fact='invented')],[dict(fact='quality_bar',reasoning='Extra field')],
+                           [dict(reasoning='Keep thinking.')]):
+                with self.assertRaises(ValueError):
+                    resource_decision.render(json.dumps(dict(answer=blocks,resource=None,steps=[])),projection)
+
+    def test_unavailable_current_route_cannot_be_kept_by_any_packet_format(self):
+        with tempfile.TemporaryDirectory() as temp:
+            conversation=self.conversation('Suppose Gemini is depleted; what can our subscriptions do?')
+            conversation['preferred_provider']='gemini'
+            projection=resource_decision.project(Path(temp),conversation)
+            self.assertTrue(projection['current_route']['unavailable'])
+            self.assertNotIn('keep_current',projection['allowed_steps'])
+            for value in (dict(resource='claude',steps=['keep_current']),
+                          dict(answer='Preserve the standard. [fact:quality_bar]',resource=None,steps=['keep_current']),
+                          dict(answer=[dict(fact='availability')],resource='claude',steps=['keep_current'])):
+                with self.assertRaises(ValueError):resource_decision.render(json.dumps(value),projection)
+            answer,decision=resource_decision.render(json.dumps(dict(answer=[dict(fact='availability'),
+                dict(reasoning='Prepare the evidence and comparison criteria before any generation.')],
+                resource=None,steps=['preserve_standard','provide_inputs'])),projection)
+            self.assertIn('unavailable',answer);self.assertFalse(decision['execution_started'])
+            packet=dict(answer=[dict(fact='availability'),dict(reasoning='Keep the current qualified route active.')],
+                        resource=None,steps=['preserve_standard'])
+            answer,decision=resource_decision.render(json.dumps(packet),projection)
+            self.assertTrue(decision['partial']);self.assertNotIn('Keep the current qualified route active.',answer)
+            for text in ('Use Gemini for the next reply.','Keep Gemini active.',
+                         'Use Gemini after Codex is available.',
+                         'Use Gemini now and plan the comparison after it is restored.',
+                         'Use Gemini for the next reply and plan the comparison after it is restored.',
+                         'Use Gemini once it is restored and keep Gemini active now.'):
+                packet['answer'][1]['reasoning']=text
+                answer,decision=resource_decision.render(json.dumps(packet),projection)
+                self.assertTrue(decision['partial']);self.assertNotIn(text,answer)
+            for text in ('Do not use Gemini for the next reply.', 'Use Gemini only after it is restored.',
+                         'Once Gemini is restored, use Gemini for the next reply.'):
+                packet['answer'][1]['reasoning']=text
+                answer,decision=resource_decision.render(json.dumps(packet),projection)
+                self.assertFalse(decision['partial']);self.assertIn(text,answer)
+            comparison=dict(projection,requested_view='comparison')
+            for value in (dict(resource='claude',steps=['keep_current']),dict(packet,extra=True)):
+                with self.assertRaises(ValueError):resource_decision.render(json.dumps(value),comparison)
+
+    def test_missing_input_cause_is_not_inferred_from_adapter_metadata(self):
+        with tempfile.TemporaryDirectory() as temp:
+            projection=resource_decision.project(Path(temp),self.conversation('Our Codex subscription cannot read the needed project files.'))
+            packet=dict(answer=[dict(fact='missing_inputs'),
+                dict(reasoning='The missing file access reflects the chat adapter boundary.'),
+                dict(reasoning='Therefore we can conclude the cause is settled.')],resource=None,steps=['provide_inputs'])
+            answer,decision=resource_decision.render(json.dumps(packet),projection)
+            self.assertTrue(decision['partial']);self.assertNotIn('reflects',answer);self.assertNotIn('Therefore',answer)
+            self.assertEqual(len(decision['rejected_blocks']),2)
+            packet['answer'][1]['reasoning']='Which evidence should we inspect now that missing file access is caused by the sandbox?'
+            answer,decision=resource_decision.render(json.dumps(packet),projection)
+            self.assertTrue(decision['partial']);self.assertNotIn('now that',answer)
+            packet['answer']=[dict(fact='missing_inputs'),dict(reasoning='File access might reflect a chat adapter limit; inspect the error before choosing a remedy.')]
+            answer,decision=resource_decision.render(json.dumps(packet),projection)
+            self.assertFalse(decision['partial']);self.assertIn('inspect the error',answer)
 
     def test_comparison_keeps_model_reasoning_and_missing_inputs_survive_explanation(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -183,6 +261,23 @@ class ProjectionTests(unittest.TestCase):
 
 
 class DeliveredTests(SessionFixture):
+    def test_owner_fact_namespace_is_current_attributed_and_revision_bound(self):
+        self.send('For the Web Bob project, remember the priority: useful daily work.')
+        self.send('Correction: reliable continuity comes first.')
+        self.fake.reply_text=json.dumps(dict(answer=[dict(fact='owner.priority'),
+            dict(reasoning='Prepare one representative question and its acceptance criteria.')],resource=None,steps=['provide_inputs']))
+        answer=self.send('For Web Bob, how can our Codex subscription help?')
+        self.assertIn('reliable continuity comes first',answer['content'])
+        self.assertNotIn('useful daily work',answer['content'])
+        self.assertIn('Owner statement',answer['content'])
+        projection=self.chat.get(self.identifier)['messages'][-1]['_reply_contract']['resource_projection']
+        self.assertEqual(projection['owner_context']['revision'],2)
+        self.assertEqual(projection['owner_context']['facts']['owner.priority']['revision'],2)
+        self.assertFalse(answer['resource_decision']['execution_started'])
+        self.send('For the Web Bob project, remember the priority: useful completed work comes first.')
+        with self.assertRaises(ValueError):
+            resource_decision.render(self.fake.reply_text,projection,root=self.root)
+
     def test_direct_answer_preserved_and_bad_answer_never_selects_default_worker(self):
         self.fake.reply_text=json.dumps(dict(answer='No. ChatGPT Pro does not pay for API calls. [fact:openai_api_billing]',resource=None,steps=[]))
         answer=self.send('Does ChatGPT Pro pay for OpenAI API usage?')
