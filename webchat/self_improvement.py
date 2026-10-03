@@ -448,7 +448,7 @@ def handle(chat, conversation, text, request_id):
             saved['verification_request_id'] = request_id
             saved['current_step'] = 'regression_verification'
             return chat.submit_task(conversation, 'Run Web Bob local regression suite webchat/test_answer_intent.py', request_id,
-                                    worker='mini', expected_code_identity=saved['investigation']['code_identity'])
+                                    worker='mini', expected_code_identity=saved['investigation']['code_identity'], attempt_limit=1)
         content += '\n\n' + scheduling
     conversation['messages'][-1]['improvement_progress'] = dict(
         origin_request_id=saved['origin_request_id'], current_step=saved['current_step'],

@@ -112,10 +112,55 @@ class ImprovementTests(SessionFixture):
             self.assertEqual(len(task_queue.tasks(self.root)), 1)
         row = next(iter(task_queue.tasks(self.root).values()))
         self.assertEqual((row['requested_worker'], row['kind']), ('mini', 'local'))
+        self.assertEqual((row['attempt_limit'], row['max_attempts']), (1, 1))
         self.assertIn('webchat/test_answer_intent.py', row['prompt'])
         self.assertNotIn('completed:', answer['content'].lower())
         self.assertFalse(self.fake.calls)
         self.assertEqual(self.chat.get(self.identifier)['messages'][:len(prior)], prior)
+
+    def test_one_attempt_survives_crash_before_and_after_enqueue(self):
+        for after_enqueue in (False, True):
+            self.identifier = self.chat.new_conversation()['id']
+            self.send(GOAL)
+            original = task_queue.enqueue
+            def interrupted(*args, **kwargs):
+                if after_enqueue:
+                    original(*args, **kwargs)
+                raise OSError('Interrupted admission')
+            with patch.object(task_queue, 'enqueue', side_effect=interrupted):
+                with self.assertRaisesRegex(OSError, 'Interrupted admission'):
+                    self.send(RESOURCES)
+            saved = json.loads((self.chat.state / (self.identifier + '.json')).read_text())
+            intent = saved['messages'][-1]['dispatch_intent']
+            self.assertEqual(intent['attempt_limit'], 1)
+            self.chat.close()
+            self.chat = Chat(self.folder, self.root, self.fake)
+            self.chat.reconcile_tasks()
+            rows = [r for r in task_queue.tasks(self.root).values() if r['conversation_id'] == self.identifier]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual((rows[0]['attempt_limit'], rows[0]['max_attempts']), (1, 1))
+            self.assertEqual(rows[0]['expected_code_identity'], intent['expected_code_identity'])
+            self.send('keep going')
+            self.assertEqual(len([r for r in task_queue.tasks(self.root).values() if r['conversation_id'] == self.identifier]), 1)
+        self.assertFalse(self.fake.calls)
+
+    def test_failed_one_attempt_stays_failed_after_restart_and_owner_continuation(self):
+        self.send(GOAL)
+        self.send(RESOURCES)
+        row = next(iter(task_queue.tasks(self.root).values()))
+        claim = task_queue.claim(self.root, 'mini', identifier=row['id'])
+        task_queue.transition(self.root, row['id'], claim['claim_token'], 'running')
+        task_queue.transition(self.root, row['id'], claim['claim_token'], 'retry', error='Mini test timeout')
+        self.chat.close()
+        self.chat = Chat(self.folder, self.root, self.fake)
+        answer = self.send('keep going')
+        self.assertIn('did not complete', answer['content'])
+        self.assertIn('Mini test timeout', answer['content'])
+        rows = task_queue.tasks(self.root)
+        self.assertEqual(list(rows), [row['id']])
+        self.assertEqual((rows[row['id']]['status'], rows[row['id']]['attempts']), ('failed', 1))
+        self.assertIsNone(task_queue.claim(self.root, 'mini', identifier=row['id']))
+        self.assertFalse(self.fake.calls)
 
     def completed_fixture(self, goal=GOAL):
         """Simulated journal evidence only; never launches an actual executor."""

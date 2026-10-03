@@ -78,6 +78,74 @@ class DispatchTests(unittest.TestCase):
             queue.enqueue(self.root, "conversation", "one", "Different request")
         self.assertEqual(len(queue.tasks(self.root)), 1)
 
+    def test_attempt_limit_is_durable_at_admission_and_part_of_request_identity(self):
+        args = (self.root, 'conversation', 'bounded', 'Run webchat/test_answer_intent.py')
+        row = queue.enqueue(*args, worker='mini', attempt_limit=1)
+        first = json.loads((self.core / 'state/queue.jsonl').read_text().splitlines()[0])
+        self.assertEqual((first['attempt_limit'], first['max_attempts'], first['attempts']), (1, 1, 0))
+        self.assertEqual(queue.enqueue(*args, worker='mini', attempt_limit=1), row)
+        before = (self.core / 'state/queue.jsonl').read_bytes()
+        for limit in (None, 2):
+            with self.assertRaisesRegex(ValueError, 'different attempt limit'):
+                queue.enqueue(*args, worker='mini', attempt_limit=limit)
+        self.assertEqual((self.core / 'state/queue.jsonl').read_bytes(), before)
+
+    def test_attempt_limit_rejects_invalid_values_without_admitting_work(self):
+        for limit in (True, False, 0, -1, 1.0, '1', [], {}):
+            with self.subTest(limit=limit), self.assertRaisesRegex(ValueError, 'positive integer'):
+                queue.enqueue(self.root, 'conversation', 'invalid', 'Run tests', worker='mini', attempt_limit=limit)
+        self.assertFalse(queue.tasks(self.root))
+
+    def test_unlimited_argument_preserves_existing_and_legacy_retry_policy(self):
+        local = self.enqueue('local', worker='mini')
+        ordinary = self.enqueue('ordinary')
+        self.assertEqual(local['max_attempts'], 3)
+        self.assertEqual(ordinary['max_attempts'], 5)
+        with queue.locked(self.root) as path:
+            local.pop('attempt_limit')
+            local.pop('max_attempts')
+            local = queue._append(path, local, 'legacy_fixture')
+        self.assertEqual(self.enqueue('local', worker='mini'), local)
+        claim = queue.claim(self.root, 'mini', identifier=local['id'])
+        retried = queue.transition(self.root, local['id'], claim['claim_token'], 'retry', error='fixture failure')
+        self.assertEqual(retried['status'], 'queued')
+
+    def test_single_attempt_failure_and_timeout_are_terminal_in_real_dispatcher(self):
+        for index, error in enumerate((RuntimeError('Mini tests failed'), subprocess.TimeoutExpired(['unittest'], 300))):
+            row = queue.enqueue(self.root, 'conversation', 'failed-' + str(index),
+                                'Run webchat/test_answer_intent.py', worker='mini', attempt_limit=1)
+            claim = queue.claim(self.root, 'mini', identifier=row['id'])
+            with patch.object(mini_worker, 'execute', side_effect=error) as execute, \
+                    patch.object(dispatch_worker, 'ask') as ask:
+                dispatch_worker.execute(row['id'], claim['claim_token'])
+                execute.assert_called_once()
+                ask.assert_not_called()
+            result = queue.tasks(self.root)[row['id']]
+            self.assertEqual((result['status'], result['attempts'], result['max_attempts']), ('failed', 1, 1))
+            self.assertIsNone(queue.claim(self.root, 'mini', identifier=row['id'], now=time.time() + 1000))
+            self.assertEqual(queue.recover(self.root, lambda _: False, now=time.time() + 1000), [])
+
+    def test_single_attempt_lost_worker_cannot_restart_after_recovery(self):
+        for running in (False, True):
+            row = queue.enqueue(self.root, 'conversation', 'lost-' + str(running), 'Run tests', worker='mini', attempt_limit=1)
+            claim = queue.claim(self.root, 'mini', identifier=row['id'], now=100)
+            if running:
+                queue.transition(self.root, row['id'], claim['claim_token'], 'running', now=101)
+            recovered = queue.recover(self.root, lambda _: False, now=300)
+            self.assertEqual([(r['status'], r['attempts']) for r in recovered], [('failed', 1)])
+            self.assertIsNone(queue.claim(self.root, 'mini', identifier=row['id'], now=301))
+            self.assertIsNone(queue.transition(self.root, row['id'], claim['claim_token'], 'succeeded', now=301, result='Stale'))
+
+    def test_single_attempt_busy_lane_does_not_consume_execution(self):
+        row = queue.enqueue(self.root, 'conversation', 'busy', 'Run tests', worker='mini', attempt_limit=1)
+        claim = queue.claim(self.root, 'mini', identifier=row['id'], now=100)
+        busy = queue.transition(self.root, row['id'], claim['claim_token'], 'busy', now=101)
+        self.assertEqual((busy['status'], busy['attempts'], busy['max_attempts']), ('queued', 0, 1))
+        claim = queue.claim(self.root, 'mini', identifier=row['id'], now=107)
+        self.assertEqual(claim['attempts'], 1)
+        failed = queue.transition(self.root, row['id'], claim['claim_token'], 'retry', now=108)
+        self.assertEqual(failed['status'], 'failed')
+
     def permission(self, cid='conversation', holds=None):
         path = self.core / 'webchat/sessions' / (cid + '.json')
         path.parent.mkdir(parents=True, exist_ok=True)

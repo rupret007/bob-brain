@@ -702,7 +702,9 @@ class Chat(TaskDispatch):
             if transition == "hold":
                 held_work, held_worker = followup_work(conversation)
                 if held_work:
-                    conversation["held_job"] = dict(prompt=held_work, worker=held_worker)
+                    held = conversation.get('held_job') or {}
+                    if held.get('prompt') != held_work or held.get('worker') != held_worker:
+                        conversation["held_job"] = dict(prompt=held_work, worker=held_worker)
                 return self.intent_reply(conversation, chat_intent.hold_reply(chat_intent.blocked_scopes(intent_state, [])))
             if transition == "priorities":
                 conversation["pending_job"] = "Improve " + ", ".join(intent_state["project_order"])
