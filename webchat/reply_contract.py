@@ -73,7 +73,9 @@ def derive(conversation, redact, root=None):
         if projection:kind='resource_advice'
     import catchup_contract
     catchup=catchup_contract.project(conversation) if not user.get('voice_call_id') and not requires_execution(text) else None
-    if catchup and (kind=='answer' or re.search(r'\bcatch[- ]?up (?:request|handoff)\b',request,re.I)):
+    # Drafting a receipt interpretation must not put cursor arithmetic or
+    # coverage fields back into free-form artifact speech.
+    if catchup and kind in ('answer','writing'):
         kind='catchup'
     else:
         catchup=None

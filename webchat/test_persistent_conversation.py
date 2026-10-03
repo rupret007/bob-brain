@@ -13,6 +13,31 @@ import task_queue
 
 
 class PersistentConversationTests(SessionFixture):
+    def test_saved_hold_keeps_pending_scope_decision_but_cannot_assert_other_holds(self):
+        self.fake.reply_text='Choose the inspection scope.'
+        self.send('Help plan a read-only Web Bob readiness report. Hold execution until I choose its scope.')
+        useful='1. **Defining scope and releasing the hold:** You set execution on hold until you choose its scope, so nothing runs until you decide the boundaries and say to proceed.'
+        self.fake.reply_text=useful
+        answer=self.send('What is waiting for me?')
+        self.assertEqual(answer['content'],useful)
+        for extra in (' WebJam is on hold.',' Codex remains paused.',' I cleared your real hold.',' All work is on hold.',' I queued the inspection.'):
+            self.fake.reply_text=useful+extra
+            answer=self.send('Make the pending decision clear.')
+            self.assertNotIn(extra.strip(),answer['content'])
+        self.fake.reply_text='Your hold on the backup service remains active.'
+        self.assertNotIn('backup service',self.send('Explain the current pending decision.')['content'])
+        for value in ('While Web Bob remains held, the backup service remains paused.',
+                      'For the backup service, your hold remains active.'):
+            self.fake.reply_text=value
+            self.assertNotIn('backup service',self.send('Explain the pending decision.')['content'])
+        self.send('Resume Web Bob')
+        self.fake.reply_text=useful
+        self.assertNotIn('You set execution on hold',self.send('What is waiting for me?')['content'])
+        self.send('Hold all work')
+        self.send('Resume Web Bob')
+        self.fake.reply_text='The hold still applies to all projects.'
+        self.assertNotIn('all projects',self.send('Explain the pending decision.')['content'])
+
     def test_reference_origin_corrections_and_explicit_live_transition(self):
         from conversation_focus import reference_scope
         from providers import needs_handoff_context

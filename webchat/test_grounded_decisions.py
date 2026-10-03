@@ -15,6 +15,23 @@ class ProjectionTests(unittest.TestCase):
     def conversation(self, *texts):
         return dict(messages=[dict(role='user',id=str(i),request_id=str(i),content=t) for i,t in enumerate(texts)])
 
+    def test_json_page_limit_is_bounded_current_and_cannot_be_inherited_from_model(self):
+        for limit in (1,8,80):
+            value=catchup_contract.project(self.conversation('ACK through 60.',f'Draft a JSON page request with limit {limit}.'))
+            answer=catchup_contract.render('{"mode":"authority"}',value)
+            self.assertIn('"since_seq":60',answer)
+            self.assertIn('"limit":'+str(limit),answer)
+            self.assertIn('61–'+str(60+limit),answer)
+        for bad in ('zero','81','2 and limit 4','unknown','1.5','1,000','2-5','three hundred','2/3','2 to 5','1.5, at most 8'):
+            value=catchup_contract.project(self.conversation('ACK through 60.',f'Draft a JSON page request with limit {bad}.'))
+            answer=catchup_contract.render('{"mode":"relay"}',value)
+            self.assertNotIn('"since_seq":',answer)
+            self.assertIn('one page limit',answer)
+        value=catchup_contract.project(self.conversation('ACK through 60.','Draft a JSON page request with limit 8. JSON only.'))
+        self.assertEqual(json.loads(catchup_contract.render('{"mode":"relay"}',value)),dict(since_seq=60,limit=8))
+        self.assertIsNone(catchup_contract.project(self.conversation('ACK through 60.','Write a thank-you note acknowledging the donation receipt.')))
+        self.assertIsNone(catchup_contract.project(self.conversation('ACK through 60.','Write a thank-you note about the receipt for my donation.')))
+
     def test_missing_history_is_receiver_scoped_and_survives_an_empty_tail(self):
         messages=['Grok ACK through 30; history_gap true.',
                   'Events 20 through 24 are unavailable.',
@@ -223,6 +240,8 @@ class ProjectionTests(unittest.TestCase):
 
     def test_exclusive_cursor_and_empty_page_do_not_skip_next_event(self):
         for text in ('ACK through 149, since_seq 137, events 12, history_gap false, has_more true.',
+                     'Acknowledgment through 149; since_seq 149; events 0; history_gap false; has_more false.',
+                     'Acknowledgement through 149; since_seq 149; events 0; history_gap false; has_more false.',
                      'Receiver receipt: {"acknowledged_through":149,"since_seq":149,"events":0,"history_gap":false,"has_more":false}'):
             projection=catchup_contract.project(self.conversation(text))
             self.assertTrue(projection['valid'])
@@ -308,6 +327,21 @@ class ProjectionTests(unittest.TestCase):
 
 
 class DeliveredTests(SessionFixture):
+    def test_drafted_page_request_fields_are_protocol_owned_even_with_bad_model_math(self):
+        self.fake.reply_text='{"mode":"explain"}'
+        self.send('Grok ACK through 72; since_seq 68; events 4; history_gap false; has_more true.')
+        self.fake.reply_text=json.dumps(dict(artifact='{"since_seq":73,"limit":99}',commentary='I fetched it.'))
+        answer=self.send('Draft the next read-only page request as JSON with since_seq and limit, at most seven events. Give the expected range.')
+        self.assertEqual(self.chat.get(self.identifier)['messages'][-1]['_reply_contract']['kind'],'catchup')
+        self.assertIn('{"since_seq":72,"limit":7}',answer['content'])
+        self.assertIn('73–79',answer['content'])
+        self.assertNotIn('I fetched',answer['content'])
+        self.assertFalse(answer.get('artifact'))
+        self.assertFalse(answer['catchup_observation']['execution_authority'])
+        answer=self.send('Write a concise status I can relay: ACK through 79; since_seq 79; events 0; history_gap false; has_more false.')
+        self.assertEqual(self.chat.get(self.identifier)['messages'][-1]['_reply_contract']['kind'],'catchup')
+        self.assertIn('79',answer['content'])
+
     def test_owner_fact_namespace_is_current_attributed_and_revision_bound(self):
         self.send('For the Web Bob project, remember the priority: useful daily work.')
         self.send('Correction: reliable continuity comes first.')

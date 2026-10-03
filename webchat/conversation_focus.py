@@ -25,6 +25,8 @@ def reference_scope(conversation, text):
     request=instructions(text)
     if TOPIC_CHANGE.match(request) or requires_execution(text) or live_observation(text):return False
     if REPORTED.search(request):return True
+    from catchup_contract import request_scope, project
+    if request_scope(text) and project(conversation or {}):return True
     state=(conversation or {}).get('answer_focus',{})
     origin=state.get('origin') or {}
     source=next((m for m in (conversation or {}).get('messages',[]) if m.get('role')=='user'

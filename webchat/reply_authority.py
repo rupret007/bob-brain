@@ -496,6 +496,36 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                                r'(?:which|what|should|could|would|can)\b[^;!?]*\?',question,re.I)
         return bool(scopes and asks_scope and not asserted_permission_change(part) and
                     (not mentioned or all(blocked_scopes(state,[name]) for name in mentioned)))
+    def saved_hold_reference(part):
+        # Referencing a matching saved hold is not an acknowledgment of a new
+        # permission change. Effect/dispatch checks still examine all prose.
+        if not scopes or asserted_permission_change(part):return False
+        mentioned=projects(part)
+        if any(not blocked_scopes(state,[name]) for name in mentioned):return False
+        if re.search(r'\b(?:'+ '|'.join(re.escape(n) for n in WORKER_NAMES)+r')\b',part,re.I):return False
+        global_hold=state['holds'].get('all')
+        if (not global_hold or global_hold.get('released_projects')) and re.search(r'\b(?:all|every|everything|global)\b',part,re.I):return False
+        qualifier=re.match(r'\s*For\s+([^,;:]+),',part,re.I)
+        if qualifier and qualifier[1].strip() not in state['holds']:return False
+        # A bare reference is allowed only within the current held project;
+        # arbitrary external subjects cannot borrow that project's permission.
+        for clause in re.split(r';|\b(?:and|but|yet|however)\b',part,flags=re.I):
+            for match in HOLD_CLAIM.finditer(clause):
+                prefix=clause[:match.start()];suffix=clause[match.end():]
+                if re.search(r'\b(?:your|the|this|that|earlier|previous)\s+(?:(?:earlier|previous|existing|current)\s+)?hold\b',match[0],re.I):
+                    # A labelled pending decision is a noun phrase, not an
+                    # unsupported hold on an arbitrary external service.
+                    label=re.fullmatch(r'\s*releasing\s*',prefix,re.I) and re.match(r'\s*:\*\*',suffix)
+                    simple=not prefix.strip(' *\n') and re.match(r'\s+(?:remains?\s+(?:active|in place)|still applies)[.!?\s]*$',suffix,re.I)
+                    if label or simple:continue
+                    return False
+                subject=re.split(r'[,;:]',prefix)[-1].strip(' *\n')
+                named=projects(match[0]) or projects(subject)
+                if named and all(blocked_scopes(state,[p]) for p in named):
+                    if (projects(match[0]) and (not subject or re.fullmatch(r'While|As|Because',subject,re.I))) or any(re.fullmatch(r'(?:(?:While|As|Because)\s+)?'+re.escape(p)+r'(?:\s+(?:is|was))?',subject,re.I) for p in named):continue
+                if re.fullmatch(r'You\s+(?:set|put|placed)\s+(?:the\s+)?(?:execution|work)',subject,re.I):continue
+                return False
+        return True
     from conversation_focus import focus
     record=focus(conversation or {}) if reported else None
     record_ids=set(re.findall(r'\b[A-Za-z][\w]*-\d+\b',' '.join(
@@ -517,7 +547,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
             record_subject=True
         return True
     kept = [part for part in sentences if not asserted_permission_change(part) and
-            (not HOLD_CLAIM.search(part) or held_scope_question(part) or attributed_record_hold(part))]
+            (not HOLD_CLAIM.search(part) or held_scope_question(part) or saved_hold_reference(part) or attributed_record_hold(part))]
     if len(kept) != len(sentences):
         content = "".join(kept).strip()
         # Only the saved state may explain an operational hold.

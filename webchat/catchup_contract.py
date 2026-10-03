@@ -9,7 +9,7 @@ import re
 
 DOMAIN=re.compile(r'\b(?:catch[- ]?up|receipts?|ACK|acknowledg\w*|since_seq|through_seq|events?|cursor|receiver)\b',re.I)
 FIELD=r'''["'`*]*\s*[=:]?\s*["'`*]*(\d+)(?!\w|\.\d)'''
-ACK=re.compile(r'\b(?:acknowledged_through|acknowledged?\s+through|ACK\s+through)'+FIELD,re.I)
+ACK=re.compile(r'\b(?:acknowledged_through|acknowledg(?:e(?:d|ment)?|ment)\s+through|ACK\s+through)'+FIELD,re.I)
 RECEIVER=re.compile(r'\b(Grok|Dot)\b',re.I)
 WITHDRAWN=re.compile(r"\b(?:ACK|acknowledg\w*)\b[^.!?\n]{0,35}\b(?:never happened|did not happen|was (?:wrong|incorrect|withdrawn))\b|"
     r"\b(?:not|never|didn['’]t|hasn['’]t)\s+(?:been\s+)?(?:ACK|acknowledged?)\b|"
@@ -92,6 +92,43 @@ def named_receivers(text):
     return names
 
 
+def page_request(text):
+    """An owner-requested JSON page is a protocol object, not model writing."""
+    from answer_intent import instructions
+    request=instructions(text)
+    if not (re.search(r'\bJSON\b',request,re.I) and re.search(r'\b(?:request|page|batch)\b',request,re.I)):
+        return None
+    words={word:i for i,word in enumerate(('zero','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve'),0)}
+    values=[];invalid=False
+    for cue in re.finditer(r'\b(?:limit\b(?:\s+of\b)?\s*(?:[=:]\s*)?|at most\s+|up to\s+)',request,re.I):
+        tail=request[cue.end():].lstrip()
+        # A requested field name in a list does not itself supply a quantity.
+        if cue[0].lower().startswith('limit') and (not tail or tail[0] in ',.;!?' or re.match(r'^(?:and|with|allowing)\b',tail,re.I)):continue
+        quantity=re.match(r'(\d+|'+ '|'.join(words)+r')\b',tail,re.I)
+        if not quantity:invalid=True;continue
+        rest=tail[quantity.end():]
+        if re.match(r'(?:[.,]\d|[/%%]|\s*[-–—]\s*\d|\s+\d|\s+(?:to|through|or|hundred|thousand|million|point|percent)\b)',rest,re.I):
+            invalid=True;continue
+        value=quantity[1].lower();values.append(int(value) if value.isdigit() else words[value])
+    if invalid or len(set(values))!=1 or not 1<=values[0]<=80:
+        return dict(valid=False,reason='Specify one page limit from 1 to 80; no request was sent.')
+    return dict(valid=True,limit=values[0],provenance='current_owner_request',
+                json_only=bool(re.search(r'\b(?:only JSON|JSON only|just (?:the )?JSON)\b',request,re.I)))
+
+
+def request_scope(text):
+    """A receipt protocol request, not any draft containing 'receipt/event'."""
+    from answer_intent import instructions
+    request=instructions(text)
+    explicit=page_request(text) or ACK.search(request) or re.search(
+        r'\b(?:catch[- ]?up|ACK|acknowledged_through|since_seq|through_seq|history_gap|has_more|execution_started|cursor|old event)\b|'
+        r'\bevents?\s+\d+\b|'
+        r'\b(?:Grok|Dot|receiver|reviewer)\b[^.!?\n]{0,100}\b(?:read|resume|claim|know|acknowledg\w*|receipt|release)\b|'
+        r'\b(?:what should|what must)\s+(?:Grok|Dot)\b',request,re.I)
+    explanation=re.match(r'^(?:what|does|did|can|is|are|how|why|which|explain|interpret|help (?:interpret|explain)|summarize)\b',request,re.I)
+    return bool(explicit or explanation and re.search(r'\b(?:this|that|the|supplied|provided|pasted)\s+(?:receipt|checkpoint|batch)\b',request,re.I))
+
+
 def coverage_limit(projection):
     gaps=projection.get('unresolved_history_gaps',[])
     if not gaps:return ''
@@ -106,7 +143,7 @@ def project(conversation):
     if not users:return None
     latest=users[-1].get('content','')
     if re.search(r'\b(?:database|SQL|mouse|calendar)\b',latest,re.I) and not re.search(r'\b(?:catch[- ]?up|ACK|Grok|Dot|receiver)\b',latest,re.I):return None
-    if not DOMAIN.search(latest) and not re.search(r'\b(?:Grok|Dot|latest release|old event)\b',latest,re.I):return None
+    if not request_scope(latest):return None
     # Do not carry gaps across an explicit topic boundary or another receiver.
     start_index=max((i for i,m in enumerate(users) if re.match(r'^(?:different|new|another|unrelated) topic\b',m.get('content',''),re.I)),default=-1)
     users=users[start_index+1:]
@@ -144,6 +181,7 @@ def project(conversation):
             reported_execution_started=boolean(text,'execution_started'),execution_authority=False,
             unresolved_history_gaps=gaps,
             reported_history_recoveries=recoveries,
+            page_request=page_request(latest),
             later_release_reported=bool(re.search(r'\brelease\b[^.!?\n]{0,70}\b(?:after|later)\b','\n'.join(m.get('content','') for m in relevant),re.I)))
     if any(ACK.search(m.get('content','')) for m in users):
         return dict(valid=False,reason='That acknowledgment belongs to a different receiver; this receiver’s acknowledged position is unknown.')
@@ -157,6 +195,14 @@ def render(raw, projection):
     if not isinstance(value,dict) or set(value)!={'mode'} or value['mode'] not in ('explain','release','authority','relay'):
         raise ValueError('Invalid receipt interpretation')
     end=projection['acknowledged_through'];start=projection['since_seq'];count=projection['event_count']
+    page=projection.get('page_request')
+    if page:
+        if not page['valid']:return page['reason']
+        limit=page['limit'];payload=json.dumps(dict(since_seq=end,limit=limit),separators=(',',':'))
+        if page['json_only']:return payload
+        return ('```json\n'+payload+'\n```\n\nIf '+str(limit)+' records are available and no history is missing, '
+                'the expected sequence range is '+str(end+1)+'–'+str(end+limit)+
+                '; this is a read-only request to relay, and nothing was fetched or executed.'+coverage_limit(projection))
     span=('events '+str(start+1)+'–'+str(end) if start is not None and start<end and projection['history_gap'] is False else
           'the supplied batch through sequence '+str(end))
     if value['mode']=='relay':
