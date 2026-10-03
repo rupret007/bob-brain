@@ -500,6 +500,43 @@ if ($("login-form")) {
         messageTools.append(hint);
       }
       article.append(messageTools);
+      if (message.handoff_receipt?.handoff_id) {
+        const handoff = message.handoff_receipt;
+        const query = new URLSearchParams({conversation_id: current, handoff_id: handoff.handoff_id});
+        const tools = document.createElement('div'); tools.className = 'action-card-actions';
+        const download = document.createElement('a'); download.className = 'job-result-link';
+        download.href = '/api/project-handoffs/export?' + query;
+        download.textContent = 'Download handoff'; download.download = 'webbob-handoff.json';
+        tools.append(download);
+        if (handoff.state === 'returned_unverified') {
+          const returned = document.createElement('a'); returned.className = 'job-result-link';
+          returned.href = '/api/project-handoffs/return?' + query;
+          returned.textContent = 'Download returned review'; returned.download = 'webbob-review.json';
+          tools.append(returned);
+        } else {
+          const picker = document.createElement('input'); picker.type = 'file'; picker.accept = '.json,application/json';
+          picker.hidden = true;
+          const importButton = document.createElement('button'); importButton.type = 'button';
+          importButton.textContent = 'Import returned review';
+          importButton.addEventListener('click', () => picker.click());
+          picker.addEventListener('change', async () => {
+            const file = picker.files?.[0]; if (!file) return;
+            const conversationId = query.get('conversation_id');
+            importButton.disabled = true;
+            try {
+              if (file.size > 170000) throw new Error('The returned review is too large.');
+              const artifact = JSON.parse(await file.text());
+              if (artifact.handoff_id !== handoff.handoff_id) throw new Error('This return belongs to another handoff.');
+              await api('/api/project-handoffs/import', {conversation_id: conversationId, artifact});
+              if (current === conversationId) render(await api('/api/conversations/' + conversationId));
+              $('notice').textContent = 'Review imported. The claimed author remains unverified.';
+            } catch (error) { $('notice').textContent = error.message || 'The returned review could not be imported.'; }
+            finally { importButton.disabled = false; picker.value = ''; }
+          });
+          tools.append(importButton, picker);
+        }
+        article.append(tools);
+      }
       if (message.status === "waiting" && message.retry_at) {
         const retry = document.createElement("div"); retry.className = "attempt";
         retry.textContent = `Queued · retry after ${new Date(message.retry_at * 1000).toLocaleTimeString()}`;

@@ -411,7 +411,8 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         return "Got it."
     if PURE_GREETING.fullmatch(text.strip()):
         content = greeting_content(content)
-    if not reference and (STATUS_QUESTION.search(text) or correcting_status(text, conversation)):
+    from resource_inventory import question as resource_question
+    if not reference and not resource_question(text) and (STATUS_QUESTION.search(text) or correcting_status(text, conversation)):
         return operational_reply(root, answer["provider"], text, observation=observation, redact=redact)
     else:
         from dispatch_receipts import claims_dispatch, dispatch_prose, reference_context, NO_DISPATCH

@@ -107,7 +107,7 @@ class ProjectReportTests(Fixture):
         report_artifacts.put_once(self.root, path, (answer + '\n').encode())
         task_queue.transition(self.root, row['id'], claimed['claim_token'], 'succeeded',
             result=answer, result_sha256=digest, result_path=str(self.root/path),
-            acceptance=dict(result_sha256=digest, contract_sha256=row['report_contract']['contract_sha256']))
+            acceptance=dict(accepted=True, result_sha256=digest, contract_sha256=row['report_contract']['contract_sha256']))
         self.submit('For the Web Bob project, remember the priority: delivery reliability comes first.')
         self.submit('Create a read-only next-actions brief for Web Bob from report ' + row['id'])
         rows = list(task_queue.tasks(self.root).values())

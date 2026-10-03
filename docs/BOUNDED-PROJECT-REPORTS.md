@@ -40,3 +40,33 @@ The authenticated Jobs result contains the report and its integrity status.
 Results live under `conductor/state/project-reports/<goal-id>/<task-id>.md`.
 Input bundles are private and immutable under `conductor/state/project-report-inputs`.
 The coordination journal records report IDs and hashes, not private report text.
+
+## Owner-relayed review
+
+After a report completes, ask “Prepare a review handoff of report JOB_ID for Dot”
+(Grok and Claude are also supported recipients). The conversation provides a
+download containing the exact report, current project context, holds, observed
+tasks, a bounded journal page and an empty return-format template. Preparation
+does not contact the recipient, acknowledge history or transfer task ownership.
+An ordinary request to draft a handoff from supplied findings remains normal
+conversation and does not require a completed executor report.
+
+Use **Import returned review** to load the receiver's filled JSON response. The
+server requires the original handoff/source identities, exact current context
+revision and content hashes. It rejects stale, mismatched and conflicting
+duplicate artifacts. An exact duplicate returns the same durable receipt. Saved
+payload digests are rechecked on export and retrieval. The response remains
+`returned_unverified`: source binding is verified, claimed authorship is not.
+Import cannot start a task, ACK Grok, grant Dot write access or certify completed
+work. Imported text is excluded from ordinary model context.
+
+## Resource observations
+
+Resource questions receive supported capabilities alongside a bounded projection
+of `conductor/state/resource-inventory.json`. Each account observation has its
+own timestamp; after 15 minutes it is marked stale. Remaining allowance stays
+unknown when the provider did not expose it. A nested usage snapshot retains its
+own observation time. The inventory does not start login flows, generation or
+workers. Explicit execution, account funding and quality checks still govern
+each actual assignment. Reducing Cursor may reduce Grok Bot allowance; a savings
+recommendation must preserve that dependency and measure representative use.

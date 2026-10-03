@@ -347,7 +347,8 @@ class Chat(TaskDispatch):
 
     def public(self, value):
         excluded = {"_coordination_outbox", "_coordination_excluded", "_coordination_prepared_batches", "codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job",
-                    "pending_memory", "pending_memory_id", "pending_memory_removal", "_project_edit", "_project_removal", "_project_intent", "_report_inputs"}
+                    "pending_memory", "pending_memory_id", "pending_memory_removal", "_project_edit", "_project_removal", "_project_intent", "_report_inputs",
+                    "_project_handoffs", "_project_returns"}
         # Extensions never see core-private state or mutable conversation objects.
         filtered = {k: copy.deepcopy(v) for k, v in value.items() if k not in excluded}
         public = {k: v for k, v in self.texting.public(filtered).items() if k not in excluded}
@@ -736,6 +737,10 @@ class Chat(TaskDispatch):
                 cancelled_task = self.cancel_task_turn(conversation, text)
                 if cancelled_task is not None:
                     return cancelled_task
+                from project_handoffs import handle as project_handoff_turn
+                handoff_reply = project_handoff_turn(self, conversation, text, request_id)
+                if handoff_reply is not None:
+                    return handoff_reply
                 from project_reports import handle as project_report_turn
                 report_reply = project_report_turn(self, conversation, text, request_id)
                 if report_reply is not None:
@@ -932,10 +937,11 @@ class Chat(TaskDispatch):
                 return self.public(conversation)
             from reply_authority import HOLD_QUESTION, STATUS_QUESTION
             from answer_intent import conceptual
+            from resource_inventory import question as resource_question
             if HOLD_QUESTION.match(text):
                 scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
                 return self.intent_reply(conversation, chat_intent.hold_reply(scopes) if scopes else "There are no active conversation holds.")
-            if ledger == self.root and STATUS_QUESTION.search(text) and not conceptual(text):
+            if ledger == self.root and STATUS_QUESTION.search(text) and not conceptual(text) and not resource_question(text):
                 return self.status_reply(conversation, text)
             if ledger == self.root:
                 try:
@@ -965,7 +971,7 @@ class Chat(TaskDispatch):
                             commits=[], confirmations=[], refusals=[], open_items=[], request_id=request_id)
                 state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
                 return self.public(conversation)
-            local_status = state_ledger.try_status_reply(ledger, text) if provider == "auto" and not conceptual(text) else None
+            local_status = state_ledger.try_status_reply(ledger, text) if provider == "auto" and not conceptual(text) and not resource_question(text) else None
             if local_status:
                 conversation["messages"][-1].update(status="done", content=local_status, provider="state")
                 self.save(conversation)
@@ -1810,6 +1816,21 @@ class Handler(BaseHTTPRequestHandler):
             if result is None:
                 raise RequestError(404, "No saved result for this job.")
             return self.send(200, json.loads(chat.redact(json.dumps(result))))
+        if route in ('/api/project-handoffs/export', '/api/project-handoffs/return'):
+            import project_handoffs
+            query = parse_qs(urlsplit(self.path).query)
+            cid = query.get('conversation_id', [''])[0]
+            hid = query.get('handoff_id', [''])[0]
+            try:
+                if route.endswith('/return'):
+                    data = project_handoffs.returned(chat, cid, hid)
+                else:
+                    handoff = project_handoffs.export(chat, cid, hid)
+                    data = dict(handoff=handoff, return_template=project_handoffs.return_template(handoff))
+            except ValueError as exc:
+                raise RequestError(404, str(exc)) from None
+            return self.send(200, data, headers={'Cache-Control': 'no-store',
+                                               'Content-Disposition': 'attachment; filename="webbob-handoff.json"'})
         if route == "/api/handback":
             return self.send(200, chat.handback())
         if route == "/api/panel":
@@ -1906,6 +1927,14 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/conversations":
             self.body()
             return self.send(201, chat.new_conversation())
+        if route == '/api/project-handoffs/import':
+            import project_handoffs
+            data = self.body(limit=project_handoffs.MAX_BYTES)
+            try:
+                value = project_handoffs.import_return(chat, data.get('conversation_id'), data.get('artifact'))
+            except (TypeError, ValueError) as exc:
+                raise RequestError(400, str(exc)) from None
+            return self.send(200, value)
         if route.startswith("/api/voice/"):
             data = self.body(limit=128 * 1024)
             owner = session["digest"]

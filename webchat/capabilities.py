@@ -6,6 +6,9 @@ import json
 def needs_grounding(text):
     """Ground capability questions and stated integration needs in actual code."""
     from answer_intent import instructions, requires_execution
+    from resource_inventory import question as resource_question
+    if resource_question(text):
+        return True
     value = instructions(text).strip()
     question = re.match(r'^(?:(?:ok|okay|hey bob)[,!. ]+)*(?:(?:can|could|do|are|will) you\b|'
                          r'what (?:can you|are your)\b|how (?:can|do|does) (?:you|web bob)\b)', value, re.I)
@@ -146,6 +149,14 @@ def grounding(root, reply_providers, conversation_id=None):
         source='Implemented Web Bob handlers in this code version; not proof of current provider health.',
         reply_providers=list(reply_providers),
         capabilities=[
+            dict(name='persistent project context', source='webchat/project_context.py',
+                 path='Versioned owner priorities and corrections, selective retrieval, inspect/remove through chat; facts do not grant execution permission.'),
+            dict(name='bounded subscription reports', source='webchat/project_reports.py; services/subscription_report.py',
+                 path='Explicit read-only Web Bob reports with one pinned owner, exact source snapshot, one attempt and a verified saved artifact.',
+                 limitation='Claude subscription route is implemented; current login/quota and real output quality require observed evidence.'),
+            dict(name='review handoff and returned artifact', source='webchat/project_handoffs.py',
+                 path='Prepared owner-relayed handoff with context and bounded journal delta; strict assignment/source-bound return import.',
+                 limitation='Prepared is not accepted; imported authorship remains unverified; no automatic native Dot/Grok dispatch.'),
             dict(name='writing and reasoning', source='webchat/providers.py',
                  path='Replies and revisions in this conversation using configured model providers.'),
             dict(name='research', source='webchat/bob_gaps.py; webchat/task_dispatch.py',
@@ -159,7 +170,7 @@ def grounding(root, reply_providers, conversation_id=None):
                  limitation='No verified direct native Grok chat transport or automatic wake-up is configured. '
                             'Only current Web Bob publishers contribute after the retained legacy import; '
                             'older external publishers and already-trimmed history are not covered.'),
-        ], coordination=observations,
+        ], coordination=observations, resources=__import__('resource_inventory').observe(root),
         comparison='Grok feature parity and answer superiority require matched evidence; not established here.')
 
 

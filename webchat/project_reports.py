@@ -34,6 +34,7 @@ def verified_report(root, identifier):
     answer = row.get('result', '')
     digest = hashlib.sha256(answer.encode()).hexdigest()
     if (raw != (answer + '\n').encode() or digest != row.get('result_sha256') or
+            row.get('acceptance', {}).get('accepted') is not True or
             row.get('acceptance', {}).get('result_sha256') != digest or
             row['acceptance'].get('contract_sha256') != contract['contract_sha256']):
         raise ValueError('The saved report failed its integrity check; no new assignment was created.')

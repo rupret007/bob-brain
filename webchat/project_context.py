@@ -312,7 +312,50 @@ def projection(root, conversation, text='', *, budget=6500):
     if len(canonical(result).encode()) > budget:
         return dict(schema_version=1, available=True, project_id=row['project_id'], revision=row['revision'],
                     omitted=True, reason='Project context exceeds this prompt budget; inspect the source.')
+    observed = work_observations(root, conversation, row)
+    if len(canonical(dict(result, work=observed)).encode()) <= budget:
+        result['work'] = observed
+    else:
+        result['work_observations_omitted'] = True
+        if len(canonical(result).encode()) > budget:
+            result.pop('work_observations_omitted')
     return result
+
+
+def work_observations(root, conversation, project):
+    """Queue facts remain observations, distinct from durable owner decisions."""
+    import task_queue
+    import alignment_events
+    value = dict(observed_at=time.time(), authority='Observed work only; no new permission',
+                 holds=copy.deepcopy(conversation.get('intent_state', {}).get('holds', {})),
+                 active_tasks=[], completed_effects=[], pending_assignments=[])
+    try:
+        rows = [r for r in task_queue.tasks(root).values()
+                if (r.get('report_contract') or {}).get('goal_id') == project['goal_id']]
+        selected = sorted(rows, key=lambda r:r['created_at'], reverse=True)[:6]
+        value['omitted_tasks'] = max(0, len(rows)-len(selected))
+        for row in selected:
+            item = {k:row.get(k) for k in ('id', 'status', 'worker', 'requested_worker', 'started_at',
+                                          'finished_at', 'result_sha256', 'result_path', 'report_checkpoint')}
+            item['assignment_goal_revision'] = row['report_contract']['goal_revision']
+            item['current_context_matches'] = row['report_contract']['goal_revision'] == project['revision']
+            if row['status'] == 'succeeded':
+                item['verification'] = 'Recorded completion; artifact integrity must be inspected before reuse'
+                value['completed_effects'].append(item)
+            else:
+                value['active_tasks'].append(item)
+        for message in conversation.get('messages', []):
+            intent = message.get('dispatch_intent') or {}
+            contract = intent.get('report_contract') or {}
+            if contract.get('goal_id') == project['goal_id'] and not message.get('task_id'):
+                value['pending_assignments'].append(dict(id=contract['task_id'],owner=contract['owner'],
+                    state='saved_not_dispatched',assignment_goal_revision=contract['goal_revision']))
+        value['pending_assignments'] = value['pending_assignments'][-4:]
+        value['journal_cursor'] = alignment_events.latest_seq(root)
+        value['source_paths'] = ['conductor/state/queue.jsonl','conductor/state/coordination-events.jsonl']
+    except (OSError, ValueError):
+        value.update(available=False,reason='Work observations unavailable; do not infer completion or fresh status')
+    return value
 
 
 SET = re.compile(r'^(?:for (?:the )?(.{1,70}?) project,?\s*|project (.{1,70}?):\s*)'
