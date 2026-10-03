@@ -53,6 +53,12 @@ HOLD_CLAIM = re.compile(
     r"\b(?:until you (?:say (?:go|resume)|resume|give (?:the )?go[- ]ahead)|waiting for (?:your|permission)|"
     r"(?:need|require) (?:your |fresh |renewed |explicit )*(?:permission|approval|go[- ]ahead))\b", re.I)
 HOLD_QUESTION = re.compile(r"^(?:(?:are|is|am|do|does|why)\b[^.!]*\b(?:on hold|holds? (?:still )?active|paused|need.{0,20}permission)\b[^.!]*|what holds? are active)\??$", re.I)
+PERMISSION_CHANGE = re.compile(
+    r'\b(?:hold|permission|approval)\b[^,;!?]{0,30}'
+    r'\b(?:is|was|has been|now|already)\s+(?:lifted|cleared|released|granted)\b|'
+    r'\b(?:I|we|you)(?:[’\']ve|\s+have)?\s+(?:(?:already|now)\s+)?'
+    r'(?:lifted|cleared|released|granted)\s+(?:(?:the|your|our)\s+)?'
+    r'(?:hold|permission|approval)\b', re.I)
 PURE_GREETING = re.compile(r"(?:hi|hey|hello|good (?:morning|afternoon|evening))"
                            r"(?:[, ]+(?:bob|there))?[.!? ]*", re.I)
 GREETING_OPERATIONS = re.compile(
@@ -442,7 +448,29 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         if len(kept) != len(sentences):
             content = "".join(kept).strip() or "What would you like me to work on?"
     sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
-    kept = [part for part in sentences if not HOLD_CLAIM.search(part)]
+    def asserted_permission_change(part):
+        for change in PERMISSION_CHANGE.finditer(part):
+            # A conditional governs its own predicate, not a subsequent
+            # assertion across punctuation or a coordinating conjunction.
+            prefix=part[:change.start()]
+            conditional=re.search(r'\b(?:if|when|once|before|until)\b'
+                                  r'(?:(?!\b(?:and|but|yet|however|now that)\b)[^,;:.!?\n])*$',prefix,re.I)
+            if not conditional:
+                return True
+        return False
+
+    def held_scope_question(part):
+        # A real hold may be discussed while choosing the remaining scope.
+        # Preserve that question, not arbitrary model status or permission
+        # claims; the ordinary effect guard has already run above.
+        mentioned=projects(part)
+        question=part.strip().lstrip('*- ').strip()
+        asks_scope=re.fullmatch(r'(?:(?:when|if|before|once)\b[^,;!?]{0,180},\s*)?'
+                               r'(?:which|what)\b[^;!?]*\?',question,re.I)
+        return bool(scopes and asks_scope and not asserted_permission_change(question) and
+                    (not mentioned or all(blocked_scopes(state,[name]) for name in mentioned)))
+    kept = [part for part in sentences if not asserted_permission_change(part) and
+            (not HOLD_CLAIM.search(part) or held_scope_question(part))]
     if len(kept) != len(sentences):
         content = "".join(kept).strip()
         # Only the saved state may explain an operational hold.

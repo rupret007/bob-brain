@@ -36,6 +36,11 @@ inspection, execution, file reach, remaining allowance, free usage or equal-qual
 guarantees. Supported operations are independent: report-executor restrictions
 never remove a provider's separate conversation adapter. An unqualified alternative
 is a candidate for a bounded comparison, not yet the recommended active chat route.
+When explaining a limitation, name the operation and adapter it applies to; do
+not turn a chat adapter's tool boundary into a denial of its scoped executor.
+Not buying another plan is distinct from incurring no charges: a comparison uses
+allowance and may trigger extra usage under unknown account settings. Preparing
+inputs or checking settings is not evidence that future generation is cost-free.
 Return JSON only, without fences or trailing commentary.
 '''
 
@@ -47,9 +52,10 @@ def facts(inventory, *, missing=False):
     result = {
         'openai_api_billing': BILLING_FACTS['openai_api_billing'],
         'subscription_scope': BILLING_FACTS['subscription_scope'],
-        'route_boundaries': 'Web Bob’s Codex and Cursor chat adapters use supplied context. Local file work uses a separate scoped executor; voice, images and other tools depend on the particular adapter. Signing in does not make those routes interchangeable.',
+        'route_boundaries': 'Web Bob supports BOTH Codex/Cursor conversation adapters using supplied context AND their separate scoped executors for assigned local file/coding work. Tool limits apply to the named adapter, not the whole resource. Voice and images require their own supported operation. Signing in does not make routes interchangeable or authorize file work.',
         'quality_bar': 'Keep the qualified answer route and its reasoning settings until a representative comparison establishes the alternative’s quality. A cheaper price or successful login does not establish equivalent answers.',
         'capacity_and_pacing': 'Pacing may reduce demand; it cannot establish remaining allowance or prevent quota exhaustion. Capacity and extra-usage settings need current observations before admission.',
+        'purchase_vs_usage': 'An existing subscription avoids purchasing another plan; it does not establish that another model invocation has no incremental charge. Extra-usage settings and remaining allowance are unverified until observed. Prepare evidence and inspect settings before admitting a comparison.',
         'manual_handoff': 'Dot and Grok have prepared handoff paths, but no verified automatic Web Bob push/acceptance interface. Preparation alone does not establish native execution.',
     }
     if missing:
@@ -106,8 +112,9 @@ def safe_reasoning(text):
     guarantee=re.compile(r"\b(?:guarantee[ds]?|unlimited|free|zero[- ]cost|no (?:extra |additional )?(?:costs?|charges?)|same quality|equal quality|equivalent (?:quality|answers)|(?:quality|quota|allowance) (?:is|stays|remains) (?:protected|unchanged)|(?:preserve[ds]?|protect(?:s|ed)?|maintain(?:s|ed)?|(?:is|are|was|were|will be) (?:preserving|protecting|maintaining)) (?:the |your )?(?:quality|quota|allowance)|(?:avoid|prevent)(?:s|ed|ing)? (?:quota exhaustion|exhaustion|rate limits?|extra charges)|will not (?:cost|exhaust|run out)|won[’']t (?:cost|exhaust|run out))\b",re.I)
     observed=re.compile(r"\b(?:I|we|Codex|Claude|Cursor|Gemini|MiniMax)(?:['’]ve| have)? (?:checked|verified|confirmed|inspected|tested|read)\b|\b(?:can|could|will) (?:already |now )?(?:read|access|open) (?:all |your |the |those |needed |project )*(?:files?|repository|repo)\b|\b(?:remaining|available) (?:quota|allowance|credits?) (?:is|are)\b",re.I)
     direct_denial=re.compile(r"\b(?:cannot|can['’]t|does not|doesn['’]t|is not|isn['’]t|not|no)\s+(?:(?:be|a|an|any|necessarily|ever|actually|guarantee|establish|imply|prove)\s+){0,3}$",re.I)
-    scoped_denial=re.compile(r"\b(?:cannot assume|can['’]t assume|(?:does not|doesn['’]t) (?:make|imply|establish|prove)|no proof of|no evidence of|rather than (?:assuming|inferring|being)|without (?:assuming|claiming|promising))\b(?:(?!\b(?:guarantee[ds]?|ensures?|therefore|since|because)\b)[^,;:.!?]){0,90}$",re.I)
+    scoped_denial=re.compile(r"\b(?:cannot assume|can['’]t assume|(?:does not|doesn['’]t) (?:make|imply|establish|prove)|no proof of|no evidence of|rather than (?:assuming|inferring)|without (?:assuming|claiming|promising))\b(?:(?!\b(?:guarantee[ds]?|ensures?|therefore|since|because)\b)[^,;:.!?]){0,90}$",re.I)
     inquiry=re.compile(r'\b(?:whether|to (?:check|test|compare|assess|verify|measure|evaluate|qualify)|(?:should|must|need to) (?:check|test|compare|assess|verify|measure|evaluate|qualify))\b[^,;:.!?]{0,70}$',re.I)
+    contrast=re.compile(r'\brather than\s+(?:(?:being|offering|providing|an?|any|completely|truly)\s+){0,3}$',re.I)
     clauses=re.split(r'((?<=[.!?])\s+|[,;\n]|\b(?:and|but|however|therefore|so|thus|although|yet|whereas|because|since)\b)',prose,flags=re.I)
     for index in range(0,len(clauses),2):
         clause=clauses[index]
@@ -121,7 +128,7 @@ def safe_reasoning(text):
             elif (sentence_start and re.match(r'^(?:preserve|protect|maintain) ',match[0],re.I) and
                   re.fullmatch(r'\s*(?:to\s+)?',prefix,re.I)):
                 continue  # Imperative/topic objective, not an asserted outcome.
-            elif not (direct_denial.search(prefix) or scoped_denial.search(prefix) or inquiry.search(prefix)):
+            elif not (direct_denial.search(prefix) or scoped_denial.search(prefix) or contrast.search(prefix) or inquiry.search(prefix)):
                 return False
         for match in observed.finditer(clause):
             if not direct_denial.search(clause[:match.start()]):return False

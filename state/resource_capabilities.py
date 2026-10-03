@@ -7,7 +7,7 @@ BILLING_FACTS = {
 }
 ROUTES = {
     'codex': dict(tasks=['conversation', 'local coding', 'scoped project jobs'], auth='ChatGPT login or separately billed API; inspect observed mode',
-                  reach='Conversation uses the existing read-only CLI reply adapter with supplied context; local coding uses assigned worktrees through the separate executor',
+                  reach='Two supported routes: (1) conversation through the CLI reply adapter using supplied context; (2) local file and coding work in assigned worktrees through the scoped executor. A limitation of route 1 does not remove route 2. Current permission and input availability still determine whether a specific task can run.',
                   billing='ChatGPT plan allowance when authenticated with ChatGPT; credits may apply',
                   conversation_quality='Supported conversation adapter; current comparative answer quality and remaining quota are not established by login',
                   report_adapter='No qualified tool-free bounded report adapter'),
@@ -17,7 +17,7 @@ ROUTES = {
                    conversation_quality='Supported conversation adapter; comparative quality and current allowance still need observation, just as for Codex and Cursor',
                    report_adapter='One attempt, high effort, requested Opus family, no model tools; model identity checked'),
     'cursor': dict(tasks=['conversation', 'local coding', 'scoped project jobs'], auth='Observe Cursor authenticated status; login alone does not prove funding route',
-                   reach='Existing CLI ask-mode conversation adapter with supplied context; assigned local worktrees through the separate executor',
+                   reach='Two supported routes: conversation through the CLI ask-mode adapter using supplied context, and local file/coding work in assigned worktrees through the scoped executor. Current permission and input availability still govern each task.',
                    billing='Cursor account; included versus on-demand usage unverified',
                    conversation_quality='Supported conversation adapter; no measured quality or capacity guarantee from authentication alone',
                    dependency='Reducing Cursor may reduce Grok Bot included allowance; verify linked account before changing plan'),
