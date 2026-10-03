@@ -51,7 +51,8 @@ def verified_report(root, identifier):
     row = task_queue.tasks(root).get(identifier)
     if not row or row['status'] != 'succeeded' or not row.get('report_contract'):
         raise ValueError('That report has no completed bounded assignment to inspect.')
-    contract = row['report_contract']
+    contract = report_contract.validate(row['report_contract'], conversation_id=row['conversation_id'],
+        request_id=row['request_id'], prompt=row['prompt'], worker=row['worker'], attempt_limit=row['attempt_limit'])
     raw = report_artifacts.read(root, contract['output_relative'])
     answer = row.get('result', '')
     digest = hashlib.sha256(answer.encode()).hexdigest()
@@ -61,6 +62,92 @@ def verified_report(root, identifier):
             row['acceptance'].get('contract_sha256') != contract['contract_sha256']):
         raise ValueError('The saved report failed its integrity check; no new assignment was created.')
     return row, raw.decode()
+
+
+def answer_evidence(root, conversation, project, text, redact):
+    """Retrieve relevant, verified saved findings independently of owner facts.
+
+    Historical findings do not grant work permission or establish present health.
+    This reads at most two queue-owned artifacts, never user-supplied paths.
+    """
+    query=instructions(text)
+    from reply_contract import current as current_contract
+    contract=current_contract(conversation) or {}
+    report_question=bool(re.search(r'\b(?:the|that|our|your|saved|latest|completed|readiness)\s+'
+                                  r'(?:readiness |next-actions )?(?:reports?|briefs?|findings|results|work)\b',query,re.I))
+    named=bool(project and project.get('name') and re.search(r'(?<!\w)'+re.escape(project['name'])+r'(?!\w)',query,re.I))
+    contextual=bool(re.fullmatch(r"\s*(?:so[, ]+)?(?:what(?:['’]s| is)? next|what (?:did|have) (?:you|we) (?:actually )?(?:finish(?:ed)?|complete[ d]*|learn(?:ed)?)|what (?:should happen|do we do) next)[?!. ]*",query,re.I))
+    if (not project or not project.get('available') or not project.get('goal_id') or
+            project_context.unrelated(query) or
+            contract.get('kind')=='writing' or
+            re.match(r'^(?:please\s+)?(?:(?:can|could|would) you\s+)?(?:write|draft|compose)\b',query,re.I) or
+            not (report_question or named or contextual) or
+            not re.search(r'\b(?:reports?|briefs?|findings|finish(?:ed)?|completed?|results?|learn(?:ed)?|next|recommendations?|decisions?)\b',query,re.I)):
+        return None,[]
+    rows=[r for r in task_queue.tasks(root).values() if r.get('status')=='succeeded' and
+          (r.get('report_contract') or {}).get('goal_id')==project['goal_id']]
+    if not rows:return None,[]
+    rows.sort(key=lambda r:(r['id'] in query,r.get('finished_at',0)),reverse=True)
+    current=project_context.read(root)['projects'].get(project['project_id'],{})
+    if current.get('revision')!=project['revision']:
+        return dict(available=False,reason='Project context changed before report retrieval; re-read current context.'),[]
+    removed_after=max((f['revision'] for f in current.get('facts',{}).values() if f['status']=='removed'),default=-1)
+    result=dict(available=True,scope='Historical saved findings, not new inspection or execution. Current owner facts override older reports.',
+                omitted_reports=max(0,len(rows)-2),reports=[])
+    bindings=[]
+    for index,row in enumerate(rows[:2],1):
+        alias='saved-report-'+str(index)
+        item=dict(citation_alias=alias,finished_at=row.get('finished_at'),retrieved_at=time.time(),available=False)
+        try:
+            verified,body=verified_report(root,row['id']);contract=verified['report_contract']
+            item.update(assignment_goal_revision=contract['goal_revision'],current_goal_revision=project['revision'],
+                        context_matches=contract['goal_revision']==project['revision'])
+            if removed_after>contract['goal_revision']:
+                item['reason']='A project fact was removed after this report. Its historical body is withheld to avoid reintroducing removed context.'
+            else:
+                clean=redact(body);raw=clean.encode();excerpt=raw[:6000].decode('utf-8','ignore')
+                if len(excerpt.encode())<len(raw) and '\n' in excerpt:excerpt=excerpt.rsplit('\n',1)[0]
+                item.update(available=True,excerpt=excerpt,original_bytes=len(body.encode()),
+                            redacted_bytes=len(raw),delivered_bytes=len(excerpt.encode()),truncated=len(excerpt.encode())<len(raw),
+                            excerpt_sha256=hashlib.sha256(excerpt.encode()).hexdigest())
+                bindings.append(dict(citation_alias=alias,task_id=row['id'],output_relative=contract['output_relative'],
+                    result_sha256=verified['result_sha256'],artifact_sha256=hashlib.sha256(body.encode()).hexdigest(),
+                    contract_sha256=contract['contract_sha256'],goal_id=project['goal_id'],
+                    assignment_goal_revision=contract['goal_revision'],current_goal_revision=project['revision'],
+                    finished_at=row.get('finished_at'),retrieved_at=item['retrieved_at'],excerpt_sha256=item['excerpt_sha256'],
+                    delivered_bytes=item['delivered_bytes'],truncated=item['truncated']))
+        except (OSError,ValueError,KeyError,TypeError):
+            item['reason']='Saved artifact verification failed; its findings are unavailable.'
+        result['reports'].append(item)
+    if len(report_contract.canonical(result).encode())>16000:
+        # Escaping/control characters can expand JSON beyond the excerpt cap.
+        for item in result['reports']:
+            if item.get('available'):
+                item['excerpt']=item['excerpt'][:1500];item['truncated']=True
+                item['delivered_bytes']=len(item['excerpt'].encode());item['excerpt_sha256']=hashlib.sha256(item['excerpt'].encode()).hexdigest()
+                binding=next(b for b in bindings if b['citation_alias']==item['citation_alias'])
+                binding.update({k:item[k] for k in ('truncated','delivered_bytes','excerpt_sha256')})
+    if len(report_contract.canonical(result).encode())>16000:
+        return dict(available=False,reason='Saved findings exceed the bounded context allowance; inspect the protected artifacts.'),[]
+    return result,bindings
+
+
+def render_citations(root, content, bindings):
+    """Publish links after the ordinary action guard, from server-bound evidence."""
+    cited=set(re.findall(r'\[report:([a-z0-9-]+)\]',content))
+    known={b['citation_alias']:b for b in bindings}
+    if not cited<=known.keys():return 'A saved-report citation could not be verified. Inspect the report in Jobs.',[]
+    try:
+        for alias in known:
+            binding=known[alias];row,body=verified_report(root,binding['task_id'])
+            current=next((p for p in project_context.read(root)['projects'].values() if p['goal_id']==binding['goal_id']),None)
+            if (row['result_sha256']!=binding['result_sha256'] or
+                    row['report_contract']['contract_sha256']!=binding['contract_sha256'] or
+                    hashlib.sha256(body.encode()).hexdigest()!=binding['artifact_sha256'] or
+                    not current or current['revision']!=binding['current_goal_revision']):raise ValueError()
+    except (OSError,ValueError,KeyError,TypeError):
+        return 'The saved report or project context changed while answering. Inspect its current verified result in Jobs.',[]
+    return re.sub(r'\[report:([a-z0-9-]+)\]',lambda m:'[Saved report '+m[1].rsplit('-',1)[1]+'](/api/jobs/result?id='+known[m[1]]['task_id']+')',content),list(known.values())
 
 
 def collect(chat, snapshot, text, *, source_root=None):

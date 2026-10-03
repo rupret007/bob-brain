@@ -13,7 +13,13 @@ BARE_EFFECT = CLAUSE_START + r"(?:queued|assigned|started|dispatched|launched|sc
 # Project IDs and paths are not speaking actors. A heading boundary also
 # cannot make an actor in that heading the subject of a later assignment.
 ACTOR = r"(?<![\w./-])(?:[_*]{1,2})?(?:I|we|Bob|" + WORKERS + r")(?:[_*]{1,2})?(?![\w/-])"
-ACTOR_EFFECT = ACTOR + r"(?:[*_]*\s*:\s*[*_]*\s*)?[^:.!?\n]{0,90}\b" + EFFECT + r"\b"
+# A speaking subject must govern the effect predicate. An arbitrary later noun
+# ("we keep discussing memory and queue state") is not an action by that subject.
+ACTOR_PREDICATE = (r"(?:['’](?:ve|ll|d|m|re|s))?\s*(?:[*_]*\s*:\s*[*_]*\s*)?"
+                   r"(?:(?:has|have|had|is|are|was|were|will|would|can|could|may|might|must|should|did|do|"
+                   r"just|now|already|also|still|finally|[a-z]+ly|been|being|get|got)\s+){0,6}")
+CAUSATIVE = r'(?:(?:ask(?:ed)?|tell|told|instruct(?:ed)?|use[ds]?)\s+(?:Bob|'+WORKERS+r')\s+to\s+)'
+ACTOR_EFFECT = ACTOR + ACTOR_PREDICATE + r'(?:'+CAUSATIVE+r')?' + EFFECT + r"\b"
 CLAIM = re.compile(
     ACTOR_EFFECT + r"|"
     + BARE_EFFECT + r"|"
@@ -256,8 +262,29 @@ def dispatch_prose(text, *, reference=''):
     # A conditional offer is not a claim that work was done.
     # Remove only the actor/modal and its immediate verb; never swallow the
     # rest of an offer or denial, which may contain a separate effect claim.
-    prose = re.sub(r"\bI (?:can(?:not|['’]t)?|could(?: not|n['’]t)?|did(?: not|n['’]t)|have(?: not|n['’]t))"
+    prose = re.sub(r"\bI (?:did(?: not|n['’]t)|have(?: not|n['’]t))"
                    r"\s+(?:been\s+)?[a-z]+\b", 'unasserted predicate', prose, flags=re.I)
+    # A capability or proposal is not a receipt or an unconditional promise.
+    # Only its base-form predicates inherit this modal. Past/finite effects in
+    # a continuation remain independently visible, including shared subjects.
+    base_action=r'(?:start|create|assign|queue|dispatch|launch|schedule|delegate|add|put|send|transfer|submit|review|inspect|ask|tell|instruct|use)'
+    modal=re.compile(r'(?P<actor>'+ACTOR+r')\s+(?:can|could|should|may|might)\s+'
+                     r'(?:(?:not|[a-z]+ly)\s+){0,3}(?P<verb>'+base_action+r')\b',re.I)
+    def possible_actions(match):
+        tail=match['tail']
+        def shared(candidate):
+            prefix=tail[:candidate.start()]
+            # An intervening actor, finite action or contrast ends the modal's
+            # scope. Never mask an actual effect asserted after the proposal.
+            new_predicate=ACTOR+ACTOR_PREDICATE+r'(?:[a-z]+ed|read|saw|took|found|sent|put|'+EFFECT+r')\b'
+            if (re.search(new_predicate,prefix,re.I) or
+                    re.search(r'\b(?:he|she|it|they|but|yet|then|will|have|has|had|did|queued|assigned|delegated|sent)\b',prefix,re.I)):
+                return candidate[0]
+            return candidate['join']+'a possible action'
+        tail=re.sub(r'(?P<join>\band\s+)(?:'+base_action+r')\b',shared,tail,flags=re.I)
+        return match['actor']+' describes a possible action'+tail
+    modal_clause=re.compile(modal.pattern+r'(?P<tail>[^.;!?\n]*)',re.I)
+    prose=modal_clause.sub(possible_actions,prose)
     # Replace only the explicitly excluded verb. Separate positive claims
     # remain visible to the guard, including after a semicolon or conjunction.
     prose = re.sub(r'\bwithout\s+(?:starting|creating|assigning|queueing|queuing|dispatching|'
@@ -325,8 +352,20 @@ def claims_dispatch(text, *, reference=''):
     # Do not use the passive proximity heuristic for a conceptual answer: a
     # definition can describe assignment without asserting a particular job.
     claim = REFERENCE_EFFECT if reference else CLAIM
-    return bool(DIRECT_CLAIM.search(verbal_effects(original)) or JOB_ID.search(original)
-                or claim.search(dispatch_prose(text, reference=reference)))
+    actor_prose=verbal_effects(original)
+    # A finite continuation retains its subject across a long subordinate
+    # phrase. Base-form actions still governed by can/could are proposals.
+    continuation=re.compile(r'\b(?:and|then|but|yet)\s+(?:will|have|has|had|did)\s+'+
+                            ACTOR_PREDICATE+r'(?:'+CAUSATIVE+r')?'+EFFECT+r'\b',re.I)
+    causative_continuation=re.compile(r'\b(?:and|then|but|yet)\s+'+CAUSATIVE+EFFECT+r'\b',re.I)
+    pronoun=re.compile(r'(?:[;.!?]\s*|\b(?:and|then|but|yet)\s+)(?:he|she|it|they)\b'+ACTOR_PREDICATE+EFFECT+r'\b',re.I)
+    inherited=bool(re.search(ACTOR,actor_prose,re.I) and (continuation.search(actor_prose) or pronoun.search(actor_prose)))
+    completed_continuation=re.compile(r'\b(?:and|then|but|yet)\s+(?:started|assigned|queued|dispatched|launched|scheduled|delegated|'+QUEUE_PLACEMENT+r')\b',re.I)
+    inherited=inherited or bool(re.search(ACTOR,actor_prose,re.I) and completed_continuation.search(actor_prose))
+    inherited=inherited or bool(re.search(r"\b(?:I|we)(?:['’]ll| will| have| did)\b",actor_prose,re.I) and causative_continuation.search(actor_prose))
+    checked=dispatch_prose(text,reference=reference)
+    return bool(DIRECT_CLAIM.search(actor_prose) or JOB_ID.search(original) or inherited
+                or claim.search(checked if reference else verbal_effects(checked)))
 
 
 def receipt_errors(answer, records, conversation_id, request_id, turn_started_at):

@@ -9,7 +9,7 @@ import re
 import hashlib
 
 import resource_inventory
-from resource_capabilities import ROUTES, supports, BILLING_FACTS
+from resource_capabilities import ROUTES, CAPABILITIES, supports, BILLING_FACTS
 
 RESOURCE_NAMES = r'\b(?:'+'|'.join(ROUTES)+r')\b'
 ACTIONABLE = tuple(name for name in ROUTES if supports(name,'conversation'))
@@ -33,7 +33,10 @@ unrequested recommendation. On follow-up, advance the reasoning rather than
 repeating the last answer. Preserve missing inputs and explicit route restrictions.
 Use only needed facts; do not paste the whole inventory or all caveats. No invented
 inspection, execution, file reach, remaining allowance, free usage or equal-quality
-guarantees. Return JSON only, without fences or trailing commentary.
+guarantees. Supported operations are independent: report-executor restrictions
+never remove a provider's separate conversation adapter. An unqualified alternative
+is a candidate for a bounded comparison, not yet the recommended active chat route.
+Return JSON only, without fences or trailing commentary.
 '''
 
 FACT_TOKEN = re.compile(r'\[fact:([a-z0-9_.]+)\]')
@@ -46,6 +49,7 @@ def facts(inventory, *, missing=False):
         'subscription_scope': BILLING_FACTS['subscription_scope'],
         'route_boundaries': 'Web Bob’s Codex and Cursor chat adapters use supplied context. Local file work uses a separate scoped executor; voice, images and other tools depend on the particular adapter. Signing in does not make those routes interchangeable.',
         'quality_bar': 'Keep the qualified answer route and its reasoning settings until a representative comparison establishes the alternative’s quality. A cheaper price or successful login does not establish equivalent answers.',
+        'capacity_and_pacing': 'Pacing may reduce demand; it cannot establish remaining allowance or prevent quota exhaustion. Capacity and extra-usage settings need current observations before admission.',
         'manual_handoff': 'Dot and Grok have prepared handoff paths, but no verified automatic Web Bob push/acceptance interface. Preparation alone does not establish native execution.',
     }
     if missing:
@@ -68,7 +72,26 @@ def parse(raw):
     # A single fenced JSON value is presentation noise, not permission for
     # appended prose or a second packet to escape validation.
     from structured_reply import loads
-    return loads(raw)
+    value=loads(raw)
+    if isinstance(value,dict) and isinstance(value.get('answer'),str):
+        # Citation lists are equivalent to separate citations, not extra prose.
+        grouped=re.compile(r'\[fact:([a-z0-9_.]+(?:\s*,\s*(?:fact:)?[a-z0-9_.]+)+)\]')
+        value['answer']=grouped.sub(lambda m: ''.join('[fact:'+part.strip().removeprefix('fact:')+']'
+                                      for part in m[1].split(',')),value['answer'])
+    return value
+
+
+def model_evidence(projection):
+    """Task-relevant capabilities and observed facts, without stale raw balances.
+
+    The complete inventory remains bound in the saved contract. Conversation
+    does not need billing caches, duplicate routes or unrelated worker policies.
+    """
+    return {**{k:projection[k] for k in ('requested_view','requested_resources','allowed_resources',
+                                       'scenario','missing_inputs','unavailable','facts')},
+            'supported_operations':{name:sorted(values) for name,values in CAPABILITIES.items()},
+            'observed_at':projection['inventory']['observed_at'],
+            'authority':'Evidence for advice only; neither provider selection nor execution authorization.'}
 
 
 def safe_reasoning(text):
@@ -80,18 +103,24 @@ def safe_reasoning(text):
     from reply_contract import safe_artifact
     prose=FACT_TOKEN.sub('',text)
     if not safe_artifact(prose):return False
-    guarantee=re.compile(r"\b(?:guarantee[ds]?|unlimited|free|zero[- ]cost|no (?:extra |additional )?(?:costs?|charges?)|same quality|equal quality|equivalent (?:quality|answers)|(?:quality|quota|allowance) (?:is|stays|remains) (?:protected|unchanged)|(?:preserv|protect|maintain)(?:e[ds]?|ing) (?:the |your )?(?:quality|quota|allowance)|(?:avoid|prevent)(?:s|ed|ing)? (?:exhaustion|rate limits?|extra charges)|will not (?:cost|exhaust|run out)|won[’']t (?:cost|exhaust|run out))\b",re.I)
+    guarantee=re.compile(r"\b(?:guarantee[ds]?|unlimited|free|zero[- ]cost|no (?:extra |additional )?(?:costs?|charges?)|same quality|equal quality|equivalent (?:quality|answers)|(?:quality|quota|allowance) (?:is|stays|remains) (?:protected|unchanged)|(?:preserve[ds]?|protect(?:s|ed)?|maintain(?:s|ed)?|(?:is|are|was|were|will be) (?:preserving|protecting|maintaining)) (?:the |your )?(?:quality|quota|allowance)|(?:avoid|prevent)(?:s|ed|ing)? (?:quota exhaustion|exhaustion|rate limits?|extra charges)|will not (?:cost|exhaust|run out)|won[’']t (?:cost|exhaust|run out))\b",re.I)
     observed=re.compile(r"\b(?:I|we|Codex|Claude|Cursor|Gemini|MiniMax)(?:['’]ve| have)? (?:checked|verified|confirmed|inspected|tested|read)\b|\b(?:can|could|will) (?:already |now )?(?:read|access|open) (?:all |your |the |those |needed |project )*(?:files?|repository|repo)\b|\b(?:remaining|available) (?:quota|allowance|credits?) (?:is|are)\b",re.I)
-    direct_denial=re.compile(r"\b(?:cannot|can['’]t|does not|doesn['’]t|is not|isn['’]t|not|no)\s+(?:(?:be|a|any|necessarily|ever|actually|guarantee|establish|imply|prove)\s+){0,3}$",re.I)
-    scoped_denial=re.compile(r"\b(?:cannot assume|can['’]t assume|(?:does not|doesn['’]t) (?:make|imply|establish|prove)|no proof of|no evidence of|rather than (?:assuming|inferring)|without (?:assuming|claiming|promising))\b(?:(?!\b(?:guarantee[ds]?|ensures?|therefore|since|because)\b)[^,;:.!?]){0,90}$",re.I)
+    direct_denial=re.compile(r"\b(?:cannot|can['’]t|does not|doesn['’]t|is not|isn['’]t|not|no)\s+(?:(?:be|a|an|any|necessarily|ever|actually|guarantee|establish|imply|prove)\s+){0,3}$",re.I)
+    scoped_denial=re.compile(r"\b(?:cannot assume|can['’]t assume|(?:does not|doesn['’]t) (?:make|imply|establish|prove)|no proof of|no evidence of|rather than (?:assuming|inferring|being)|without (?:assuming|claiming|promising))\b(?:(?!\b(?:guarantee[ds]?|ensures?|therefore|since|because)\b)[^,;:.!?]){0,90}$",re.I)
     inquiry=re.compile(r'\b(?:whether|to (?:check|test|compare|assess|verify|measure|evaluate|qualify)|(?:should|must|need to) (?:check|test|compare|assess|verify|measure|evaluate|qualify))\b[^,;:.!?]{0,70}$',re.I)
-    for clause in re.split(r'(?<=[.!?])\s+|[,;\n]|\b(?:and|but|however|therefore|so|thus|although|yet|whereas|because|since)\b',prose,flags=re.I):
+    clauses=re.split(r'((?<=[.!?])\s+|[,;\n]|\b(?:and|but|however|therefore|so|thus|although|yet|whereas|because|since)\b)',prose,flags=re.I)
+    for index in range(0,len(clauses),2):
+        clause=clauses[index]
+        sentence_start=index==0 or (clauses[index-1].isspace() and clauses[index-2].rstrip().endswith(('.','!','?')))
         for match in guarantee.finditer(clause):
             prefix=clause[:match.start()]
             # A test/comparison noun never establishes a guarantee. Negation
             # must attach to that promise itself, not an unrelated condition.
             if match[0].lower().startswith('guarantee'):
-                if not direct_denial.search(prefix):return False
+                if not (direct_denial.search(prefix) or scoped_denial.search(prefix)):return False
+            elif (sentence_start and re.match(r'^(?:preserve|protect|maintain) ',match[0],re.I) and
+                  re.fullmatch(r'\s*(?:to\s+)?',prefix,re.I)):
+                continue  # Imperative/topic objective, not an asserted outcome.
             elif not (direct_denial.search(prefix) or scoped_denial.search(prefix) or inquiry.search(prefix)):
                 return False
         for match in observed.finditer(clause):
@@ -182,7 +211,8 @@ def render(raw, projection):
             raise ValueError('Invalid answer composition')
         tokens=FACT_TOKEN.findall(value['answer'])
         known=projection.get('facts') or facts(projection['inventory'],missing=projection['missing_inputs'])
-        if not tokens or any(t not in known for t in tokens) or not safe_reasoning(value['answer']):
+        if (not tokens or any(t not in known for t in tokens) or
+                '[fact:' in FACT_TOKEN.sub('',value['answer']) or not safe_reasoning(value['answer'])):
             raise ValueError('Ungrounded answer composition')
         bare=FACT_TOKEN.sub('',value['answer']).strip(' .,:;\n')
         if not bare:

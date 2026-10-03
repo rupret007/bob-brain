@@ -1,5 +1,7 @@
 """Real product admission, saved holds and report-source integrity; no models."""
 import hashlib
+import copy
+import json
 import time
 from unittest.mock import patch
 
@@ -12,6 +14,80 @@ import task_queue
 
 
 class ProjectReportTests(Fixture):
+    def finish_report(self,row,answer):
+        claimed=task_queue.claim(self.root,'claude',identifier=row['id'])
+        digest=hashlib.sha256(answer.encode()).hexdigest()
+        path=row['report_contract']['output_relative']
+        report_artifacts.put_once(self.root,path,(answer+'\n').encode())
+        task_queue.transition(self.root,row['id'],claimed['claim_token'],'succeeded',result=answer,
+            result_sha256=digest,result_path=str(self.root/path),
+            acceptance=dict(accepted=True,result_sha256=digest,contract_sha256=row['report_contract']['contract_sha256']))
+
+    def test_later_conversation_loads_verified_findings_separately_and_cites_protected_results(self):
+        from providers import Providers
+        from reply_authority import enforce
+        row,_=self.report();self.finish_report(row,'Saved finding: receipt transport deserves the next investigation.')
+        question='For Web Bob, what finished and what should happen next?'
+        conversation=dict(id=self.identifier,messages=[dict(role='user',status='done',content=question)])
+        provider=Providers(self.root,self.chat.redact);provider.prompt(conversation,fast=True)
+        context=provider.current_call.api_input['context']
+        self.assertIn('receipt transport deserves',context)
+        self.assertIn('reliable daily assistance',context)
+        self.assertEqual(len(provider.current_call.report_sources),1)
+        content='The saved finding recommends investigating receipt transport. [report:saved-report-1]'
+        guarded=enforce(self.root,question,dict(content=content,provider='gemini'),conversation)
+        linked,sources=project_reports.render_citations(self.root,guarded,provider.current_call.report_sources)
+        self.assertIn('/api/jobs/result?id='+row['id'],linked);self.assertEqual(sources[0]['task_id'],row['id'])
+        for extra in (' I queued your task.',' webchat-'+'a'*32):
+            rejected=enforce(self.root,question,dict(content=content+extra,provider='gemini'),conversation)
+            self.assertNotIn('[report:',rejected)
+        with patch.object(project_reports,'verified_report',side_effect=AssertionError('unrelated report read')):
+            provider.prompt(dict(messages=[dict(role='user',status='done',content='Different topic: what is a good lunch?')]),fast=True)
+        self.assertEqual(provider.current_call.report_sources,[])
+        project=project_context.projection(self.root,dict(project_id='web-bob'),'What next?')
+        with patch.object(project_reports,'verified_report',side_effect=AssertionError('personal question read')):
+            for query in ('What is a good book to read next?', 'Could you write a birthday note about next year?',
+                          'What is an earnings report?', 'What did today’s weather report say?'):
+                self.assertEqual(project_reports.answer_evidence(self.root,dict(project_id='web-bob'),project,query,self.chat.redact),(None,[]))
+
+    def test_recall_rejects_file_and_contract_tampering_and_bounds_utf8(self):
+        row,_=self.report();self.finish_report(row,'Useful finding with evidence.\n'+'🪴'*5000)
+        conversation=dict(project_id='web-bob');question='What did the report find?'
+        project=project_context.projection(self.root,conversation,question)
+        value,bindings=project_reports.answer_evidence(self.root,conversation,project,question,self.chat.redact)
+        self.assertLessEqual(len(json.dumps(value,ensure_ascii=False).encode()),16000)
+        self.assertTrue(value['reports'][0]['truncated']);self.assertTrue(bindings)
+        current=task_queue.tasks(self.root);tampered=copy.deepcopy(current)
+        tampered[row['id']]['report_contract']['scope']='Different scope without a new contract hash'
+        with patch.object(task_queue,'tasks',return_value=tampered):
+            value,bad=project_reports.answer_evidence(self.root,conversation,project,question,self.chat.redact)
+        self.assertFalse(bad);self.assertNotIn('excerpt',value['reports'][0])
+        (self.root/row['report_contract']['output_relative']).write_text('Tampered findings')
+        value,bad=project_reports.answer_evidence(self.root,conversation,project,question,self.chat.redact)
+        self.assertFalse(bad);self.assertNotIn('excerpt',value['reports'][0])
+        content,sources=project_reports.render_citations(self.root,'See [report:saved-report-1]',bindings)
+        self.assertFalse(sources);self.assertIn('changed',content)
+        content,sources=project_reports.render_citations(self.root,'The report recommends a new investigation.',bindings)
+        self.assertFalse(sources);self.assertIn('changed',content)
+
+    def test_removal_withholds_historical_body_but_correction_keeps_it_historical(self):
+        row,_=self.report();self.finish_report(row,'Saved finding with an earlier priority.')
+        self.submit('For the Web Bob project, remember the priority: answer quality first.')
+        conversation=self.chat.get(self.identifier);question='What did the report find?'
+        project=project_context.projection(self.root,conversation,question)
+        value,bindings=project_reports.answer_evidence(self.root,conversation,project,question,self.chat.redact)
+        self.assertTrue(bindings);self.assertFalse(value['reports'][0]['context_matches'])
+        retained=bindings
+        fact=next(f for f in project['facts'] if f['kind']=='priority')
+        self.submit('Forget project fact web-bob '+fact['id']+' at revision '+str(project['revision']))
+        proposal=self.chat.get(self.identifier)['_project_removal']['proposal_id']
+        self.submit('yes, forget project fact proposal '+proposal)
+        project=project_context.projection(self.root,self.chat.get(self.identifier),question)
+        value,bindings=project_reports.answer_evidence(self.root,self.chat.get(self.identifier),project,question,self.chat.redact)
+        self.assertFalse(bindings);self.assertNotIn('excerpt',value['reports'][0]);self.assertIn('removed',value['reports'][0]['reason'])
+        answer,bound=project_reports.render_citations(self.root,'The older report recommended work.',retained)
+        self.assertFalse(bound);self.assertIn('changed',answer)
+
     def submit(self, text):
         from uuid import uuid4
         self.chat.submit(self.identifier, text, str(uuid4()))

@@ -777,6 +777,7 @@ class Providers:
             self.context_root(conversation.get('id')), conversation, last_user)
         from project_context import inherited_dependencies
         self.current_call.project_dependencies = inherited_dependencies(conversation, project, included=included_messages)
+        self.current_call.report_sources=[]
         if project:
             snapshots.append(dict(path='current saved project context', modified=project.get('updated_at'),
                                   truncated=bool(project.get('omitted_fact_ids') or project.get('omitted')),
@@ -786,6 +787,14 @@ class Providers:
                     text=json.dumps(dict(code_sha=BUILD['sha'],
                         scope='Source of this reply server; not a passing test, deployment readiness, or service-health observation.',
                         project_revision_is_code_revision=False))))
+            import project_reports
+            reports,bindings=project_reports.answer_evidence(self.context_root(conversation.get('id')),
+                conversation,project,last_user,self.redact)
+            if reports:
+                self.current_call.report_sources=bindings
+                snapshots.append(dict(path='verified saved project findings',modified='retrieved this turn',
+                    truncated=any(r.get('truncated') for r in reports.get('reports',[])),
+                    text=json.dumps(reports,ensure_ascii=False)))
         if capability_question:
             capability_facts=grounding(self.context_root(conversation.get('id')), ORDER, conversation.get('id'))
             if contract and contract.get('resource_projection'):
@@ -793,6 +802,9 @@ class Providers:
                 # coordination/receiver observations are distinct evidence.
                 capability_facts.pop('resources',None)
                 capability_facts.pop('resource_inventory',None)
+                # Resource advice gets its operations from the shared registry.
+                # Generic executor policies here blur chat and report limits.
+                capability_facts.pop('capabilities',None)
             snapshots += [dict(path='implemented Web Bob capability metadata', modified='current code and saved acknowledgment',
                                truncated=False, text=json.dumps(capability_facts))]
         if retained:
@@ -811,8 +823,9 @@ class Providers:
         import reply_contract
         contract=reply_contract.current(conversation)
         if contract and contract.get('resource_projection'):
+            from resource_decision import model_evidence
             snapshots.append(dict(path='server-owned resource decision evidence',modified='this turn',truncated=False,
-                                  text=self.redact(json.dumps(contract['resource_projection'],ensure_ascii=False))))
+                                  text=self.redact(json.dumps(model_evidence(contract['resource_projection']),ensure_ascii=False))))
         if contract and contract.get('catchup_projection'):
             snapshots.append(dict(path='server-owned receiver receipt projection',modified='owner supplied',truncated=False,
                                   text=self.redact(json.dumps(contract['catchup_projection'],ensure_ascii=False))))
@@ -850,6 +863,11 @@ class Providers:
         self.current_call.instructions = policy + scope
         if project:
             self.current_call.instructions += '\n' + PROJECT_RULES
+        if self.current_call.report_sources:
+            self.current_call.instructions += ('\nUse verified saved findings for report conclusions. Cite each using '
+                '[report:saved-report-1] or its supplied citation_alias; the server resolves protected links. '
+                'Do not copy internal task IDs. Findings are historical, excerpts may be incomplete, and current '
+                'owner corrections take precedence. Saved proposals do not authorize new work.\n')
         if capability_question:
             self.current_call.instructions += '\n' + GROUNDING_RULES
         if self.current_call.draft_revision:

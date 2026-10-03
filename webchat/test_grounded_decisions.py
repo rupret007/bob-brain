@@ -30,6 +30,9 @@ class ProjectionTests(unittest.TestCase):
             self.assertIn('does not pay',answer)
             self.assertEqual(decision['steps'],['inspect_allowance'])
             self.assertIsNone(decision['resource'])
+            grouped=dict(answer='Billing depends on the authentication route. [fact:openai_api_billing, fact:codex.billing]',resource=None,steps=[])
+            answer,decision=resource_decision.render(json.dumps(grouped),projection)
+            self.assertNotIn('[fact:',answer);self.assertEqual(len(decision['fact_ids']),2)
             with self.assertRaises(ValueError):resource_decision.render('```json\n'+packet+'\n```\nI queued your task.',projection)
 
     def test_grounded_fact_cannot_launder_adjacent_guarantee_or_fake_inspection(self):
@@ -45,6 +48,11 @@ class ProjectionTests(unittest.TestCase):
                           'Without a new subscription we guarantee the same quality.',
                           'We are not changing plans since this route is free.',
                           'Rather than wait this route provides equal quality.',
+                          'Conversation pacing prevents quota exhaustion.',
+                          'This route is preserving quality.',
+                          'This route protects quality.',
+                          'This route maintains quality.',
+                          'Pacing will reduce demand and preserve quality.',
                           'Pacing prevents rate limits.', 'I inspected your files.',
                           'We can read your project files.', 'I queued your task.'):
                 with self.subTest(claim=claim),self.assertRaises(ValueError):
@@ -53,7 +61,12 @@ class ProjectionTests(unittest.TestCase):
                            'Pacing cannot prevent rate limits.', 'File access is unverified.',
                            'Paying for a subscription does not make API requests free.',
                            'Compare the outputs rather than assuming equal quality.',
-                           'We cannot assume this provider produces equivalent answers.'):
+                           'We cannot assume this provider produces equivalent answers.',
+                           'Subscription access is not an unlimited pool.',
+                           'Use a bounded allowance rather than being completely unlimited.',
+                           'Check remaining quota rather than assuming login guarantees capacity.',
+                           '**Preserving quality:** Compare the delivered outputs first.',
+                           'Preserve quality by comparing outputs first.'):
                 answer,_=resource_decision.render(json.dumps(dict(answer=clause+' [fact:codex.observation]',resource=None,steps=[])),projection)
                 self.assertIn(clause,answer)
 

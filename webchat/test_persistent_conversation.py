@@ -13,6 +13,32 @@ import task_queue
 
 
 class PersistentConversationTests(SessionFixture):
+    def test_proposals_and_queue_nouns_do_not_excuse_later_actual_effects(self):
+        from dispatch_receipts import claims_dispatch
+        for prose in ('We can safely delegate bounded reviews.',
+                      'We could inspect the inputs and queue a bounded task.',
+                      'We could inspect the inputs and put your task into the queue.',
+                      'We can ask Codex to start a bounded task.',
+                      'We can ask Codex to review the inputs and put your task into the queue.',
+                      "We could inspect Codex's report and put your task into the queue.",
+                      'Should we keep the report limited to memory and queue state?',
+                      'Claude can prepare a report; we should compare the findings.'):
+            with self.subTest(prose=prose):
+                self.assertFalse(claims_dispatch(prose))
+                for extra in (' I queued your repair.',' and queued your repair.',
+                              ' and will queue your repair.',' webchat-'+'b'*32):
+                    self.assertTrue(claims_dispatch(prose+extra))
+        for prose in ('We queue your task now.','We put your task into the queue.',
+                      'The task is queued.','I have delegated your repair.',
+                      'We can inspect it and have queued your task.',
+                      'We checked the inputs and put your task into the queue.',
+                      'We reviewed the report and delegated your task to Codex.'):
+            self.assertTrue(claims_dispatch(prose))
+        for prose in ('We could inspect inputs and Bob checked the logs and put your task into the queue.',
+                      'We could inspect inputs and Codex reviewed the logs and put your task into the queue.',
+                      'We asked Codex to start a bounded task.'):
+            self.assertTrue(claims_dispatch(prose))
+
     def test_substantive_followups_use_typed_reasoning_without_live_snapshot_noise(self):
         prompts = (
             'Here is a report: four checks passed and a delivery result disappeared after reload. Assess it only.',
