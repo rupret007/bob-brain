@@ -647,6 +647,8 @@ class Providers:
         return parts
 
     def prompt(self, conversation, *, fast=False):
+        from project_context import model_view as project_model_view
+        conversation = project_model_view(self.context_root(conversation.get('id')), conversation)
         last_user_msg = next((m for m in reversed(conversation["messages"]) if m["role"] == "user"), None)
         last_user = (last_user_msg or {}).get("content") or ""
         self._vision_parts = []
@@ -676,7 +678,7 @@ class Providers:
         answer_context = (answer_only(conversation, last_user) or capability_question or
                           bool(suspended and not OPERATIONAL.search(last_user))) and not needs_handoff_context(last_user)
         self.current_call.answer_context = answer_context
-        history, remaining = [], 24000 if not fast else 12000
+        history, included_messages, remaining = [], [], 24000 if not fast else 12000
         represented = set()
         messages = conversation['messages']
         if suspended and answer_context:
@@ -700,6 +702,7 @@ class Providers:
             if not content:
                 break
             history.insert(0, {"role": message["role"], "content": self.redact(content)})
+            included_messages.append(message)
             remaining -= len(content)
         from reply_authority import dispatch_block
         blocked = dispatch_block(conversation)
@@ -715,11 +718,23 @@ class Providers:
                 retained['latest_answer'] = None
             if not retained['user_excerpts'] and not retained.get('latest_answer'):
                 retained = None
+        if retained and retained.get('latest_answer'):
+            included_messages.extend(m for m in conversation['messages'] if m['role']=='assistant' and
+                                     m.get('request_id')==retained['latest_answer']['request_id'])
         # A poem or supplied calculation needs its conversation, not unrelated
         # project handoffs, operational logs, or the owner's entire profile.
         # The operational snapshot is cached across conversations. Never append
         # private user excerpts or attachments into that shared list.
         snapshots = [] if answer_context else list(self.snapshot(lite=fast, conversation_id=conversation.get("id")))
+        from project_context import projection as project_projection, RULES as PROJECT_RULES
+        project = conversation['_project_snapshot'] if '_project_snapshot' in conversation else project_projection(
+            self.context_root(conversation.get('id')), conversation, last_user)
+        from project_context import inherited_dependencies
+        self.current_call.project_dependencies = inherited_dependencies(conversation, project, included=included_messages)
+        if project:
+            snapshots.append(dict(path='current saved project context', modified=project.get('updated_at'),
+                                  truncated=bool(project.get('omitted_fact_ids') or project.get('omitted')),
+                                  text=self.redact(json.dumps(project, ensure_ascii=False))))
         if capability_question:
             snapshots += [dict(path='implemented Web Bob capability metadata', modified='current code and saved acknowledgment',
                                truncated=False, text=json.dumps(grounding(self.context_root(conversation.get('id')), ORDER, conversation.get('id'))))]
@@ -768,6 +783,8 @@ class Providers:
         reference = conceptual(last_user)
         policy = REFERENCE_RULES if answer_context and reference else ANSWER_RULES if answer_context else RULES
         self.current_call.instructions = policy + scope
+        if project:
+            self.current_call.instructions += '\n' + PROJECT_RULES
         if capability_question:
             self.current_call.instructions += '\n' + GROUNDING_RULES
         if self.current_call.draft_revision:

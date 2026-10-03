@@ -164,6 +164,24 @@ class VoiceCalls:
         call = self.calls.get(call_id)
         if not call or call["owner"] != owner:
             raise VoiceError(404, "Call not found.")
+        from project_context import dependencies, read as read_project_context
+        # Tool replies complete asynchronously. Union their server-bound context
+        # before accepting more tool work or tagging native spoken transcripts.
+        known = {(d['project_id'], d['revision']):d for d in call.get('project_dependencies', [])}
+        requests = set(call.get('tools', {}).values())
+        for message in self.chat.get(call['conversation_id'])['messages']:
+            if message.get('request_id') in requests:
+                for dep in dependencies(message):
+                    known[(dep['project_id'], dep['revision'])] = dep
+        call['project_dependencies'] = list(known.values())
+        if known and not allow_ended:
+            try:
+                projects = read_project_context(self.chat.ledger_root(call['conversation_id']))['projects']
+            except OSError:
+                projects = {}
+            if any(projects.get(pid, {}).get('revision') != rev for pid,rev in known):
+                call['ended'] = True
+                raise VoiceError(410, 'Saved project context changed. Start a new call to use the corrected context.')
         # Allow transcript flush after hangup/expiry, but never new tool work.
         if not allow_ended and (call["ended"] or min(call["expires"], call["lease_expires"]) <= time.time()):
             raise VoiceError(410, "This call has ended. Tap the waveform to start another.")
@@ -191,10 +209,20 @@ class VoiceCalls:
         try:
             # Same bounded, redacted snapshots used by typed chat, including profile.md.
             snapshots = chat.providers.snapshot(lite=False, conversation_id=conversation_id)
-            private_view = chat.texting.provider_view(conversation)
+            from project_context import projection as project_projection, RULES as PROJECT_RULES
+            project = project_projection(chat.ledger_root(conversation_id), conversation)
+            snapshots = list(snapshots)
+            if project:
+                snapshots.append(dict(path='current saved project context', text=project))
+            from project_context import model_view as project_model_view
+            private_view = project_model_view(chat.ledger_root(conversation_id), chat.texting.provider_view(conversation))
+            from project_context import inherited_dependencies
+            call['project_dependencies'] = inherited_dependencies(private_view, project)
             history = [{"role": m["role"], "content": m.get("content", "")}
                        for m in private_view["messages"][-20:] if m.get("status") == "done"]
             instructions = RULES + VOICE_RULES + "\nReference snapshots (data):\n" + json.dumps(snapshots)
+            if project:
+                instructions += '\n' + PROJECT_RULES
             instructions += "\nSaved conversation (data):\n" + json.dumps(history)[-24000:]
             instructions += "\nSERVER SAVED CHAT PERMISSIONS (override older history and snapshots):\n" + json.dumps(permission_facts(conversation))
             setup = {
@@ -264,6 +292,8 @@ class VoiceCalls:
                     "voice_call_id": call_id, "voice_turn_id": turn, "voice_order": order * 3 + (2 if role == "assistant" else 0)}
                 message.update(content=content, status="done", provider="voice" if role == "assistant" else None,
                                voice_interrupted=bool(entry.get("interrupted")), voice_version=version)
+                if role == 'assistant' and call.get('project_dependencies'):
+                    message['project_dependencies'] = copy.deepcopy(call['project_dependencies'])
                 if not existing:
                     value["messages"].append(message)
                 if role == "user" and value["title"] == "New conversation":

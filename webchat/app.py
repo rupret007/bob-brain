@@ -188,6 +188,8 @@ class Chat(TaskDispatch):
             self.conversations[value["id"]] = value
             migrated_intent = "intent_state" not in value
             chat_intent.state_for(value)
+            from project_context import recover as recover_project_context
+            recovered_context = recover_project_context(self.ledger_root(value['id']), value)
             interrupted = False
             for message in value["messages"]:
                 if message.get("status") in ("queued", "running"):
@@ -197,7 +199,7 @@ class Chat(TaskDispatch):
                 value["codex_thread_id"] = None
                 from self_improvement import recover_research
                 recover_research(value)
-            if interrupted or migrated_intent or value.get("_coordination_outbox"):
+            if interrupted or migrated_intent or recovered_context or value.get("_coordination_outbox"):
                 self.save(value)
         if not self.conversations:
             self.new_conversation()
@@ -211,6 +213,11 @@ class Chat(TaskDispatch):
             # is cleared or the process restarts.
             conversation['_coordination_excluded'] = True
         pending = conversation.setdefault('_coordination_outbox', {})
+        private_requests = {m.get('request_id') for m in conversation.get('messages', [])
+                            if m.get('private_memory') or m.get('texting')}
+        for event_id, record in list(pending.items()):
+            if record.get('kind') == 'answer-delivered' and record.get('request_id') in private_requests:
+                pending.pop(event_id)
         for record in self.coordination_records(conversation):
             pending.setdefault(record['event_id'], record)
         path = self.state / (conversation["id"] + ".json")
@@ -260,7 +267,8 @@ class Chat(TaskDispatch):
             return []
         user = next((m for m in reversed(messages) if m.get('role') == 'user'
                      and m.get('request_id') == last.get('request_id')), {})
-        if not user or last.get('texting') or user.get('texting'):
+        if (not user or last.get('texting') or user.get('texting') or
+                last.get('private_memory') or user.get('private_memory')):
             return []
         records = []
         permission = conversation.get('intent_state', {}).get('last_permission') or {}
@@ -282,6 +290,9 @@ class Chat(TaskDispatch):
                 summary='Delivered a chat answer; this is not a verified external action.',
                 conversation_id=conversation['id'], request_id=user['request_id'], message_id=last['id'],
                 answer_excerpt=content[:1000], answer_sha256=digest))
+            if last.get('project_dependencies') or last.get('project_dependency'):
+                records[-1].pop('answer_excerpt')
+                records[-1]['project_dependencies'] = last.get('project_dependencies', [last.get('project_dependency')])
         return records
 
     def ledger_root(self, conversation_id: str | None = None) -> Path:
@@ -336,7 +347,7 @@ class Chat(TaskDispatch):
 
     def public(self, value):
         excluded = {"_coordination_outbox", "_coordination_excluded", "_coordination_prepared_batches", "codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job",
-                    "pending_memory", "pending_memory_id", "pending_memory_removal"}
+                    "pending_memory", "pending_memory_id", "pending_memory_removal", "_project_edit", "_project_removal", "_project_intent"}
         # Extensions never see core-private state or mutable conversation objects.
         filtered = {k: copy.deepcopy(v) for k, v in value.items() if k not in excluded}
         public = {k: v for k, v in self.texting.public(filtered).items() if k not in excluded}
@@ -644,6 +655,13 @@ class Chat(TaskDispatch):
                                          provider=provider, worker=worker, attachments=public_attachments)
             if removal is not None:
                 return removal
+            from project_context import handle as project_context_turn
+            from project_context import observe as observe_project
+            observe_project(self.ledger_root(identifier), conversation, text)
+            context_reply = project_context_turn(self, conversation, text, request_id, provider=provider,
+                worker=worker, attachments=public_attachments, source_voice=source_voice)
+            if context_reply is not None:
+                return context_reply
             if VERSION_QUESTION.search(text):
                 self.texting.invalidate(conversation)
                 return self.intent_reply(conversation, BUILD["short_sha"])
@@ -1012,7 +1030,12 @@ class Chat(TaskDispatch):
                     raise Cancelled("Reply stopped.")
                 reply(value).update(status="running", provider=None, attempts=[])
                 self.save(value)
-            answer = self.providers.reply(self.texting.provider_view(conversation), cancel, progress)
+            from project_context import model_view as project_model_view, projection as project_projection
+            model_conversation = project_model_view(self.ledger_root(identifier), self.texting.provider_view(conversation))
+            project_prompt = next((m['content'] for m in reversed(model_conversation['messages']) if m['role']=='user'), '')
+            project_snapshot = project_projection(self.ledger_root(identifier), model_conversation, project_prompt)
+            model_conversation['_project_snapshot'] = project_snapshot
+            answer = self.providers.reply(model_conversation, cancel, progress)
             with self.lock:
                 value = self.get(identifier)
                 # Check after acquiring the lock: Stop/timeout may have won it
@@ -1025,6 +1048,12 @@ class Chat(TaskDispatch):
                 value.pop("retry_prompt", None)
                 # Provider metadata cannot mint receipts or dispatcher authority.
                 answer = {key: answer[key] for key in ("content", "provider", "attempts") if key in answer}
+                from project_context import inherited_dependencies
+                deps = getattr(getattr(self.providers, 'current_call', None), 'project_dependencies', None)
+                if deps is None:
+                    deps = inherited_dependencies(model_conversation, project_snapshot)
+                if deps:
+                    answer['project_dependencies'] = deps
                 answer["content"] = self.redact(answer["content"])
                 user_msg = next((m for m in value["messages"] if m["role"] == "user" and m.get("request_id") == reply(value).get("request_id")), {})
                 from reply_authority import enforce

@@ -403,6 +403,10 @@ if ($("login-form")) {
     setBottomTab("chat");
     submitChatText("show my saved memories");
   });
+  $("project-context")?.addEventListener("click", () => {
+    setBottomTab("chat");
+    submitChatText("show saved project context");
+  });
   const messageText = new WeakMap();
   function render(conversation) {
     if (conversation.id !== current) return;
@@ -443,6 +447,16 @@ if ($("login-form")) {
       else if (message.role === "assistant" && !message.texting && !message.private_memory) body.innerHTML = renderMarkdown(message.content || "");
       else body.textContent = message.private_memory && message.memory_action_label || message.content;
       article.append(body);
+      if (message.private_memory && Array.isArray(message.project_facts)) {
+        for (const fact of message.project_facts) {
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.textContent = `Review removal: ${fact.kind}`;
+          remove.addEventListener("click", () => submitChatText(
+            `forget project fact ${fact.project_id} ${fact.id} at revision ${fact.revision}`));
+          article.append(remove);
+        }
+      }
       if (message.private_memory && Array.isArray(message.memory_notes)) {
         for (const note of message.memory_notes) {
           const card = document.createElement("div"); card.className = "action-card memory-note";
@@ -506,18 +520,19 @@ if ($("login-form")) {
           const actions = document.createElement("div"); actions.className = "action-card-actions";
           const council = /council/i.test(message.action_card.reason || "");
           const removal = message.action_card.kind === "memory-remove";
+          const projectRemoval = message.action_card.kind === "project-forget";
           const memory = message.action_card.kind === "memory" || /^memory:/i.test(message.action_card.reason || "");
           const proposalId = message.action_card.proposal_id || message.action_card.id || "";
           const approve = document.createElement("button");
           approve.type = "button"; approve.className = "action-approve";
-          approve.textContent = removal ? "Remove this note" : memory ? "Save memory" : council ? "Start review" : "Start job";
+          approve.textContent = projectRemoval ? "Forget this fact" : removal ? "Remove this note" : memory ? "Save memory" : council ? "Start review" : "Start job";
           approve.addEventListener("click", () => {
             const suffix = proposalId ? ` proposal ${proposalId}` : "";
-            submitChatText(removal ? `yes, remove saved note${suffix}` : memory ? `yes, save memory${suffix}` : council ? `yes, run council${suffix}` : `yes, start job${suffix}`);
+            submitChatText(projectRemoval ? `yes, forget project fact${suffix}` : removal ? `yes, remove saved note${suffix}` : memory ? `yes, save memory${suffix}` : council ? `yes, run council${suffix}` : `yes, start job${suffix}`);
           });
           const deny = document.createElement("button");
           deny.type = "button"; deny.className = "action-deny";
-          deny.textContent = removal ? "Keep note" : memory ? "Dismiss" : council ? "Dismiss" : "Not now";
+          deny.textContent = projectRemoval ? "Keep fact" : removal ? "Keep note" : memory ? "Dismiss" : council ? "Dismiss" : "Not now";
           deny.addEventListener("click", () => {
             submitChatText(removal || memory ? "never mind memory" : council ? "never mind council" : "never mind");
           });
