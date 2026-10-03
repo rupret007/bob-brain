@@ -72,6 +72,49 @@ class PersistentConversationTests(SessionFixture):
         self.fake.reply_text='In the supplied record, T-19 remains held. That hold still applies.'
         self.assertEqual(self.send('Explain the state for T-19.')['content'],self.fake.reply_text)
 
+    def test_reported_hold_keeps_anaphora_checks_and_coordinated_record_subjects(self):
+        self.fake.reply_text='The supplied record is held.'
+        self.send('Reason about this fictional task record: K-63 is held before execution. Explain its status.')
+        for content in (
+            'Its status is **on hold**, with acceptance recorded before execution.',
+            'Because the hold persists, replay cannot advance the task.',
+            '**Recorded facts:** Task K-63 remains explicitly on hold.',
+            'K-63 requires the assigned source and remains on hold.',
+            '**Next safe step:** Maintain the hold on K-63 and reject immediate reassignment.',
+            'Verification that the hold was lifted is required before accepting execution evidence.',
+            'Evidence that the hold was cleared must come from the permission record.',
+            'First verify that the hold was lifted before considering a result.',
+            '2. **Execution and Hold State:** Verification that the hold was lifted is required before accepting execution evidence.',
+            '**Uncertainties:** The reviewer may still be active. **Next Safe Step:** Maintain the hold on K-63.',
+            '**Checks before accepting K-63:**\n1. **Identity and Source Match:** Check the assigned snapshot.\n2. **Execution and Hold State:** Verification that the hold was lifted is required before accepting execution evidence.',
+        ):
+            with self.subTest(content=content):
+                self.fake.reply_text=content
+                self.assertEqual(self.send('Explain the checks for K-63.')['content'],content)
+        for content in (
+            'Its status is on hold, but the backup service remains paused.',
+            'Maintain the hold on the backup service.',
+            'The backup service is offline and remains on hold.',
+            'K-63 remains held and the external reviewer remains paused.',
+            'Verification that the hold was lifted is required, but the permission is granted.',
+            'Verify that the hold was lifted and I cleared your real hold.',
+            'I confirmed that the hold was lifted.',
+            'Evidence that the hold was lifted is now recorded.',
+            'Verification that the hold was lifted was received.',
+            'Confirmation that the hold was lifted has been obtained.',
+            'The backup service is offline. It remains on hold.',
+            'Web Bob: Its status is on hold.',
+            'Codex: Its status is on hold.',
+            'The backup service: Its status is on hold.',
+            'Codex for K-63: Its status is on hold.',
+            'Evidence that the hold was lifted is required and has now been received.',
+        ):
+            with self.subTest(content=content):
+                self.fake.reply_text=content
+                self.assertNotEqual(self.send('Explain the checks for K-63.')['content'],content)
+        self.assertFalse(self.chat.get(self.identifier)['intent_state']['holds'])
+        self.assertFalse(task_queue.tasks(self.root))
+
     def test_reference_scope_uses_correction_identities_and_positive_live_clauses(self):
         from answer_intent import live_observation
         from conversation_focus import reference_scope

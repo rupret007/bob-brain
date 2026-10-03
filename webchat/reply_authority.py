@@ -479,7 +479,26 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
             prefix=part[:change.start()]
             conditional=re.search(r'\b(?:if|when|once|before|until)\b'
                                   r'(?:(?!\b(?:and|but|yet|however|now that)\b)[^,;:.!?\n])*$',prefix,re.I)
-            if not conditional:
+            # A requested verification is not a completed permission change.
+            # Anchor its governing predicate locally so a subsequent actual
+            # assertion cannot borrow a preceding check or conditional.
+            local=re.split(r'[;:.!?\n]|\b(?:and|but|yet|however)\b',prefix,flags=re.I)[-1]
+            local=re.sub(r'[*_`]', '', local).strip()
+            verification=re.fullmatch(
+                r'(?:(?:first\s+)?(?:verify|check|confirm)\s+(?:that|whether)|'
+                r'(?:(?:obtain|require|seek)\s+)?(?:verification|confirmation|evidence)\s+that|'
+                r'(?:we|you)\s+(?:must|should|need to)\s+(?:verify|check|confirm)\s+(?:that|whether))(?:\s+the)?\s*',
+                local,re.I)
+            if verification and re.match(r'^(?:verification|confirmation|evidence)\b',local,re.I):
+                tail=part[change.end():].strip()
+                # A bare checklist item can name evidence to obtain. A noun
+                # phrase with a completed main predicate instead asserts that
+                # evidence exists; it cannot masquerade as an instruction.
+                for tail_clause in re.split(r'[,;]|\b(?:and|but|yet|however)\b',tail,flags=re.I):
+                    required=re.match(r'^\s*(?:is required|must\b|should\b|needs? to\b)',tail_clause,re.I)
+                    completed=re.search(r'\b(?:is|was|has|have|exists?|now|already|recorded|obtained|received|confirmed)\b',tail_clause,re.I)
+                    if completed and not required:verification=None
+            if not conditional and not verification:
                 return True
         return False
 
@@ -530,24 +549,71 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
     record=focus(conversation or {}) if reported else None
     record_ids=set(re.findall(r'\b[A-Za-z][\w]*-\d+\b',' '.join(
         e.get('content','') for e in (record or {}).get('user_excerpts',[]))))
-    record_subject=False
+    # The server-bound focus supplies the referent for "its status" and
+    # "the hold" across corrections. It does not authorize any real effect.
+    record_subject=bool(record_ids)
     def attributed_record_hold(part):
         nonlocal record_subject
-        if not reported:return False
-        for clause in re.split(r';|\b(?:and|but|yet|however)\b',part,flags=re.I):
-            claim=HOLD_CLAIM.search(clause)
-            if not claim:continue
-            prefix=clause[:claim.start()].strip()
-            if re.search(r'\b(?:your|our|my|actual|real|this chat|this conversation)\b',clause,re.I):return False
-            subject=re.sub(r'^In the (?:supplied|reported|fictional|hypothetical) (?:record|case|scenario),?\s*','',prefix,flags=re.I)
-            identified=any(re.fullmatch(r'(?:task\s+)?'+re.escape(i)+r'(?:\s+(?:is|was))?\s*',subject,re.I) for i in record_ids)
-            described=bool(re.fullmatch(r'(?:the|this|that) (?:supplied|reported|fictional|hypothetical) (?:task|record)(?:\s+(?:is|was))?\s*',subject,re.I))
-            pronoun=record_subject and bool(re.match(r'^\s*(?:That|This) hold\b',clause,re.I))
-            if not (identified or described or pronoun):return False
-            record_subject=True
+        if not reported or not record_ids:return False
+        plain=re.sub(r'[*_`]', '', part)
+        plain=re.sub(r'^\s*(?:[-+]\s+|\d+[.)]\s+)?', '', plain)
+        # Labels are presentation, never authority; effect checks above still
+        # inspect the original, and subject checks inspect the whole clause.
+        label=re.match(r'^([\w /-]{1,64}):\s*',plain)
+        if label:
+            structural=re.fullmatch(r'(?:(?:recorded|known|current|verified|next|safe|execution|hold|identity|source|scope|constraint|and)\s+)*(?:facts|status|state|steps?|checks?|requirements?|evidence|decision|uncertainties|match|compliance)',label[1],re.I)
+            # A heading can explicitly return to the bound task after a
+            # historical result. Keep that referent for subsequent fields.
+            foreign_heading=projects(label[1]) or re.search(r'\b(?:'+ '|'.join(re.escape(n) for n in WORKER_NAMES)+r'|service|worker|project|process|system|app|host)\b',label[1],re.I)
+            bound_heading=not foreign_heading and any(re.search(r'\b'+re.escape(i)+r'\b',label[1]) for i in record_ids)
+            if bound_heading:record_subject=True
+            if not structural and not bound_heading:
+                record_subject=False
+                return not bool(HOLD_CLAIM.search(plain))
+            plain=plain[label.end():]
+        identity='(?:'+'|'.join(re.escape(i) for i in sorted(record_ids))+')'
+        subject=r'(?:(?:task|assignment|record)\s+)?'+identity
+        nominal=r'(?:the|this|that)\s+(?:(?:supplied|reported|fictional|hypothetical)\s+)?(?:task|assignment|record)'
+        predicate=r'(?:(?:is|was|remains?|stays?)\b\s*)?(?:(?:still|explicitly|currently)\b\s*)?'
+        for clause in re.split(r';|\b(?:and|but|yet|however)\b',plain,flags=re.I):
+            # A new named app/worker/real-world subject cannot inherit a
+            # fictional record's state, including after a conjunction.
+            if projects(clause) or re.search(r'\b(?:'+ '|'.join(re.escape(n) for n in WORKER_NAMES)+r'|your|our|my|actual|real|this chat|this conversation)\b',clause,re.I):
+                record_subject=False
+                if HOLD_CLAIM.search(clause):return False
+                continue
+            clean_clause=re.sub(r'^\s*(?:In the (?:supplied|reported|fictional|hypothetical) (?:record|case|scenario),?\s*|(?:Because|While|Whereas)\s+)','',clause,flags=re.I).strip()
+            for claim in HOLD_CLAIM.finditer(clean_clause):
+                prefix=clean_clause[:claim.start()].strip()
+                suffix=clean_clause[claim.end():].strip()
+                identified=bool(re.fullmatch(subject+r'\s*'+predicate,prefix,re.I))
+                described=bool(re.fullmatch(nominal+r'\s*'+predicate,prefix,re.I))
+                anaphor=record_subject and bool(re.fullmatch(r'(?:it|its (?:status|state)|(?:the|this|that) (?:status|state))\s*'+predicate,prefix,re.I))
+                inherited=record_subject and bool(re.fullmatch(predicate,prefix,re.I))
+                # References/advice/checks about a hold have a bounded object;
+                # "the hold on the backup service" cannot borrow this scope.
+                noun=bool(re.fullmatch(r'(?:the|this|that|earlier|previous)(?:\s+(?:earlier|previous|existing|current))?\s+hold',claim[0],re.I))
+                governing=bool(re.fullmatch(r'(?:(?:maintain|keep|preserve)\s*|(?:(?:obtain|require|seek)\s+)?(?:verification|confirmation|evidence)\s+that\s*|(?:first\s+)?(?:verify|check|confirm)\s+(?:that|whether)\s*)?',prefix,re.I))
+                explicit_object=bool(re.match(r'(?:on|for|in)\s+'+subject+r'\b',suffix,re.I))
+                object_ok=not re.match(r'(?:on|for|in)\b',suffix,re.I) or explicit_object
+                noun_reference=(record_subject or explicit_object) and noun and governing and object_ok
+                if not (identified or described or anaphor or inherited and not noun or noun_reference):return False
+                record_subject=True
+            if not HOLD_CLAIM.search(clean_clause):
+                # Coordinated predicates may share an explicit preceding
+                # record subject, but not a different service's subject.
+                if re.search(r'(?:^|\bwhereas\s+)'+subject+r'\b',clean_clause,re.I):record_subject=True
+                elif re.search(r'\b(?:service|worker|reviewer|project|process|system|app|host)\s+(?:is|was|remains|has)\b',clean_clause,re.I):record_subject=False
         return True
-    kept = [part for part in sentences if not asserted_permission_change(part) and
-            (not HOLD_CLAIM.search(part) or held_scope_question(part) or saved_hold_reference(part) or attributed_record_hold(part))]
+    kept=[]
+    for part in sentences:
+        # Track intervening subjects even when a sentence has no hold claim.
+        # Otherwise "a service is offline. It is on hold" could inherit the
+        # fictional task's referent across the first sentence's short circuit.
+        record_hold=attributed_record_hold(part)
+        if not asserted_permission_change(part) and (not HOLD_CLAIM.search(part) or
+                held_scope_question(part) or saved_hold_reference(part) or record_hold):
+            kept.append(part)
     if len(kept) != len(sentences):
         content = "".join(kept).strip()
         # Only the saved state may explain an operational hold.
