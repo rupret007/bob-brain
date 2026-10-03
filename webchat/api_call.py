@@ -118,6 +118,11 @@ def main():
                 if name not in parameters:
                     raise RuntimeError('model_call does not support structured chat input. Upgrade services/api.py.')
                 kwargs[name] = payload[name]
+        if lane=='gemini' and payload['model_id']=='gemini-3.8-flash' and payload['thinking_level']=='high':
+            # HIGH reasoning consumed 7,864 of the old 8,192-token shared
+            # ceiling in a retained real response, truncating its answer.
+            # Keep reasoning quality and reserve the full larger bound in api.
+            kwargs['max_tokens']=16384
         answer = model_call(lane, prompt, **kwargs)
         # Native extraction already requires a completed final response and
         # excludes thought parts. Structured chat needs no model-written XML.

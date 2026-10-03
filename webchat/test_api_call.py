@@ -37,6 +37,15 @@ class APIRootTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, 'The structured helper preserved context.\n')
             self.assertIn('HTTP attempt 1/3 failed', result.stderr)
+            helper.write_text(
+                'def model_call(lane, prompt, purpose, vision=None, system=None, messages=None, thinking_level=None, model_id=None, max_tokens=None):\n'
+                '    assert model_id == "gemini-3.8-flash" and thinking_level == "high"\n'
+                '    assert max_tokens == 16384\n'
+                '    return "Reasoning and answer both fit."\n')
+            modern=json.loads(payload);modern.pop('thinking_budget');modern.update(model_id='gemini-3.8-flash',thinking_level='high')
+            result=subprocess.run(command,env=env,input=json.dumps(modern),text=True,capture_output=True,timeout=10)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(result.stdout,'Reasoning and answer both fit.\n')
             helper.write_text('def model_call(lane, prompt, purpose):\n    raise AssertionError("must not be called")\n')
             result = subprocess.run(command, env=env, input=payload, text=True, capture_output=True, timeout=10)
             self.assertNotEqual(result.returncode, 0)

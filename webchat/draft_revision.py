@@ -66,7 +66,8 @@ def apply(value, bound):
     """Validate completely before reconstructing; never mutate the saved draft."""
     if not isinstance(value, str) or len(value) > LIMIT * 3:
         raise ValueError('Invalid edit size')
-    patch = json.loads(value)
+    from structured_reply import loads
+    patch = loads(value)
     if not isinstance(patch, dict) or set(patch) != {'source_sha256', 'edits'} or patch['source_sha256'] != bound['source_sha256']:
         raise ValueError('Edit source does not match')
     edits = patch['edits']

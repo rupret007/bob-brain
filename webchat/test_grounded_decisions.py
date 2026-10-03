@@ -25,6 +25,11 @@ class ProjectionTests(unittest.TestCase):
                 self.assertIn('key distinction',answer)
                 self.assertIsNone(decision['resource'])
                 self.assertNotIn('My recommendation',answer)
+            value=json.loads(packet);value['steps']=['inspect_allowance']
+            answer,decision=resource_decision.render(json.dumps(value),projection)
+            self.assertIn('does not pay',answer)
+            self.assertEqual(decision['steps'],['inspect_allowance'])
+            self.assertIsNone(decision['resource'])
             with self.assertRaises(ValueError):resource_decision.render('```json\n'+packet+'\n```\nI queued your task.',projection)
 
     def test_grounded_fact_cannot_launder_adjacent_guarantee_or_fake_inspection(self):

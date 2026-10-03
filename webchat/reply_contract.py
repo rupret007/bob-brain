@@ -160,7 +160,8 @@ def deliver(root, text, answer, conversation, *, observation, redact):
         packet = dict(artifact=raw, commentary='')
     elif valid:
         try:
-            packet = json.loads(raw)
+            from structured_reply import loads
+            packet = loads(raw)
         except (ValueError, TypeError):
             if raw.lstrip().startswith(('{','[','```')):
                 return 'I could not produce a valid draft. Please retry.', None

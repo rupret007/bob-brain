@@ -12,6 +12,16 @@ class ArtifactTests(SessionFixture):
     def packet(self, artifact, commentary=''):
         self.fake.reply_text=json.dumps(dict(artifact=artifact,commentary=commentary))
 
+    def test_whole_fenced_packet_is_a_draft_but_appended_claim_is_not(self):
+        packet=json.dumps(dict(artifact='Before we start, let’s finish the current workflow.',commentary=''))
+        self.fake.reply_text='```json\n'+packet+'\n```'
+        answer=self.send('Draft a friendly note.')
+        self.assertTrue(answer['artifact']['accepted'])
+        self.fake.reply_text='```json\n'+packet+'\n```\nI queued your task.'
+        rejected=self.send('Write another note.')
+        self.assertFalse(rejected.get('artifact'))
+        self.assertNotIn('I queued',rejected['content'])
+
     def test_temporal_first_person_draft_survives_and_revision_retains_identity(self):
         draft='Before we start three integrations, I’d like to finish one useful workflow. We can review the other two afterward.'
         self.packet(draft)

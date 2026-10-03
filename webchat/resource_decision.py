@@ -21,12 +21,13 @@ prose composed for this turn, not a routing receipt. Insert server-owned facts
 as [fact:ID] using the supplied facts map; use at least one relevant fact. Explain
 tradeoffs and reasoning in your own words around those facts. Do not restate
 unknown account facts as verified or infer guarantees from login, pacing or price.
-resource is null for an explanation, or codex/cursor/claude/gemini/minimax for an
-actual recommendation. steps is an optional empty list or up to three distinct
+resource is null when no provider is selected, or codex/cursor/claude/gemini/minimax
+for a recommendation. steps is an empty list or up to three distinct
 choices: qualify_chat, prepare_report, provide_inputs, inspect_allowance,
 keep_current, review_dependency. Describe the useful proposed next step in answer;
 these fields neither start it nor change routing. prepare_report supports Claude
-only. A question about a billing premise needs an answer to that premise, not an
+only; qualify_chat needs a selected provider. General inspection/preparation
+steps do not require a provider selection. A billing premise needs an answer, not an
 unrequested recommendation. On follow-up, advance the reasoning rather than
 repeating the last answer. Preserve missing inputs and explicit route restrictions.
 Use only needed facts; do not paste the whole inventory or all caveats. No invented
@@ -65,8 +66,8 @@ def facts(inventory, *, missing=False):
 def parse(raw):
     # A single fenced JSON value is presentation noise, not permission for
     # appended prose or a second packet to escape validation.
-    fenced=re.fullmatch(r'\s*```(?:json)?\s*\n(.*?)\n```\s*',raw,re.S)
-    return json.loads(fenced[1] if fenced else raw)
+    from structured_reply import loads
+    return loads(raw)
 
 
 def safe_reasoning(text):
@@ -177,10 +178,14 @@ def render(raw, projection):
         content=FACT_TOKEN.sub(lambda m:known[m[1]],value['answer']).strip()
         resource=value['resource']
         if resource is None:
-            if value['steps']!=[]:raise ValueError('Explanation cannot select actions')
+            steps=value['steps']
+            if (not isinstance(steps,list) or len(steps)>3 or
+                    any(not isinstance(s,str) or s not in ('provide_inputs','inspect_allowance','keep_current','review_dependency') for s in steps) or
+                    len(set(steps))!=len(steps)):
+                raise ValueError('Invalid general advice steps')
             if projection['missing_inputs'] and 'missing_inputs' not in tokens:
                 content+='\n\n'+known['missing_inputs']
-            return content,dict(resource=None,steps=[],fact_ids=tokens,execution_started=False,model_proposal_accepted=True)
+            return content,dict(resource=None,steps=steps,fact_ids=tokens,execution_started=False,model_proposal_accepted=True)
         validate_route(resource,value['steps'],projection,empty=True)
         decision=dict(resource=resource,missing_inputs=projection['missing_inputs'],scenario=projection['scenario'],
                       execution_started=False,observation_time=projection['inventory']['observed_at'])
