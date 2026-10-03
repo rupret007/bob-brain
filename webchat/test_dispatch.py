@@ -10,6 +10,41 @@ from test_webchat import Fixture
 
 
 class ChatDispatchTests(Fixture):
+    def test_attempt_limit_survives_saved_hold_and_rejects_group_dispatch(self):
+        from chat_intent import state_for
+        value = self.chat.conversations[self.identifier]
+        request = str(uuid.uuid4())
+        value['messages'].append(dict(id=str(uuid.uuid4()), role='user', request_id=request,
+                                      created_at=time.time(), status='done', content='Run the local regression suite'))
+        value['messages'].append(dict(id=str(uuid.uuid4()), role='assistant', request_id=request,
+                                      status='done', content=''))
+        state_for(value)['holds']['all'] = {'released_projects': []}
+        prompt = 'Run Web Bob local regression suite webchat/test_answer_intent.py'
+        identity = {'sha256': 'fixture-source'}
+        self.chat.submit_task(value, prompt, request, worker='mini',
+                              expected_code_identity=identity, attempt_limit=1)
+        self.assertFalse(queue.tasks(self.root))
+        self.submit('Hold all work')
+        self.assertEqual(self.chat.conversations[self.identifier]['held_job']['attempt_limit'], 1)
+        self.chat.close()
+        self.chat = Chat(self.folder, self.root, self.fake)
+        value = self.chat.conversations[self.identifier]
+        state_for(value)['holds'].clear()
+        value['messages'].append(dict(id=str(uuid.uuid4()), role='assistant', request_id=request,
+                                      status='done', content=''))
+        self.chat.submit_task(value, prompt, request, worker='mini')
+        row = next(iter(queue.tasks(self.root).values()))
+        self.assertEqual((row['attempt_limit'], row['max_attempts'], row['expected_code_identity']), (1, 1, identity))
+        for text, worker in (('Review this evidence', 'max'), ('Review WebJam and AdoptIQ', 'auto')):
+            request = str(uuid.uuid4())
+            value = self.chat.conversations[self.identifier]
+            value['messages'].append(dict(id=str(uuid.uuid4()), role='assistant', request_id=request,
+                                          status='done', content=''))
+            result = self.chat.submit_task(value, text, request, worker=worker, attempt_limit=1)
+            self.assertEqual(result['messages'][-1]['action_card']['state'], 'refused')
+            self.assertIn('single task', result['messages'][-1]['content'])
+        self.assertEqual(len(queue.tasks(self.root)), 1)
+
     def test_partial_group_admission_cannot_replay_after_release_pause_and_restart(self):
         import max_mode
         rid = str(uuid.uuid4())

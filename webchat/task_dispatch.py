@@ -323,7 +323,7 @@ class TaskDispatch:
     def submit_max_task(self, conversation, description, request_id):
         return self.submit_task(conversation, description, request_id, worker="max")
 
-    def submit_task(self, conversation, description, request_id, worker="auto", *, expected_code_identity=None):
+    def submit_task(self, conversation, description, request_id, worker="auto", *, expected_code_identity=None, attempt_limit=None):
         from app import hard_rule_refusal
         if conversation.get('answer_focus'):
             conversation['answer_focus'].update(origin=None, corrections=[])
@@ -337,20 +337,33 @@ class TaskDispatch:
         routed_prompt, routed_worker = parse_work(description)
         if routed_worker != "auto":
             description, worker = routed_prompt, routed_worker
+        held = conversation.get('held_job') or {}
+        if held.get('prompt') == description and held.get('worker') == worker:
+            if attempt_limit is None:
+                attempt_limit = held.get('attempt_limit')
+            if expected_code_identity is None:
+                expected_code_identity = held.get('expected_code_identity')
         state = state_for(conversation)
         names = project_targets(description, state)
         scopes = blocked_scopes(state, names)
         if scopes:
             conversation["held_job"] = dict(prompt=description, worker=worker)
+            if attempt_limit is not None:
+                conversation['held_job']['attempt_limit'] = attempt_limit
+            if expected_code_identity is not None:
+                conversation['held_job']['expected_code_identity'] = expected_code_identity
             message.update(status="done", provider="dispatcher", content=hold_reply(scopes))
             self.save(conversation)
             self.conversations[identifier] = conversation
             return self.public(conversation)
         try:
+            task_queue.validate_attempt_limit(attempt_limit)
             publish_project = None
             draft_pr = False
             maximum = worker == "max"
             project_batch = len(names) >= 2
+            if attempt_limit is not None and (maximum or project_batch):
+                raise ValueError("An attempt limit requires a single task, not a task group")
             worker = "auto" if maximum else task_queue.worker_name(worker)
             kind = task_kind(max_mode.MAX_MODE.sub("", description).strip(" :,-\n") if maximum else description)
             kind = normalize_kind(worker, kind, description)
@@ -388,6 +401,8 @@ class TaskDispatch:
         intent = dict(prompt=description, worker=worker, kind=kind, request_id=request_id, publish_project=publish_project, draft_pr=draft_pr)
         if expected_code_identity:
             intent['expected_code_identity'] = expected_code_identity
+        if attempt_limit is not None:
+            intent['attempt_limit'] = attempt_limit
         if maximum or project_batch:
             intent.update(goal=goal, subtasks=subtasks)
         if project_batch:
@@ -439,7 +454,8 @@ class TaskDispatch:
                                                  source_job_id=intent.get("source_job_id"),
                                                  permission_file=self.state / (identifier + '.json'),
                                                  project_scopes=intent.get('assignment_projects') or project_targets(intent['prompt'], state),
-                                                 expected_code_identity=intent.get('expected_code_identity'))
+                                                 expected_code_identity=intent.get('expected_code_identity'),
+                                                 attempt_limit=intent.get('attempt_limit'))
                         message.update(task_id=row["id"], status="done", provider="dispatcher",
                                        content=task_receipt(row),
                                        action_card={"id": message["request_id"], "state": "queued", "executable": False,

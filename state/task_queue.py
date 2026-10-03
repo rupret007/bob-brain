@@ -188,10 +188,16 @@ def group_complete(members):
                     (size, first.get("conversation_id"), first.get("group_goal")) for r in members))
 
 
+def validate_attempt_limit(attempt_limit):
+    if attempt_limit is not None and (type(attempt_limit) is not int or attempt_limit < 1):
+        raise ValueError("Attempt limit must be a positive integer")
+
+
 def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="analysis", source_file=None,
             group_id=None, group_size=None, group_index=None, group_goal=None, title=None, local_suite=None,
             publish_project=None, draft_pr=False, source_job_id=None, permission_file=None, project_scopes=None,
-            expected_code_identity=None):
+            expected_code_identity=None, attempt_limit=None):
+    validate_attempt_limit(attempt_limit)
     worker = worker_name(worker)
     if worker == "mini":
         kind = "local"
@@ -220,6 +226,8 @@ def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="a
                 raise ValueError("This request ID already belongs to a different task")
             if row.get('expected_code_identity') != expected_code_identity:
                 raise ValueError('This request ID belongs to a different source revision')
+            if row.get('attempt_limit') != attempt_limit:
+                raise ValueError('This request ID already has a different attempt limit')
             if permission_file:
                 if row.get('permission_file') and (row['permission_file'] != str(permission_file)
                         or row.get('project_scopes', []) != list(project_scopes or [])):
@@ -244,7 +252,8 @@ def enqueue(root, conversation_id, request_id, prompt, *, worker="auto", kind="a
                                  permission_file=str(permission_file) if permission_file else None,
                                  project_scopes=list(project_scopes or []),
                                  expected_code_identity=expected_code_identity,
-                                 tried_workers=[], max_attempts=max(MAX_ATTEMPTS, len(worker_order(kind))),
+                                 attempt_limit=attempt_limit, tried_workers=[],
+                                 max_attempts=attempt_limit if attempt_limit is not None else max(MAX_ATTEMPTS, len(worker_order(kind))),
                                  worker=None, claim_token=None, lease_until=0, retry_at=0), "enqueued")
 
 
