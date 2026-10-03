@@ -864,6 +864,8 @@ class Providers:
         reference = conceptual(last_user) or reference_scope(conversation,last_user)
         policy = REFERENCE_RULES if answer_context and reference else ANSWER_RULES if answer_context else RULES
         self.current_call.instructions = policy + scope
+        from claim_evidence import RULES as EVIDENCE_STRENGTH_RULES
+        self.current_call.instructions += '\n' + EVIDENCE_STRENGTH_RULES
         if project:
             self.current_call.instructions += '\n' + PROJECT_RULES
         if self.current_call.report_sources:

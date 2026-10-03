@@ -130,6 +130,7 @@ def deliver(root, text, answer, conversation, *, observation, redact):
     """Return (visible answer, accepted artifact) from a saved server contract."""
     from reply_authority import enforce
     from reply_guard import repair_hollow_progress
+    import claim_evidence
     contract = current(conversation)
     raw = answer['content']
     if contract and contract['kind']=='catchup' and contract['user_sha256']==digest(text):
@@ -184,16 +185,30 @@ def deliver(root, text, answer, conversation, *, observation, redact):
         artifact = redact(packet['artifact']).strip()
         if not safe_artifact(artifact, text + '\n' + (prior['content'] if prior else '')):
             return 'The draft contained an unsupported action claim; I could not deliver that version.', None
+        artifact, claim_findings = claim_evidence.deliver(artifact,
+            source=text + '\n' + (prior['content'] if prior else ''), artifact=True)
+        if claim_findings:
+            conversation['messages'][-1]['claim_review'] = dict(partial=True, findings=claim_findings,
+                scope='Bounded protected-conclusion checks; not general semantic certification')
         commentary = packet['commentary'].strip()
         if commentary:
+            commentary, findings = claim_evidence.deliver(commentary, source=text)
+            if findings:
+                conversation['messages'][-1]['claim_review'] = dict(partial=True,
+                    findings=claim_findings + findings, scope='Bounded protected-conclusion checks')
             guarded = enforce(root,text,dict(answer,content=commentary),conversation,observation=observation,redact=redact)
             if guarded != commentary:
                 return 'The reply contained an unsupported action claim; I could not deliver that version.', None
             commentary = repair_hollow_progress(guarded)
         visible = artifact + ('\n\n' + commentary if commentary else '')
         return visible, dict(accepted=True, kind='writing', label='Draft',
-                             text=artifact, sha256=digest(artifact), source=source, commentary=commentary)
-    guarded = enforce(root,text,dict(answer,content=raw),conversation,observation=observation,redact=redact)
+                             text=artifact, sha256=digest(artifact), source=source, commentary=commentary,
+                             claims_partial=bool(conversation['messages'][-1].get('claim_review')))
+    bounded, findings = claim_evidence.deliver(raw, source=text)
+    if findings:
+        conversation['messages'][-1]['claim_review'] = dict(partial=True, findings=findings,
+            scope='Bounded protected-conclusion checks; not general semantic certification')
+    guarded = enforce(root,text,dict(answer,content=bounded),conversation,observation=observation,redact=redact)
     delivered = guarded if observation else repair_hollow_progress(guarded)
     # Legacy/plain-text providers remain guarded. They can establish a source
     # only after their entire answer survives, never after a substituted denial.

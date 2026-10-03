@@ -103,6 +103,10 @@ def model_evidence(projection):
     The complete inventory remains bound in the saved contract. Conversation
     does not need billing caches, duplicate routes or unrelated worker policies.
     """
+    support = {identifier:dict(statement_sha256=hashlib.sha256(value.encode()).hexdigest(),
+        scope='owner-reported context' if identifier.startswith('owner.') else
+              'resource observation' if identifier.endswith('.observation') else 'server rule')
+        for identifier,value in projection['facts'].items()}
     return {**{k:projection[k] for k in ('requested_view','requested_resources','allowed_resources',
                                        'scenario','missing_inputs','unavailable','facts')},
             'allowed_steps':projection.get('allowed_steps',list(STEPS)),
@@ -110,6 +114,8 @@ def model_evidence(projection):
             'owner_context':projection.get('owner_context'),
             'supported_operations':{name:sorted(values) for name,values in CAPABILITIES.items()},
             'observed_at':projection['inventory']['observed_at'],
+            'fact_support':support,
+            'fact_support_scope':'Only the complete supplied statement at its stated scope and time; no stronger outcome follows from a fact ID. Owner reports are not independent observations.',
             'authority':'Evidence for advice only; neither provider selection nor execution authorization.'}
 
 
@@ -121,21 +127,17 @@ def safe_reasoning(text):
     """
     from reply_contract import safe_artifact
     from assertion_scope import nonasserted, DIRECT_DENIAL
+    from claim_evidence import violations
     prose=FACT_TOKEN.sub('',text)
-    if not safe_artifact(prose):return False
+    if not safe_artifact(prose) or violations(prose):return False
     guarantee=re.compile(r"\b(?:guarantee[ds]?|unlimited|free|zero[- ]cost|no (?:extra |additional )?(?:costs?|charges?)|same quality|equal quality|equivalent (?:quality|answers)|(?:quality|quota|allowance) (?:is|stays|remains) (?:protected|unchanged)|(?:preserve[ds]?|protect(?:s|ed)?|maintain(?:s|ed)?|(?:is|are|was|were|will be) (?:preserving|protecting|maintaining)) (?:the |your )?(?:quality|quota|allowance)|(?:avoid|prevent)(?:s|ed|ing)? (?:quota exhaustion|exhaustion|rate limits?|extra charges)|will not (?:cost|exhaust|run out)|won[’']t (?:cost|exhaust|run out))\b",re.I)
     observed=re.compile(r"\b(?:I|we|Codex|Claude|Cursor|Gemini|MiniMax)(?:['’]ve| have)? (?:checked|verified|confirmed|inspected|tested|read)\b|\b(?:can|could|will) (?:already |now )?(?:read|access|open) (?:all |your |the |those |needed |project )*(?:files?|repository|repo)\b|\b(?:remaining|available) (?:quota|allowance|credits?) (?:is|are)\b",re.I)
     protected=re.compile(r'\b(?:quality|quota|allowance|continuity)\s+(?:is|are|stay|stays|remain|remains)\s+(?:protected|unchanged)\b',re.I)
-    exclusion=re.compile(r'\bwithout\s+(?:(?:(?!\b(?:and|but|yet|however)\b)[^,;.!?\n]){1,120}\s+or\s+)?'
-                         r'(?:(?:any|the)\s+)?(?:(?:risk(?:ing)?|triggering|incurring|causing)\s+(?:of\s+)?)?'
-                         r'(?:(?:unexpected|unintended|extra|additional|new|degraded|worse|lower[- ]quality)\s+)*'
-                         r'(?:charges?|costs?|spending|overages?|degraded responses|quality loss|quality degradation)\b|'
-                         r'\b(?:no|zero)\s+risk\s+of\s+(?:charges?|costs?|overages?|quality loss)\b',re.I)
     clauses=re.split(r'((?<=[.!?])\s+|[,;\n]|\b(?:and|but|however|therefore|so|thus|although|yet|whereas|because|since)\b)',prose,flags=re.I)
     for index in range(0,len(clauses),2):
         clause=clauses[index]
         sentence_start=index==0 or (clauses[index-1].isspace() and clauses[index-2].rstrip().endswith(('.','!','?')))
-        for match in (*guarantee.finditer(clause), *protected.finditer(clause), *exclusion.finditer(clause)):
+        for match in (*guarantee.finditer(clause), *protected.finditer(clause)):
             prefix=clause[:match.start()]
             # A test/comparison noun never establishes a guarantee. Negation
             # must attach to that promise itself, not an unrelated condition.
@@ -301,7 +303,9 @@ def compose_blocks(blocks, known, projection):
                 raise ValueError('Invalid reasoning block')
             reasoning.append(dict(index=index,sha256=hashlib.sha256(prose.encode()).hexdigest()))
             if not safe_reasoning(prose) or not feasible_reasoning(prose,projection):
-                rejected.append(dict(index=index,reason='unsupported_assertion',sha256=hashlib.sha256(prose.encode()).hexdigest()))
+                from claim_evidence import violations
+                rejected.append(dict(index=index,reason='unsupported_assertion',sha256=hashlib.sha256(prose.encode()).hexdigest(),
+                                     claim_findings=violations(prose)))
             else:
                 content.append(prose)
         else:

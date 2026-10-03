@@ -541,6 +541,12 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 subject=re.split(r'[,;:]',prefix)[-1].strip(' *\n')
                 named=projects(match[0]) or projects(subject)
                 if named and all(blocked_scopes(state,[p]) for p in named):
+                    # Bare operational status belongs to the saved-state
+                    # renderer. Contextual discussion may reference that hold
+                    # without replacing the rest of a useful answer.
+                    standalone = not suffix.strip(' .!?\n') and (not subject or any(
+                        re.fullmatch(re.escape(p)+r'(?:\s+(?:is|was))?',subject,re.I) for p in named))
+                    if standalone:return False
                     if (projects(match[0]) and (not subject or re.fullmatch(r'While|As|Because',subject,re.I))) or any(re.fullmatch(r'(?:(?:While|As|Because)\s+)?'+re.escape(p)+r'(?:\s+(?:is|was))?',subject,re.I) for p in named):continue
                 if re.fullmatch(r'You\s+(?:set|put|placed)\s+(?:the\s+)?(?:execution|work)',subject,re.I):continue
                 return False

@@ -410,6 +410,13 @@ class IntentTests(Fixture):
                 content = enforce(self.root, "What about Web Bob?", dict(provider="gemini", content=claim),
                                   self.chat.conversations[self.identifier])
                 self.assertEqual(content, "On hold: Web Bob. Say go or resume when you're ready.")
+                planning = 'Compare the saved evidence before choosing the report scope.'
+                content = enforce(self.root, "What about Web Bob?", dict(provider="gemini", content=claim + ' ' + planning),
+                                  self.chat.conversations[self.identifier])
+                self.assertEqual(content, planning + "\n\nOn hold: Web Bob. Say go or resume when you're ready.")
+        contextual = 'While Web Bob is paused, compare the saved evidence.'
+        self.assertEqual(enforce(self.root, "Help plan the Web Bob report.", dict(provider="gemini", content=contextual),
+                                 self.chat.conversations[self.identifier]), contextual)
         self.submit("go")
         self.reload()
         for claim in claims:
