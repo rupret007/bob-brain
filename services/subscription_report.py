@@ -79,7 +79,10 @@ def subscription(env, row, admission_env=None):
         ref=generation_budget.attribution(admission_env)
         if ref:
             selected=generation_budget.selection(ref['root'],ref['id'])
-            seconds=min(remaining(row),selected['deadline']-time.time()-10)
+            with generation_budget.locked(ref['root'],ref['id']) as (_,data):
+                stage=generation_budget.active_stage(data,ref)
+            deadline=min(selected['deadline'],stage['deadline']) if stage else selected['deadline']
+            seconds=min(remaining(row),deadline-time.time()-10)
             if seconds<=0:raise RuntimeError('Goal deadline leaves no authentication cleanup time')
             return seconds
         return remaining(row)
@@ -92,7 +95,7 @@ def subscription(env, row, admission_env=None):
     try:
         result = run(['claude', '--restricted', '--safe-mode', 'auth', 'status', '--json'],
                      cwd=env.get('TMPDIR', '/tmp'), env=env, capture_output=True, text=True,
-                     timeout=min(15,time_left()))
+                     timeout=min(15,time_left(),generation_budget.remaining(receipt)))
         completed=True
     finally:
         generation_budget.settle(receipt,None,status='metadata_completed' if completed else 'metadata_failed_or_interrupted')

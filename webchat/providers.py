@@ -1334,6 +1334,16 @@ class Providers:
             return {"billing": "unavailable", "cap_usd": MINIMAX_CAP_USD if name == "minimax" else None}
 
     def probe_once(self):
+        import generation_budget
+        try:
+            attributed = generation_budget.attribution(dict(self.env, BOB_ROOT=str(self.root)))
+        except generation_budget.AdmissionDenied:
+            attributed = True
+        if attributed:
+            # Optional network/login probes are not model executions and must
+            # not consume an unreviewed side channel during a bounded goal.
+            # Leave real call/circuit evidence intact; never mark this healthy.
+            return
         for name in ORDER:
             if self.probe_cancel.is_set():
                 return

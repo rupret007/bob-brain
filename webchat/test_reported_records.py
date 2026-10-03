@@ -8,6 +8,16 @@ import task_queue
 
 
 class LayoutTests(unittest.TestCase):
+    def test_identity_correction_invalidates_inherited_topic_but_cached_evidence_does_not(self):
+        from reported_records import topic_record, source_bindings
+        def record(text):
+            return dict(user_excerpts=[dict(message_id='1',request_id='1',content='Fictional task V-57 is proposed.'),
+                                      dict(message_id='2',request_id='2',content=text)])
+        old=record('The cached artifact names task W-58, not V-57.')
+        self.assertEqual(topic_record(old,source_bindings(old)),'V-57')
+        corrected=record('Correction: the card is for task W-58, not V-57.')
+        self.assertIsNone(topic_record(corrected,source_bindings(corrected)))
+
     def test_numbered_item_and_continuation_remain_one_unit(self):
         text = 'Checks:\n1. Confirm identity.\n2. Verify the permission record.\n   Keep the original attempt ID.\n3. Inspect the artifact.\n'
         parts = list(units(text))
@@ -24,6 +34,51 @@ class ReportedRecordDeliveryTests(SessionFixture):
     def delivered(self, text):
         self.fake.reply_text = text
         return self.send('Explain the state and next check for V-57.')
+
+    def test_bound_reduced_relative_does_not_become_dispatch_receipt(self):
+        self.establish()
+        valid = ('The task identity remains **V-57** (bound to lease `L-57` and assigned to `ReviewWorker`), '
+                 'as re-submitting the request after a browser reload targets the existing task rather than creating a new one.\n\n'
+                 'Its current status is **on hold** (accepted, but paused prior to execution). '
+                 'Because the hold was recorded before any execution-start receipt and remains active, '
+                 'the re-submission cannot dispatch or run the task.')
+        self.assertEqual(self.delivered(valid)['content'], valid)
+        for effect in (' I assigned Codex another task.', ' I queued your repair.',
+                       ' Assigned your task to Claude.', ' Gemini has started your work.'):
+            with self.subTest(effect=effect):
+                self.assertNotIn(effect.strip(), self.delivered(valid+effect)['content'])
+        for invalid in ('Unknown-58 (bound to L-58 and assigned to ReviewWorker).',
+                        'V-57 (I assigned Codex the review).',
+                        'V-57 (bound to L-57 and I assigned the task).',
+                        'V-57 (bound to L-57 and assigned your task to Codex).',
+                        'V-57 (bound to L-57 and queued your repair).',
+                        'V-57 (bound to L-57 and queued in your live queue).'):
+            self.assertNotEqual(self.delivered(invalid)['content'], invalid)
+        from dispatch_receipts import claims_dispatch
+        self.assertTrue(claims_dispatch(valid, reference='A generic explanation, with no source bindings.'))
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_hold_prerequisite_retains_complete_list_and_topic_after_foreign_subject(self):
+        self.establish()
+        self.fake.reply_text='The older artifact does not establish the current task result.'
+        self.send('A cached return names task ID V-56, not V-57. Explain the evidence checks.')
+        valid = ('1. Check the identity against V-57.\n'
+                 '2. **Hold and Authorization State:** The hold on `V-57` must be explicitly cleared, '
+                 'and budget admission and execution authorization must be confirmed before any run can be considered valid.\n'
+                 '3. Compare the actual artifact with the assigned source.')
+        self.assertEqual(self.delivered(valid)['content'], valid)
+        self.assertEqual(self.delivered('ReviewWorker may still be active. Maintain the hold and reject immediate reassignment.')['content'],
+                         'ReviewWorker may still be active. Maintain the hold and reject immediate reassignment.')
+        for invalid in ('The hold on V-57 must be cleared, and the hold is now cleared.',
+                        'The hold on V-57 must have been cleared.',
+                        'The hold must have been cleared.',
+                        'The hold on V-57 must have already been cleared.',
+                        'The hold on V-57 must surely have already been explicitly cleared.',
+                        'ReviewWorker is offline. Its status is on hold.',
+                        'The backup daemon is now held.',
+                        'Maintain the hold on the backup daemon.'):
+            self.assertNotEqual(self.delivered(invalid)['content'], invalid)
+        self.assertFalse(self.chat.get(self.identifier)['intent_state']['holds'])
 
     def test_neutral_headings_do_not_delete_bound_facts_or_prerequisites(self):
         self.establish()

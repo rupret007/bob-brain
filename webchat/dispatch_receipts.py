@@ -371,13 +371,15 @@ def dispatch_prose(text, *, reference=''):
     return prose
 
 
-def claims_dispatch(text, *, reference=''):
+def claims_dispatch(text, *, reference='', bindings=None):
     # Direct actors and concrete IDs never receive a reference exemption.
     original = dispatch_prose(text)
     # Do not use the passive proximity heuristic for a conceptual answer: a
     # definition can describe assignment without asserting a particular job.
     claim = REFERENCE_EFFECT if reference else CLAIM
-    actor_prose=verbal_effects(original)
+    from reported_records import attributed_parentheticals
+    scoped = attributed_parentheticals(text, bindings) if reference else text
+    actor_prose=verbal_effects(dispatch_prose(scoped))
     # A finite continuation retains its subject across a long subordinate
     # phrase. Base-form actions still governed by can/could are proposals.
     continuation=re.compile(r'\b(?:and|then|but|yet)\s+(?:will|have|has|had|did)\s+'+
@@ -388,7 +390,7 @@ def claims_dispatch(text, *, reference=''):
     completed_continuation=re.compile(r'\b(?:and|then|but|yet)\s+(?:started|assigned|queued|dispatched|launched|scheduled|delegated|'+QUEUE_PLACEMENT+r')\b',re.I)
     inherited=inherited or bool(re.search(ACTOR,actor_prose,re.I) and completed_continuation.search(actor_prose))
     inherited=inherited or bool(re.search(r"\b(?:I|we)(?:['’]ll| will| have| did)\b",actor_prose,re.I) and causative_continuation.search(actor_prose))
-    checked=dispatch_prose(text,reference=reference)
+    checked=dispatch_prose(scoped,reference=reference)
     # The normalized denied subject may be shared by a later progress claim.
     # The denial itself stays nonassertive; only its affirmative continuation
     # is counted, with no exemption for reference prose.
@@ -397,7 +399,7 @@ def claims_dispatch(text, *, reference=''):
                                     r'(?:running|working|in progress|picked up)\b',re.I)
     denied_progress=any(progress_continuation.search(match['tail']) for match in re.finditer(
         r'has no established action(?P<tail>[^.!?\n]*)',original,re.I))
-    return bool(DIRECT_CLAIM.search(actor_prose) or JOB_ID.search(original) or inherited
+    return bool(DIRECT_CLAIM.search(verbal_effects(original)) or JOB_ID.search(original) or inherited
                 or denied_progress
                 or claim.search(checked if reference else verbal_effects(checked)))
 

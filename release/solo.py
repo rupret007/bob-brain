@@ -27,6 +27,7 @@ if __name__ == '__main__' and '--root' in sys.argv:
 sys.path[:0] = [str(CODE / d) for d in ('webchat', 'services', 'state', 'reviews', 'release')]
 from release_ownership import serialized
 import activation_journal as journal
+import qualification_scope
 from texting_deploy_record import atomic_json, atomic_text, require_disk_space, reserve_recovery, release_recovery
 from live_redeploy_check import Client, require
 
@@ -815,6 +816,8 @@ def staging(root, sha, feature):
 
 def checks(root, feature):
     sha = identity()
+    scope=qualification_scope.selected()
+    require(scope is None or feature=='improve','Scoped qualification requires the complete improve feature set')
     out = root / 'conductor/reviews' / f'SOLO-0018-{feature}-{sha[:12]}'
     out.mkdir(mode=0o700, exist_ok=True)
     if feature == 'improve':
@@ -836,7 +839,8 @@ def checks(root, feature):
         commands['media-browser'] = [sys.executable, 'webchat/media_browser_test.py', '--screenshots', str(out / 'media-browser')]
     if ORDER.index(feature) >= ORDER.index('voice'):
         commands['voice-js'] = ['node', '--test', 'webchat/test_voice_js.cjs']
-        commands['voice-browser'] = [sys.executable, 'release/voice_probe.py', '--root', str(root), '--output', str(out / 'voice-browser')]
+        if scope is None:
+            commands['voice-browser'] = [sys.executable, 'release/voice_probe.py', '--root', str(root), '--output', str(out / 'voice-browser')]
     if ORDER.index(feature) >= ORDER.index('instinct'):
         commands['instinct-browser'] = [sys.executable, 'webchat/instinct_proof.py', '--output-dir', str(out / 'instinct-browser')]
     if ORDER.index(feature) >= ORDER.index('remaining'):
@@ -900,6 +904,7 @@ def checks(root, feature):
     require(identity() == sha, 'Candidate changed during checks')
     passed = all(r['exit'] == 0 and r['skipped'] == 0 for r in results.values())
     record = dict(sha=sha, feature=feature, all_pass=passed, results=results, at=time.time())
+    record.update(qualification_scope.outcome(passed,scope))
     if passed and ORDER.index(feature) >= ORDER.index('bridge'):
         record['andrea'] = andrea_gates(root)
     if passed:
@@ -913,19 +918,23 @@ def checks(root, feature):
 
 def fixture_generation_environment(environment):
     return {key:value for key,value in environment.items()
-            if not key.startswith('BOB_GENERATION_') and key != 'BOB_REQUIRE_GENERATION_BUDGET'}
+            if not key.startswith(('BOB_GENERATION_','BOB_QUALIFICATION_')) and key != 'BOB_REQUIRE_GENERATION_BUDGET'}
 
 
 def verify_checks(sha, feature, check_path):
     check = json.loads(check_path.read_text())
+    scope=qualification_scope.selected()
+    require(scope is None or feature=='improve','Scoped qualification requires the complete improve feature set')
     require(check['sha'] == sha and check['feature'] == feature,
             'Stale or wrong-feature release evidence')
-    require(check['all_pass'] and check['staging']['all_pass'], 'Tests/evals/staging failed')
+    require(qualification_scope.passed(check,scope) and check['staging']['all_pass'], 'Tests/evals/staging failed or qualification scope differs')
     required = {'webchat', 'services', 'reviews', 'release', 'eval', 'browser'}
     if ORDER.index(feature) >= ORDER.index('media'):
         required.add('media-browser')
     if ORDER.index(feature) >= ORDER.index('voice'):
-        required.update(('voice-js', 'voice-browser'))
+        required.add('voice-js')
+        if scope is None:required.add('voice-browser')
+        else:require('voice-browser' not in check['results'],'Deferred voice cannot be represented as a passing check')
     if ORDER.index(feature) >= ORDER.index('instinct'):
         required.add('instinct-browser')
     if ORDER.index(feature) >= ORDER.index('remaining'):
@@ -960,12 +969,15 @@ def consecutive_checks(sha, feature, check_path):
 def verify_gates(sha, feature, check_path, review_path):
     verify_checks(sha, feature, check_path)
     review = json.loads(review_path.read_text())
+    scope=qualification_scope.selected()
+    require(review.get('qualification_scope')==scope,'Self-review qualification scope differs')
     require(review['sha'] == sha and review['feature'] == feature, 'Stale or wrong-feature release evidence')
     pair = consecutive_checks(sha, feature, check_path) if feature == 'improve' else None
     require(review['reviewer'] == 'Codex solo' and review['verdict'] == 'PASS' and
             review['checks_sha256'] == digest(check_path) and review['findings'] and
             not review.get('unresolved_blockers'), 'Self-review missing or unresolved')
     result = dict(checks_sha256=digest(check_path), self_review_sha256=digest(review_path))
+    if scope:result['qualification_scope']=scope
     if pair:
         result['predeploy_greens'] = pair
     return result
@@ -1164,6 +1176,7 @@ def recover_locked(root, record):
         dispatch = Path((root / 'conductor/state/dispatch-code-root').read_text().strip())
         require(runner_activation.matches(root, dispatch), 'Required runner was not restored to the predecessor dispatch code')
     record.update(rolled_back=True, all_pass=False, status='ROLLED_BACK')
+    if record.get('qualification_scope'):record['scope_passed']=False
 
 
 @serialized
@@ -1172,6 +1185,8 @@ def transaction(root, record, path, activate, live, publish=atomic_json, final_p
     journal.require_clear(root)
     activated = False
     intent = None
+    scope=qualification_scope.selected()
+    require(record.get('qualification_scope')==scope,'Activation qualification scope differs')
     try:
         require_disk_space(root, CODE, 'before-activation')
         record.update(activated=True, status='ACTIVATING')
@@ -1183,10 +1198,12 @@ def transaction(root, record, path, activate, live, publish=atomic_json, final_p
         for index in (1, 2):
             require_disk_space(root, CODE, 'live-round-' + str(index))
             proof = live()
-            require(proof.get('all_pass') is True, 'Live replay failed')
+            require(qualification_scope.selected()==scope,'Qualification scope changed during live checks')
+            require(qualification_scope.passed(proof,scope), 'Live replay failed or qualification scope differs')
             record['rounds'].append(proof)
             publish(path, record)
-        record.update(all_pass=True, status='LIVE_PASS', finished_at=time.time())
+        require(qualification_scope.selected()==scope,'Qualification scope changed before final publication')
+        record.update(qualification_scope.outcome(True,scope), status='SCOPED_LIVE_PASS' if scope else 'LIVE_PASS', finished_at=time.time())
         publish(path, record)
         if final_path:
             publish(final_path, record)
@@ -1196,6 +1213,7 @@ def transaction(root, record, path, activate, live, publish=atomic_json, final_p
         import runner_activation
         with runner_activation.coordinated(root):
             record.update(all_pass=False, failure=type(exc).__name__ + ': ' + str(exc))
+            if record.get('qualification_scope'):record['scope_passed']=False
             if activated:
                 try:
                     recover(root, record)
@@ -1218,6 +1236,7 @@ def deploy(args):
     journal.require_clear(root)
     sha = identity()
     gates = verify_gates(sha, args.feature, args.checks, args.review)
+    scope=qualification_scope.selected()
     from runtime import screen_sessions
     verify_worker_service_mode(root, screen_sessions())
     index = ORDER.index(args.feature)
@@ -1227,13 +1246,13 @@ def deploy(args):
             latest = root / 'conductor/reviews/SOLO-0018-improve-live.json'
             if latest.exists():
                 value = json.loads(latest.read_text())
-                if value.get('all_pass') and value.get('sha') == args.previous:
+                if qualification_scope.historical_passed(value) and value.get('sha') == args.previous:
                     predecessor = latest
                 elif value.get('previous') == args.previous and value.get('rolled_back'):
                     predecessor = Path(value['predecessor_receipt'])
         prior = json.loads(predecessor.read_text())
-        require(prior['all_pass'] and prior['sha'] == args.previous and len(prior['rounds']) == 2 and
-                all(r['all_pass'] for r in prior['rounds']), 'Predecessor has not passed two live rounds')
+        require(qualification_scope.historical_passed(prior) and prior['sha'] == args.previous and len(prior['rounds']) == 2 and
+                all(qualification_scope.historical_passed(r) for r in prior['rounds']), 'Predecessor has not passed two live rounds')
     else:
         require(args.previous == 'a777736b3f0a37c82b0c4c62be8c91117c4c9881', 'Initial baseline changed')
     remote = dict(line.split()[::-1] for line in git('ls-remote', 'origin', 'refs/heads/' + BASE).splitlines())
@@ -1255,6 +1274,7 @@ def deploy(args):
     folder.mkdir(mode=0o700)
     record = dict(sha=sha, feature=args.feature, previous=args.previous, gates=gates, draft_pr=args.pr,
                   rollback=str(folder), all_pass=False, activated=False, snapshots={}, original_pins={}, at=time.time())
+    if scope:record.update(qualification_scope.outcome(False,scope))
     import runner_activation
     record['runner_refresh'] = runner_activation.obligation(root)
     if index:
@@ -1302,12 +1322,12 @@ def deploy(args):
              folder / f'browser-round-{number}.png', browser_path], env=env)
         browser = json.loads(browser_path.read_text())
         require(browser['pass_check'], 'Live browser check failed')
-        if ORDER.index(args.feature) >= ORDER.index('voice'):
+        if ORDER.index(args.feature) >= ORDER.index('voice') and scope is None:
             from voice_probe import probe
             for name, url in (('local', 'http://127.0.0.1:8787'), ('public', origin)):
                 results.append(probe(root, folder / f'voice-{name}-round-{number}', url,
                                      engines=('chromium',) if name == 'local' else ('webkit',)))
-        return dict(all_pass=all(r['all_pass'] for r in results), versions=pair, endpoints=results,
+        return dict(**qualification_scope.outcome(all(r['all_pass'] for r in results),scope), versions=pair, endpoints=results,
                     browser=dict(path=str(browser_path), sha256=digest(browser_path), passed=True))
 
     def activate():
@@ -1315,7 +1335,7 @@ def deploy(args):
 
     transaction(root, record, path, activate, live,
                 final_path=root / 'conductor/reviews' / ('SOLO-0018-' + args.feature + '-live.json'))
-    print('LIVE_PASS ' + sha + ' rollback=' + str(folder), flush=True)
+    print(('SCOPED_LIVE_PASS ' if scope else 'LIVE_PASS ') + sha + ' rollback=' + str(folder), flush=True)
 
 
 def rollback_publication(root, record):

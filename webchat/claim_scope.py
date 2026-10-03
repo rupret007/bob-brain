@@ -27,11 +27,11 @@ VERIFY = re.compile(r'^\s*(?:(?:we|you)\s+(?:should|must|need to)\s+)?'
                     r'(?:check|verify|confirm|assess|evaluate|measure|test|inspect|examine)\b', re.I)
 REQUIRE = re.compile(r'^\s*(?:(?:we|you)\s+(?:should|must|need to)\s+)?require\b', re.I)
 COMPLEMENT = re.compile(r'\b(?:whether|that)\s*$', re.I)
-DEPENDENT = re.compile(r'\b(?:assume|assuming|claim|claiming|promise|promising|verify|'
-                       r'confirm|check|establish|prove|test|assess|evaluate|know|determine)\s*$', re.I)
+EPISTEMIC = r'(?:assume|claim|promise|guarantee|establish|prove|mean|imply|confirm|verify|know|determine|conclude)'
+DEPENDENT = re.compile(r'\b(?:'+EPISTEMIC+r'|assuming|claiming|promising|check|test|assess|evaluate)\s*$', re.I)
 DENIED = re.compile(r"\b(?:cannot|can['’]t|could not|do not|don['’]t|does not|doesn['’]t|"
                     r"must not|should not|never|not)\s+(?:safely\s+|yet\s+)?"
-                    r"(?:assume|claim|promise|guarantee|establish|prove|mean|imply|confirm|verify)\b", re.I)
+                    + EPISTEMIC + r"\b", re.I)
 PASSIVE_UNKNOWN = re.compile(r"\b(?:(?:cannot|can['’]t|could not|must not|should not)\s+be\s+"
     r"(?:assumed|claimed|promised|guaranteed|established|proven|proved|confirmed|verified)|"
     r"(?:is|are|was|were|remain|remains)\s+(?:not\s+(?:assumed|established|known|proven|proved|verified|guaranteed)|"
@@ -146,8 +146,19 @@ def disposition(clause, start, end, predicate):
     if (not prefix.strip() and re.fullmatch(r'(?:preserving|protecting|maintaining)',predicate,re.I)
             and re.fullmatch(r'[^.!?;]*:\s*',suffix)):
         return 'objective_heading'
-    if DIRECT_DENIAL.search(prefix) or DENIED.search(prefix):
+    # A protected match may itself start at "cannot". Read its complete
+    # epistemic governor before deciding that it promises a negative outcome.
+    if (DIRECT_DENIAL.search(prefix) or DENIED.search(prefix) or
+            any(m.start() <= start < m.end() for m in DENIED.finditer(text))):
         return 'negated_predicate_or_complement'
+    dependency = r'\b(?:depends?\s+(?:\w+ly\s+)?on|requires?|is contingent on|is conditional on)\b'
+    if (not prefix.strip() and re.fullmatch(r'\w+ing', predicate.split()[0], re.I) and
+            re.search(dependency, suffix, re.I)):
+        governor = re.search(dependency, suffix, re.I)
+        # "Avoiding costs" can be the subject of a dependency; "avoiding
+        # costs guarantees quality" still has an asserted outcome predicate.
+        if not FINITE.search(suffix[:governor.start()]):
+            return 'outcome_dependency_subject'
     nominal_denial = re.match(r'^\s*no\s+(?:guarantee\w*|assurance\w*|promise\w*|'
                              r'evidence|proof|assumption\w*|presumption\w*)\b', text, re.I)
     if nominal_denial:

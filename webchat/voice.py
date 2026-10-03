@@ -189,6 +189,11 @@ class VoiceCalls:
 
     def start(self, conversation_id, owner, *, session=None):
         chat = self.chat
+        import generation_budget
+        try:
+            generation_budget.transport_allowed(chat.root,'gemini-live',env=getattr(chat.providers,'env',None))
+        except generation_budget.AdmissionDenied:
+            raise VoiceError(503,'Live voice is temporarily unavailable. Please use text chat.') from None
         with chat.lock:
             self.check_start_owner(owner, session)
             conversation = copy.deepcopy(chat.get(conversation_id))

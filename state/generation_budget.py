@@ -72,6 +72,9 @@ def locked(root, identifier):
             for key in ('api_usd', 'direct_attempts', 'native_invocations', 'reserve_usd', 'reserve_attempts'):
                 if type(limits[key]) not in (int, float) or not math.isfinite(limits[key]) or limits[key] < 0:
                     raise ValueError()
+            for key in ('total_http_attempts', 'request_http_attempts'):
+                if key in limits and (type(limits[key]) is not int or limits[key] < 0):
+                    raise ValueError()
             if (not data['providers'] or any(p not in PROVIDERS for p in data['providers']) or
                     data['phase'] not in ('tuning', 'qualification', 'product') or
                     type(data['deadline']) not in (int, float) or not math.isfinite(data['deadline'])):
@@ -87,6 +90,7 @@ def totals(data):
                 reserved_api_usd=sum(c['reserved_usd'] for c in calls if c['kind'] == 'http' and c['cost_usd'] is None),
                 direct_attempts=sum(c['kind'] == 'http' and c['purpose'] != 'controller' for c in calls),
                 controller_attempts=sum(c['kind'] == 'http' and c['purpose'] == 'controller' for c in calls),
+                http_attempts=sum(c['kind'] == 'http' for c in calls),
                 native_invocations=sum(c['kind'] == 'native' for c in calls))
 
 
@@ -128,7 +132,8 @@ def attribution(env=None):
     if purpose == 'controller' and (not controller or not ID.fullmatch(controller)):
         raise AdmissionDenied('Controller generation requires an admitted controller attempt.')
     return dict(root=root, id=identifier, purpose=purpose, context=env.get('BOB_GENERATION_CONTEXT', '')[:240],
-                controller_attempt=controller, task_id=env.get('BOB_GENERATION_TASK_ID'))
+                controller_attempt=controller, task_id=env.get('BOB_GENERATION_TASK_ID'),
+                request_key=env.get('BOB_GENERATION_REQUEST_KEY'), stage_id=env.get('BOB_GENERATION_STAGE'))
 
 
 def read_policy(root):
@@ -154,9 +159,13 @@ def binding(root, request_id, actor, text, *, env=None, require_active=True):
     if ref is None:
         return None
     if require_active:selection(ref['root'], ref['id'])
-    return dict(root=ref['root'], id=ref['id'], purpose='product', request_id=request_id,
+    with locked(ref['root'],ref['id']) as (_,data):
+        stage = data.get('active_stage') if data.get('stage_required') else None
+    result=dict(root=ref['root'], id=ref['id'], purpose='product', request_id=request_id,
                 actor_sha256=hashlib.sha256(str(actor or 'local-operator').encode()).hexdigest(),
                 input_sha256=hashlib.sha256(text.encode()).hexdigest())
+    if stage:result['stage_id']=stage
+    return result
 
 
 def bound_environment(ref, base):
@@ -164,7 +173,67 @@ def bound_environment(ref, base):
         return dict(base)
     env = environment(ref['root'], ref['id'], context=ref['request_id'], base=base)
     env['BOB_GENERATION_PURPOSE'] = ref['purpose']
+    if ref.get('stage_id'):
+        env['BOB_GENERATION_STAGE'] = ref['stage_id']
+    else:
+        env.pop('BOB_GENERATION_STAGE',None)
+    env['BOB_GENERATION_REQUEST_KEY'] = hashlib.sha256(json.dumps(
+        [ref['request_id'], ref['actor_sha256'], ref['input_sha256']],
+        separators=(',', ':')).encode()).hexdigest()
+    request_available(ref, env=env)
     return env
+
+
+def request_available(ref, *, env=None):
+    """A saved owner request cannot acquire fresh transport retries on reload."""
+    if ref is None:
+        return
+    with locked(ref['root'], ref['id']) as (_, data):
+        if data.get('status')!='active' or time.time()>=data['deadline']:
+            raise AdmissionDenied('This saved request’s generation budget is stopped or expired.')
+        request=attribution(env) if env is not None else dict(
+            context=ref['request_id'],
+            stage_id=ref.get('stage_id'),
+            request_key=hashlib.sha256(json.dumps(
+                [ref['request_id'], ref['actor_sha256'], ref['input_sha256']],
+                separators=(',', ':')).encode()).hexdigest())
+        active_stage(data,request)
+        _request_available(data,request)
+
+
+def _request_available(data, ref):
+    limit = data['limits'].get('request_http_attempts', 3 if 'total_http_attempts' in data['limits'] else None)
+    if limit is None or not ref.get('request_key'):
+        return
+    used = sum(c['kind']=='http' and (c.get('request_key')==ref['request_key'] or
+               not c.get('request_key') and c.get('context')==ref.get('context'))
+               for c in data['calls'].values())
+    if used >= limit:
+        raise AdmissionDenied('This saved request has used its transport attempts; automatic retry is stopped.')
+
+
+def active_stage(data, ref, source=None):
+    if not data.get('stage_required'):
+        return None
+    identifier=ref.get('stage_id')
+    stage=data.get('stages',{}).get(identifier,{})
+    if (not identifier or data.get('active_stage')!=identifier or stage.get('status')!='active'
+            or time.time()>=stage.get('deadline',0) or source and stage.get('source_sha')!=source):
+        raise AdmissionDenied('This request is not bound to the current admitted validation stage.')
+    limit=stage.get('max_http_attempts')
+    if type(limit) is not int or limit<0:
+        raise AdmissionDenied('The validation stage has no verified transport ceiling.')
+    return stage
+
+
+def transport_allowed(root, name, *, env=None):
+    """Server configuration can exclude a transport before any credential I/O."""
+    ref=attribution(dict(os.environ if env is None else env, BOB_ROOT=str(root)))
+    if ref:
+        selection(ref['root'],ref['id'])
+        with locked(ref['root'],ref['id']) as (_,data):
+            if name in data.get('excluded_transports',[]):
+                raise AdmissionDenied('This transport is deferred in the current validation scope.')
 
 
 def reserve(provider, bound=0, *, kind='http', call_id=None, env=None):
@@ -180,6 +249,12 @@ def reserve(provider, bound=0, *, kind='http', call_id=None, env=None):
         if data.get('allowed_source_shas') and source not in data['allowed_source_shas']:
             raise AdmissionDenied('This source has not been admitted to the generation budget.')
         used, limits = totals(data), data['limits']
+        stage=active_stage(data,ref,source)
+        if stage and kind=='http' and sum(c['kind']=='http' and c.get('stage_id')==ref['stage_id']
+                                         for c in data['calls'].values())>=stage['max_http_attempts']:
+            raise AdmissionDenied('This validation stage has used its admitted transport attempts.')
+        if kind == 'http':
+            _request_available(data, ref)
         if ref['purpose'] == 'controller':
             controller = data.get('controller_attempts',{}).get(ref['controller_attempt'],{})
             if controller.get('status') != 'active' or time.time() >= controller.get('deadline',0):
@@ -191,9 +266,13 @@ def reserve(provider, bound=0, *, kind='http', call_id=None, env=None):
                 raise AdmissionDenied('This product job does not fit the one-attempt job allowance.')
         tuning = data['phase'] == 'tuning'
         dollars = limits['api_usd'] - (limits['reserve_usd'] if tuning else 0)
-        attempts = limits['direct_attempts'] - (limits['reserve_attempts'] if tuning else 0)
+        attempts = limits.get('total_http_attempts', limits['direct_attempts']) - (limits['reserve_attempts'] if tuning else 0)
+        # Legacy ledgers retain their original interpretation. A total ceiling
+        # admits no controller exemption and counts historical calls unchanged.
+        counted = used['http_attempts'] if 'total_http_attempts' in limits else used['direct_attempts']
+        exempt = 'total_http_attempts' not in limits and ref['purpose'] == 'controller'
         if kind == 'http' and (used['known_api_usd'] + used['reserved_api_usd'] + bound > dollars + 1e-12 or
-                ref['purpose'] != 'controller' and used['direct_attempts'] >= attempts):
+                not exempt and counted >= attempts):
             raise AdmissionDenied('The next request does not fit this goal\'s remaining API allowance.')
         if kind == 'native' and used['native_invocations'] >= limits['native_invocations']:
             raise AdmissionDenied('This goal\'s native invocation allowance is exhausted.')
@@ -204,6 +283,8 @@ def reserve(provider, bound=0, *, kind='http', call_id=None, env=None):
             context=ref['context'], reserved_usd=bound, cost_usd=None, admitted_at=time.time(),
             source_sha=source,
             phase=data['phase'], status='reserved', controller_attempt=ref.get('controller_attempt'), task_id=ref.get('task_id'),
+            request_key=ref.get('request_key'),
+            stage_id=ref.get('stage_id'),
             native_internal_calls_known=False if kind == 'native' else None)
         atomic(path, data)
     return dict(root=ref['root'], id=ref['id'], call_id=identifier)
@@ -253,6 +334,8 @@ def remaining(ref, *, cleanup_seconds=10):
     with locked(ref['root'],ref['id']) as (_,data):
         deadline=data['deadline']
         row=data['calls'].get(ref.get('call_id'),{})
+        stage=active_stage(data,row)
+        if stage:deadline=min(deadline,stage['deadline'])
         if row.get('purpose')=='controller':
             controller=data.get('controller_attempts',{}).get(row.get('controller_attempt'),{})
             if controller.get('status')!='active':raise AdmissionDenied('The controller attempt is no longer active.')
@@ -270,6 +353,8 @@ def task_block(root, contract=None):
         ref=(contract or {}).get('generation_binding')
         if policy and not ref:
             return 'This active generation allowance requires a budget-bound read-only report assignment; the unbound task was not started.'
-        if ref:selection(ref['root'],ref['id'])
+        if ref:
+            selection(ref['root'],ref['id'])
+            with locked(ref['root'],ref['id']) as (_,data):active_stage(data,ref)
     except AdmissionDenied as exc:return str(exc)
     return None

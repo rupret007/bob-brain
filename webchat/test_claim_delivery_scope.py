@@ -23,6 +23,10 @@ VALID = (
     'We should outline the next comparison and preserve quality as a requirement.',
     'Outline the criteria for this rollout to preserve quality.',
     '1. **Quality criteria:** Compare outputs and preserve quality as an acceptance requirement.\n2. **Verification:** Can the test command run read-only?',
+    'You cannot determine which proposal is stronger, more cost-effective, or preferable, since the decision explicitly requires comparing both.',
+    "Avoiding extra charges depends entirely on your subscription's actual remaining allowance and overage rules, which have not yet been verified.",
+    'Preventing degradation requires representative comparisons.',
+    'We cannot conclude that equivalent quality is established.',
 )
 
 INVALID = (
@@ -42,6 +46,9 @@ INVALID = (
     '**No Guaranteed Outcomes:** This route guarantees equal quality.',
     'We specified the plan, and the configuration preserves continuity.',
     'Zero fees are established, and preserved quality cannot be assumed.',
+    'We cannot determine which proposal is more cost-effective, but this route cannot incur charges.',
+    'Avoiding charges depends on unverified allowance and overage rules; therefore this invocation is free of charges.',
+    'Preventing degradation guarantees equivalent quality.',
 )
 
 

@@ -250,6 +250,29 @@ class TransactionTests(unittest.TestCase):
         self.versions.assert_called_with(self.root, 'b' * 40)
         self.assertFalse(json.loads(self.path.read_text())['all_pass'])
 
+    def test_scoped_live_proof_preserves_deferral_and_mixed_scope_rolls_back(self):
+        from qualification_scope import outcome, passed
+        scope=dict(path='/fixture/scope.json',sha256='fixture')
+        self.record.update(outcome(False,scope))
+        live=Mock(return_value=outcome(True,scope))
+        with patch('qualification_scope.selected',return_value=scope):
+            self.attempt(live=live)
+        record=json.loads(self.path.read_text())
+        self.assertEqual(live.call_count,2)
+        self.assertEqual(record['status'],'SCOPED_LIVE_PASS')
+        self.assertFalse(record['all_pass'])
+        self.assertTrue(passed(record,scope))
+        self.assertFalse(passed(record))
+
+    def test_scoped_round_cannot_accept_unrestricted_or_different_scope_proof(self):
+        from qualification_scope import outcome
+        scope=dict(path='/fixture/scope.json',sha256='fixture')
+        self.record.update(outcome(False,scope))
+        with patch('qualification_scope.selected',return_value=scope):
+            with self.assertRaisesRegex(Exception,'Live replay failed'):
+                self.attempt(live=Mock(side_effect=[outcome(True,scope),{'all_pass':True}]))
+        self.restart.assert_called_once_with(self.root,self.record['snapshots'])
+
     def test_partial_startup_failure_also_rolls_back(self):
         with self.assertRaisesRegex(RuntimeError, 'startup'):
             self.attempt(activate=Mock(side_effect=RuntimeError('startup')))
@@ -394,6 +417,7 @@ class EvidenceTests(unittest.TestCase):
         solo.atomic_json(checks, self.check)
         with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
             solo.verify_checks('a' * 40, 'improve', checks)
+
         self.check['results']['voice-availability-browser'] = self.check['results']['browser']
         solo.atomic_json(checks, self.check)
         solo.verify_checks('a' * 40, 'improve', checks)
@@ -406,6 +430,25 @@ class EvidenceTests(unittest.TestCase):
         solo.atomic_json(checks, self.check)
         with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
             solo.verify_checks('a' * 40, 'improve', checks)
+
+
+    def test_owner_voice_deferral_never_excuses_another_missing_gate(self):
+        from qualification_scope import outcome
+        scope=dict(path='/fixture/scope.json',sha256='fixture')
+        self.check['feature']='improve'
+        for name in ('media-browser','voice-js','instinct-browser','remaining-browser','cold-browser',
+                     'startup-recovery-browser','bridge-contract','jobs-results-browser','reply-lifecycle-browser',
+                     'memory-removal-browser','project-handoffs-browser','voice-availability-browser'):
+            self.check['results'][name]=self.check['results']['browser']
+        sha=solo.andrea_pin()['sha'];self.check['andrea']=dict(sha=sha,results=[])
+        solo.atomic_json(self.folder/'bridge-contract.json',dict(all_pass=True,andrea_sha=sha,real_texts_sent=0))
+        self.check.update(outcome(True,scope));checks=self.folder/'checks.json'
+        solo.atomic_json(checks,self.check)
+        with self.assertRaises(Exception):solo.verify_checks('a'*40,'improve',checks)
+        with patch('qualification_scope.selected',return_value=scope):
+            solo.verify_checks('a'*40,'improve',checks)
+            del self.check['results']['voice-availability-browser'];solo.atomic_json(checks,self.check)
+            with self.assertRaisesRegex(Exception,'Missing mandatory suite'):solo.verify_checks('a'*40,'improve',checks)
 
     def test_instinct_requires_read_only_browser_proof(self):
         self.check['feature'] = self.review['feature'] = 'instinct'

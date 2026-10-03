@@ -75,6 +75,83 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(admission.status(self.root, 'test')['controller_attempts'], 1)
         self.assertEqual(admission.status(self.root, 'test')['direct_attempts'], 3)
 
+    def test_total_http_cap_counts_historical_and_controller_purposes_atomically(self):
+        historical = admission.reserve('gemini', .01, env=self.env)
+        before = json.loads(self.path.read_text())['calls'][historical['call_id']]
+        with admission.locked(self.root,'test') as (path,data):
+            data['limits']['total_http_attempts'] = 5
+            admission.atomic(path,data)
+        controller=dict(self.env, BOB_GENERATION_PURPOSE='controller', BOB_GENERATION_CONTROLLER_ATTEMPT='full-1')
+        def attempt(n):
+            try:return admission.reserve('gemini',.01,env=controller if n%2 else self.env)
+            except admission.AdmissionDenied:return None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            self.assertEqual(sum(bool(r) for r in pool.map(attempt,range(8))),2)
+        status=admission.status(self.root,'test')
+        self.assertEqual(status['http_attempts'],3)
+        self.assertEqual(status['http_attempts'],status['direct_attempts']+status['controller_attempts'])
+        self.assertEqual(json.loads(self.path.read_text())['calls'][historical['call_id']],before)
+
+    def test_saved_request_cannot_reacquire_three_retries_after_reload(self):
+        with admission.locked(self.root,'test') as (path,data):
+            data['phase']='product';data['limits']['total_http_attempts']=10
+            admission.atomic(path,data)
+        ref=admission.binding(self.root,'same-request','owner','Explain the records.',env=self.env)
+        env=admission.bound_environment(ref,{})
+        for _ in range(3):admission.reserve('gemini',.01,env=env)
+        restored=json.loads(json.dumps(ref))
+        with self.assertRaises(admission.AdmissionDenied):admission.bound_environment(restored,{})
+        with self.assertRaises(admission.AdmissionDenied):admission.reserve('gemini',.01,env=env)
+        self.assertEqual(admission.status(self.root,'test')['http_attempts'],3)
+        another=admission.binding(self.root,'new-request','owner','Explain different evidence.',env=self.env)
+        admission.reserve('gemini',.01,env=admission.bound_environment(another,{}))
+        self.assertEqual(admission.status(self.root,'test')['http_attempts'],4)
+
+    def test_unkeyed_legacy_attempts_are_counted_without_rewriting_history(self):
+        env=dict(self.env,BOB_GENERATION_CONTEXT='legacy-request')
+        for _ in range(3):admission.reserve('gemini',.01,env=env)
+        with admission.locked(self.root,'test') as (path,data):
+            historical=json.loads(json.dumps(data['calls']))
+            data['phase']='product';data['limits']['total_http_attempts']=10
+            admission.atomic(path,data)
+        ref=admission.binding(self.root,'legacy-request','owner','Original saved prompt.',env=self.env)
+        with self.assertRaises(admission.AdmissionDenied):admission.bound_environment(ref,{})
+        self.assertEqual(json.loads(self.path.read_text())['calls'],historical)
+        other=admission.binding(self.root,'different-request','owner','New prompt.',env=self.env)
+        admission.reserve('gemini',.01,env=admission.bound_environment(other,{}))
+        self.assertEqual(admission.status(self.root,'test')['http_attempts'],4)
+
+    def test_stage_limit_applies_to_product_children_and_stale_bindings(self):
+        with admission.locked(self.root,'test') as (path,data):
+            data.update(phase='qualification',stage_required=True,active_stage='live-1',stages={
+                'live-1':dict(status='active',source_sha='fixture',deadline=time.time()+80,max_http_attempts=1)})
+            data['limits']['total_http_attempts']=10
+            admission.atomic(path,data)
+        saved=admission.binding(self.root,'request','owner','Question.',env=self.env)
+        env=admission.bound_environment(saved,dict(BOB_GENERATION_SOURCE_SHA='fixture'))
+        receipt=admission.reserve('gemini',.01,env=env)
+        self.assertLessEqual(admission.remaining(receipt),70)
+        another=admission.binding(self.root,'another','owner','Next question.',env=self.env)
+        with self.assertRaises(admission.AdmissionDenied):
+            admission.reserve('gemini',.01,env=admission.bound_environment(another,dict(BOB_GENERATION_SOURCE_SHA='fixture')))
+        with admission.locked(self.root,'test') as (path,data):
+            data['stages']['live-1']['status']='finished';data['active_stage']='product'
+            data['stages']['product']=dict(status='active',source_sha='fixture',deadline=time.time()+60,max_http_attempts=9)
+            admission.atomic(path,data)
+        with self.assertRaises(admission.AdmissionDenied):admission.reserve('gemini',.01,env=env)
+        with self.assertRaises(admission.AdmissionDenied):admission.remaining(receipt)
+
+    def test_zero_http_stage_and_deferred_transport_admit_no_provider(self):
+        with admission.locked(self.root,'test') as (path,data):
+            data.update(stage_required=True,active_stage='full',excluded_transports=['gemini-live'],stages={
+                'full':dict(status='active',source_sha='fixture',deadline=time.time()+80,max_http_attempts=0)})
+            admission.atomic(path,data)
+        env=dict(self.env,BOB_GENERATION_SOURCE_SHA='fixture',BOB_GENERATION_STAGE='full',
+                 BOB_GENERATION_PURPOSE='controller',BOB_GENERATION_CONTROLLER_ATTEMPT='full-1')
+        with self.assertRaises(admission.AdmissionDenied):admission.reserve('gemini',.01,env=env)
+        with self.assertRaises(admission.AdmissionDenied):admission.transport_allowed(self.root,'gemini-live',env=env)
+        self.assertFalse(json.loads(self.path.read_text())['calls'])
+
     def test_controller_runtime_uses_its_shorter_deadline_and_stopped_state(self):
         env=dict(self.env,BOB_GENERATION_PURPOSE='controller',BOB_GENERATION_CONTROLLER_ATTEMPT='full-1')
         ref=admission.reserve('gemini',.01,env=env)

@@ -49,7 +49,11 @@ def validate(value, *, conversation_id, request_id, prompt, worker, attempt_limi
             binding = value['generation_binding']
             if binding is not None:
                 import generation_budget
-                if (not isinstance(binding,dict) or set(binding) != {'root','id','purpose','request_id','actor_sha256','input_sha256'} or
+                binding_keys={'root','id','purpose','request_id','actor_sha256','input_sha256'}
+                if isinstance(binding,dict) and 'stage_id' in binding:
+                    binding_keys.add('stage_id')
+                    if not isinstance(binding['stage_id'],str) or not generation_budget.ID.fullmatch(binding['stage_id']):raise ValueError()
+                if (not isinstance(binding,dict) or set(binding) != binding_keys or
                         binding['request_id'] != request_id or binding['purpose'] != 'product' or
                         not isinstance(binding['root'],str) or not binding['root'].startswith('/') or
                         not generation_budget.ID.fullmatch(binding['id']) or

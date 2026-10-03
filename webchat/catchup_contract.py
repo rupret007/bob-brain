@@ -217,6 +217,12 @@ def render(raw, projection):
                 'start a deployment or transfer ownership. Keep completed work and holds intact; execution needs a '
                 'current scoped assignment, a confirmed owner and the applicable release gates.'+coverage_limit(projection))
     if value['mode']=='release':
+        if projection['has_more'] is False:
+            return ('The receiver reports reaching the available tail through sequence '+str(end)+
+                    '. That does not establish complete history or knowledge of the current release. '
+                    'Inspect independent current deployment/result evidence before claiming that knowledge; '
+                    'no later records are reported available at this snapshot. Keep catch-up read-only, '
+                    'preserving completed work and holds.'+coverage_limit(projection))
         timing=', not a release completed afterward' if projection['later_release_reported'] else '; it does not establish knowledge of the current release'
         return ('No. That acknowledgment covers '+span+timing+'. The receiver needs '
                 'the later records and current deployment/result evidence before claiming it knows that release. '

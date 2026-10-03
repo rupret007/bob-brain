@@ -48,14 +48,18 @@ PROVIDER_CLAIM = re.compile(
 HOLD_CLAIM = re.compile(
     r"\b(?:your|the|earlier|previous)\s+(?:(?:earlier|previous|existing|current)\s+)?hold\b|"
     r"\b(?:on hold|still (?:paused|held)|remain(?:s)? (?:paused|held))\b|"
+    r"\b(?:daemons?|services?|workers?|reviewers?|process(?:es)?|servers?|systems?|agents?)\s+"
+    r"(?:is|are|was|were)\s+(?:(?:now|still|currently)\s+)?(?:held|paused)\b|"
     r"\b(?:" + PROJECT.pattern + r"|work|coding|jobs?|tasks?)\s+(?:is|are|has been|have been)\s+(?:paused|held)\b|"
     r"\b(?:awaiting|pending)\s+(?:your\s+)?(?:permission|approval|go[- ]ahead)\b|"
     r"\b(?:until you (?:say (?:go|resume)|resume|give (?:the )?go[- ]ahead)|waiting for (?:your|permission)|"
     r"(?:need|require) (?:your |fresh |renewed |explicit )*(?:permission|approval|go[- ]ahead))\b", re.I)
 HOLD_QUESTION = re.compile(r"^(?:(?:are|is|am|do|does|why)\b[^.!]*\b(?:on hold|holds? (?:still )?active|paused|need.{0,20}permission)\b[^.!]*|what holds? are active)\??$", re.I)
+STATE_ADVERB = r'(?:already|now|just|still|yet|[a-z]+ly)'
+MODAL_PERFECT = r'must\s+(?:'+STATE_ADVERB+r'\s+){0,3}have\s+(?:'+STATE_ADVERB+r'\s+){0,3}been'
 PERMISSION_CHANGE = re.compile(
     r'\b(?:hold|permission|approval)\b[^,;!?]{0,30}'
-    r'\b(?:is|was|has been|now|already)\s+(?:lifted|cleared|released|granted)\b|'
+    r'\b(?:is|was|has been|'+MODAL_PERFECT+r'|now|already)\s+(?:'+STATE_ADVERB+r'\s+){0,3}(?:lifted|cleared|released|granted)\b|'
     r'\b(?:I|we|you)(?:[’\']ve|\s+have)?\s+(?:(?:already|now)\s+)?'
     r'(?:lifted|cleared|released|granted)\s+(?:(?:the|your|our|my|real|actual|current|existing)\s+){0,3}'
     r'(?:hold|permission|approval)\b', re.I)
@@ -472,6 +476,10 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
     from answer_intent import conceptual, wants_answer, LIVE_REQUEST
     from conversation_focus import reference_scope
     reported=reference_scope(conversation,text)
+    from conversation_focus import focus
+    from reported_records import source_bindings, topic_record
+    record=focus(conversation or {}) if reported else None
+    bindings=source_bindings(record)
     reference = conceptual(text) or reported
     from worker_assignment import requested_workers
     blocked = dispatch_block(conversation)
@@ -507,7 +515,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         # Reference answers still reject direct effects, concrete IDs and
         # asserted progress; they do not need the proximity-only heuristic.
         progress_claim = REFERENCE_PROGRESS_CLAIM if reference else QUEUE_CLAIM
-        if claims_dispatch(content, reference=supplied) or progress_claim.search(dispatch_prose(content, reference=supplied)):
+        if claims_dispatch(content, reference=supplied, bindings=bindings) or progress_claim.search(dispatch_prose(content, reference=supplied)):
             return blocked or unperformed_restart(root, text)
         # Keep the useful answer; remove unsupported effects and boilerplate
         # without adding a system notice to ordinary chat.
@@ -640,13 +648,11 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 if re.fullmatch(r'You\s+(?:set|put|placed)\s+(?:the\s+)?(?:execution|work)',subject,re.I):continue
                 return False
         return True
-    from conversation_focus import focus
-    record=focus(conversation or {}) if reported else None
-    bindings=source_bindings(record)
     record_ids=set(bindings)
     # The server-bound focus supplies the referent for "its status" and
     # "the hold" across corrections. It does not authorize any real effect.
-    record_subject=next(iter(bindings),None)
+    record_topic=topic_record(record,bindings)
+    record_subject=record_topic
     def attributed_record_hold(part):
         nonlocal record_subject
         if not reported or not record_ids:return False
@@ -674,7 +680,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 suffix=clean_clause[claim.end():].strip()
                 identified=re.fullmatch(subject+r'\s*'+predicate,prefix,re.I)
                 described=bool(re.fullmatch(nominal+r'\s*'+predicate,prefix,re.I))
-                anaphor=record_subject and bool(re.fullmatch(r'(?:it|its (?:status|state)|(?:the|this|that) (?:status|state))\s*'+predicate,prefix,re.I))
+                anaphor=record_subject and bool(re.fullmatch(r'(?:it|(?:its|the|this|that)\s+(?:(?:current|recorded|reported)\s+)?(?:status|state))\s*'+predicate,prefix,re.I))
                 inherited=record_subject and bool(re.fullmatch(predicate,prefix,re.I))
                 # References/advice/checks about a hold have a bounded object;
                 # "the hold on the backup service" cannot borrow this scope.
@@ -686,10 +692,11 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 prerequisite=bool(re.search(r'\b(?:must|should|needs? to|is required to)\b',prefix,re.I)
                     and re.search(r'\b(?:before|after)\s+(?:lifting|clearing|releasing)\s*$',prefix,re.I)
                     and not foreign_label(prefix,projects,WORKER_NAMES))
-                explicit_object=bool(re.fullmatch(r'(?:on|for|in)\s+'+subject+r'(?:\s*(?:[,;]|(?:until|while|before|after)\b).*)?\s*[.!?]*',suffix,re.I))
+                explicit_object=bool(re.fullmatch(r'(?:on|for|in)\s+'+subject+r'(?:\s*(?:[,;]|(?:until|while|before|after|must|should|needs? to)\b).*)?\s*[.!?]*',suffix,re.I))
                 state_modifier=bool(re.match(r'in\s+(?:place|force|effect)\b(?!\s+(?:on|for|in)\b)',suffix,re.I))
                 object_ok=not re.match(r'(?:on|for|in)\b',suffix,re.I) or explicit_object or state_modifier
-                noun_reference=(record_subject or explicit_object) and noun and (governing or prerequisite) and object_ok
+                directive=bool(re.fullmatch(r'(?:maintain|keep|preserve)\s*',prefix,re.I))
+                noun_reference=(record_subject or explicit_object or directive and record_topic) and noun and (governing or prerequisite) and object_ok
                 if not (identified or described or anaphor or inherited and not noun or noun_reference):
                     accepted=False
                     record_subject=None

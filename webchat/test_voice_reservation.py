@@ -13,6 +13,14 @@ from voice import VoiceError
 
 
 class VoiceReservationTests(Fixture):
+    def test_explicit_deferred_transport_stops_before_token_factory(self):
+        import generation_budget
+        with patch('generation_budget.transport_allowed',side_effect=generation_budget.AdmissionDenied('deferred')), \
+                patch.object(self.chat.voice,'token_factory') as factory:
+            with self.assertRaises(VoiceError) as error:self.chat.voice.start(self.identifier,'owner')
+            self.assertEqual(error.exception.status,503)
+            factory.assert_not_called()
+            self.assertFalse(self.chat.voice.calls)
     def setUp(self):
         super().setUp()
         self.fake.snapshot = lambda **_: []

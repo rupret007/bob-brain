@@ -1173,6 +1173,18 @@ class Chat(TaskDispatch):
                 value = self.get(identifier)
                 if not pending(value):
                     return
+                import generation_budget
+                user = next((m for m in reversed(value['messages']) if m['role']=='user'
+                             and m.get('request_id')==reply(value).get('request_id')), {})
+                try:
+                    generation_budget.request_available(user.get('_generation'))
+                except generation_budget.AdmissionDenied as exhausted:
+                    value.pop('retry_prompt', None)
+                    reply(value).update(status='error', provider=None, content=str(exhausted), attempts=exc.attempts)
+                    reply(value).pop('retry_at', None)
+                    self.save(value)
+                    release_worker()
+                    return
                 value["codex_thread_id"] = None
                 if cancel.is_set():
                     value.pop("retry_prompt", None)

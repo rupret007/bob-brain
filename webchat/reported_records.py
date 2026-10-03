@@ -68,7 +68,58 @@ def source_bindings(record):
     return result
 
 
+def topic_record(record, bindings):
+    """The original question's unique task stays the topic of its follow-ups.
+
+    Later cached artifact/task IDs are evidence to compare, not automatic topic
+    switches. A new question resets answer_focus upstream. Multiple original
+    subjects remain ambiguous and receive no implicit task attribution.
+    """
+    excerpts = (record or {}).get('user_excerpts', [])
+    candidates = {m[1] for m in TASK_ID.finditer(excerpts[0]['content'])} if excerpts else set()
+    candidates &= set(bindings)
+    from conversation_focus import CORRECTION
+    for excerpt in excerpts[1:]:
+        if CORRECTION.match(excerpt['content'].strip()):
+            corrected = {m[1] for m in TASK_ID.finditer(excerpt['content'])} & set(bindings)
+            if corrected and corrected != candidates:
+                # A correction may change the target or only an associated
+                # artifact. Require an explicit answer subject before inheriting
+                # a task again; never continue using the old identity silently.
+                return None
+    return next(iter(candidates)) if len(candidates)==1 else None
+
+
 def receipt(part, *, offset, accepted, reason, subject, bindings):
     return dict(start=offset, end=offset+len(part), sha256=hashlib.sha256(part.encode()).hexdigest(),
                 accepted=accepted, reason=reason, referenced_record=subject,
                 source_bindings=bindings.get(subject, []))
+
+
+def attributed_parentheticals(content, bindings):
+    """Mask passive descriptive predicates whose head is a supplied task ID.
+
+    Only reduced relative clauses inside a parenthesis inherit that head.
+    Finite actors, concrete application IDs and text outside the parenthesis
+    remain visible to the independent effect checks. This supplies reference
+    scope, never evidence of an actual assignment.
+    """
+    if not bindings:
+        return content
+    plain = re.sub(r'[*_`]', ' ', content)
+    identity = '(?:'+'|'.join(re.escape(i) for i in sorted(bindings))+')'
+    parenthetical = re.compile(r'\b'+identity+r'\s*\((?P<body>[^()\n.!?]{1,240})\)', re.I)
+    predicate = re.compile(r'(?:^|\b(?:and|or)\s+)(?P<verb>bound|assigned|queued|scheduled|delegated)'
+                           r'(?=\s+(?:to|for|in|under|with|by)\b)', re.I)
+    masked = list(content)
+    for item in parenthetical.finditer(plain):
+        body = item['body']
+        # Reduced relatives have no independent finite subject. Do not let
+        # "R-41 (I assigned...)" or a later finite clause borrow task scope.
+        if not predicate.match(body) or re.search(r'\b(?:I|we|you|he|she|it|they|is|are|was|were|has|have|will|did|your|our|my|actual|real|live)\b',body,re.I):
+            continue
+        for match in predicate.finditer(body):
+            start = item.start('body')+match.start('verb')
+            end = item.start('body')+match.end('verb')
+            masked[start:end] = ' '*(end-start)
+    return ''.join(masked)

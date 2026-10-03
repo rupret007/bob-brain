@@ -11,6 +11,29 @@ import task_queue
 
 
 class BindingTests(SessionFixture):
+    def test_held_report_preserves_product_stage_and_stale_stage_never_consumes_attempt(self):
+        self.policy()
+        with generation_budget.locked(self.root,'proof') as (path,data):
+            data.update(stage_required=True,active_stage='product',stages={'product':dict(status='active',
+                source_sha='fixture',deadline=time.time()+300,max_http_attempts=9)})
+            generation_budget.atomic(path,data)
+        self.send('For the Web Bob project, remember the priority: reliable daily assistance.')
+        self.send('Hold all work')
+        self.send('Create a read-only Web Bob readiness report')
+        contract=self.chat.get(self.identifier)['held_job']['report_contract']
+        self.assertEqual(contract['generation_binding']['stage_id'],'product')
+        self.chat.close();self.chat=Chat(self.folder,self.root,self.fake)
+        self.send('Resume')
+        row=task_queue.tasks(self.root)[contract['task_id']]
+        self.assertEqual(row['report_contract'],contract)
+        with generation_budget.locked(self.root,'proof') as (path,data):
+            data['stages']['product']['status']='finished';data['active_stage']=None
+            generation_budget.atomic(path,data)
+        self.assertIsNone(task_queue.claim(self.root,'claude',identifier=row['id']))
+        saved=task_queue.tasks(self.root)[row['id']]
+        self.assertEqual(saved['attempts'],0)
+        self.assertIn('stage',saved['error'])
+
     def policy(self,identifier='proof'):
         directory=self.root/'conductor/state/generation-budgets';directory.mkdir(parents=True,exist_ok=True)
         generation_budget.atomic(directory/(identifier+'.json'),dict(schema=1,id=identifier,status='active',
@@ -50,6 +73,27 @@ class BindingTests(SessionFixture):
         user=self.fake.calls[-1]['messages'][-2]
         self.assertEqual(user['_generation']['id'],'proof')
         self.assertEqual(user['_generation']['request_id'],rid)
+
+    def test_exhausted_request_is_terminal_across_queue_poll_and_restart(self):
+        self.policy()
+        with generation_budget.locked(self.root,'proof') as (path,data):
+            data['limits']['total_http_attempts']=10
+            generation_budget.atomic(path,data)
+        attempts=[]
+        def down(conversation,*args):
+            user=next(m for m in reversed(conversation['messages']) if m['role']=='user')
+            env=generation_budget.bound_environment(user['_generation'],{})
+            for _ in range(3):attempts.append(generation_budget.reserve('gemini',.01,env=env))
+            raise AllDown([],time.time()-1,'saved prompt')
+        self.fake.reply=down
+        answer=self.send('Explain ocean tides.')
+        self.assertEqual(answer['status'],'error')
+        self.assertIn('automatic retry is stopped',answer['content'])
+        self.chat.retry_queued()
+        self.chat.close();self.chat=Chat(self.folder,self.root,self.fake)
+        self.chat.retry_queued()
+        self.assertEqual(len(attempts),3)
+        self.assertEqual(self.chat.get(self.identifier)['messages'][-1]['status'],'error')
 
     def test_held_report_keeps_original_budget_when_current_policy_changes(self):
         self.policy('first')

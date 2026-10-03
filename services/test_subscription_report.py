@@ -41,6 +41,26 @@ def process(rows=None, code=0):
 
 
 class AuthenticationAdmissionTests(unittest.TestCase):
+    def test_shorter_stage_bounds_authentication_before_native_launch(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);folder=root/'conductor/state/generation-budgets';folder.mkdir(parents=True)
+            path=folder/'auth-proof.json'
+            value=dict(schema=1,id='auth-proof',status='active',deadline=time.time()+600,phase='product',providers=['claude'],calls={},
+                stage_required=True,active_stage='product',stages={'product':dict(status='active',source_sha='fixture',
+                    deadline=time.time()+13,max_http_attempts=9)},
+                limits=dict(api_usd=1,reserve_usd=0,direct_attempts=1,reserve_attempts=0,native_invocations=2,product_jobs=1))
+            generation_budget.atomic(path,value)
+            env=dict(BOB_GENERATION_BUDGET='auth-proof',BOB_GENERATION_BUDGET_ROOT=str(root),BOB_GENERATION_PURPOSE='product',
+                     BOB_GENERATION_SOURCE_SHA='fixture',BOB_GENERATION_STAGE='product')
+            row=dict(id='report-task',execution_deadline=time.time()+900)
+            with patch.object(worker,'policy_check') as policy,patch.object(worker,'run',side_effect=subprocess.TimeoutExpired('fixture',1)) as run:
+                with self.assertRaises(subprocess.TimeoutExpired):worker.subscription(dict(HOME=temp),row,env)
+                self.assertLessEqual(policy.call_args.args[1],3)
+                self.assertLessEqual(run.call_args.kwargs['timeout'],3)
+            value['stages']['product']['status']='finished';generation_budget.atomic(path,value)
+            with patch.object(worker,'policy_check') as policy,patch.object(worker,'run') as run:
+                with self.assertRaises(generation_budget.AdmissionDenied):worker.subscription(dict(HOME=temp),row,env)
+                policy.assert_not_called();run.assert_not_called()
     def test_metadata_invocation_is_counted_separately_and_exhaustion_stops_cli(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);folder=root/'conductor/state/generation-budgets';folder.mkdir(parents=True)
