@@ -15,6 +15,55 @@ class ProjectionTests(unittest.TestCase):
     def conversation(self, *texts):
         return dict(messages=[dict(role='user',id=str(i),request_id=str(i),content=t) for i,t in enumerate(texts)])
 
+    def test_explanation_has_no_forced_route_and_fences_cannot_hide_extra_prose(self):
+        with tempfile.TemporaryDirectory() as temp:
+            projection=resource_decision.project(Path(temp),self.conversation('Does the ChatGPT subscription cover API bills?'))
+            packet=json.dumps(dict(answer='No. [fact:openai_api_billing] The login route is the key distinction.',resource=None,steps=[]))
+            for raw in (packet,'```json\n'+packet+'\n```'):
+                answer,decision=resource_decision.render(raw,projection)
+                self.assertTrue(answer.startswith('No. ChatGPT Pro does not'))
+                self.assertIn('key distinction',answer)
+                self.assertIsNone(decision['resource'])
+                self.assertNotIn('My recommendation',answer)
+            with self.assertRaises(ValueError):resource_decision.render('```json\n'+packet+'\n```\nI queued your task.',projection)
+
+    def test_grounded_fact_cannot_launder_adjacent_guarantee_or_fake_inspection(self):
+        with tempfile.TemporaryDirectory() as temp:
+            projection=resource_decision.project(Path(temp),self.conversation('Can Codex replace our paid API route?'))
+            for claim in ('Your quota is protected.', 'This guarantees equal quality.',
+                          'It is not free, but it is unlimited.', 'There will be no additional charges.',
+                          'Quota is unknown and this guarantees equal quality.',
+                          'It is not free and it is unlimited.',
+                          'I have not checked quota and I inspected your files.',
+                          'Pacing prevents rate limits.', 'I inspected your files.',
+                          'We can read your project files.', 'I queued your task.'):
+                with self.subTest(claim=claim),self.assertRaises(ValueError):
+                    resource_decision.render(json.dumps(dict(answer='[fact:codex.observation] '+claim,resource=None,steps=[])),projection)
+            for clause in ('Login does not guarantee equal quality.', 'That is not free.',
+                           'Pacing cannot prevent rate limits.', 'File access is unverified.'):
+                answer,_=resource_decision.render(json.dumps(dict(answer=clause+' [fact:codex.observation]',resource=None,steps=[])),projection)
+                self.assertIn(clause,answer)
+
+    def test_comparison_keeps_model_reasoning_and_missing_inputs_survive_explanation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            projection=resource_decision.project(Path(temp),self.conversation('Compare Codex and Claude subscriptions.'))
+            answer,_=resource_decision.render(json.dumps(dict(answer='For a bounded review, begin with the supported report interface. [fact:claude.reach]',resource=None,steps=[])),projection)
+            self.assertIn('begin with',answer)
+            projection=resource_decision.project(Path(temp),self.conversation('Our Codex subscription cannot read the needed project files.', 'What next?'))
+            answer,_=resource_decision.render(json.dumps(dict(answer='[fact:codex.reach] Define a short evidence checklist first.',resource=None,steps=[])),projection)
+            self.assertIn('files are still missing',answer)
+            restored=resource_decision.project(Path(temp),self.conversation('Our Codex subscription cannot read the needed project files.',
+                'Correction: the files are now available.'))
+            self.assertNotIn('missing_inputs',restored['facts'])
+            with self.assertRaises(ValueError):resource_decision.render(json.dumps(dict(answer='[fact:missing_inputs]',resource=None,steps=[])),restored)
+
+    def test_comparison_cannot_skip_route_or_step_schema_constraints(self):
+        with tempfile.TemporaryDirectory() as temp:
+            projection=resource_decision.project(Path(temp),self.conversation('Compare Codex and Cursor subscriptions.'))
+            for resource,steps in [('cursor',['prepare_report']),('grok',[]),('codex',None),('codex',False),('codex',0),('codex',''),('codex',{})]:
+                with self.subTest(resource=resource,steps=steps),self.assertRaises(ValueError):
+                    resource_decision.render(json.dumps(dict(answer='[fact:codex.reach]',resource=resource,steps=steps)),projection)
+
     def test_exclusive_cursor_and_empty_page_do_not_skip_next_event(self):
         for text in ('ACK through 149, since_seq 137, events 12, history_gap false, has_more true.',
                      'Receiver receipt: {"acknowledged_through":149,"since_seq":149,"events":0,"history_gap":false,"has_more":false}'):
@@ -102,6 +151,16 @@ class ProjectionTests(unittest.TestCase):
 
 
 class DeliveredTests(SessionFixture):
+    def test_direct_answer_preserved_and_bad_answer_never_selects_default_worker(self):
+        self.fake.reply_text=json.dumps(dict(answer='No. [fact:openai_api_billing]',resource=None,steps=[]))
+        answer=self.send('Does ChatGPT Pro pay for OpenAI API usage?')
+        self.assertIn('does not pay',answer['content'])
+        self.assertIsNone(answer['resource_decision']['resource'])
+        self.fake.reply_text='malformed proposal'
+        answer=self.send('Then what does our subscription cover?')
+        self.assertIsNone(answer['resource_decision']['resource'])
+        self.assertNotIn('qualify Codex',answer['content'])
+
     def test_server_delivers_typed_catchup_fields_and_no_fake_model_cursor(self):
         self.fake.reply_text='{"mode":"relay"}'
         answer=self.send('Grok ACK through 149. Write a concise catch-up request I can relay.')

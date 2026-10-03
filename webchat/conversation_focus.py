@@ -9,7 +9,7 @@ from chat_intent import command, projects
 
 CORRECTION = re.compile(r'^(?:actually|correction|oops|my mistake|no|instead|i meant|that is the wrong|'
                         r'(?:less|more) (?:formal|casual|friendly|concise|detailed|technical|playful|serious)|'
-                        r'(?:make|keep) (?:it|that|this|these|those|the (?:first|second|third|fourth|fifth|last))|rewrite|revise|shorten|expand|'
+                        r'(?:make|keep) (?:it|that|this|these|those|the (?:point|meaning|message|intent|tone|wording|first|second|third|fourth|fifth|last))|rewrite|revise|shorten|expand|'
                         r'rephrase|use .{0,40} instead|change .{0,40} to|'
                         r'the (?:first|second|third|fourth|fifth|last)\b.{0,60}\b(?:too|try|instead|change|make|needs?|should))\b', re.I)
 CONTINUE = re.compile(r'^(?:continue|keep going|finish that|do it|go ahead|what did you finish)\b', re.I)

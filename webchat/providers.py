@@ -704,6 +704,8 @@ class Providers:
         from conversation_focus import focus, answer_only, OPERATIONAL, needs_permission_facts
         from capabilities import needs_grounding, grounding, GROUNDING_RULES
         from resource_inventory import relevant as resource_context, question as resource_question
+        import reply_contract
+        contract=reply_contract.current(conversation)
         capability_question = needs_grounding(last_user) or resource_context(conversation)
         progress = conversation.get('improvement_goal') or {}
         suspended = progress.get('suspended_by') or {}
@@ -779,8 +781,14 @@ class Providers:
                                   truncated=bool(project.get('omitted_fact_ids') or project.get('omitted')),
                                   text=self.redact(json.dumps(project, ensure_ascii=False))))
         if capability_question:
+            capability_facts=grounding(self.context_root(conversation.get('id')), ORDER, conversation.get('id'))
+            if contract and contract.get('resource_projection'):
+                # Resource inventory is already bound in this turn's projection;
+                # coordination/receiver observations are distinct evidence.
+                capability_facts.pop('resources',None)
+                capability_facts.pop('resource_inventory',None)
             snapshots += [dict(path='implemented Web Bob capability metadata', modified='current code and saved acknowledgment',
-                               truncated=False, text=json.dumps(grounding(self.context_root(conversation.get('id')), ORDER, conversation.get('id'))))]
+                               truncated=False, text=json.dumps(capability_facts))]
         if retained:
             snapshots += [dict(path='conversation user-source index', modified='saved', truncated=False,
                                text=self.redact(json.dumps(retained, ensure_ascii=False)))]

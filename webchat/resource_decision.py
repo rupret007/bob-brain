@@ -9,22 +9,94 @@ import re
 import hashlib
 
 import resource_inventory
-from resource_capabilities import ROUTES, supports
+from resource_capabilities import ROUTES, supports, BILLING_FACTS
 
 RESOURCE_NAMES = r'\b(?:'+'|'.join(ROUTES)+r')\b'
 ACTIONABLE = tuple(name for name in ROUTES if supports(name,'conversation'))
 
 STEPS = ('qualify_chat','prepare_report','provide_inputs','inspect_allowance','keep_current','review_dependency')
-RULES = '''This is resource advice, not an execution request. Return only JSON
-with exactly resource and steps. resource is codex, cursor, claude, gemini or
-minimax; steps is a list of one to three distinct choices from qualify_chat,
-prepare_report, provide_inputs, inspect_allowance, keep_current, review_dependency.
-Choose the most useful next step first, based on the owner's current question,
-needed files, existing supported routes and evidence. prepare_report supports
-Claude only. qualify_chat means a representative quality check, not changing
-the default. Do not generate resource facts or guarantees: the server renders
-verified reach and genuine unknowns. An outage scenario is not a live outage.
+RULES = '''Answer the current question directly, including disagreement when warranted.
+Return one JSON object with exactly answer, resource, steps. answer is natural
+prose composed for this turn, not a routing receipt. Insert server-owned facts
+as [fact:ID] using the supplied facts map; use at least one relevant fact. Explain
+tradeoffs and reasoning in your own words around those facts. Do not restate
+unknown account facts as verified or infer guarantees from login, pacing or price.
+resource is null for an explanation, or codex/cursor/claude/gemini/minimax for an
+actual recommendation. steps is an optional empty list or up to three distinct
+choices: qualify_chat, prepare_report, provide_inputs, inspect_allowance,
+keep_current, review_dependency. Describe the useful proposed next step in answer;
+these fields neither start it nor change routing. prepare_report supports Claude
+only. A question about a billing premise needs an answer to that premise, not an
+unrequested recommendation. On follow-up, advance the reasoning rather than
+repeating the last answer. Preserve missing inputs and explicit route restrictions.
+Use only needed facts; do not paste the whole inventory or all caveats. No invented
+inspection, execution, file reach, remaining allowance, free usage or equal-quality
+guarantees. Return JSON only, without fences or trailing commentary.
 '''
+
+FACT_TOKEN = re.compile(r'\[fact:([a-z0-9_.]+)\]')
+
+
+def facts(inventory, *, missing=False):
+    """Versioned public rules and current registry evidence, not model assertions."""
+    result = {
+        'openai_api_billing': BILLING_FACTS['openai_api_billing'],
+        'subscription_scope': BILLING_FACTS['subscription_scope'],
+        'route_boundaries': 'Web Bob’s Codex and Cursor chat adapters use supplied context. Local file work uses a separate scoped executor; voice, images and other tools depend on the particular adapter. Signing in does not make those routes interchangeable.',
+        'quality_bar': 'Keep the qualified answer route and its reasoning settings until a representative comparison establishes the alternative’s quality. A cheaper price or successful login does not establish equivalent answers.',
+        'manual_handoff': 'Dot and Grok have prepared handoff paths, but no verified automatic Web Bob push/acceptance interface. Preparation alone does not establish native execution.',
+    }
+    if missing:
+        result['missing_inputs']='The needed project files are still missing. A bounded evidence snapshot can make the next task useful; without it, project-specific findings cannot be verified.'
+    for item in inventory['resources']:
+        name=item['name'];obs=item['observation'];fresh=obs.get('freshness')=='recent'
+        result[name+'.reach']=item['reach']
+        result[name+'.billing']=item['billing']+'.'
+        auth=('Sign-in was observed recently' if fresh and obs.get('authenticated') is True else 'Current sign-in is unverified')
+        unknown=[]
+        if not fresh or obs.get('remaining_usage') is None:unknown.append('remaining allowance')
+        if not fresh or obs.get('extra_usage') is None:unknown.append('possible extra charges')
+        measured=obs.get('quality_evidence')
+        if not fresh or not isinstance(measured,dict) or measured.get('qualified') is not True or measured.get('task')!='conversation':unknown.append('comparable answer quality')
+        result[name+'.observation']=auth+('. Unverified: '+', '.join(unknown) if unknown else '. Recent evidence is limited to the recorded task and observation time')+'.'
+    return result
+
+
+def parse(raw):
+    # A single fenced JSON value is presentation noise, not permission for
+    # appended prose or a second packet to escape validation.
+    fenced=re.fullmatch(r'\s*```(?:json)?\s*\n(.*?)\n```\s*',raw,re.S)
+    return json.loads(fenced[1] if fenced else raw)
+
+
+def safe_reasoning(text):
+    """Bounded assertion checks; evidence links cannot excuse adjacent claims.
+
+    This is not a proof of arbitrary factual correctness. Only a directly
+    negated assertion is exempt; unknowns elsewhere do not validate a promise.
+    """
+    from reply_contract import safe_artifact
+    prose=FACT_TOKEN.sub('',text)
+    if not safe_artifact(prose):return False
+    guarantee=re.compile(r"\b(?:guarantee[ds]?|unlimited|free|zero[- ]cost|no (?:extra |additional )?(?:costs?|charges?)|same quality|equal quality|equivalent (?:quality|answers)|(?:quality|quota|allowance) (?:is|stays|remains) (?:protected|unchanged)|(?:preserv|protect|maintain)(?:e[ds]?|ing) (?:the |your )?(?:quality|quota|allowance)|(?:avoid|prevent)(?:s|ed|ing)? (?:exhaustion|rate limits?|extra charges)|will not (?:cost|exhaust|run out)|won[’']t (?:cost|exhaust|run out))\b",re.I)
+    observed=re.compile(r"\b(?:I|we|Codex|Claude|Cursor|Gemini|MiniMax)(?:['’]ve| have)? (?:checked|verified|confirmed|inspected|tested|read)\b|\b(?:can|could|will) (?:already |now )?(?:read|access|open) (?:all |your |the |those |needed |project )*(?:files?|repository|repo)\b|\b(?:remaining|available) (?:quota|allowance|credits?) (?:is|are)\b",re.I)
+    negation=re.compile(r"\b(?:cannot|can['’]t|does not|doesn['’]t|is not|isn['’]t|not|no proof of|no evidence of|no)\s+(?:(?:be|a|any|necessarily|guarantee|establish|imply|prove)\s+){0,3}$",re.I)
+    for clause in re.split(r'(?<=[.!?])\s+|[;\n]|\b(?:and|but|however|therefore|so|thus|although|yet|whereas)\b',prose,flags=re.I):
+        for match in guarantee.finditer(clause):
+            if not negation.search(clause[:match.start()]):return False
+        for match in observed.finditer(clause):
+            if not negation.search(clause[:match.start()]):return False
+    return True
+
+
+def validate_route(resource,steps,projection,*,empty=False):
+    if (resource not in ACTIONABLE or not isinstance(steps,list) or
+            not (0 if empty else 1)<=len(steps)<=3 or
+            any(not isinstance(s,str) or s not in STEPS for s in steps) or len(set(steps))!=len(steps)):
+        raise ValueError('Invalid resource decision')
+    if (resource not in projection.get('allowed_resources',ACTIONABLE) or resource in projection['unavailable'] or
+            'prepare_report' in steps and not supports(resource,'bounded-report')):
+        raise ValueError('The proposed route does not meet the task constraints')
 
 
 def project(root, conversation):
@@ -74,7 +146,8 @@ def project(root, conversation):
                     name for name in ACTIONABLE if re.search(r'\b'+name+r'[- ]only\b',clause,re.I)}
                 names.intersection_update(ACTIONABLE)
                 if names:restricted=names
-    return dict(version=1,inventory=resource_inventory.observe(root),
+    inventory=resource_inventory.observe(root)
+    return dict(version=2,inventory=inventory,facts=facts(inventory,missing=missing),
         owner_sources=[dict(request_id=m['request_id'],sha256=hashlib.sha256(m['text'].encode()).hexdigest()) for m in scope],
         requested_view=view,requested_resources=named,allowed_resources=sorted(restricted) if restricted else list(ACTIONABLE),
         scenario=bool(re.search(r'\b(?:suppose|scenario|what if)\b',source,re.I)),
@@ -82,8 +155,10 @@ def project(root, conversation):
 
 
 def render(raw, projection):
-    """No ungrounded free-text factual field can enter a resource recommendation."""
-    if projection.get('requested_view') in ('comparison','inventory'):
+    """Compose grounded facts and checked reasoning; advice creates no effects."""
+    value=parse(raw)
+    modern=isinstance(value,dict) and set(value)=={'answer','resource','steps'}
+    if not modern and projection.get('requested_view') in ('comparison','inventory'):
         names=projection.get('requested_resources') or list(ROUTES)
         rows=['| Resource | Supported use | Billing / evidence |','|---|---|---|']
         for item in projection['inventory']['resources']:
@@ -92,15 +167,33 @@ def render(raw, projection):
             auth=(str(observed.get('plan') or observed.get('auth_mode'))+' observed; ' if observed.get('freshness')=='recent' and observed.get('authenticated') is True else 'Current sign-in/plan unverified; ')
             rows.append('| '+item['name'].title()+' | '+', '.join(item['tasks'])+' | '+auth+item['billing']+' |')
         return '\n'.join(rows)+'\n\nThese are supported routes, not a verified subscription invoice. Login alone establishes neither remaining capacity nor comparative answer quality; use a matched task before changing the default.',dict(view=projection['requested_view'],execution_started=False)
-    value=json.loads(raw)
-    if (not isinstance(value,dict) or set(value)!= {'resource','steps'} or
-            value['resource'] not in ('codex','cursor','claude','gemini','minimax') or
-            not isinstance(value['steps'],list) or not 1<=len(value['steps'])<=3 or
-            len(set(value['steps']))!=len(value['steps']) or any(s not in STEPS for s in value['steps'])):
+    if modern:
+        if not isinstance(value['answer'],str) or not 1<=len(value['answer'])<=7000:
+            raise ValueError('Invalid answer composition')
+        tokens=FACT_TOKEN.findall(value['answer'])
+        known=projection.get('facts') or facts(projection['inventory'],missing=projection['missing_inputs'])
+        if not tokens or any(t not in known for t in tokens) or not safe_reasoning(value['answer']):
+            raise ValueError('Ungrounded answer composition')
+        content=FACT_TOKEN.sub(lambda m:known[m[1]],value['answer']).strip()
+        resource=value['resource']
+        if resource is None:
+            if value['steps']!=[]:raise ValueError('Explanation cannot select actions')
+            if projection['missing_inputs'] and 'missing_inputs' not in tokens:
+                content+='\n\n'+known['missing_inputs']
+            return content,dict(resource=None,steps=[],fact_ids=tokens,execution_started=False,model_proposal_accepted=True)
+        validate_route(resource,value['steps'],projection,empty=True)
+        decision=dict(resource=resource,missing_inputs=projection['missing_inputs'],scenario=projection['scenario'],
+                      execution_started=False,observation_time=projection['inventory']['observed_at'])
+        if projection['missing_inputs'] and 'missing_inputs' not in tokens:
+            content+='\n\n'+known['missing_inputs']
+        if resource+'.observation' not in tokens:
+            content+='\n\n'+known[resource+'.observation']
+        decision.update(steps=value['steps'],fact_ids=tokens,model_proposal_accepted=True)
+        return content,decision
+    if not isinstance(value,dict) or set(value)!= {'resource','steps'}:
         raise ValueError('Invalid resource decision')
-    resource=value['resource']; steps=value['steps']
-    if resource not in projection.get('allowed_resources',ACTIONABLE) or resource in projection['unavailable'] or 'prepare_report' in steps and not supports(resource,'bounded-report'):
-        raise ValueError('The proposed route does not meet the task constraints')
+    resource=value['resource'];steps=value['steps']
+    validate_route(resource,steps,projection)
     item=next(r for r in projection['inventory']['resources'] if r['name']==resource)
     name={'codex':'Codex','cursor':'Cursor','claude':'Claude','gemini':'Gemini','minimax':'MiniMax'}[resource]
     parts=[]

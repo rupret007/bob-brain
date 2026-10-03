@@ -61,6 +61,16 @@ class ArtifactTests(SessionFixture):
         contract=self.chat.get(self.identifier)['messages'][-1]['_reply_contract']
         self.assertEqual(contract['kind'],'answer')
 
+    def test_meaning_preserving_revision_keeps_accepted_source_across_reloads(self):
+        self.packet('We have five suppliers to review.')
+        first=self.send('Write a short note about reviewing five suppliers.')
+        self.packet('Review the urgent supplier first, then the other four.')
+        second=self.send('Keep the meaning, but acknowledge that one supplier is urgent.')
+        self.assertEqual(second['artifact']['source']['message_id'],first['id'])
+        self.packet('Review the urgent supplier first, then the other four.')
+        third=self.send('Give me the final wording.')
+        self.assertEqual(third['artifact']['source']['message_id'],second['id'])
+
 
 if __name__=='__main__':
     unittest.main()

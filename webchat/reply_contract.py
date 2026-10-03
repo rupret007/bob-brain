@@ -15,6 +15,8 @@ empty: do not preface the writing. The artifact speaks for its requested author,
 not for this application. Commentary speaks for Web Bob and cannot claim any
 execution. Neither field may invent task receipts, IDs, tools or completed work.
 Keep the user's requested length, facts, counts and latest corrections. Do not
+turn a member of an existing group into an additional member: a new exception
+changes treatment, not the original total, unless the owner changes that total.
 wrap the JSON in fences. The server will label the artifact as a draft separately.
 '''
 WRITING = re.compile(r'^(?:write|draft|compose|rewrite|revise|rephrase|shorten|expand)\b', re.I)
@@ -137,12 +139,18 @@ def deliver(root, text, answer, conversation, *, observation, redact):
             content, decision=resource_decision.render(raw,contract['resource_projection'])
         except (ValueError,TypeError,KeyError):
             projection=contract['resource_projection']
-            resource=next((r for r in projection.get('requested_resources',[])+['codex','claude','cursor']
-                if r in projection.get('allowed_resources',[]) and r not in projection['unavailable']),None)
-            if not resource:
-                return 'No supported route meets these constraints with the available evidence. The next step is to check the permitted route’s access and prepare the relevant inputs; no fallback or task was started.',None
-            content,decision=resource_decision.render(json.dumps(dict(resource=resource,steps=['qualify_chat'])),projection)
+            facts=projection.get('facts') or resource_decision.facts(projection['inventory'],missing=projection['missing_inputs'])
+            names=[r for r in projection.get('requested_resources',[]) if r in projection.get('allowed_resources',[])]
+            content='I could not validate that resource answer.'
+            if projection['missing_inputs']:
+                content+=' '+facts['missing_inputs']
+            for name in names[:2]:
+                content+=' '+name.title()+': '+facts[name+'.observation']
+            decision=dict(resource=None,steps=[],execution_started=False,model_proposal_accepted=False)
+        guarded=enforce(root,text,dict(answer,content=content),conversation,observation=observation,redact=redact)
+        if guarded!=content:
             decision['model_proposal_accepted']=False
+        content=guarded
         conversation['messages'][-1]['resource_decision']=decision
         return content,None
     valid = bool(contract and contract['kind']=='writing' and contract['allowed_effects']==[] and
