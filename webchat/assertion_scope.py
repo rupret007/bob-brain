@@ -3,7 +3,7 @@ import re
 
 DIRECT_DENIAL = re.compile(r"\b(?:cannot|can['’]t|does not|doesn['’]t|is not|isn['’]t|not|no)\s+(?:(?:be|a|an|any|necessarily|ever|actually|guarantee|establish|imply|prove)\s+){0,3}$", re.I)
 NEGATED_COMPLEMENT = re.compile(
-    r"\b(?:cannot assume|can['’]t assume|(?:does not|doesn['’]t) (?:make|mean|imply|establish|prove)|"
+    r"\b(?:(?:cannot|can['’]t) (?:assume|promise|guarantee)|(?:does not|doesn['’]t) (?:make|mean|imply|establish|prove)|"
     r"no proof of|no evidence of|rather than (?:assuming|inferring)|without (?:assuming|claiming|promising))\b"
     r"(?:(?!\b(?:guarantee[ds]?|ensures?|therefore|since|because)\b)[^,;:.!?]){0,90}$", re.I)
 PREREQUISITE = re.compile(r'\b(?:whether|to (?:check|test|compare|assess|verify|measure|evaluate|qualify)|'

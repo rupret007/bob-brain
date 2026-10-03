@@ -20,6 +20,9 @@ class PersistentConversationTests(SessionFixture):
         self.fake.reply_text=useful
         answer=self.send('What is waiting for me?')
         self.assertEqual(answer['content'],useful)
+        labelled='1. **Releasing the Hold:** An explicit decision to release the execution hold remains pending.'
+        self.fake.reply_text=labelled
+        self.assertEqual(self.send('What is waiting for me?')['content'],labelled)
         for extra in (' WebJam is on hold.',' Codex remains paused.',' I cleared your real hold.',' All work is on hold.',' I queued the inspection.'):
             self.fake.reply_text=useful+extra
             answer=self.send('Make the pending decision clear.')

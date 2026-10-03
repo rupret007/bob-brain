@@ -534,7 +534,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 if re.search(r'\b(?:your|the|this|that|earlier|previous)\s+(?:(?:earlier|previous|existing|current)\s+)?hold\b',match[0],re.I):
                     # A labelled pending decision is a noun phrase, not an
                     # unsupported hold on an arbitrary external service.
-                    label=re.fullmatch(r'\s*releasing\s*',prefix,re.I) and re.match(r'\s*:\*\*',suffix)
+                    label=re.fullmatch(r'\s*(?:\*\*)?releasing\s*',prefix,re.I) and re.match(r'\s*\*\*?:|\s*:\*\*',suffix)
                     simple=not prefix.strip(' *\n') and re.match(r'\s+(?:remains?\s+(?:active|in place)|still applies)[.!?\s]*$',suffix,re.I)
                     if label or simple:continue
                     return False

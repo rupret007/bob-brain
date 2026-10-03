@@ -126,11 +126,16 @@ def safe_reasoning(text):
     guarantee=re.compile(r"\b(?:guarantee[ds]?|unlimited|free|zero[- ]cost|no (?:extra |additional )?(?:costs?|charges?)|same quality|equal quality|equivalent (?:quality|answers)|(?:quality|quota|allowance) (?:is|stays|remains) (?:protected|unchanged)|(?:preserve[ds]?|protect(?:s|ed)?|maintain(?:s|ed)?|(?:is|are|was|were|will be) (?:preserving|protecting|maintaining)) (?:the |your )?(?:quality|quota|allowance)|(?:avoid|prevent)(?:s|ed|ing)? (?:quota exhaustion|exhaustion|rate limits?|extra charges)|will not (?:cost|exhaust|run out)|won[’']t (?:cost|exhaust|run out))\b",re.I)
     observed=re.compile(r"\b(?:I|we|Codex|Claude|Cursor|Gemini|MiniMax)(?:['’]ve| have)? (?:checked|verified|confirmed|inspected|tested|read)\b|\b(?:can|could|will) (?:already |now )?(?:read|access|open) (?:all |your |the |those |needed |project )*(?:files?|repository|repo)\b|\b(?:remaining|available) (?:quota|allowance|credits?) (?:is|are)\b",re.I)
     protected=re.compile(r'\b(?:quality|quota|allowance|continuity)\s+(?:is|are|stay|stays|remain|remains)\s+(?:protected|unchanged)\b',re.I)
+    exclusion=re.compile(r'\bwithout\s+(?:(?:(?!\b(?:and|but|yet|however)\b)[^,;.!?\n]){1,120}\s+or\s+)?'
+                         r'(?:(?:any|the)\s+)?(?:(?:risk(?:ing)?|triggering|incurring|causing)\s+(?:of\s+)?)?'
+                         r'(?:(?:unexpected|unintended|extra|additional|new|degraded|worse|lower[- ]quality)\s+)*'
+                         r'(?:charges?|costs?|spending|overages?|degraded responses|quality loss|quality degradation)\b|'
+                         r'\b(?:no|zero)\s+risk\s+of\s+(?:charges?|costs?|overages?|quality loss)\b',re.I)
     clauses=re.split(r'((?<=[.!?])\s+|[,;\n]|\b(?:and|but|however|therefore|so|thus|although|yet|whereas|because|since)\b)',prose,flags=re.I)
     for index in range(0,len(clauses),2):
         clause=clauses[index]
         sentence_start=index==0 or (clauses[index-1].isspace() and clauses[index-2].rstrip().endswith(('.','!','?')))
-        for match in (*guarantee.finditer(clause), *protected.finditer(clause)):
+        for match in (*guarantee.finditer(clause), *protected.finditer(clause), *exclusion.finditer(clause)):
             prefix=clause[:match.start()]
             # A test/comparison noun never establishes a guarantee. Negation
             # must attach to that promise itself, not an unrelated condition.
@@ -311,6 +316,28 @@ def compose_blocks(blocks, known, projection):
     return '\n\n'.join(content),tokens,rejected
 
 
+def preparation_steps(steps, resource, projection):
+    """Render independently validated proposal fields, never repaired prose.
+
+    These are preparation instructions, not authority or a claim of execution.
+    A rejected causal explanation cannot remove a valid next step or turn it
+    into a promise about outcome, account capacity, cost or answer quality.
+    """
+    name=resource.title() if resource else 'the candidate route'
+    descriptions={
+        'provide_inputs':'Assemble the smallest relevant source snapshot, current constraints and acceptance criteria using an already-permitted read or owner-supplied material. Missing inputs remain unverified.',
+        'inspect_allowance':'Check the authentication route, current remaining allowance and extra-usage settings. Record unknowns; require budget admission before any comparison generates an answer.',
+        'keep_current':'Leave the default configuration unchanged while checking current availability and evaluating alternatives; retaining a configuration does not establish service health or answer quality.',
+        'preserve_standard':'Write the acceptance criteria and prepare matched tasks, including multi-turn corrections, using the same inputs for each candidate. Require quality evidence before changing the default.',
+        'review_dependency':'Verify the linked Cursor/Grok allowance and observed usage before recommending a subscription change.',
+        'qualify_chat':'Prepare matched tasks and an evaluation rubric for '+name+'. Verify current access and budget admission before running the comparison; its result must qualify any default change.',
+        'prepare_report':'Define a bounded '+name+' report assignment with its source snapshot, expected artifact and acceptance criteria. Obtain task and budget admission before execution.',
+    }
+    if not steps:return ''
+    return '\n\nProposed preparation steps (not started):\n'+'\n'.join(
+        str(i)+'. '+descriptions[s] for i,s in enumerate(steps,1))
+
+
 def render(raw, projection, *, root=None):
     """Compose grounded facts and checked reasoning; advice creates no effects."""
     value=parse(raw)
@@ -379,8 +406,9 @@ def render(raw, projection, *, root=None):
                 raise ValueError('Invalid general advice steps')
             if projection['missing_inputs'] and (not blocked or 'missing_inputs' not in tokens):
                 content+='\n\n'+known['missing_inputs']
+            if rejected:content+=preparation_steps(steps,None,projection)
             return content,dict(resource=None,steps=steps if not rejected else [],fact_ids=tokens,execution_started=False,model_proposal_accepted=not rejected,
-                partial=bool(rejected),rejected_blocks=rejected,acceptance_scope='schema and bounded claim checks; not semantic certification')
+                verified_preparation_steps=steps if rejected else [],partial=bool(rejected),rejected_blocks=rejected,acceptance_scope='schema and bounded claim checks; not semantic certification')
         validate_route(resource,value['steps'],projection,empty=True)
         decision=dict(resource=resource,missing_inputs=projection['missing_inputs'],scenario=projection['scenario'],
                       execution_started=False,observation_time=projection['inventory']['observed_at'])
@@ -390,7 +418,9 @@ def render(raw, projection, *, root=None):
             content+='\n\n'+known[resource+'.observation']
         decision.update(steps=value['steps'],fact_ids=tokens,model_proposal_accepted=not rejected,
                         partial=bool(rejected),rejected_blocks=rejected,acceptance_scope='schema and bounded claim checks; not semantic certification')
-        if rejected:decision.update(resource=None,steps=[])
+        if rejected:
+            content+=preparation_steps(value['steps'],resource,projection)
+            decision.update(resource=None,steps=[],verified_preparation_steps=value['steps'])
         return content,decision
     if not isinstance(value,dict) or set(value)!= {'resource','steps'}:
         raise ValueError('Invalid resource decision')

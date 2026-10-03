@@ -166,6 +166,28 @@ class ProjectionTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     resource_decision.render(json.dumps(dict(answer=blocks,resource=None,steps=[])),projection)
 
+    def test_invalid_explanation_keeps_only_independently_validated_preparation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            projection=resource_decision.project(Path(temp),self.conversation('What should our paid subscription do when needed files are missing?'))
+            for bad in ('Proceed without risking unexpected charges or degraded responses.',
+                        'This lets us compare without purchasing a new service or triggering unintended charges.',
+                        'The setup works without incurring extra costs.',
+                        'Preparing inputs entails zero risk of overages.'):
+                packet=dict(answer=[dict(fact='purchase_vs_usage'),dict(reasoning=bad)],resource=None,steps=['provide_inputs','inspect_allowance','preserve_standard'])
+                answer,decision=resource_decision.render(json.dumps(packet),projection)
+                self.assertNotIn(bad,answer);self.assertTrue(decision['partial'])
+                self.assertFalse(decision['model_proposal_accepted']);self.assertFalse(decision['execution_started'])
+                self.assertEqual(decision['steps'],[])
+                self.assertEqual(decision['verified_preparation_steps'],packet['steps'])
+                self.assertIn('Proposed preparation steps (not started)',answer)
+                self.assertIn('multi-turn corrections',answer)
+                self.assertIn('require budget admission',answer)
+                for resource,steps in ((None,['qualify_chat']),('codex',['prepare_report']),(None,['invented'])):
+                    with self.assertRaises(ValueError):resource_decision.render(json.dumps(dict(packet,resource=resource,steps=steps)),projection)
+            self.assertTrue(resource_decision.safe_reasoning('Prepare the inputs without purchasing another subscription.'))
+            self.assertTrue(resource_decision.safe_reasoning('We cannot promise a comparison without incurring extra costs.'))
+            self.assertFalse(resource_decision.safe_reasoning('We cannot promise a comparison without incurring extra costs, but this route runs without extra charges.'))
+
     def test_unavailable_current_route_cannot_be_kept_by_any_packet_format(self):
         with tempfile.TemporaryDirectory() as temp:
             conversation=self.conversation('Suppose Gemini is depleted; what can our subscriptions do?')
