@@ -1104,10 +1104,10 @@ class Chat(TaskDispatch):
                 from status_observation import bind_observation
                 observation = {}
                 from reply_contract import deliver
-                delivered, artifact = deliver(self.ledger_root(identifier), user_msg.get('content',''), answer, value,
-                                               observation=observation, redact=self.redact)
-                from project_reports import render_citations
                 report_bindings=getattr(getattr(self.providers,'current_call',None),'report_sources',[]) or []
+                delivered, artifact = deliver(self.ledger_root(identifier), user_msg.get('content',''), answer, value,
+                                               observation=observation, redact=self.redact,report_bindings=report_bindings)
+                from project_reports import render_citations
                 report_sources=[]
                 if report_bindings:
                     delivered,report_sources=render_citations(self.ledger_root(identifier),delivered,report_bindings)

@@ -14,6 +14,35 @@ import task_queue
 
 
 class ProjectReportTests(Fixture):
+    def test_completion_support_is_bound_to_verified_saved_report_not_another_task(self):
+        import result_provenance
+        row,_=self.report();self.finish_report(row,'Useful saved finding with evidence.')
+        question='For Web Bob, what finished and what should happen next?'
+        conversation=dict(project_id='web-bob')
+        project=project_context.projection(self.root,conversation,question)
+        _,bindings=project_reports.answer_evidence(self.root,conversation,project,question,self.chat.redact)
+        source=dict(topic=None,records=[],prior_assistant_evidence=False)
+        text='The report completed. [report:saved-report-1]'
+        # A citation in a separate sentence is not a grammatical subject; a
+        # bound alias in the same proposition identifies the actual report.
+        text='The saved report [report:saved-report-1] completed.'
+        self.assertEqual(result_provenance.deliver(self.root,text,source,bindings)[0],text)
+        trailing='The report completed [report:saved-report-1].'
+        self.assertEqual(result_provenance.deliver(self.root,trailing,source,bindings)[0],trailing)
+        for unsupported in ('The recommendations in [report:saved-report-1] were executed.',
+                            'The report’s recommendations in [report:saved-report-1] were executed.',
+                            'The recommendations for '+row['id']+' were executed.'):
+            self.assertNotEqual(result_provenance.deliver(self.root,unsupported,source,bindings)[0],unsupported)
+        source['records']=[dict(subject='H-88',kind='received_claim',predicates=['completion'])]
+        other='Task H-88 completed.'
+        self.assertNotEqual(result_provenance.deliver(self.root,other,source,bindings)[0],other)
+        (self.root/row['report_contract']['output_relative']).write_text('Altered result')
+        # Retain the referenced identity even when fresh verification fails.
+        source['records'].append(dict(subject=row['id'],kind='received_claim',predicates=[]))
+        changed=row['id']+' completed.'
+        self.assertNotEqual(result_provenance.deliver(self.root,changed,source,bindings)[0],changed)
+        self.assertNotEqual(result_provenance.deliver(self.root,text,source,bindings)[0],text)
+
     def finish_report(self,row,answer):
         claimed=task_queue.claim(self.root,'claude',identifier=row['id'])
         digest=hashlib.sha256(answer.encode()).hexdigest()

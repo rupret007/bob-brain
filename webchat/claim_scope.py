@@ -12,11 +12,13 @@ from assertion_scope import nonasserted as local_nonasserted, DIRECT_DENIAL
 from reported_records import units
 
 FINITE = re.compile(r"(?<![\w-])(?:am|is|are|was|were|has|have|had|does|do|did|can|could|will|would|"
-                    r"should|must|may|might|cannot|can['’]t|won['’]t|guarantees|ensures|"
+                    r"should|must|may|might|cannot|can['’]t|won['’]t|completed|finished|succeeded|executed|guarantees|ensures|"
                     r"preserves|protects|maintains|avoids|prevents|eliminates|incurs|"
                     r"prove[sd]?|establish(?:es|ed)?|confirm[sd]?|demonstrate[sd]?|means|remains|stays|"
                     r"reduce[sd]?|works?|runs?|reads?|access(?:es)?|opens?|offers?|provides?|returns?|points?|"
                     r"guarantee|ensure|preserve|protect|maintain|avoid|prevent|eliminate)(?![\w-])", re.I)
+AUXILIARY = re.compile(r"\b(?:am|is|are|was|were|has|have|had|does|do|did|can|could|will|would|"
+                       r"should|must|may|might|cannot|can['’]t|won['’]t)\b",re.I)
 QUESTION = re.compile(r'^\s*(?:who|what|which|where|when|why|how|am|is|are|was|were|'
                       r'has|have|had|do|does|did|can|could|will|would|should|may|might|must)\b', re.I)
 DIRECTIVE = re.compile(r'^\s*(?:(?:we|you)\s+(?:should|must|need to)\s+)?'
@@ -48,6 +50,7 @@ TERMINAL = re.compile(r'(?<=[.!?;])(?=\s|$)|\n')
 
 def plain(text):
     """Keep offsets stable while removing presentation from grammatical input."""
+    text = re.sub(r'\[(?:report|fact):[^\]\n]+\]',lambda m:m[0].replace(':',' '),text)
     text = re.sub(r'[*_`#]', ' ', text)
     return re.sub(r'(?m)^\s*(?:[-+]\s+|\d+[.)]\s+)', lambda m: ' ' * len(m[0]), text)
 
@@ -68,8 +71,11 @@ def _coordination(text, *, question=False, base=0, label=''):
         left = text[start:match.start()]
         right = text[match.end():]
         # Noun-list commas retain a following common predicate/negation.
-        left_complete = bool(FINITE.search(left) or DIRECTIVE.match(left) or QUESTION.match(left) or
-                             re.match(r'^\s*no\s+',left,re.I))
+        left_complete = bool(FINITE.search(left) or DIRECTIVE.match(left) or QUESTION.match(left))
+        # Lexical verbs can be noun heads or participial modifiers here:
+        # "No completed cost reports ..." still awaits its common predicate.
+        if re.match(r'^\s*(?:no|neither)\b',left,re.I) and not AUXILIARY.search(left):
+            left_complete=False
         next_join = CONNECTOR.search(right)
         immediate = right[:next_join.start()] if next_join and next_join.start() else right
         right_finite = FINITE.search(immediate)
@@ -78,6 +84,14 @@ def _coordination(text, *, question=False, base=0, label=''):
         denied = list(DENIED.finditer(left))
         new_subject = (re.match(r'^\s*(?:I|we|you|it|this|that|these|those|the|our|your|my|a|an|all|every|each|any|some)\b',right,re.I)
                        or re.match(r'^\s*[A-Z][\w-]*\b',right))
+        # A negative quantified noun list still needs its common predicate:
+        # "No prices, fees, or rankings can be determined" is one denial.
+        # A fresh determiner/actor instead introduces an independent subject,
+        # including after an elliptical "No evidence ..." statement.
+        explicit_subject=re.match(r'^\s*(?:I|we|you|it|this|that|these|those|the|our|your|my|a|an|all|every|each|any|some)\b',right,re.I)
+        nominal_negative=re.match(r'^\s*no\s+(?:evidence|proof|assurances?|guarantees?|promises?)\b',left,re.I)
+        if re.match(r'^\s*(?:no|neither)\b',left,re.I) and (explicit_subject or nominal_negative and new_subject):
+            left_complete = True
         plural_subject = bool(right_finite and right_finite[0].lower() in ('are','were') and
                               re.search(r'\b[a-z][\w-]*s\s*$',right[:right_finite.start()]) and
                               not re.match(r'^\s*(?:no|zero|\d+)\b',right,re.I))
@@ -94,7 +108,8 @@ def _coordination(text, *, question=False, base=0, label=''):
                               r'^\s*(?:preserve|protect|maintain|keep|avoid|prevent|eliminate)\b',right,re.I)))
         conditional_end = bool(link == '' and HYPOTHETICAL.match(left))
         discourse = link == '' and re.fullmatch(r'\s*(?:yes|no|well|okay)\s*',left,re.I)
-        boundary = bool(ASSERTED_LINK.fullmatch(link) or relative or conditional_end or directives or discourse or
+        result_adjunct=bool(link=='' and left_complete and re.match(r'^\s*(?:guaranteeing|ensuring|making|leaving|thereby)\b',right,re.I))
+        boundary = bool(ASSERTED_LINK.fullmatch(link) or relative or conditional_end or directives or discourse or result_adjunct or
                         link in ('and', 'or', 'while', '') and independent)
         if not boundary:
             continue
@@ -163,6 +178,11 @@ def disposition(clause, start, end, predicate):
                              r'evidence|proof|assumption\w*|presumption\w*)\b', text, re.I)
     if nominal_denial:
         return 'negated_nominal_claim'
+    quantified = re.match(r'^\s*(?:no|neither)\b', text, re.I)
+    epistemic = re.search(r'\b(?:(?:can|could)\s+be|is|are|was|were)\s+'
+                          r'(?:known|determined|established|concluded|inferred|verified|confirmed)\b',text,re.I)
+    if quantified and epistemic and start<=epistemic.end() and not AUXILIARY.search(text[:epistemic.start()]):
+        return 'negative_quantified_knowledge'
     for denial in PASSIVE_UNKNOWN.finditer(text):
         # A trailing predicate governs a coordinated subject, not a preceding
         # completed assertion that happens to share the sentence.

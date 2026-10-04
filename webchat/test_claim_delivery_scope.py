@@ -27,6 +27,14 @@ VALID = (
     "Avoiding extra charges depends entirely on your subscription's actual remaining allowance and overage rules, which have not yet been verified.",
     'Preventing degradation requires representative comparisons.',
     'We cannot conclude that equivalent quality is established.',
+    'No prices, relative advantages, or cost differences can be determined without both inputs.',
+    'Neither fees nor quality differences can be established from the supplied evidence.',
+    'We cannot determine costs, relative advantages, or quality differences without both inputs.',
+    '**Comparative Strengths or Rankings:** No trade-offs, relative advantages, cost differences, or feasibility rankings can be determined without Proposal B\'s contents.',
+    'No cost comparisons can be determined. Prepare the missing input next.',
+    'No prices, fees, or API costs can be determined without both inputs.',
+    'No cost claims, quota reports, or API limits can be verified without the records.',
+    'No completed cost reports or API comparisons can be verified without the records.',
 )
 
 INVALID = (
@@ -49,10 +57,28 @@ INVALID = (
     'We cannot determine which proposal is more cost-effective, but this route cannot incur charges.',
     'Avoiding charges depends on unverified allowance and overage rules; therefore this invocation is free of charges.',
     'Preventing degradation guarantees equivalent quality.',
+    'No fees, charges, or overages will be incurred.',
+    'No cost comparisons can be determined, and this route is free of charges.',
+    'No cost comparisons can be determined; this route guarantees equivalent quality.',
+    'No costs are known, guaranteeing zero charges.',
+    'No costs are known, making this invocation free of charges.',
 )
 
 
 class DeliveredScopeTests(SessionFixture):
+    def test_negative_subject_keeps_its_predicate_and_independent_claims_stay_separate(self):
+        denial='No cost comparisons can be determined'
+        source=denial+', and this route is free of charges. Prepare the missing input next.'
+        delivered,findings=claim_evidence.deliver(source)
+        self.assertIn(denial,delivered)
+        self.assertIn('Prepare the missing input next.',delivered)
+        self.assertEqual(len(findings),1)
+        self.assertEqual(source[findings[0]['start']:findings[0]['end']],'this route is free of charges.')
+        value='No fees, charges, or overages will be incurred.'
+        delivered,findings=claim_evidence.deliver(value)
+        self.assertEqual(value[findings[0]['start']:findings[0]['end']],value)
+        self.assertNotIn('will be incurred',delivered)
+
     def test_retained_questions_denials_and_requirements_survive_ordinary_delivery(self):
         self.fake.reply_text = 'Choose the inspection scope.'
         self.send('Help plan a read-only Web Bob readiness report. Hold execution until I choose its scope.')

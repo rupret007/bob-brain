@@ -813,6 +813,12 @@ class Providers:
         if retained:
             snapshots += [dict(path='conversation user-source index', modified='saved', truncated=False,
                                text=self.redact(json.dumps(retained, ensure_ascii=False)))]
+        import result_provenance
+        provenance=(contract or {}).get('result_provenance') or result_provenance.projection(conversation)
+        if provenance['records'] or self.current_call.report_sources:
+            snapshots.append(dict(path='task result provenance',modified='this request',truncated=False,
+                text=self.redact(json.dumps(dict(provenance,verified_reports=result_provenance.verified(
+                    self.context_root(conversation.get('id')),self.current_call.report_sources)),ensure_ascii=False))))
         saved_permissions = permission_facts(conversation)
         if answer_context and not blocked and (needs_permission_facts(last_user) or saved_permissions['holds'] or saved_permissions['last_permission']):
             # Preserve authoritative state for questions about saved holds even
@@ -866,6 +872,8 @@ class Providers:
         self.current_call.instructions = policy + scope
         from claim_evidence import RULES as EVIDENCE_STRENGTH_RULES
         self.current_call.instructions += '\n' + EVIDENCE_STRENGTH_RULES
+        if provenance['records'] or self.current_call.report_sources:
+            self.current_call.instructions += '\n' + result_provenance.RULES
         if project:
             self.current_call.instructions += '\n' + PROJECT_RULES
         if self.current_call.report_sources:

@@ -79,9 +79,11 @@ def derive(conversation, redact, root=None):
         kind='catchup'
     else:
         catchup=None
+    import result_provenance
     return dict(version=1, kind=kind, request_id=user.get('request_id'), reply_id=reply.get('id'),
                 user_sha256=digest(text), allowed_effects=[], source=source,
-                localized_edit=bool(edit), permissions=permission_facts(conversation),resource_projection=projection,catchup_projection=catchup)
+                localized_edit=bool(edit), permissions=permission_facts(conversation),resource_projection=projection,catchup_projection=catchup,
+                result_provenance=result_provenance.projection(conversation))
 
 
 def safe_artifact(content, source_text=''):
@@ -126,7 +128,20 @@ def safe_artifact(content, source_text=''):
     return True
 
 
-def deliver(root, text, answer, conversation, *, observation, redact):
+def deliver(root, text, answer, conversation, *, observation, redact, report_bindings=()):
+    """Check provenance after every other prose transformation, on saved scope."""
+    import result_provenance
+    content,artifact=_deliver(root,text,answer,conversation,observation=observation,redact=redact)
+    contract=current(conversation) or {}
+    projection=contract.get('result_provenance') or result_provenance.projection(conversation)
+    checked,review=result_provenance.deliver(root,content,projection,report_bindings)
+    if projection.get('records') or report_bindings or review['partial']:
+        conversation['messages'][-1]['result_provenance_review']=review
+    if checked!=content:artifact=None
+    return checked,artifact
+
+
+def _deliver(root, text, answer, conversation, *, observation, redact):
     """Return (visible answer, accepted artifact) from a saved server contract."""
     from reply_authority import enforce
     from reply_guard import repair_hollow_progress
