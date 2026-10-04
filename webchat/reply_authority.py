@@ -575,11 +575,13 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         # Referencing a matching saved hold is not an acknowledgment of a new
         # permission change. Effect/dispatch checks still examine all prose.
         if not scopes or asserted_permission_change(part):return False
+        from hold_scope import GLOBAL_REFERENCE, pending_reference
         mentioned=projects(part)
         if any(not blocked_scopes(state,[name]) for name in mentioned):return False
+        if pending_reference(part,state,scopes,HOLD_CLAIM):return True
         if re.search(r'\b(?:'+ '|'.join(re.escape(n) for n in WORKER_NAMES)+r')\b',part,re.I):return False
         global_hold=state['holds'].get('all')
-        if (not global_hold or global_hold.get('released_projects')) and re.search(r'\b(?:all|every|everything|global)\b',part,re.I):return False
+        if (not global_hold or global_hold.get('released_projects')) and GLOBAL_REFERENCE.search(part):return False
         qualifier=re.match(r'\s*For\s+([^,;:]+),',part,re.I)
         if qualifier and qualifier[1].strip() not in state['holds']:return False
         # A bare reference is allowed only within the current held project;
