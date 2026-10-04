@@ -45,6 +45,30 @@ CAUSE = re.compile(r'\b(?:proves?|establish\w*|confirm\w*|demonstrat\w*|means?|p
 PERSISTENCE = re.compile(r'\b(?:persistence|persisted|backend|API failure|storage failure|never (?:saved|stored)|data loss)\b', re.I)
 EVIDENCE_OBJECT = re.compile(r'\b(?:data|evidence|records?|settings?|configuration|information|documentation|'
                              r'controls?|criteria|changes?|questions?|decisions?|permissions?|approval|proof|measurements?)\b', re.I)
+# Copular conclusions are assurances too: an outcome can be asserted intact
+# without using a verb such as "preserve". Bind the outcome as subject, not as
+# an attributive modifier in "quality records remain intact".
+STATE = re.compile(r'\b(?P<link>is|are|was|were|be|been|being|remain(?:s|ed)?|stay(?:s|ed)?)\s+'
+                   r'(?:(?:\w+ly|still|not)\s+)*(?P<state>intact|unaffected|unbroken|stable|'
+                   r'unchanged|equal|equivalent|protected|preserved|maintained)\b',re.I)
+STATE_BRIDGE = re.compile(r'^\s*(?:(?:\w+ly|still|not|never|am|is|are|was|were|be|been|being|'
+    r'has|have|had|can|cannot|could|will|would|may|might|must|should|need|needs|to|'
+    r'known|proven|shown|established|verified|required)\s+)*$',re.I)
+
+
+def state_predicates(text, objects):
+    for match in STATE.finditer(text):
+        for subject in objects.finditer(text[:match.start()]):
+            bridge = text[subject.end():match.start()]
+            # Only grammatical links may follow the protected subject. Other
+            # noun heads (records/criteria/etc.) describe a different object.
+            if not STATE_BRIDGE.fullmatch(bridge):
+                continue
+            before = text[:subject.start()]
+            if re.search(r'\b(?:records?|data|evidence|criteria|settings?|measurements?)\s+of\s*$',before,re.I):
+                continue
+            yield match
+            break
 OBJECT_BOUNDARY = re.compile(r'\b(?:about|above|across|after|against|along|among|around|as|at|before|behind|below|'
     r'beneath|beside|between|beyond|by|despite|during|except|for|from|in|inside|into|near|of|off|on|onto|out|outside|'
     r'over|past|per|since|through|throughout|to|toward|under|until|upon|via|with|within|when|while|because|using|or|that|which|where|if)\b', re.I)
@@ -121,6 +145,13 @@ def violations(content, *, source='', trusted_facts=(), artifact=False):
                 labelled = bool(objects.search(part.label))
                 if not targets and not labelled:
                     continue
+                states = list(state_predicates(clause, objects))
+                for predicate in states:
+                    start, end = predicate.span('state')
+                    if not disposition(part, start, end, predicate['state'], copular=True):
+                        categories.add(kind)
+                        claims.append(dict(start=part.start+start,end=part.start+end,
+                                           category=kind,disposition='asserted_without_support'))
                 for predicate in ASSURANCE.finditer(clause):
                     # Acquisition is a different operation from metered use.
                     tail = clause[predicate.end():]
@@ -137,7 +168,8 @@ def violations(content, *, source='', trusted_facts=(), artifact=False):
                         # Configuration/evidence availability is a different
                         # object from charges or a guaranteed performance outcome.
                         continue
-                    if disposition(part, predicate.start(), predicate.end(), predicate[0]):
+                    copular = any(p.span('state') == predicate.span() for p in states)
+                    if disposition(part, predicate.start(), predicate.end(), predicate[0], copular=copular):
                         continue
                     # A predicate must govern an outcome in this clause. A cost
                     # noun before "without buying" cannot change that operation.

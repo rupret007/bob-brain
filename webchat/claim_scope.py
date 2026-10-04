@@ -22,11 +22,11 @@ AUXILIARY = re.compile(r"\b(?:am|is|are|was|were|has|have|had|does|do|did|can|co
 QUESTION = re.compile(r'^\s*(?:who|what|which|where|when|why|how|am|is|are|was|were|'
                       r'has|have|had|do|does|did|can|could|will|would|should|may|might|must)\b', re.I)
 DIRECTIVE = re.compile(r'^\s*(?:(?:we|you)\s+(?:should|must|need to)\s+)?'
-                       r'(?:check|verify|confirm|inspect|examine|assess|evaluate|compare|'
+                       r'(?:check|verify|confirm|inspect|examine|assess|evaluate|audit|compare|'
                        r'measure|test|require|define|outline|specify|prepare|write|record|discuss|choose|decide|'
                        r'preserve|protect|maintain|keep)\b', re.I)
 VERIFY = re.compile(r'^\s*(?:(?:we|you)\s+(?:should|must|need to)\s+)?'
-                    r'(?:check|verify|confirm|assess|evaluate|measure|test|inspect|examine)\b', re.I)
+                    r'(?:check|verify|confirm|assess|evaluate|measure|test|inspect|examine|audit)\b', re.I)
 REQUIRE = re.compile(r'^\s*(?:(?:we|you)\s+(?:should|must|need to)\s+)?require\b', re.I)
 COMPLEMENT = re.compile(r'\b(?:whether|that)\s*$', re.I)
 EPISTEMIC = r'(?:assume|claim|promise|guarantee|establish|prove|mean|imply|confirm|verify|know|determine|conclude)'
@@ -46,6 +46,83 @@ ASSERTED_LINK = re.compile(r'^(?:now that|given that|even though|because|since|a
                            r'however|therefore|whereas|thus|but|yet|so|then)$', re.I)
 HYPOTHETICAL = re.compile(r'^\s*(?:if|unless|until|when|once|before)\b', re.I)
 TERMINAL = re.compile(r'(?<=[.!?;])(?=\s|$)|\n')
+WH = re.compile(r'^\s*(?:who|what|which|where|when|why|how)\b', re.I)
+# Bare access/read/run/return can be nominal heads in a wh subject. An auxiliary
+# or an unambiguous lexical predicate completes that subject; its wh head alone
+# does not. This is a bounded grammar, not a general English parser.
+WH_PREDICATE = re.compile(r'\b(?:guarantees?|ensures?|preserves?|protects?|maintains?|'
+    r'avoids?|prevents?|eliminates?|incurs?|means|remains|stays|'
+    r'establish(?:es|ed)?|demonstrates?|confirms?|proves?|shows?|indicates?)\b', re.I)
+DECLARATIVE = re.compile(r'\b(?:shows?|showed|indicates?|indicated|suggests?|asserts?)\b',re.I)
+PURPOSE = re.compile(r'\bto\s+(?:check|verify|confirm|inspect|examine|assess|evaluate|audit|'
+    r'measure|test|ensure|establish|prove|demonstrate|preserve|protect|maintain)\b',re.I)
+STRONG_FINITE = re.compile(r'\b(?:(?:guarantee|ensure|confirm|prove|establish|demonstrate)s?|'
+    r'(?:is|are|was|were|will be|has been|have been)\s+'
+    r'(?:guaranteed|proven|proved|confirmed|established|verified|known))\b',re.I)
+
+
+def purpose_boundary(text):
+    """Return (has governed purpose, independent stronger predicate)."""
+    purpose = PURPOSE.search(text)
+    if not purpose or finite_predicate(text[:purpose.start()]):
+        return False, None
+    for match in STRONG_FINITE.finditer(text,purpose.end()):
+        prefix = text[purpose.end():match.start()]
+        # A stronger predicate needs its own explicit question/denial. The
+        # mere presence of an earlier infinitive is not that governor.
+        own_check = (VERIFY.match(purpose[0].split(None,1)[1]) and re.match(r'^\s*(?:whether|that)\b',prefix,re.I)
+                     or re.search(r'\b(?:check|verify|confirm|assess|evaluate|test)\s+(?:whether|that)\b',prefix,re.I))
+        if own_check or DIRECT_DENIAL.search(prefix) or DENIED.search(prefix) or re.search(r'\bto\s*$',prefix,re.I):
+            continue
+        return True, match
+    return True, None
+
+
+def finite_predicate(text, *, purpose=False):
+    """Find a finite head, not a nominal access/return or infinitive purpose."""
+    if purpose:
+        governed, boundary = purpose_boundary(text)
+        if governed:
+            return boundary
+    for match in sorted([*FINITE.finditer(text),*DECLARATIVE.finditer(text)],key=lambda m:m.start()):
+        if re.search(r'\bto\s*$',text[:match.start()],re.I):
+            continue
+        nominal = match[0].lower() in ('access','read','work','run','return','points')
+        actor = re.search(r'\b(?:I|we|you|they|he|she|it)\s*$',text[:match.start()],re.I)
+        plural_subject = re.fullmatch(r'\s*(?:(?:the|our|your|these|those|some|all)\s+)?'
+                                      r'(?:[\w’\'-]+\s+)*[\w’\'-]+s\s*',text[:match.start()],re.I)
+        if nominal and not (actor or plural_subject):
+            continue
+        return match
+    return None
+
+
+def question_complete(text):
+    wh = WH.match(text)
+    if not wh:
+        return bool(finite_predicate(text))
+    if AUXILIARY.search(text):
+        return True
+    for predicate in WH_PREDICATE.finditer(text):
+        # In "which guarantees and safeguards...", guarantees is a nominal
+        # head. A lexical predicate needs a subject and its complement.
+        subject = text[wh.end():predicate.start()].strip()
+        complement = text[predicate.end():].strip(' ,.!?')
+        if complement and (subject or wh[0].strip().lower() in ('who','what')):
+            return True
+    return False
+
+
+def verification_governs(prefix):
+    """An imperative governs a check; a nominal audit's result does not."""
+    directive = VERIFY.match(prefix)
+    if not directive:
+        return False
+    remainder = prefix[directive.end():]
+    complement = re.search(r'\b(?:whether|that|to\s+(?:check|verify|confirm|ensure|'
+                           r'establish|assess|evaluate|measure|test|inspect|examine))\b',remainder,re.I)
+    subject = remainder[:complement.start()] if complement else remainder
+    return not finite_predicate(subject)
 
 
 def plain(text):
@@ -71,14 +148,20 @@ def _coordination(text, *, question=False, base=0, label=''):
         left = text[start:match.start()]
         right = text[match.end():]
         # Noun-list commas retain a following common predicate/negation.
-        left_complete = bool(FINITE.search(left) or DIRECTIVE.match(left) or QUESTION.match(left))
+        left_complete = bool(FINITE.search(left) or DIRECTIVE.match(left))
+        if WH.match(left):
+            left_complete = question_complete(left)
         # Lexical verbs can be noun heads or participial modifiers here:
         # "No completed cost reports ..." still awaits its common predicate.
         if re.match(r'^\s*(?:no|neither)\b',left,re.I) and not AUXILIARY.search(left):
             left_complete=False
         next_join = CONNECTOR.search(right)
         immediate = right[:next_join.start()] if next_join and next_join.start() else right
-        right_finite = FINITE.search(immediate)
+        directive = DIRECTIVE.match(left)
+        object_list = bool(directive and not finite_predicate(left[directive.end():]) and
+                           not re.search(r'\b(?:whether|that)\b',left,re.I))
+        bare_object = not re.match(r'^\s*(?:I|we|you|they|he|she|it|this|that|the|our|your|my|a|an)\b',right,re.I)
+        right_finite = finite_predicate(immediate,purpose=object_list and (bare_object or ',' not in match[0]))
         right_subject = bool(right_finite and right[:right_finite.start()].strip())
         right_question = bool(question and QUESTION.match(right))
         denied = list(DENIED.finditer(left))
@@ -98,8 +181,14 @@ def _coordination(text, *, question=False, base=0, label=''):
         nominal_complement = bool(denied and not FINITE.search(left[denied[-1].end():]) and
                                   right_finite and right_finite[0].lower() in ('are', 'were') and
                                   not new_subject and not plural_subject and ',' not in match[0])
-        independent = left_complete and (right_subject or right_question) and not nominal_complement
-        relative = link in ('which', 'that') and not DEPENDENT.search(left) and bool(
+        # A malformed/elliptical question cannot shield a separate statement
+        # introduced by a comma and a new actor.
+        explicit_actor = re.match(r'^\s*(?:I|we|you|they|he|she|it)\b',right,re.I) or re.match(r'^\s*[A-Z][\w-]*\b',right)
+        indicative_subject = explicit_subject and right_finite and not re.fullmatch(
+            r'can|could|will|would|should|must|may|might',right_finite[0],re.I)
+        question_boundary = question and WH.match(left) and ',' in match[0] and (explicit_actor or indicative_subject)
+        independent = (left_complete or question_boundary) and (right_subject or right_question) and not nominal_complement
+        relative = bool(left.strip()) and link in ('which', 'that') and not DEPENDENT.search(left) and bool(
             right_finite and not right[:right_finite.start()].strip())
         # Bare outcome verbs can share an asserted subject/modal: "the route
         # will reduce demand and preserve quality" is not two directives.
@@ -150,7 +239,7 @@ def clauses(content):
         offset += len(unit)
 
 
-def disposition(clause, start, end, predicate):
+def disposition(clause, start, end, predicate, *, copular=False):
     """Return a nonassertion reason, or None for an unsupported assertion.
 
     Offsets are relative to this clause. Every sibling statement is classified
@@ -192,12 +281,27 @@ def disposition(clause, start, end, predicate):
         return 'question'
     if REQUIRE.match(prefix):
         return 'required_outcome'
-    if VERIFY.match(prefix):
+    if verification_governs(prefix):
         # "Inspect records without charges" attaches an assurance to the
         # inspection. "Check whether it runs without charges" asks a question.
         adjunct = predicate.lower() in ('without', 'no', 'free', 'zero')
         if not adjunct or re.search(r'\bwhether\b', prefix, re.I):
             return 'verification_complement'
+    if copular:
+        # Keep the modal/epistemic governor visible when the predicate is an
+        # adjectival state rather than a lexical outcome verb.
+        link = r'(?:(?:be|been|being|remain(?:s|ed)?|stay(?:s|ed)?)\s+)?'
+        adverbs = r'(?:(?:\w+ly|still|not)\s+)*'
+        if re.search(r"\b(?:cannot|can['’]t|won['’]t|not|never)\s+"+adverbs+link+adverbs+r'$',prefix,re.I):
+            return 'negated_state'
+        if re.search(r'\b(?:may|might|could)\s+'+adverbs+link+adverbs+r'$',prefix,re.I):
+            return 'uncertain_state'
+        if re.search(r'\b(?:should|must|need(?:s)? to|(?:is|are) required to)\s+'
+                     +adverbs+link+adverbs+r'$',prefix,re.I):
+            return 'required_state'
+        if re.search(r'\b(?:not|never)\s+(?:known|proven|shown|established|verified)\s+to\s+'
+                     +link+adverbs+r'$',prefix,re.I):
+            return 'unestablished_state'
     requirement = NOMINAL_REQUIREMENT.search(prefix)
     if requirement and not FINITE.search(prefix[requirement.end():]) and re.fullmatch(
             r'(?:\w+ing|no|zero|free|equal|equivalent)',predicate,re.I):
