@@ -82,10 +82,10 @@ def _without_quoted_material(text, replacement=''):
     return re.sub(r'(?m)^\s*>.*$', replacement, text)
 
 
-def instructions(text):
+def instructions(text, *, preserve_offsets=False):
     """Reference content cannot add tool requirements to an answer request."""
-    quoted = '\x00quoted-reference\x00'
-    text = _without_quoted_material(text, quoted)
+    quoted = '\x00' if preserve_offsets else '\x00quoted-reference\x00'
+    text = _without_quoted_material(text, (lambda m:quoted*len(m[0])) if preserve_offsets else quoted)
     # Plain introduced material has the same data role as a quotation. Its
     # sentences cannot become commands merely because they use imperative
     # verbs. Keep the governing request (including any action before the
@@ -110,7 +110,7 @@ def instructions(text):
             break
         introduction = min(matches, key=lambda match: match.end())
         tail = text[introduction.end():]
-        quoted_start = re.match(r'\s*' + re.escape(quoted), tail)
+        quoted_start = re.match(r'\s*' + re.escape(quoted) + ('+' if preserve_offsets else ''), tail)
         if quoted_start:
             # The quote/fence already has its own boundary. Keep commands
             # after it instead of mistaking the entire remainder for data.
@@ -118,12 +118,12 @@ def instructions(text):
             continue
         closing = closed.search(tail)
         if not closing:
-            text = text[:introduction.end()]
+            text = text[:introduction.end()] + (' '*len(tail) if preserve_offsets else '')
             break
         # An explicit end marker returns to the owner's governing request.
-        text = text[:introduction.end()] + '\n' + tail[closing.end():]
+        text = text[:introduction.end()] + (' '*closing.end() if preserve_offsets else '\n') + tail[closing.end():]
         offset = introduction.end()
-    return text.replace(quoted, '')
+    return text.replace(quoted, ' ' if preserve_offsets else '')
 
 
 def request_clauses(request):

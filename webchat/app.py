@@ -1144,6 +1144,11 @@ class Chat(TaskDispatch):
                     if unavailable:
                         cleaned += "\n\nOne or more requested attachments could not be included. Please reattach the file in this conversation."
                 answer["content"] = cleaned
+                import decision_context
+                contract=reply(value).get('_reply_contract') or {}
+                answer['content'],context_review=decision_context.render(answer['content'],contract.get('decision_context'),value,self.redact)
+                if context_review:
+                    answer['decision_context_review']=context_review
                 rid = user_msg.get("request_id")
                 reply(value).update(answer, status="done")
                 if rid:

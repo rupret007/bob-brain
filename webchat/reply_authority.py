@@ -681,6 +681,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 prefix=clean_clause[:claim.start()].strip()
                 suffix=clean_clause[claim.end():].strip()
                 identified=re.fullmatch(subject+r'\s*'+predicate,prefix,re.I)
+                task_directive=re.fullmatch(r'(?:keep|maintain)\s+'+subject+r'\s*',prefix,re.I)
                 described=bool(re.fullmatch(nominal+r'\s*'+predicate,prefix,re.I))
                 anaphor=record_subject and bool(re.fullmatch(r'(?:it|(?:its|the|this|that)\s+(?:(?:current|recorded|reported)\s+)?(?:status|state))\s*'+predicate,prefix,re.I))
                 inherited=record_subject and bool(re.fullmatch(predicate,prefix,re.I))
@@ -698,11 +699,15 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 state_modifier=bool(re.match(r'in\s+(?:place|force|effect)\b(?!\s+(?:on|for|in)\b)',suffix,re.I))
                 object_ok=not re.match(r'(?:on|for|in)\b',suffix,re.I) or explicit_object or state_modifier
                 directive=bool(re.fullmatch(r'(?:maintain|keep|preserve)\s*',prefix,re.I))
-                noun_reference=(record_subject or explicit_object or directive and record_topic) and noun and (governing or prerequisite) and object_ok
-                if not (identified or described or anaphor or inherited and not noun or noun_reference):
+                from reported_records import prospective_hold_check
+                bound_target=re.match(r'(?:on|for|in)\s+'+subject+r'(?=\s|$)',suffix,re.I) if explicit_object else None
+                prospective_tail=suffix[bound_target.end():] if bound_target else suffix
+                prospective=bool(record_topic and prospective_hold_check(prefix,prospective_tail))
+                noun_reference=(record_subject or explicit_object or (directive or prospective) and record_topic) and noun and (governing or prerequisite or prospective) and object_ok
+                if not (identified or task_directive or described or anaphor or inherited and not noun or noun_reference):
                     accepted=False
                     record_subject=None
-                elif identified:
+                elif identified or task_directive:
                     record_subject=next(i for i in bindings if re.search(r'\b'+re.escape(i)+r'\b',prefix,re.I))
                 elif explicit_object:
                     record_subject=next(i for i in bindings if re.search(r'\b'+re.escape(i)+r'\b',suffix,re.I))

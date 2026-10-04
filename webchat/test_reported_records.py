@@ -147,6 +147,48 @@ class ReportedRecordDeliveryTests(SessionFixture):
         self.assertFalse(self.chat.get(self.identifier)['intent_state']['holds'])
         self.assertFalse(task_queue.tasks(self.root))
 
+    def test_task_object_directives_and_prospective_verification_keep_next_step_bodies(self):
+        self.establish()
+        values = (
+            'Keep task V-57 on hold until its evidence is reconciled.',
+            'Maintain V-57 on hold and do not assign another worker.',
+            '**Worker termination:** Check whether the assigned worker stopped before considering release of the hold.',
+            'Obtain termination evidence before asking the owner to release the hold.',
+            'Obtain confirmation before considering release of the hold on task V-57.',
+            'Next Safe Step:\n* **Preserve the Hold:** Keep V-57 on hold and do not reassign or dispatch the task to another worker.\n'
+            '* **Verify Worker Termination:** Obtain explicit confirmation or check process status to verify that `ReviewWorker` has fully stopped before taking any action to release the hold or evaluate rescheduling.',
+        )
+        for value in values:
+            with self.subTest(value=value):
+                answer=self.delivered(value)
+                self.assertEqual(answer['content'],value)
+                self.assertFalse(answer['authority_review']['partial'])
+        for value in ("Keep task V-57's reviewer on hold.",
+                      'Maintain V-57 on hold, and the backup service is paused.',
+                      '**Worker termination:** The worker stopped, and the hold is now released.',
+                      'Obtain termination evidence; we have released the hold.',
+                      'Obtain confirmation before considering release of the hold that is already lifted.',
+                      "Obtain confirmation before considering release of the hold on task V-57's reviewer.",
+                      'Check whether the worker stopped before considering release of the hold on the backup service.'):
+            with self.subTest(value=value):
+                self.assertNotEqual(self.delivered(value)['content'],value)
+        self.assertFalse(task_queue.tasks(self.root))
+        self.assertFalse(self.chat.get(self.identifier)['intent_state']['holds'])
+
+    def test_negative_evidence_complements_preserve_record_scope_and_independent_claim_checks(self):
+        self.establish()
+        self.fake.reply_text='The cached payload has a different identity.'
+        self.send('A cached return names task ID V-56, not V-57. Explain the evidence checks.')
+        text=('* **Scope Boundary:** It serves as evidence of what was claimed in that transmission, '
+              'not proof that V-56 was validly executed or that V-57 is complete.')
+        self.assertEqual(self.delivered(text)['content'],text)
+        for tail in (' However, V-57 is complete.', ' But V-56 was executed.'):
+            self.assertNotIn(tail.strip(),self.delivered(text+tail)['content'])
+        bad='**Result:** V-56 was executed, and V-57 is complete.'
+        answer=self.delivered(bad)['content']
+        self.assertNotIn('**Result:**.',answer)
+        self.assertNotIn('execution.The',answer)
+
     def test_task_role_excludes_associated_lease_and_source_identifiers(self):
         self.fake.reply_text = 'The supplied task is held.'
         self.send('Reason about this fictional record: source rev-62 belongs to task P-62, which is on hold with lease L-62. Do not create work.')

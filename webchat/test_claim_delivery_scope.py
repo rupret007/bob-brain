@@ -9,6 +9,11 @@ import resource_decision
 
 
 VALID = (
+    'No determination can be made regarding which proposal is better, more cost-effective, or lower risk.',
+    'No conclusion can be drawn about whether the alternative offers equivalent quality.',
+    'No conclusion can be drawn about whether this route guarantees equivalent quality.',
+    'No conclusion can be drawn about whether the subscription route with the supplied context guarantees equivalent quality.',
+    'No ranking can be established without both proposals.',
     'Next, we should outline the specific plan and verification criteria for maintaining cross-conversation continuity for your review.',
     'When you are ready to release the hold, what target scope do you want the report to evaluate: **a static audit of configuration, queue, and memory records**, or a **dry-run transcript simulation testing multi-turn continuity**?',
     'When you choose to release the hold, should the investigation scope remain restricted solely to **static file/code inspection**, or do you wish to permit **offline dry-run test scripts** once their isolation contracts have been verified?',
@@ -38,6 +43,13 @@ VALID = (
 )
 
 INVALID = (
+    'No determination can be made without incurring charges.',
+    'No determination can be made regarding rankings at no cost.',
+    'No conclusion can be drawn about fees for zero charges.',
+    'No payment will be made for these invocations.',
+    'No conclusion can be drawn about costs, with this route guaranteeing equivalent quality.',
+    'No determination can be made regarding which option is cheaper, but this route guarantees lower charges.',
+    'No conclusion can be drawn about which route is cheaper, and the alternative guarantees equivalent quality.',
     'We cannot assume equal quality and this route is free of charges.',
     'We cannot assume equal quality and Codex is free of charges.',
     'We cannot assume equal quality and all generation is free of charges.',

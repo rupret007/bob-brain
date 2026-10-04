@@ -40,6 +40,7 @@ PASSIVE_UNKNOWN = re.compile(r"\b(?:(?:cannot|can['’]t|could not|must not|shou
     r"unknown|unverified|uncertain|unproven))\b", re.I)
 NOMINAL_REQUIREMENT = re.compile(r'\b(?:requirements?|criteria|criterion|goals?|objectives?|targets?)'
     r'\s+(?:for|of|to)\b', re.I)
+NOMINAL_DENIAL = re.compile(r'\b(?:no|not|neither)\s+(?:proof|evidence|assurance|confirmation|verification)\s+(?:that|of)\b',re.I)
 CONNECTOR = re.compile(r',?\s*\b(?:now that|given that|even though|because|since|although|'
                        r'however|therefore|whereas|thus|but|yet|so|then|and|or|while|which|that)\b\s*|,\s*', re.I)
 ASSERTED_LINK = re.compile(r'^(?:now that|given that|even though|because|since|although|'
@@ -181,13 +182,17 @@ def _coordination(text, *, question=False, base=0, label=''):
         nominal_complement = bool(denied and not FINITE.search(left[denied[-1].end():]) and
                                   right_finite and right_finite[0].lower() in ('are', 'were') and
                                   not new_subject and not plural_subject and ',' not in match[0])
+        # Repeated complementizers coordinate propositions under the same
+        # denied evidence head: "not proof that A ran or that B finished".
+        coordinated_denial = bool(NOMINAL_DENIAL.search(left) and link in ('and','or') and
+                                  re.match(r'^\s*that\b',right,re.I))
         # A malformed/elliptical question cannot shield a separate statement
         # introduced by a comma and a new actor.
         explicit_actor = re.match(r'^\s*(?:I|we|you|they|he|she|it)\b',right,re.I) or re.match(r'^\s*[A-Z][\w-]*\b',right)
         indicative_subject = explicit_subject and right_finite and not re.fullmatch(
             r'can|could|will|would|should|must|may|might',right_finite[0],re.I)
         question_boundary = question and WH.match(left) and ',' in match[0] and (explicit_actor or indicative_subject)
-        independent = (left_complete or question_boundary) and (right_subject or right_question) and not nominal_complement
+        independent = (left_complete or question_boundary) and (right_subject or right_question) and not (nominal_complement or coordinated_denial)
         relative = bool(left.strip()) and link in ('which', 'that') and not DEPENDENT.search(left) and bool(
             right_finite and not right[:right_finite.start()].strip())
         # Bare outcome verbs can share an asserted subject/modal: "the route
@@ -197,7 +202,8 @@ def _coordination(text, *, question=False, base=0, label=''):
                               r'^\s*(?:preserve|protect|maintain|keep|avoid|prevent|eliminate)\b',right,re.I)))
         conditional_end = bool(link == '' and HYPOTHETICAL.match(left))
         discourse = link == '' and re.fullmatch(r'\s*(?:yes|no|well|okay)\s*',left,re.I)
-        result_adjunct=bool(link=='' and left_complete and re.match(r'^\s*(?:guaranteeing|ensuring|making|leaving|thereby)\b',right,re.I))
+        result_adjunct=bool(link=='' and left_complete and re.match(r'^\s*(?:(?:with\s+(?:[\w-]+\s+){1,6})?'
+            r'(?:guaranteeing|ensuring|making|leaving)|thereby)\b',right,re.I))
         boundary = bool(ASSERTED_LINK.fullmatch(link) or relative or conditional_end or directives or discourse or result_adjunct or
                         link in ('and', 'or', 'while', '') and independent)
         if not boundary:
@@ -247,6 +253,31 @@ def disposition(clause, start, end, predicate, *, copular=False):
     """
     text = clause.text
     prefix, suffix = text[:start], text[end:]
+    # A denied conclusion can have a nominal head and support verb. Its
+    # comparison complement is unestablished; an attached cost prerequisite
+    # ("without incurring charges") is a separate claim, not that conclusion.
+    nominal_knowledge = re.match(r'^\s*no\s+(?:determination|conclusion|ranking|comparison|'
+        r'judgment|judgement|assessment|inference|finding)\s+'
+        r'(?:(?:can|could)\s+be|is|was)\s+(?:made|drawn|established|reached|formed)\b',text,re.I)
+    if nominal_knowledge:
+        if start < nominal_knowledge.end():
+            return 'denied_epistemic_head'
+        complement = re.match(r'\s+(?:regarding|about|as to|on)\s+|\s+(?=whether\b|which\b|what\b)',
+                              text[nominal_knowledge.end():],re.I)
+        if complement:
+            # A prepositional circumstance of making the determination does
+            # not inherit the denied conclusion. Keep noun coordination in
+            # the complement; stop before an attached cost/manner condition.
+            embedded=text[nominal_knowledge.end()+complement.end():]
+            # An explicit whether/which proposition retains its internal noun
+            # modifiers. Independent assertions have their own clause above.
+            question_complement=bool(re.match(r'^\s*(?:whether|which|what|how)\b',embedded,re.I))
+            adjunct = None if question_complement else re.search(r'\b(?:at|for|from|under|over|on|in|without|with|by|despite|while|'
+                                r'using|through|via|during|after|before|upon|within|outside|beyond)\b',
+                                embedded,re.I)
+            boundary = nominal_knowledge.end()+complement.end()+adjunct.start() if adjunct else len(text)
+            if end <= boundary:
+                return 'denied_epistemic_complement'
     if (not prefix.strip() and re.fullmatch(r'(?:preserving|protecting|maintaining)',predicate,re.I)
             and re.fullmatch(r'[^.!?;]*:\s*',suffix)):
         return 'objective_heading'
@@ -255,6 +286,8 @@ def disposition(clause, start, end, predicate, *, copular=False):
     if (DIRECT_DENIAL.search(prefix) or DENIED.search(prefix) or
             any(m.start() <= start < m.end() for m in DENIED.finditer(text))):
         return 'negated_predicate_or_complement'
+    if NOMINAL_DENIAL.search(prefix):
+        return 'negated_evidence_complement'
     dependency = r'\b(?:depends?\s+(?:\w+ly\s+)?on|requires?|is contingent on|is conditional on)\b'
     if (not prefix.strip() and re.fullmatch(r'\w+ing', predicate.split()[0], re.I) and
             re.search(dependency, suffix, re.I)):

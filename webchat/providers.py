@@ -838,6 +838,9 @@ class Providers:
         if contract and contract.get('catchup_projection'):
             snapshots.append(dict(path='server-owned receiver receipt projection',modified='owner supplied',truncated=False,
                                   text=self.redact(json.dumps(contract['catchup_projection'],ensure_ascii=False))))
+        if contract and contract.get('decision_context'):
+            snapshots.append(dict(path='user-supplied decision conditions',modified='this request',truncated=False,
+                text=self.redact(json.dumps(contract['decision_context'],ensure_ascii=False))))
         self.current_call.draft_revision = draft_revision.source(conversation, self.redact) if answer_context and not blocked else None
         if self.current_call.draft_revision:
             snapshots += [dict(path='bound source draft for this edit', modified='saved', truncated=False,
@@ -872,6 +875,9 @@ class Providers:
         self.current_call.instructions = policy + scope
         from claim_evidence import RULES as EVIDENCE_STRENGTH_RULES
         self.current_call.instructions += '\n' + EVIDENCE_STRENGTH_RULES
+        if contract and contract.get('decision_context'):
+            import decision_context
+            self.current_call.instructions += '\n' + decision_context.RULES
         if provenance['records'] or self.current_call.report_sources:
             self.current_call.instructions += '\n' + result_provenance.RULES
         if project:

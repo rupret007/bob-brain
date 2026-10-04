@@ -80,10 +80,12 @@ def derive(conversation, redact, root=None):
     else:
         catchup=None
     import result_provenance
+    import decision_context
+    decision = decision_context.project(conversation,redact) if kind in ('answer','resource_advice') and not user.get('voice_call_id') and not reply.get('dispatch_blocked') else None
     return dict(version=1, kind=kind, request_id=user.get('request_id'), reply_id=reply.get('id'),
                 user_sha256=digest(text), allowed_effects=[], source=source,
                 localized_edit=bool(edit), permissions=permission_facts(conversation),resource_projection=projection,catchup_projection=catchup,
-                result_provenance=result_provenance.projection(conversation))
+                result_provenance=result_provenance.projection(conversation),decision_context=decision)
 
 
 def safe_artifact(content, source_text=''):

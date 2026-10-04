@@ -28,7 +28,7 @@ turning uncertainty into a blanket inability or asking for permission already he
 # Predicates and their protected objects are independent of intervening modifiers.
 # This is deliberately not a list of adjective + noun phrases from past answers.
 OUTCOMES = {
-    'cost': re.compile(r'\b(?:charges?|costs?|fees?|spend(?:ing)?|overages?|billing|credits?|quota|allowance|exhaustion|rate limits?)\b', re.I),
+    'cost': re.compile(r'\b(?:charges?|costs?|fees?|payments?|spend(?:ing)?|overages?|billing|credits?|quota|allowance|exhaustion|rate limits?)\b', re.I),
     'quality': re.compile(r'\b(?:quality|continuity|regressions?|degradation|degraded responses|equivalent answers)\b', re.I),
 }
 ASSURANCE = re.compile(r"\b(?:without|no|zero|free|risk[- ]free|guarantee\w*|ensure\w*|"

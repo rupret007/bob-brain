@@ -245,7 +245,8 @@ def deliver(root, content, source, report_bindings=()):
     for finding in findings:
         before=content[offset:finding['start']]
         before=re.sub(r'(?:,?\s*\b(?:and|or|but|yet|however|therefore|thus|so|then|because|since|which|that)\b\s*)+$','',before,flags=re.I)
-        if before.strip() and before[-1] not in '.!?\n:':before=before.rstrip()+'.\n'
+        label=before.rstrip().rstrip('*_').endswith(':')
+        if before.strip() and before[-1] not in '.!?\n:' and not label:before=before.rstrip()+'.\n'
         result.append(before)
         original=content[finding['start']:finding['end']]
         marker=re.match(r'^\s*(?:[-*+]\s+|\d+[.)]\s+)',original)
@@ -260,6 +261,7 @@ def deliver(root, content, source, report_bindings=()):
             result.append('The '+finding['required_predicate'].replace('_',' ')+' of '+finding['subject']+
                           ' is unverified; no supporting task result was supplied.')
         offset=finding['end']
+        result.append('\n')
     result.append(content[offset:])
     return ''.join(result),dict(partial=True,claims=decisions,projection=source,
         evaluated_input_sha256=digest(content),scope='Bounded task-result provenance, not general semantic certification.')

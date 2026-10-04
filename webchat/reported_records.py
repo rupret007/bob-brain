@@ -51,6 +51,40 @@ def foreign_subject(clause, projects, worker_names):
     return bool(subject and foreign_label(subject[1], projects, worker_names))
 
 
+def prospective_hold_check(prefix, suffix=''):
+    """A verification instruction may name a prospective release prerequisite.
+
+    Bind only the dependent hold reference. This neither asserts termination
+    nor exempts sibling claims, and the caller still checks permission effects.
+    """
+    from claim_scope import clauses, verification_governs, finite_predicate
+    tail=suffix.strip(' .!?\n')
+    if tail:
+        continuation=re.fullmatch(r'(?:or|and)\s+(?:evaluate|consider|review|propose)\s+(.+)',tail,re.I)
+        if not continuation or finite_predicate(continuation[1]) or re.search(
+                r'\b(?:that|which|who|because|since|already|now)\b',continuation[1],re.I):
+            return False
+    boundary = re.search(r'\bbefore\s+(?:(?:taking\s+(?:any\s+)?action\s+to|'
+        r'considering|evaluating|proposing)\s+)?(?:release|releasing|lift|lifting|clear|clearing)(?:\s+of)?\s*$',prefix,re.I)
+    if not boundary:
+        boundary = re.search(r'\bbefore\s+asking\s+(?:the\s+)?owner\s+to\s+(?:release|lift|clear)\s*$',prefix,re.I)
+    if not boundary:
+        return False
+    directives = re.split(r'\b(?:and|or)\s+(?=(?:check|verify|confirm|assess|evaluate|inspect|examine|obtain|seek|require)\b)',
+                          prefix[:boundary.start()],flags=re.I)
+    checks = [clause for directive in directives for clause in clauses(directive)]
+    if not checks:
+        return False
+    for check in checks:
+        if verification_governs(check.text):
+            continue
+        head = re.match(r'^\s*(?:obtain|seek|require)\s+(?:(?:explicit|independent|documented|termination)\s+)?'
+                        r'(?:confirmation|verification|evidence)\b',check.text,re.I)
+        if not head or finite_predicate(check.text[head.end():]):
+            return False
+    return True
+
+
 def source_bindings(record):
     excerpts = (record or {}).get('user_excerpts', [])
     # Associated lease/snapshot/artifact identifiers are not task subjects.
