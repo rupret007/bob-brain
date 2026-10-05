@@ -712,7 +712,8 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 if explicit:record_subject=next(i for i in bindings if re.search(r'\b'+re.escape(i)+r'\b',explicit[0],re.I))
                 elif foreign_subject(clean_clause,projects,WORKER_NAMES):record_subject=None
         return accepted
-    from answer_fragments import independent_after_rejection, consequence_of_rejected_reference, ACKNOWLEDGEMENT
+    from answer_fragments import DependencyState, consequence_of_rejected_reference, ACKNOWLEDGEMENT
+    dependency=DependencyState()
     kept=[];pending_effect=False;pending_reference=False;rejected_effect=False
     decisions=[];offset=0
     for part in sentences:
@@ -723,10 +724,12 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         record_hold=attributed_record_hold(part)
         changed=asserted_permission_change(part)
         effect=unsupported_effect(part)
-        dependent=bool(part.strip() and (pending_effect and not independent_after_rejection(part) or
-                       pending_reference and consequence_of_rejected_reference(part)))
-        accepted=not effect and not dependent and not changed and (not HOLD_CLAIM.search(part) or
+        valid=not effect and not changed and (not HOLD_CLAIM.search(part) or
                 held_scope_question(part) or saved_hold_reference(part) or record_hold)
+        independent,governor=dependency.consider(part,valid,offset=offset,taint=bool(effect or changed))
+        dependent=bool(part.strip() and (valid and not independent or
+                       pending_reference and consequence_of_rejected_reference(part)))
+        accepted=valid and independent and not dependent
         if accepted:
             kept.append(part)
         elif part.strip():
@@ -742,6 +745,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 'unsupported_permission_change' if changed else 'supported_reference_or_nonclaim' if accepted else 'unbound_hold_claim',
             subject=record_subject,bindings=bindings))
         decisions[-1].update(context_record=context_record,context_source_bindings=bindings.get(context_record,[]))
+        decisions[-1]['prospective_governor_start']=governor
         offset+=len(part)
     if conversation and (reported or len(kept)!=len(sentences)):
         message=conversation.get('messages',[])[-1:]

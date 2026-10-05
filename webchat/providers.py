@@ -262,6 +262,15 @@ storage defect or an invalid test. Match request identity, source/revision, actu
 stored state, query and authorization, acknowledgment/commit timing and rendering.
 Explain which observations discriminate storage, retrieval, rendering and races;
 keep ambiguous observations ambiguous rather than giving them a definitive cause.
+For each diagnostic branch name the observed trace, the still-possible alternatives,
+and the next distinguishing check. An acknowledgment can mean receipt, queueing or
+durable commit: verify that contract and the expected read-visibility window first.
+A missing record after an acknowledgment requires a matched request, storage key,
+namespace, source and timing before implicating persistence. A fetch error requires
+matching query and access scope before blaming retrieval. A reload before completion
+can be normal asynchronous behavior; establish the promised ordering before calling
+it a race defect. Reserve proof or confirmed-cause wording for evidence that rules
+out those alternatives; proposed instrumentation has not produced that evidence.
 Planning and read-only restrictions allow useful analysis, recommendations and draft
 content. They prohibit execution, not thought. Reuse the scope already chosen by
 the owner; an assistant's proposal is not that choice. State the unresolved decision.

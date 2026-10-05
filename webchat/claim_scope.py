@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import re
 
 from assertion_scope import nonasserted as local_nonasserted, DIRECT_DENIAL, EPISTEMIC_GERUND
-from reported_records import units
+from reported_records import units, sentence_spans, containers
 
 FINITE = re.compile(r"(?<![\w-])(?:am|is|are|was|were|has|have|had|does|do|did|can|could|will|would|"
                     r"should|must|may|might|cannot|can['’]t|won['’]t|completed|finished|succeeded|executed|guarantees|ensures|"
@@ -24,7 +24,8 @@ QUESTION = re.compile(r'^\s*(?:who|what|which|where|when|why|how|am|is|are|was|w
 DIRECTIVE = re.compile(r'^\s*(?:(?:we|you)\s+(?:should|must|need to)\s+)?'
                        r'(?:check|verify|confirm|inspect|examine|assess|evaluate|audit|compare|'
                        r'measure|test|require|define|outline|specify|prepare|write|record|discuss|choose|decide|'
-                       r'preserve|protect|maintain|keep)\b', re.I)
+                       r'issue|introduce|switch|ask|score|reject|accept|repeat|include|trace|collect|obtain|'
+                       r'supply|provide|present|preserve|protect|maintain|keep)\b', re.I)
 VERIFY = re.compile(r'^\s*(?:(?:we|you)\s+(?:should|must|need to)\s+)?'
                     r'(?:check|verify|confirm|assess|evaluate|measure|test|inspect|examine|audit)\b', re.I)
 REQUIRE = re.compile(r'^\s*(?:(?:we|you)\s+(?:should|must|need to)\s+)?require\b', re.I)
@@ -199,13 +200,19 @@ def _coordination(text, *, question=False, base=0, label=''):
             r'can|could|will|would|should|must|may|might',right_finite[0],re.I)
         question_boundary = question and WH.match(left) and ',' in match[0] and (explicit_actor or indicative_subject)
         independent = (left_complete or question_boundary) and (right_subject or right_question) and not (nominal_complement or coordinated_denial)
-        relative = bool(left.strip()) and link in ('which', 'that') and not DEPENDENT.search(left) and bool(
+        complement_head = bool(DEPENDENT.search(left) and
+            (verification_governs(left) or DENIED.search(left) or EPISTEMIC_GERUND.search(left)))
+        relative = bool(left.strip()) and link in ('which', 'that') and not complement_head and bool(
             right_finite and not right[:right_finite.start()].strip())
         # Bare outcome verbs can share an asserted subject/modal: "the route
         # will reduce demand and preserve quality" is not two directives.
         directives = bool(left_complete and DIRECTIVE.match(right) and
                           (DIRECTIVE.match(left) or not re.match(
                               r'^\s*(?:preserve|protect|maintain|keep|avoid|prevent|eliminate)\b',right,re.I)))
+        # An alternative under a noun head is not an imperative merely because
+        # its first modifier can also be a verb ("regression or test defect").
+        if link == 'or' and not DIRECTIVE.match(left) and not right_finite:
+            directives = False
         conditional_end = bool(link == '' and HYPOTHETICAL.match(left))
         discourse = link == '' and re.fullmatch(r'\s*(?:yes|no|well|okay)\s*',left,re.I)
         result_adjunct=bool(link=='' and left_complete and re.match(r'^\s*(?:(?:with\s+(?:[\w-]+\s+){1,6})?'
@@ -227,15 +234,39 @@ def _coordination(text, *, question=False, base=0, label=''):
                      question and bool(QUESTION.match(value)), label)
 
 
+def presentation_scope(text):
+    """Keep grammatical attachments; isolate only independent propositions."""
+    embedded=[];masked=list(text)
+    for a,b in containers(text):
+        # Typed citation identifiers are provenance metadata, not prose
+        # parentheses. Keep their delimiters for downstream subject binding.
+        if re.fullmatch(r'\[(?:report|fact) [a-z0-9_.-]+\]',text[a:b]):
+            continue
+        inner=text[a+1:b-1]
+        predicate=finite_predicate(inner)
+        prefix=text[:a]
+        governed=bool(DEPENDENT.search(prefix) or COMPLEMENT.search(prefix) and
+                      (verification_governs(prefix) or DENIED.search(prefix)))
+        if predicate and inner[:predicate.start()].strip() and not governed:
+            embedded.append((a+1,b-1))
+            masked[a:b]=' '*(b-a)
+        else:
+            attached,children=presentation_scope(inner)
+            masked[a:b]=' '+attached+' '
+            embedded.extend((a+1+c,a+1+d) for c,d in children)
+    return ''.join(masked),embedded
+
+
 def clauses(content):
     """Yield offset-bound local statements without splitting object lists."""
     offset = 0
     for unit in units(content):
         normalized = plain(unit)
-        begin = 0
-        for boundary in [*TERMINAL.finditer(normalized), None]:
-            end = boundary.start() if boundary else len(normalized)
-            sentence = normalized[begin:end]
+        masked,embedded=presentation_scope(normalized)
+        # Scan again after attaching fragments: punctuation inside a governed
+        # container still ends that governor's proposition.
+        for begin,end in sentence_spans(masked,clauses=True):
+            sentence = masked[begin:end]
             # A presentation label has its own grammatical scope. Check its
             # words separately; it cannot negate/guarantee the following body.
             title = re.match(r'^\s*([^:\n]{1,128}):\s*', sentence)
@@ -247,7 +278,10 @@ def clauses(content):
                 sentence = sentence[title.end():]
             yield from _coordination(sentence, question=sentence.rstrip().endswith('?'),
                                      base=offset+begin, label=label)
-            begin = boundary.end() if boundary else len(normalized)
+        for a,b in embedded:
+            for part in clauses(normalized[a:b]):
+                yield Clause(offset+a+part.start,offset+a+part.end,
+                             part.text,part.question,part.label)
         offset += len(unit)
 
 
@@ -259,6 +293,16 @@ def disposition(clause, start, end, predicate, *, copular=False):
     """
     text = clause.text
     prefix, suffix = text[:start], text[end:]
+    evidence = re.match(r'^\s*(?:there\s+(?:is|are|was|were)\s+)?no\s+(.+?)\b'
+        r'(establishing|showing|confirming|demonstrating|proving|establishes?|shows?|confirms?|'
+        r'demonstrates?|proves?)\b',text,re.I)
+    if evidence and re.search(r'\b(?:evidence|proof|records?|checks?|validation|verification|'
+                             r'audits?|measurements?|observations?)\s*$',evidence[1],re.I):
+        # The negative determiner governs an evidence head and its proposition,
+        # never a negative cost/quality outcome such as "no fees are incurred".
+        if not finite_predicate(evidence[1]) and (start >= evidence.start(2) or
+                                                 predicate.lower()=='no' and start < evidence.start(1)):
+            return 'absent_evidence_proposition'
     for governor in EPISTEMIC_GERUND.finditer(text):
         # Match the complete governor even when the protected token is
         # "without" itself. Clause splitting keeps independent assertions

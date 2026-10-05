@@ -290,7 +290,8 @@ def compose_blocks(blocks, known, projection):
     """
     if not 1<=len(blocks)<=8:
         raise ValueError('Invalid answer blocks')
-    from answer_fragments import select
+    from answer_fragments import select, DependencyState
+    dependency=DependencyState()
     content=[];tokens=[];rejected=[];pending=False;retained_reasoning=False
     context='\n\n'.join(b['reasoning'] for b in blocks if isinstance(b,dict) and isinstance(b.get('reasoning'),str))
     for index,block in enumerate(blocks):
@@ -307,7 +308,7 @@ def compose_blocks(blocks, known, projection):
             if not isinstance(prose,str) or not 1<=len(prose)<=2500 or '[fact:' in prose:
                 raise ValueError('Invalid reasoning block')
             retained,units,pending=select(prose,
-                lambda part:safe_reasoning(part,context=context) and feasible_reasoning(part,projection),pending=pending)
+                lambda part:safe_reasoning(part,context=context) and feasible_reasoning(part,projection),state=dependency)
             if any(not unit['accepted'] for unit in units):
                 from claim_evidence import violations
                 rejected.append(dict(index=index,reason='unsupported_assertion',sha256=hashlib.sha256(prose.encode()).hexdigest(),

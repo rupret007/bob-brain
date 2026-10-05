@@ -8,9 +8,45 @@ import re
 
 ITEM = re.compile(r'^\s*(?:[-*+]\s+|\d+[.)]\s+)')
 SENTENCE = re.compile(r'(?<=[!?])(?=\s)|(?<=[.])(?=\s)(?<!\d\.)')
+ABBREVIATION = re.compile(r'\b(?:vs|e\.g|i\.e|etc|Mr|Mrs|Dr)\.$', re.I)
 ENTITY = re.compile(r'\b(?:services?|workers?|reviewers?|daemons?|servers?|processes|process|systems?|apps?|hosts?|agents?|coordinators?|supervisors?)\b|\b[A-Z][A-Za-z]*(?:Worker|Agent|Service|Daemon)\b', re.I)
 IDENTIFIER = r'[A-Za-z][\w]*-\d+'
 TASK_ID = re.compile(r'\b(?:(?:task|assignment)\s+(?:ID\s+)?|(?:record|card|case|scenario)(?:\s+only)?\s*:\s*(?:task\s+)?)('+IDENTIFIER+r')\b', re.I)
+
+
+def containers(text):
+    """Balanced presentation spans; offsets always refer to original bytes."""
+    stack = []
+    for index, char in enumerate(text):
+        if char in '([':
+            stack.append((index, char))
+        elif char in ')]' and stack and stack[-1][1] == {')':'(', ']':'['}[char]:
+            start, _ = stack.pop()
+            if not stack:
+                yield start, index+1
+
+
+def sentence_spans(text, *, clauses=False):
+    """Shared boundaries: abbreviations and balanced containers stay intact.
+
+    Containers affect presentation only. Claim callers separately inspect their
+    contents, including finite assertions inside a nominal report description.
+    """
+    protected = list(containers(text))
+    start = 0
+    for index, char in enumerate(text):
+        if any(a <= index < b for a,b in protected):
+            continue
+        terminal = char in '.!?' or clauses and char in ';\n'
+        if not terminal or char != '\n' and index+1 < len(text) and not text[index+1].isspace():
+            continue
+        if char == '.' and (ABBREVIATION.search(text[:index+1]) or
+                            re.search(r'\b\d+\.$',text[:index+1])):
+            continue
+        yield start,index+1
+        start=index+1
+    if start < len(text):
+        yield start,len(text)
 
 
 def units(content):
@@ -27,7 +63,8 @@ def units(content):
         if item:
             pending = line
         else:
-            yield from SENTENCE.split(line)
+            for start,end in sentence_spans(line):
+                yield line[start:end]
     if pending:
         yield pending
 

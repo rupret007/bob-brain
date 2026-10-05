@@ -69,6 +69,26 @@ def state_predicates(text, objects):
                 continue
             yield match
             break
+
+
+def operation_mode(text, mode):
+    """Bind a mode to an executable head, not any nearby test mention."""
+    prefix, suffix = text[:mode.start()], text[mode.end():]
+    bridge=re.compile(r'^\s*(?:(?:\w+ly|still|not|am|is|are|was|were|be|been|being|'
+        r'remains?|stays?|has|have|had|can|cannot|could|will|would|may|might|must|should|'
+        r'need|needs|to|known|proven|shown|established|verified|required|guaranteed|'
+        r'described|considered|runs?|run|executed|operates?|in|as)\s+)+$',re.I)
+    for subject in TEST.finditer(prefix):
+        if bridge.fullmatch(prefix[subject.end():]):
+            return True
+    # Attributive mode: the last noun before a relation/predicate is its head.
+    phrase = re.split(r'[.,;:!?()|]|\b(?:of|for|about|with|from|in|on|to|and|or|'
+                      r'is|are|was|were|has|have|will|can|remains?)\b',suffix,maxsplit=1,flags=re.I)[0]
+    words = re.findall(r'[\w-]+',phrase)
+    if words and words[-1].lower() not in ('mode','operation','execution'):
+        return bool(TEST.fullmatch(words[-1]))
+    # Copular/adverbial mode: bind the predicate's subject or imperative object.
+    return False
 OBJECT_BOUNDARY = re.compile(r'\b(?:about|above|across|after|against|along|among|around|as|at|before|behind|below|'
     r'beneath|beside|between|beyond|by|despite|during|except|for|from|in|inside|into|near|of|off|on|onto|out|outside|'
     r'over|past|per|since|through|throughout|to|toward|under|until|upon|via|with|within|when|while|because|using|or|that|which|where|if)\b', re.I)
@@ -180,7 +200,7 @@ def violations(content, *, source='', trusted_facts=(), artifact=False):
                                            category=kind, disposition='asserted_without_support'))
             if TEST.search(clause):
                 for mode in MODE.finditer(clause):
-                    if not disposition(part, mode.start(), mode.end(), mode[0]):
+                    if operation_mode(clause,mode) and not disposition(part, mode.start(), mode.end(), mode[0]):
                         categories.add('operation_mode')
                         claims.append(dict(start=part.start+mode.start(), end=part.start+mode.end(),
                                            category='operation_mode', disposition='asserted_without_support'))
@@ -206,6 +226,28 @@ def deliver(content, *, source='', trusted_facts=(), artifact=False):
     findings = violations(content, source=source, trusted_facts=trusted_facts, artifact=artifact)
     if not findings:
         return content, []
+    # A rejected embedded claim must not leave half a parenthesis or table row.
+    # Preserve original claim receipts; these are presentation replacement spans.
+    from reported_records import containers
+    spans=[];detached=[]
+    for finding in sorted(findings,key=lambda f:f['start']):
+        start,end=finding['start'],finding['end']
+        for a,b in containers(content):
+            if a < end and start < b:
+                if a <= start and end <= b:
+                    detached.extend(finding['categories'])
+                start,end=min(start,a),max(end,b)
+        line_start=content.rfind('\n',0,start)+1
+        line_end=content.find('\n',end)
+        if line_end<0:line_end=len(content)
+        if content[line_start:line_end].strip().startswith('|'):
+            start,end=line_start,line_end
+        if spans and start<=spans[-1]['end']:
+            spans[-1]['end']=max(end,spans[-1]['end'])
+            spans[-1]['categories']=sorted(set(spans[-1]['categories']+finding['categories']))
+        else:
+            embedded=any(a==start and b==end for a,b in containers(content))
+            spans.append(dict(start=start,end=end,categories=[] if embedded else finding['categories']))
     parts = []; position = 0
     connector = re.compile(r'(?:,?\s*\b(?:and|or|but|yet|however|therefore|thus|so|then|because|since|now that|given that|which|that)\b\s*|,\s*)$',re.I)
     leading = re.compile(r'^\s*(?:,?\s*\b(?:and|or|but|yet|however|therefore|thus|so|then)\b\s*|[,;]\s*)',re.I)
@@ -213,7 +255,7 @@ def deliver(content, *, source='', trusted_facts=(), artifact=False):
         # A rejected clause cannot leave its join word attached to the next
         # independently checked instruction.
         return leading.sub('',value,count=1) if position else value
-    for finding in findings:
+    for finding in spans:
         before = remainder(content[position:finding['start']])
         join = connector.search(before)
         if join:
@@ -235,4 +277,6 @@ def deliver(content, *, source='', trusted_facts=(), artifact=False):
             parts.append(' [Unverified claim withheld] ' + QUALIFICATIONS[category] + '\n')
         position = finding['end']
     parts.append(remainder(content[position:]))
+    for category in dict.fromkeys(detached):
+        parts.append('\n\n[Unverified claim withheld] '+QUALIFICATIONS[category])
     return ''.join(parts).strip(), findings
