@@ -51,6 +51,11 @@ not keep an unavailable route running. If no available route is qualified, prepa
 inputs and a bounded comparison, naming what must be checked before generation.
 The cause of missing input access is unknown: adapter boundaries are possibilities,
 not an established diagnosis. Give a feasible preparation step now.
+For a provider comparison, prepare matched multi-turn sequences with a correction,
+a topic change and a return to the corrected task. Compare delivered usefulness,
+constraint retention and evidence quality; one isolated prompt cannot establish
+conversation continuity. Include the concrete sequence or rubric in the answer
+when asked for next steps, rather than merely naming a future comparison.
 Return JSON only, without fences or trailing commentary.
 '''
 
@@ -119,7 +124,7 @@ def model_evidence(projection):
             'authority':'Evidence for advice only; neither provider selection nor execution authorization.'}
 
 
-def safe_reasoning(text):
+def safe_reasoning(text, *, context=''):
     """Bounded assertion checks; evidence links cannot excuse adjacent claims.
 
     This is not a proof of arbitrary factual correctness. Questions, proposals
@@ -130,6 +135,9 @@ def safe_reasoning(text):
     from claim_evidence import violations
     prose=FACT_TOKEN.sub('',text)
     if not safe_artifact(prose) or violations(prose):return False
+    if context:
+        from dispatch_receipts import claims_dispatch
+        if claims_dispatch(prose,context=context):return False
     guarantee=re.compile(r"\b(?:guarantee[ds]?|unlimited|free|zero[- ]cost|no (?:extra |additional )?(?:costs?|charges?)|same quality|equal quality|equivalent (?:quality|answers)|(?:quality|quota|allowance) (?:is|stays|remains) (?:protected|unchanged)|(?:preserve[ds]?|protect(?:s|ed)?|maintain(?:s|ed)?|(?:is|are|was|were|will be) (?:preserving|protecting|maintaining)) (?:the |your )?(?:quality|quota|allowance)|(?:avoid|prevent)(?:s|ed|ing)? (?:quota exhaustion|exhaustion|rate limits?|extra charges)|will not (?:cost|exhaust|run out)|won[’']t (?:cost|exhaust|run out))\b",re.I)
     observed=re.compile(r"\b(?:I|we|Codex|Claude|Cursor|Gemini|MiniMax)(?:['’]ve| have)? (?:checked|verified|confirmed|inspected|tested|read)\b|\b(?:can|could|will) (?:already |now )?(?:read|access|open) (?:all |your |the |those |needed |project )*(?:files?|repository|repo)\b|\b(?:remaining|available) (?:quota|allowance|credits?) (?:is|are)\b",re.I)
     protected=re.compile(r'\b(?:quality|quota|allowance|continuity)\s+(?:is|are|stay|stays|remain|remains)\s+(?:protected|unchanged)\b',re.I)
@@ -282,7 +290,9 @@ def compose_blocks(blocks, known, projection):
     """
     if not 1<=len(blocks)<=8:
         raise ValueError('Invalid answer blocks')
-    content=[];tokens=[];rejected=[];reasoning=[]
+    from answer_fragments import select
+    content=[];tokens=[];rejected=[];pending=False;retained_reasoning=False
+    context='\n\n'.join(b['reasoning'] for b in blocks if isinstance(b,dict) and isinstance(b.get('reasoning'),str))
     for index,block in enumerate(blocks):
         if not isinstance(block,dict) or len(block)!=1:
             raise ValueError('Invalid answer block schema')
@@ -296,23 +306,21 @@ def compose_blocks(blocks, known, projection):
             prose=block['reasoning']
             if not isinstance(prose,str) or not 1<=len(prose)<=2500 or '[fact:' in prose:
                 raise ValueError('Invalid reasoning block')
-            reasoning.append(dict(index=index,sha256=hashlib.sha256(prose.encode()).hexdigest()))
-            if not safe_reasoning(prose) or not feasible_reasoning(prose,projection):
+            retained,units,pending=select(prose,
+                lambda part:safe_reasoning(part,context=context) and feasible_reasoning(part,projection),pending=pending)
+            if any(not unit['accepted'] for unit in units):
                 from claim_evidence import violations
                 rejected.append(dict(index=index,reason='unsupported_assertion',sha256=hashlib.sha256(prose.encode()).hexdigest(),
-                                     claim_findings=violations(prose)))
-            else:
-                content.append(prose)
+                                     claim_findings=violations(prose),units=units))
+            if retained.strip():
+                content.append(retained.strip());retained_reasoning=True
         else:
             raise ValueError('Unknown answer block type')
     if not tokens or sum(len(p) for p in content)>10000:
         raise ValueError('Answer evidence or size invalid')
     if rejected:
-        failed={r['index'] for r in rejected}
-        rejected.extend(dict(row,reason='composition_incomplete') for row in reasoning if row['index'] not in failed)
-        content=['Part of the proposed reasoning could not be verified; this answer is incomplete. The supported facts are below.']
-        content.extend(known[t] for t in dict.fromkeys(tokens))
-    return '\n\n'.join(content),tokens,rejected
+        content.insert(0,'Part of the proposed reasoning could not be verified; this answer is incomplete. The supported facts and independent next steps are below.')
+    return '\n\n'.join(content),tokens,rejected,retained_reasoning
 
 
 def preparation_steps(steps, resource, projection):
@@ -361,15 +369,26 @@ def render(raw, projection, *, root=None):
         if not blocked and (not isinstance(value['answer'],str) or not 1<=len(value['answer'])<=7000):
             raise ValueError('Invalid answer composition')
         known=projection.get('facts') or facts(projection['inventory'],missing=projection['missing_inputs'])
-        rejected=[]
+        rejected=[];retained_reasoning=False
         if blocked:
-            content,tokens,rejected=compose_blocks(value['answer'],known,projection)
+            content,tokens,rejected,retained_reasoning=compose_blocks(value['answer'],known,projection)
         else:
             tokens=FACT_TOKEN.findall(value['answer'])
-        if not blocked and (not tokens or any(t not in known for t in tokens) or
-                '[fact:' in FACT_TOKEN.sub('',value['answer']) or not safe_reasoning(value['answer']) or
-                not feasible_reasoning(value['answer'],projection)):
-            raise ValueError('Ungrounded answer composition')
+        if not blocked:
+            if not tokens or any(t not in known for t in tokens) or '[fact:' in FACT_TOKEN.sub('',value['answer']):
+                raise ValueError('Ungrounded answer composition')
+            if not safe_reasoning(value['answer']) or not feasible_reasoning(value['answer'],projection):
+                # Keep the legacy citation format's complete independent
+                # reasoning, using the same dependency checks as block format.
+                # Mask citations in place; they cannot stitch rejected prose
+                # into a fact or establish a rejected premise.
+                from answer_fragments import select
+                prose=FACT_TOKEN.sub(lambda m:' '*len(m[0]),value['answer'])
+                retained,units,_=select(prose,lambda part:safe_reasoning(part,context=prose) and feasible_reasoning(part,projection))
+                if not retained.strip():raise ValueError('Ungrounded answer composition')
+                content,tokens,rejected,retained_reasoning=compose_blocks([*[dict(fact=t) for t in dict.fromkeys(tokens)],
+                    dict(reasoning=prose)],known,projection)
+                blocked=True
         owner=projection.get('owner_context')
         if root is not None and owner and any(t.startswith('owner.') for t in tokens):
             import project_context
@@ -405,7 +424,8 @@ def render(raw, projection, *, root=None):
                 raise ValueError('Invalid general advice steps')
             if projection['missing_inputs'] and (not blocked or 'missing_inputs' not in tokens):
                 content+='\n\n'+known['missing_inputs']
-            if rejected:content+=preparation_steps(steps,None,projection)
+            if rejected and not retained_reasoning:
+                content+=preparation_steps(steps,None,projection)
             return content,dict(resource=None,steps=steps if not rejected else [],fact_ids=tokens,execution_started=False,model_proposal_accepted=not rejected,
                 verified_preparation_steps=steps if rejected else [],partial=bool(rejected),rejected_blocks=rejected,acceptance_scope='schema and bounded claim checks; not semantic certification')
         validate_route(resource,value['steps'],projection,empty=True)
@@ -418,7 +438,7 @@ def render(raw, projection, *, root=None):
         decision.update(steps=value['steps'],fact_ids=tokens,model_proposal_accepted=not rejected,
                         partial=bool(rejected),rejected_blocks=rejected,acceptance_scope='schema and bounded claim checks; not semantic certification')
         if rejected:
-            content+=preparation_steps(value['steps'],resource,projection)
+            if not retained_reasoning:content+=preparation_steps(value['steps'],resource,projection)
             decision.update(resource=None,steps=[],verified_preparation_steps=value['steps'])
         return content,decision
     if not isinstance(value,dict) or set(value)!= {'resource','steps'}:

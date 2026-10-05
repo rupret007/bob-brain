@@ -515,16 +515,10 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         # Reference answers still reject direct effects, concrete IDs and
         # asserted progress; they do not need the proximity-only heuristic.
         progress_claim = REFERENCE_PROGRESS_CLAIM if reference else QUEUE_CLAIM
-        if claims_dispatch(content, reference=supplied, bindings=bindings) or progress_claim.search(dispatch_prose(content, reference=supplied)):
-            return blocked or unperformed_restart(root, text)
-        # Keep the useful answer; remove unsupported effects and boilerplate
-        # without adding a system notice to ordinary chat.
-        # Keep original whitespace so removing a footer doesn't flatten the
-        # useful answer's paragraphs, lists, or code formatting.
-        sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
-        kept = [part for part in sentences if not PROVIDER_CLAIM.search(part)]
-        if len(kept) != len(sentences):
-            content = "".join(kept).strip() or "What would you like me to work on?"
+        def unsupported_effect(part):
+            return bool(claims_dispatch(part,reference=supplied,bindings=bindings,context=content) or
+                        progress_claim.search(dispatch_prose(part.strip(),reference=supplied)) or
+                        PROVIDER_CLAIM.search(part))
     from reported_records import units, presentation, foreign_label, foreign_subject, source_bindings, receipt
     sentences = list(units(content))
     def asserted_permission_change(part):
@@ -718,7 +712,8 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 if explicit:record_subject=next(i for i in bindings if re.search(r'\b'+re.escape(i)+r'\b',explicit[0],re.I))
                 elif foreign_subject(clean_clause,projects,WORKER_NAMES):record_subject=None
         return accepted
-    kept=[]
+    from answer_fragments import independent_after_rejection, consequence_of_rejected_reference, ACKNOWLEDGEMENT
+    kept=[];pending_effect=False;pending_reference=False;rejected_effect=False
     decisions=[];offset=0
     for part in sentences:
         # Track intervening subjects even when a sentence has no hold claim.
@@ -727,12 +722,24 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         context_record=record_subject
         record_hold=attributed_record_hold(part)
         changed=asserted_permission_change(part)
-        accepted=not changed and (not HOLD_CLAIM.search(part) or
+        effect=unsupported_effect(part)
+        dependent=bool(part.strip() and (pending_effect and not independent_after_rejection(part) or
+                       pending_reference and consequence_of_rejected_reference(part)))
+        accepted=not effect and not dependent and not changed and (not HOLD_CLAIM.search(part) or
                 held_scope_question(part) or saved_hold_reference(part) or record_hold)
         if accepted:
             kept.append(part)
+        elif part.strip():
+            # An unresolved reference is not evidence of a fabricated effect.
+            # Preserve independently checked payload/proof/requirement prose;
+            # its original referents and final provenance remain checked.
+            if effect or changed:pending_effect=True
+            pending_reference=True
+            rejected_effect=rejected_effect or effect or dependent
         decisions.append(receipt(part,offset=offset,accepted=bool(accepted),
-            reason='unsupported_permission_change' if changed else 'supported_reference_or_nonclaim' if accepted else 'unbound_hold_claim',
+            reason='unsupported_effect' if effect else
+                ('dependent_on_rejected_effect' if pending_effect else 'dependent_on_unresolved_reference') if dependent else
+                'unsupported_permission_change' if changed else 'supported_reference_or_nonclaim' if accepted else 'unbound_hold_claim',
             subject=record_subject,bindings=bindings))
         decisions[-1].update(context_record=context_record,context_source_bindings=bindings.get(context_record,[]))
         offset+=len(part)
@@ -742,10 +749,12 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
             import hashlib
             message[0]['authority_review']=dict(partial=len(kept)!=len(sentences),units=decisions,
                 evaluated_input_sha256=hashlib.sha256(content.encode()).hexdigest(),
-                stage='hold_and_permission_after_dispatch_and_provider_filters',
+                stage='original_units_effect_hold_and_permission',
                 scope='Reported-record and permission delivery checks; no execution authority')
     if len(kept) != len(sentences):
         content = "".join(kept).strip()
+        if rejected_effect and (not content or ACKNOWLEDGEMENT.fullmatch(content)):
+            return blocked or unperformed_restart(root,text)
         # Only the saved state may explain an operational hold.
         if scopes:
             content = (content + "\n\n" if content else "") + hold_reply(scopes)

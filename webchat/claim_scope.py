@@ -8,7 +8,7 @@ English or infer that a proposed check has already succeeded.
 from dataclasses import dataclass
 import re
 
-from assertion_scope import nonasserted as local_nonasserted, DIRECT_DENIAL
+from assertion_scope import nonasserted as local_nonasserted, DIRECT_DENIAL, EPISTEMIC_GERUND
 from reported_records import units
 
 FINITE = re.compile(r"(?<![\w-])(?:am|is|are|was|were|has|have|had|does|do|did|can|could|will|would|"
@@ -56,7 +56,7 @@ WH_PREDICATE = re.compile(r'\b(?:guarantees?|ensures?|preserves?|protects?|maint
     r'establish(?:es|ed)?|demonstrates?|confirms?|proves?|shows?|indicates?)\b', re.I)
 DECLARATIVE = re.compile(r'\b(?:shows?|showed|indicates?|indicated|suggests?|asserts?)\b',re.I)
 PURPOSE = re.compile(r'\bto\s+(?:check|verify|confirm|inspect|examine|assess|evaluate|audit|'
-    r'measure|test|ensure|establish|prove|demonstrate|preserve|protect|maintain)\b',re.I)
+    r'measure|test|ensure|establish|prove|demonstrate|preserve|protect|maintain|avoid|prevent|eliminate|reduce|limit|guard)\b',re.I)
 STRONG_FINITE = re.compile(r'\b(?:(?:guarantee|ensure|confirm|prove|establish|demonstrate)s?|'
     r'(?:is|are|was|were|will be|has been|have been)\s+'
     r'(?:guaranteed|proven|proved|confirmed|established|verified|known))\b',re.I)
@@ -179,6 +179,12 @@ def _coordination(text, *, question=False, base=0, label=''):
         plural_subject = bool(right_finite and right_finite[0].lower() in ('are','were') and
                               re.search(r'\b[a-z][\w-]*s\s*$',right[:right_finite.start()]) and
                               not re.match(r'^\s*(?:no|zero|\d+)\b',right,re.I))
+        epistemic_boundary=bool(EPISTEMIC_GERUND.search(left) and (
+            right_subject and (new_subject or plural_subject or ',' in match[0]) or
+            right_finite and not right[:right_finite.start()].strip() or
+            DIRECTIVE.match(right) or re.match(r'^\s*(?:use|run|retain|switch|continue|'
+                r'guarantee|ensure|avoid|prevent|eliminate)\b',right,re.I)))
+        if epistemic_boundary:left_complete=True
         nominal_complement = bool(denied and not FINITE.search(left[denied[-1].end():]) and
                                   right_finite and right_finite[0].lower() in ('are', 'were') and
                                   not new_subject and not plural_subject and ',' not in match[0])
@@ -204,7 +210,7 @@ def _coordination(text, *, question=False, base=0, label=''):
         discourse = link == '' and re.fullmatch(r'\s*(?:yes|no|well|okay)\s*',left,re.I)
         result_adjunct=bool(link=='' and left_complete and re.match(r'^\s*(?:(?:with\s+(?:[\w-]+\s+){1,6})?'
             r'(?:guaranteeing|ensuring|making|leaving)|thereby)\b',right,re.I))
-        boundary = bool(ASSERTED_LINK.fullmatch(link) or relative or conditional_end or directives or discourse or result_adjunct or
+        boundary = bool(epistemic_boundary or ASSERTED_LINK.fullmatch(link) or relative or conditional_end or directives or discourse or result_adjunct or
                         link in ('and', 'or', 'while', '') and independent)
         if not boundary:
             continue
@@ -253,6 +259,39 @@ def disposition(clause, start, end, predicate, *, copular=False):
     """
     text = clause.text
     prefix, suffix = text[:start], text[end:]
+    for governor in EPISTEMIC_GERUND.finditer(text):
+        # Match the complete governor even when the protected token is
+        # "without" itself. Clause splitting keeps independent assertions
+        # separate; a second manner/cost adjunct cannot borrow the denial.
+        if start < governor.start() or start>=governor.end() and predicate.lower()=='without':
+            continue
+        complement=text[governor.end():start]
+        following=text[governor.end():]
+        first_finite=finite_predicate(following)
+        explicit_subject=re.match(r'^\s*(?:that\s+)?(?:the|a|an|our|your|my|their|its|his|her|'
+                                  r'this|these|those|I|we|you|he|she|it|they)\b',following,re.I)
+        # Finite complements need an explicit complementizer or subject
+        # constituent. Ambiguous unpunctuated nominal+matrix sequences do
+        # not receive a blanket negation exemption.
+        if first_finite and governor.end()+first_finite.start()<=start and not explicit_subject:
+            return None
+        # An unpunctuated matrix subject can follow a complete nominal
+        # complement. A subject at the start of the complement itself still
+        # belongs to the denied assumption ("without assuming we ...").
+        for subject in re.finditer(r'\b(?:I|we|you|he|she|it|they|this|that|these|those|'
+                r'the|a|an|[A-Z][\w-]*)\b',text[governor.end():]):
+            before=text[governor.end():governor.end()+subject.start()].strip()
+            if not before or before.lower()=='that':continue
+            if (explicit_subject and first_finite and subject.start()<first_finite.start() and
+                    re.fullmatch(r'[A-Z][\w-]*',subject[0]) and subject[0]!='I'):
+                continue
+            matrix=text[governor.end()+subject.start():]
+            finite=finite_predicate(matrix)
+            if (finite and governor.end()+subject.start()+finite.start()<=start and
+                    not re.search(r'\b(?:of|for|from|with|without|by|in|on|at|to)\s*$',before,re.I)):
+                return None
+        if not re.search(r'\b(?:without|by|through|thereby|because|since|therefore|thus)\b',complement,re.I):
+            return 'negated_epistemic_governor'
     # A denied conclusion can have a nominal head and support verb. Its
     # comparison complement is unestablished; an attached cost prerequisite
     # ("without incurring charges") is a separate claim, not that conclusion.

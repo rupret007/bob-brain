@@ -7,9 +7,18 @@ WORKERS = r"(?:Codex|Claude|Cursor|Gemini|MiniMax|the (?:system|dispatcher|worke
 PLACEMENT_VERB = r"(?:put(?:ting)?|plac(?:e|ed|ing)|add(?:ed|ing)?|mov(?:e|ed|ing)|send(?:ing)?|sent|transfer(?:red|ring)?|submit(?:ted|ting)?)"
 QUEUE_PLACEMENT = (PLACEMENT_VERB + r"\b[^.;!?\n]{0,70}\b(?:in(?:to)?|to)\s+"
                    r"(?:(?:a|an|the|my|your|our|this|that)\s+)?queue\b")
-EFFECT = r"(?:start(?:ed|ing)?|creat(?:e|ed|ing)\b[^.!?\n]{0,60}\b(?:jobs?|tasks?)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|add(?:ed|ing)? work|put .{0,40} to work|kick(?:ed|ing)? off|" + QUEUE_PLACEMENT + r")"
+# A causative result requires an object followed by its resulting state.
+# Retrieving attributively described inputs ("get the assigned files") has
+# a following noun head and is not such an operation.
+RESULT_HEAD = (r'(?!(?:the|a|an|my|our|your|their|its|his|her|this|that|these|those|'
+               r'and|or|but|of|from|for|to|with|without|by|in|on|at)\b)[\w-]+')
+RESULT_OBJECT = r'(?:(?!\b(?:restarted|dispatched|assigned)\b)[^.!?\n]){0,115}?\b' + RESULT_HEAD
+RESULT_END = (r'(?=$|[.;!?\n]|\s+(?:now|today|tonight|by|before|after|without|for|so|and|but|yet|then)\b|'
+              r',\s+(?:and|but|yet|then|so|before|after)\b)')
+CAUSATIVE_RESULT = r'get\s+' + RESULT_OBJECT + r'\s+(?:restarted|dispatched|assigned)\b' + RESULT_END
+EFFECT = r"(?:(?:re)?start(?:ed|ing)?|creat(?:e|ed|ing)\b[^.!?\n]{0,60}\b(?:jobs?|tasks?)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|" + CAUSATIVE_RESULT + r"|add(?:ed|ing)? work|put .{0,40} to work|kick(?:ed|ing)? off|" + QUEUE_PLACEMENT + r")"
 CLAUSE_START = r"(?:^|[.;!?\n–—]\s*|\b(?:and|then|but|yet)\s+)"
-BARE_EFFECT = CLAUSE_START + r"(?:queued|assigned|started|dispatched|launched|scheduled)\b"
+BARE_EFFECT = CLAUSE_START + r"(?:queued|assigned|started|restarted|dispatched|launched|scheduled)\b"
 # Project IDs and paths are not speaking actors. A heading boundary also
 # cannot make an actor in that heading the subject of a later assignment.
 ACTOR = r"(?<![\w./-])(?:[_*]{1,2})?(?:I|we|Bob|" + WORKERS + r")(?:[_*]{1,2})?(?![\w/-])"
@@ -173,9 +182,13 @@ def unasserted_prose(prose):
     # Match one immediate predicate, never a tail of arbitrary words. In
     # particular, EFFECT contains object-spanning forms such as create...job
     # that must not be used to erase the scope of a negation.
-    verb = (r'(?:start(?:ed|ing)?|creat(?:e|ed|ing)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|'
+    verb = (r'(?:(?:re)?start(?:ed|ing)?|creat(?:e|ed|ing)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|'
             r'dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|'
             + PLACEMENT_VERB + r'|kick(?:ed|ing)? off|running|working|in progress|picked up)\b')
+    from assertion_scope import negative_passive_effects
+    spans=list(negative_passive_effects(prose,verb))
+    for start,end in reversed(spans):
+        prose=prose[:start]+' '* (end-start)+prose[end:]
     denial = (r"\b(?:(?:does|do|did|would|could)(?: not|n['’]t)|cannot|can['’]t)\s+"
               r"(?:prove|establish|show|confirm|mean|demonstrate|indicate|assume)\b|"
               r"\bno (?:evidence|proof|record)\s+(?:shows?|proves?|establishes?|confirms?|that)\b|"
@@ -261,7 +274,7 @@ def dispatch_prose(text, *, reference=''):
     prose = unasserted_prose(prose)
     # An instruction to ask an actor for work is not that actor performing it.
     # Normalize only the infinitive predicate, preserving every later clause.
-    infinitive = (r'(?:start|create|assign|queue|dispatch|launch|schedule|delegate|'
+    infinitive = (r'(?:start|restart|create|assign|queue|dispatch|launch|schedule|delegate|'
                   r'submit|send|put|kick off)\b')
     prose = re.sub(r'(?:^|(?<=[.;!?\n])\s*)(?:please\s+)?(?:ask|tell|instruct)\s+'
                    r'(?:Bob|' + WORKERS + r')\s+to\s+' + infinitive,
@@ -292,7 +305,7 @@ def dispatch_prose(text, *, reference=''):
     # A capability or proposal is not a receipt or an unconditional promise.
     # Only its base-form predicates inherit this modal. Past/finite effects in
     # a continuation remain independently visible, including shared subjects.
-    base_action=r'(?:start|create|assign|queue|dispatch|launch|schedule|delegate|add|put|send|transfer|submit|review|inspect|ask|tell|instruct|use)'
+    base_action=r'(?:start|restart|create|assign|queue|dispatch|launch|schedule|delegate|add|put|send|transfer|submit|review|inspect|ask|tell|instruct|use|get)'
     modal=re.compile(r'(?P<actor>'+ACTOR+r')\s+(?:can|could|should|may|might)\s+'
                      r'(?:(?:not|[a-z]+ly)\s+){0,3}(?P<verb>'+base_action+r')\b',re.I)
     def possible_actions(match):
@@ -371,7 +384,11 @@ def dispatch_prose(text, *, reference=''):
     return prose
 
 
-def claims_dispatch(text, *, reference='', bindings=None):
+def claims_dispatch(text, *, reference='', bindings=None, context=''):
+    # Sentence selectors preserve their original leading whitespace. The
+    # normalization grammar must see the same sentence boundary when called
+    # on that original unit as when called on the entire answer.
+    text=text.strip()
     # Direct actors and concrete IDs never receive a reference exemption.
     original = dispatch_prose(text)
     # Do not use the passive proximity heuristic for a conceptual answer: a
@@ -380,16 +397,19 @@ def claims_dispatch(text, *, reference='', bindings=None):
     from reported_records import attributed_parentheticals
     scoped = attributed_parentheticals(text, bindings) if reference else text
     actor_prose=verbal_effects(dispatch_prose(scoped))
+    surrounding=attributed_parentheticals(context,bindings) if reference else context
+    actor_context=verbal_effects(dispatch_prose(surrounding))
+    has_actor=bool(re.search(ACTOR,actor_prose+'\n'+actor_context,re.I))
     # A finite continuation retains its subject across a long subordinate
     # phrase. Base-form actions still governed by can/could are proposals.
     continuation=re.compile(r'\b(?:and|then|but|yet)\s+(?:will|have|has|had|did)\s+'+
                             ACTOR_PREDICATE+r'(?:'+CAUSATIVE+r')?'+EFFECT+r'\b',re.I)
     causative_continuation=re.compile(r'\b(?:and|then|but|yet)\s+'+CAUSATIVE+EFFECT+r'\b',re.I)
-    pronoun=re.compile(r'(?:[;.!?]\s*|\b(?:and|then|but|yet)\s+)(?:he|she|it|they)\b'+ACTOR_PREDICATE+EFFECT+r'\b',re.I)
-    inherited=bool(re.search(ACTOR,actor_prose,re.I) and (continuation.search(actor_prose) or pronoun.search(actor_prose)))
+    pronoun=re.compile(r'(?:^\s*|[;.!?]\s*|\b(?:and|then|but|yet)\s+)(?:he|she|it|they)\b'+ACTOR_PREDICATE+EFFECT+r'\b',re.I)
+    inherited=bool(has_actor and (continuation.search(actor_prose) or pronoun.search(actor_prose)))
     completed_continuation=re.compile(r'\b(?:and|then|but|yet)\s+(?:started|assigned|queued|dispatched|launched|scheduled|delegated|'+QUEUE_PLACEMENT+r')\b',re.I)
-    inherited=inherited or bool(re.search(ACTOR,actor_prose,re.I) and completed_continuation.search(actor_prose))
-    inherited=inherited or bool(re.search(r"\b(?:I|we)(?:['’]ll| will| have| did)\b",actor_prose,re.I) and causative_continuation.search(actor_prose))
+    inherited=inherited or bool(has_actor and completed_continuation.search(actor_prose))
+    inherited=inherited or bool(re.search(r"\b(?:I|we)(?:['’]ll| will| have| did)\b",actor_prose+'\n'+actor_context,re.I) and causative_continuation.search(actor_prose))
     checked=dispatch_prose(scoped,reference=reference)
     # The normalized denied subject may be shared by a later progress claim.
     # The denial itself stays nonassertive; only its affirmative continuation
