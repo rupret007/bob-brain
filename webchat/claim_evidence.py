@@ -93,6 +93,10 @@ OBJECT_BOUNDARY = re.compile(r'\b(?:about|above|across|after|against|along|among
     r'beneath|beside|between|beyond|by|despite|during|except|for|from|in|inside|into|near|of|off|on|onto|out|outside|'
     r'over|past|per|since|through|throughout|to|toward|under|until|upon|via|with|within|when|while|because|using|or|that|which|where|if)\b', re.I)
 IMPERATIVE = re.compile(r'^\s*(?:[-*]\s*|\d+[.)]\s*)?(?:compare|check|inspect|prepare|require|preserve|protect|maintain|keep|record|verify)\b', re.I)
+METHOD_OBJECT = re.compile(r'\b(?:bias|rushing|omission|drift|skew|overreach)\b', re.I)
+REJECTED_NOMINAL = re.compile(
+    r'\b(?:rejecting|denying|refusing|declining|withdraw(?:ing)?)\b[^.!?]{0,48}\b(?:guarantees?|promises?|assurances?)\b', re.I)
+EPISTEMIC_WITHOUT = re.compile(r'^\s*(?:establishing|preserving|assuming|claiming|promising|proving)\b', re.I)
 QUALIFICATIONS = {
     'cost': 'The cost or capacity outcome is unverified. Check the actual route, allowance and billing controls before admitting generation; preparing a plan does not establish its charges.',
     'quality': 'The quality or continuity outcome is unverified. Preserve it as an acceptance requirement and obtain representative evidence before claiming it is protected.',
@@ -144,6 +148,26 @@ def _quoted_source(text, source):
     return re.sub(r'["“]([^"”\n]+)["”]', mask, text)
 
 
+def _assurance_head(clause, predicate):
+    tail = clause[predicate.end():]
+    return re.split(r'\b(?:without|before|unless|until|while|if|when|once)\b|[,;]', tail, maxsplit=1, flags=re.I)[0]
+
+
+def _assurance_governs_outcome(clause, predicate, objects):
+    head = _assurance_head(clause, predicate)
+    if objects.search(head):
+        return True
+    if re.search(r'\b(?:is|are|was|were|remains?|stays?|will be)\s*$', clause[:predicate.start()], re.I):
+        return bool(objects.search(clause[predicate.end():]))
+    return False
+
+
+def _rejected_nominal_assurance(clause, predicate):
+    if predicate[0].lower() not in ('guarantee', 'guarantees', 'promise', 'promises'):
+        return False
+    return bool(REJECTED_NOMINAL.search(clause[:predicate.end()]))
+
+
 def violations(content, *, source='', trusted_facts=(), artifact=False):
     from claim_scope import clauses, disposition
     findings = []
@@ -178,6 +202,21 @@ def violations(content, *, source='', trusted_facts=(), artifact=False):
                     negative = predicate[0].lower() in ('no', 'cannot', "can't", 'can’t', 'does not', 'do not', 'will not', "won't", 'won’t')
                     if negative and re.match(r'\s+(?:evidence|proof|basis|mean|imply|establish|prove|guarantee|promise|assume|prevent|protect|preserve|maintain|avoid|guard|ensure|eliminate)\b', tail, re.I):
                         continue
+                    if predicate[0].lower() == 'without' and EPISTEMIC_WITHOUT.match(tail):
+                        continue
+                    if re.search(r'\bwithout\s+$', clause[:predicate.start()], re.I):
+                        continue
+                    if (predicate[0].lower() in ('prevent', 'prevents', 'avoid', 'avoids', 'preventing', 'avoiding')
+                            and METHOD_OBJECT.search(_assurance_head(clause, predicate))
+                            and not objects.search(_assurance_head(clause, predicate))):
+                        continue
+                    if _rejected_nominal_assurance(clause, predicate):
+                        continue
+                    if re.search(r'\bwithout\s+(?:establishing|preserving|assuming|claiming|promising)\s+', clause[:predicate.start()], re.I):
+                        continue
+                    if (predicate[0].lower() in ('equal', 'equivalent') and re.search(
+                            r'\b(?:establishing|preserving|assuming|claiming|promising)\s+', clause[:predicate.start()], re.I)):
+                        continue
                     if (predicate[0].lower() == 'without' and re.match(r'\s+(?:purchasing|buying)\b', tail, re.I)
                             and not re.search(r'\b(?:or|and)\b', tail, re.I)):
                         continue
@@ -193,7 +232,7 @@ def violations(content, *, source='', trusted_facts=(), artifact=False):
                         continue
                     # A predicate must govern an outcome in this clause. A cost
                     # noun before "without buying" cannot change that operation.
-                    if labelled or any(t.start() >= predicate.end() for t in targets) or re.search(
+                    if labelled or _assurance_governs_outcome(clause, predicate, objects) or re.search(
                             r'\b(?:is|are|stays?|remains?|will be)\s*$', clause[:predicate.start()], re.I):
                         categories.add(kind)
                         claims.append(dict(start=part.start+predicate.start(), end=part.start+predicate.end(),
@@ -251,6 +290,8 @@ def deliver(content, *, source='', trusted_facts=(), artifact=False):
     parts = []; position = 0
     connector = re.compile(r'(?:,?\s*\b(?:and|or|but|yet|however|therefore|thus|so|then|because|since|now that|given that|which|that)\b\s*|,\s*)$',re.I)
     leading = re.compile(r'^\s*(?:,?\s*\b(?:and|or|but|yet|however|therefore|thus|so|then)\b\s*|[,;]\s*)',re.I)
+    dangling_relative = re.compile(
+        r'^\s*,?\s*(?:which|that)\s+(?:prevents?|avoids?|reduces?|limits?|blocks?)\b[^.!?]{0,120}(?:\.|$)', re.I)
     def remainder(value):
         # A rejected clause cannot leave its join word attached to the next
         # independently checked instruction.
@@ -276,7 +317,13 @@ def deliver(content, *, source='', trusted_facts=(), artifact=False):
         for category in finding['categories']:
             parts.append(' [Unverified claim withheld] ' + QUALIFICATIONS[category] + '\n')
         position = finding['end']
-    parts.append(remainder(content[position:]))
+    tail = remainder(content[position:])
+    while tail:
+        match = dangling_relative.match(tail)
+        if not match:
+            break
+        tail = tail[match.end():].lstrip()
+    parts.append(tail)
     for category in dict.fromkeys(detached):
         parts.append('\n\n[Unverified claim withheld] '+QUALIFICATIONS[category])
     return ''.join(parts).strip(), findings

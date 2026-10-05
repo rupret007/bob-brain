@@ -135,6 +135,19 @@ class DeliveredScopeTests(SessionFixture):
                 self.assertNotEqual(answer['content'], self.fake.reply_text)
                 self.assertIn('Match the request identity', answer['content'])
 
+    def test_methodological_prevention_survives_without_establishing_quality(self):
+        for source in (
+            'Rejecting pacing guarantees prevents bias without establishing equal quality.',
+            'No pacing guarantee is offered, which prevents rushing without establishing quality.',
+            'All preparation prevents bias without establishing quality.',
+            'While pacing cannot be guaranteed, preparation prevents bias without preserving quality.',
+        ):
+            with self.subTest(source=source):
+                self.assertFalse(claim_evidence.violations(source))
+                delivered, findings = claim_evidence.deliver(source)
+                self.assertEqual(delivered, source)
+                self.assertFalse(findings)
+
     def test_rejected_clauses_keep_independent_next_step_and_complete_list_items(self):
         source = ('1. Compare outputs, but this route guarantees zero regressions, and inspect the stored evidence.\n'
                   '2. This route guarantees zero regressions.\n3. Record the request identity.')
