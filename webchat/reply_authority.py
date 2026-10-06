@@ -64,7 +64,43 @@ PERMISSION_CHANGE = re.compile(
     r'\b(?:is|was|has been|'+MODAL_PERFECT+r'|now|already)\s+(?:'+STATE_ADVERB+r'\s+){0,3}(?:lifted|cleared|released|granted)\b|'
     r'\b(?:I|we|you)(?:[’\']ve|\s+have)?\s+(?:(?:already|now)\s+)?'
     r'(?:lifted|cleared|released|granted)\s+(?:(?:the|your|our|my|real|actual|current|existing)\s+){0,3}'
-    r'(?:hold|permission|approval)\b', re.I)
+    r'(?:hold|permission|approval)\b|'
+    r'\bhold\s+(?:lifted|cleared|released|removed|ended|expired)\b|'
+    r'\b(?:clears|lifts|releases|removes|ends|expires|cleared|lifted|released|removed|ended|expired)\s+'
+    r'(?:(?:the|your|our|my|this|that|saved|reported|owner[- ]placed)\s+)+hold\b|'
+    r'\b(?:I|we)(?:[’\']ve|\s+have)?\s+(?:(?:already|now|just)\s+)?'
+    r'(?:lifted|cleared|released|removed|ended)\s+it\b|'
+    r'\b(?:the hold expired|the hold no longer applies|lifts automatically)\b', re.I)
+HOLD_RELEASE_CLAIM = re.compile(
+    r'\b(?:clears|lifts|releases|removes|ends|expires|cleared|lifted|released|removed|ended|expired)\s+'
+    r'(?:(?:the|your|our|my|this|that|saved|reported|owner[- ]placed)\s+)+hold\b|'
+    r'\b(?:the|your|our|my|this|that|saved|reported|owner[- ]placed)\s+hold\b'
+    r'(?:(?!\b(?:but|yet|however)\b)[^.;!?\n]){0,80}'
+    r'\b(?:cleared|lifted|released|removed|ended|expired|lifts?|clears?|no longer applies)\b|'
+    r'\bhold\s+(?:is |was |has been |will be |now |already )?(?:lifted|cleared|released|removed|ended|expired)\b|'
+    r'\b(?:it\s+)?lifts automatically\b|'
+    r'\bthe hold expired\b|'
+    r'\b(?:I|we)(?:[’\']ve|\s+have)?\s+(?:(?:already|now|just)\s+)?'
+    r'(?:lifted|cleared|released|removed|ended)\s+(?:(?:the|your|our|my|this|that|saved)\s+)*(?:hold|it)\b',
+    re.I)
+EXECUTION_START_CLAIM = re.compile(
+    r'\bexecution(?:\s+has)?\s+(?:start(?:s|ed)|begins?|began|is running|resumed|was authorized)\b|'
+    r'\b(?:start(?:s|ed)|begins?|began)\s+execution\b|'
+    r'\bexecution\s+to\s+begin\b|'
+    r'\bthe\s+workers?\s+(?:starts?|started|is running|resumed)\b|'
+    r'\bI resumed(?:\s+it)?\b', re.I)
+PRODUCT_HOLD_AUTHORSHIP = re.compile(
+    r"\b(?:I|we)(?:['’]ve|\s+have)?\s+(?:(?:just|already|now)\s+)?"
+    r"(?:registered|saved|placed|filed|put)\b.{0,50}\b(?:a |the |your )?(?:saved )?hold\b|"
+    r'\bsaved the hold in (?:the|this) product\b', re.I)
+CLAIM_NEGATION = re.compile(
+    r"(?:^|\b)(?:do(?:es)? not|did not|cannot|can['’]t|has not|have not|will not|never|"
+    r"not reached|has no(?:\s+\w+){0,6}\s+authority to|no authority to|"
+    r"before(?:\s+any)?|without|not (?:yet|been))\b", re.I)
+PERMISSION_REQUIREMENT = re.compile(
+    r'\b(?:must|should|needs? to|is required)\b|'
+    r'\b(?:verification|confirmation|evidence)\s+that\b|'
+    r'\b(?:first\s+)?(?:verify|check|confirm|obtain|seek|require)\b', re.I)
 PURE_GREETING = re.compile(r"(?:hi|hey|hello|good (?:morning|afternoon|evening))"
                            r"(?:[, ]+(?:bob|there))?[.!? ]*", re.I)
 GREETING_OPERATIONS = re.compile(
@@ -76,6 +112,87 @@ GREETING_OPERATIONS = re.compile(
 
 STICKY_REPLY = re.compile(r"(?:(?:ready when you are|(?:hi|hey|hello)(?:[, ]+Jeff)?|"
                          r"(?:I(?:['’]m| am) )?ready to help)[.!,\s]*)+", re.I)
+
+
+def _claim_text(text):
+    return re.sub(r'[*_`]', '', text or '')
+
+
+def _contrast_clauses(text):
+    return re.split(r'[;]|\s*[,;]?\s*\b(?:but|yet|however)\b', text or '', flags=re.I)
+
+
+def _claim_negated(prefix):
+    return bool(CLAIM_NEGATION.search(prefix or ''))
+
+
+def unnegated_hold_release(text):
+    """A clause that asserts a hold is/was/will be lifted, cleared, or ended."""
+    text = _claim_text(text)
+    for clause in _contrast_clauses(text):
+        if (PERMISSION_REQUIREMENT.search(clause) and
+                not re.search(r'\b(?:now|already|automatically)\b', clause, re.I) and
+                not re.search(r'\bmust\s+have\s+been\b', clause, re.I)):
+            continue
+        for match in HOLD_RELEASE_CLAIM.finditer(clause):
+            prefix = clause[:match.start()]
+            if re.search(r'\b(?:if|unless)\b', prefix, re.I):
+                continue
+            if not _claim_negated(prefix):
+                return True
+    return False
+
+
+def unnegated_execution_start(text):
+    """A clause that asserts execution started, began, is running, or resumed."""
+    text = _claim_text(text)
+    for clause in _contrast_clauses(text):
+        for match in EXECUTION_START_CLAIM.finditer(clause):
+            if re.match(r'-start\b', clause[match.end():], re.I):
+                continue
+            if not _claim_negated(clause[:match.start()]):
+                return True
+    return False
+
+
+def in_force_hold_restatement_ok(text):
+    """True only when the restatement does not also lift the hold or start work."""
+    return not unnegated_hold_release(text) and not unnegated_execution_start(text)
+
+
+def split_mixed_hold_units(parts, item_pattern):
+    """Keep a negated hold-denial when a later clause lifts the hold or starts work."""
+    expanded = []
+    splitter = re.compile(
+        r'(?s)^(?P<head>.*?\b(?:do(?:es)? not|cannot|has no(?:\s+\w+){0,6}\s+authority to)\s+'
+        r'(?:clear|lift|release|bypass|override)\s+(?:the\s+)?(?:saved\s+)?hold)'
+        r'\s*[,;]?\s*(?:but|yet|however)\s+(?P<tail>.+)$', re.I)
+    for part in parts:
+        if item_pattern.match(part):
+            expanded.append(part)
+            continue
+        match = splitter.match(part)
+        if match and in_force_hold_restatement_ok(match['head']) and (
+                unnegated_hold_release(match['tail']) or unnegated_execution_start(match['tail'])):
+            head = match['head'].rstrip()
+            if not re.search(r'[.!?]$', head):
+                head += '.'
+            newline = '\n' if part.endswith('\n') else ''
+            expanded.append(head + newline)
+            expanded.append(match['tail'])
+            continue
+        expanded.append(part)
+    return expanded
+
+
+def rewrite_unsaved_hold_authorship(content):
+    """A user-reported hold is not something this product registered."""
+    content = re.sub(r'\bthe saved hold\b', 'the hold', content, flags=re.I)
+    content = re.sub(
+        r'\s+under the hold I (?:registered|saved|placed|filed)(?:\s+for it)?',
+        ' as you reported',
+        content, flags=re.I)
+    return content
 
 
 def sticky_reply(text, content):
@@ -520,14 +637,20 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         def unsupported_effect(part):
             return bool(claims_dispatch(part,reference=supplied,bindings=bindings,context=content) or
                         progress_claim.search(dispatch_prose(part.strip(),reference=supplied)) or
-                        PROVIDER_CLAIM.search(part))
+                        PROVIDER_CLAIM.search(part) or
+                        unnegated_execution_start(part))
     from reported_records import units, presentation, foreign_label, foreign_subject, source_bindings, receipt, ITEM
-    sentences = list(units(content))
+    if not scopes:
+        content = rewrite_unsaved_hold_authorship(content)
+    sentences = split_mixed_hold_units(list(units(content)), ITEM)
     def asserted_permission_change(part):
         for change in PERMISSION_CHANGE.finditer(part):
             # A conditional governs its own predicate, not a subsequent
             # assertion across punctuation or a coordinating conjunction.
             prefix=part[:change.start()]
+            local_negation=re.split(r'[;:.!?\n]|\b(?:and|but|yet|however)\b',prefix,flags=re.I)[-1]
+            if _claim_negated(local_negation):
+                continue
             conditional=re.search(r'\b(?:if|when|once|before|until)\b'
                                   r'(?:(?!\b(?:and|but|yet|however|now that)\b)[^,;:.!?\n])*$',prefix,re.I)
             # A requested verification is not a completed permission change.
@@ -549,6 +672,8 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                     required=re.match(r'^\s*(?:is required|must\b|should\b|needs? to\b)',tail_clause,re.I)
                     completed=re.search(r'\b(?:is|was|has|have|exists?|now|already|recorded|obtained|received|confirmed)\b',tail_clause,re.I)
                     if completed and not required:verification=None
+            if change.group(0) and re.search(r'\bautomatically\b', change.group(0)+part[change.end():change.end()+24], re.I):
+                conditional=False
             if not conditional and not verification:
                 return True
         return False
@@ -571,6 +696,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         # Referencing a matching saved hold is not an acknowledgment of a new
         # permission change. Effect/dispatch checks still examine all prose.
         if not scopes or asserted_permission_change(part):return False
+        if not in_force_hold_restatement_ok(part):return False
         from hold_scope import GLOBAL_REFERENCE, pending_reference
         mentioned=projects(part)
         if any(not blocked_scopes(state,[name]) for name in mentioned):return False
@@ -648,7 +774,8 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 # This does not invent a hold or describe a lift/clear/release.
                 if (scopes and not named and not foreign_subject(clause,projects,WORKER_NAMES) and
                         re.search(r'\b(?:execution|work)\b',prefix+' '+subject,re.I) and
-                        re.search(r'\b(?:on hold|held|paused)\b',match[0]+' '+suffix,re.I)):
+                        re.search(r'\b(?:on hold|held|paused)\b',match[0]+' '+suffix,re.I) and
+                        in_force_hold_restatement_ok(clause)):
                     continue
                 return False
         return True
@@ -698,12 +825,13 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                               clean_clause,re.I) and
                     re.search(
                         r'\b(?:lifecycle stage|active status|currently on hold|has not executed|'
-                        r'has not reached|execution started|do(?:es)? not (?:clear|lift|release|bypass)|'
-                        r'reload|resubmission|still applies|'
+                        r'has not reached|do(?:es)? not (?:clear|lift|release|bypass)|'
+                        r'still applies|'
                         r'remains?\s+(?:(?:explicitly|currently|still)\s+)*(?:active|in (?:force|place|effect)|on hold|held)|'
                         r'was placed(?:\s+before)?)\b',
                         clean_clause,re.I) and
-                    not foreign_subject(clean_clause,projects,WORKER_NAMES))
+                    not foreign_subject(clean_clause,projects,WORKER_NAMES) and
+                    in_force_hold_restatement_ok(clean_clause))
                 named_subject=re.match(
                     r'^\s*(?:(?:task|assignment|record|lease|source|snapshot|revision|artifact)\s+)?'
                     r'([A-Za-z][\w]*-\d+)\b',clean_clause,re.I)
@@ -772,7 +900,8 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         record_hold=attributed_record_hold(part)
         changed=asserted_permission_change(part)
         effect=unsupported_effect(part)
-        valid=not effect and not changed and (not HOLD_CLAIM.search(part) or
+        invented_hold = (not scopes and PRODUCT_HOLD_AUTHORSHIP.search(part))
+        valid=not effect and not changed and not invented_hold and (not HOLD_CLAIM.search(part) or
                 held_scope_question(part) or saved_hold_reference(part) or record_hold)
         independent,governor=dependency.consider(part,valid,offset=offset,taint=bool(effect or changed))
         # Independent list items and headings are judged on their own. Other
@@ -839,10 +968,12 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
             content = (content + "\n\n" if content else "") + hold_reply(scopes)
         elif not content:
             content = "I could not produce a useful answer to that request. Please retry."
+        from claim_evidence import _renumber_lists, drop_orphan_fragments
+        content = drop_orphan_fragments(_renumber_lists(content))
     if not scopes:
         # A user-reported hold is not a product-saved hold. Restate it as a
-        # hold, never as something this product stored.
-        content=re.sub(r'\bthe saved hold\b','the hold',content,flags=re.I)
+        # hold, never as something this product stored or registered.
+        content = rewrite_unsaved_hold_authorship(content)
     if sticky_reply(text, content):
         content = "I could not produce a useful answer to that request. Please retry."
     if blocked:

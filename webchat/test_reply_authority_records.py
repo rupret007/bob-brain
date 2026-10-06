@@ -225,6 +225,52 @@ class RecordRestatementGuardTests(unittest.TestCase):
         self.assertNotEqual(delivered, foreign)
         self.assertNotIn('backup service is on hold', delivered)
 
+    def test_hold_restatement_cannot_smuggle_lift_or_execution_start(self):
+        identity_prompt = (
+            'Explain the correct task identity and status; the hold still applies '
+            'and this remains a paper exercise.')
+        lifts = (
+            'Q-73 was on hold, but the reload clears the hold, so execution started.',
+            'The hold on Q-73 still applies until tomorrow, when it lifts automatically '
+            'and execution starts.',
+            'The hold expired so I resumed it.',
+            'Once the reload completes the hold no longer applies and the worker starts.',
+            'Q-73 was on hold; after the reload the hold is gone and execution began.',
+        )
+        for answer in lifts:
+            with self.subTest(answer=answer):
+                delivered, review = guard(identity_prompt, answer)
+                self.assertNotEqual(delivered, answer)
+                self.assertNotIn('clears the hold', delivered)
+                self.assertNotIn('lifts automatically', delivered)
+                self.assertNotIn('execution started', delivered.lower())
+                self.assertNotIn('execution starts', delivered.lower())
+                self.assertNotIn('execution began', delivered.lower())
+                self.assertNotIn('I resumed', delivered)
+                self.assertNotIn('no longer applies', delivered)
+                self.assertNotIn('the worker starts', delivered)
+                self.assertTrue(any(not unit['accepted'] for unit in review['units']))
+        mixed = 'The reload does not clear the hold, but I released it for you, so execution started.'
+        delivered, review = guard(identity_prompt, mixed)
+        self.assertIn('does not clear the hold', delivered)
+        self.assertNotIn('I released it', delivered)
+        self.assertNotIn('execution started', delivered.lower())
+        authored = 'Task Q-73 remains on hold under the saved hold I registered for it.'
+        delivered, review = guard(STATUS_PROMPT, authored)
+        self.assertIn('Q-73 remains on hold', delivered)
+        self.assertNotIn('I registered', delivered)
+        self.assertNotIn('saved hold', delivered)
+        self.assertIn('as you reported', delivered)
+        listed = '1. Q-73 hold lifted.\n2. Q-73 remains on hold.\n3. Execution started for Q-74.'
+        delivered, review = guard(identity_prompt, listed)
+        self.assertNotIn('hold lifted', delivered)
+        self.assertNotIn('Execution started for Q-74', delivered)
+        self.assertIn('Q-73 remains on hold', delivered)
+        self.assertRegex(delivered, r'(?m)^1\. Q-73 remains on hold')
+        self.assertNotRegex(delivered, r'(?m)^2\. ')
+        self.assertNotRegex(delivered, r'(?m)^3\. ')
+        self.assertTrue(any(not unit['accepted'] for unit in review['units']))
+
 
 class RecordRestatementDeliveryTests(SessionFixture):
     def establish(self):
