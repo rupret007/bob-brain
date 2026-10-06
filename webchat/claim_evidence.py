@@ -338,6 +338,7 @@ def drop_empty_labels(text):
 
 
 def _renumber_lists(text):
+    """Compact a numbered run only when a guard left a gap; separate lists stay 1-based."""
     lines = text.split('\n')
     i = 0
     while i < len(lines):
@@ -346,13 +347,15 @@ def _renumber_lists(text):
             i += 1
             continue
         indent, delim = match.group(1), match.group(3)
-        n = 0
+        run = []
         j = i
         while j < len(lines):
             numbered = re.match(r'^(\s*)(\d+)([.)]\s+)(.*)$', lines[j])
             if numbered and numbered.group(1) == indent and numbered.group(3) == delim:
-                n += 1
-                lines[j] = indent + str(n) + delim + numbered.group(4)
+                value = int(numbered.group(2))
+                if run and value <= run[-1][1]:
+                    break
+                run.append((j, value, numbered.group(4)))
                 j += 1
                 continue
             if not lines[j].strip():
@@ -360,14 +363,140 @@ def _renumber_lists(text):
                 while k < len(lines) and not lines[k].strip():
                     k += 1
                 if k < len(lines) and re.match(r'^' + re.escape(indent) + r'\d+' + re.escape(delim), lines[k]):
+                    next_num = re.match(r'^' + re.escape(indent) + r'(\d+)' + re.escape(delim), lines[k])
+                    if next_num and run and int(next_num.group(1)) <= run[-1][1]:
+                        break
                     j += 1
                     continue
                 break
             if ITEM_START.match(lines[j].strip()) or EMPTY_LABEL.match(lines[j].strip()):
                 break
             j += 1
+        numbers = [item[1] for item in run]
+        consecutive = list(range(numbers[0], numbers[0] + len(numbers))) if numbers else []
+        if numbers and numbers != consecutive:
+            for n, (line, _, body) in enumerate(run, 1):
+                lines[line] = indent + str(n) + delim + body
         i = j if j > i else i + 1
     return '\n'.join(lines)
+
+
+SUBORDINATE_ONLY = re.compile(
+    r'^\s*(?:since|because|as|if|when|while|although|given that)\b', re.I)
+DISCOURSE_AS = re.compile(
+    r'^\s*as\s+(?:a\s+result|such|follows|usual|expected|of|for|to|with|per)\b', re.I)
+LOWER_CONNECTOR = re.compile(
+    r'^(?:and|or|but|yet|so|then|as|because|since|although|while)\b')
+
+
+def _orphan_subordinate(body):
+    """A leftover subordinate clause has no main clause of its own."""
+    if not body:
+        return False
+    if body[0].islower() and LOWER_CONNECTOR.match(body) and not DISCOURSE_AS.match(body):
+        return True
+    if not SUBORDINATE_ONLY.match(body) or DISCOURSE_AS.match(body):
+        return False
+    return not (re.search(r',\s+\S', body) or re.search(r'\bthen\b', body, re.I))
+
+
+def drop_orphan_fragments(text):
+    """Drop sentences that are only a subordinate clause after a guard edit."""
+    if not text:
+        return text
+    from reported_records import units
+    kept = []
+    for part in units(text):
+        stripped = part.strip()
+        if not stripped:
+            kept.append(part)
+            continue
+        body = re.sub(r'^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+)', '', stripped).strip()
+        if _orphan_subordinate(body):
+            continue
+        kept.append(part)
+    return ''.join(kept)
+
+
+STEP_LABEL = re.compile(
+    r'(?im)(?P<prefix>^\s*\|\s*|^\s*(?:#{1,6}\s+)?)(?P<label>Step\s+)(?P<n>\d+)\b')
+STEP_REF = re.compile(
+    r'\b(?:pass(?:es)?\s+)?steps?\s+\d+(?:\s*(?:,|and|&)\s*\d+)+', re.I)
+
+
+def _drop_missing_step_refs(text, missing):
+    if not missing:
+        return text
+    def scrub(match):
+        nums = [int(n) for n in re.findall(r'\d+', match[0])]
+        kept = [n for n in nums if n not in missing]
+        if not kept:
+            return ''
+        if kept == nums:
+            return match[0]
+        head = match[0][:re.search(r'\d', match[0]).start()]
+        if len(kept) == 1:
+            head = re.sub(r'(?i)steps\s*$', 'step ', head)
+            return head + str(kept[0])
+        joined = ', '.join(str(n) for n in kept[:-1]) + ' and ' + str(kept[-1])
+        return head + joined
+    text = STEP_REF.sub(scrub, text)
+    return re.sub(r' +([,.;:])', r'\1', re.sub(r' {2,}', ' ', text))
+
+
+def _repair_step_lists(text):
+    """Renumber remaining Step N labels and drop references to a removed step."""
+    labels = [int(m.group('n')) for m in STEP_LABEL.finditer(text)]
+    if labels:
+        present = sorted(set(labels))
+        missing = [n for n in range(1, max(present) + 1) if n not in present]
+        if missing:
+            text = _drop_missing_step_refs(text, set(missing))
+            remap = {old: i for i, old in enumerate(present, 1)}
+            def relabel(match):
+                n = int(match.group('n'))
+                return match.group('prefix') + match.group('label') + str(remap.get(n, n))
+            text = STEP_LABEL.sub(relabel, text)
+    return _renumber_lists(text)
+
+
+def _norm_para(text):
+    return re.sub(r'\s+', ' ', re.sub(r'[*_`]', '', text or '')).strip().lower()
+
+
+def already_delivered(text, prior):
+    """True when this paragraph was already shown in an earlier assistant turn."""
+    needle = _norm_para(text)
+    if not needle or not prior or len(needle) < 40:
+        return False
+    for para in re.split(r'\n\s*\n', prior):
+        hay = _norm_para(para)
+        if not hay:
+            continue
+        if hay == needle or (len(needle) > 80 and needle in hay) or (len(hay) > 80 and hay in needle):
+            return True
+        if abs(len(hay) - len(needle)) <= max(24, int(0.15 * max(len(hay), len(needle)))):
+            import difflib
+            if difflib.SequenceMatcher(None, hay, needle).ratio() >= 0.92:
+                return True
+    return False
+
+
+def drop_repeated_paragraphs(text, prior):
+    """Replace near-verbatim earlier paragraphs with nothing, keeping new substance."""
+    if not text or not prior:
+        return text
+    chunks = re.split(r'(\n\s*\n)', text)
+    kept = []
+    for index, chunk in enumerate(chunks):
+        if index % 2 == 1:
+            kept.append(chunk)
+            continue
+        if already_delivered(chunk, prior) and len(_norm_para(chunk)) > 80:
+            continue
+        kept.append(chunk)
+    result = re.sub(r'\n{3,}', '\n\n', ''.join(kept)).strip()
+    return result or 'The previous answer still applies to this follow-up.'
 
 
 def scrub_unretrieved_links(text, *, source='', trusted_facts=()):
@@ -395,6 +524,8 @@ def finish_delivery(text, *, source='', trusted_facts=()):
     if not _user_asked_cursors(source):
         text = strip_journal_cursors(text)
     text = drop_empty_labels(text)
+    text = drop_orphan_fragments(text)
+    text = _repair_step_lists(text)
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
@@ -445,7 +576,7 @@ def deliver(content, *, source='', trusted_facts=(), artifact=False):
             spans.append(dict(start=start,end=end,categories=[] if embedded else finding['categories']))
     parts = []; position = 0
     connector = re.compile(r'(?:,?\s*\b(?:and|or|but|yet|however|therefore|thus|so|then|because|since|now that|given that|which|that)\b\s*|,\s*)$',re.I)
-    leading = re.compile(r'^\s*(?:,?\s*\b(?:and|or|but|yet|however|therefore|thus|so|then)\b\s*|[,;]\s*)',re.I)
+    leading = re.compile(r'^\s*(?:,?\s*\b(?:and|or|but|yet|however|therefore|thus|so|then|as|because|since|although|while)\b\s*|[,;]\s*)',re.I)
     dangling_relative = re.compile(
         r'^\s*,?\s*(?:which|that)\s+(?:prevents?|avoids?|reduces?|limits?|blocks?)\b[^.!?]{0,120}(?:\.|$)', re.I)
     def remainder(value):

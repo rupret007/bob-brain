@@ -282,7 +282,7 @@ def feasible_reasoning(text, projection):
     return True
 
 
-def compose_blocks(blocks, known, projection):
+def compose_blocks(blocks, known, projection, prior=''):
     """Select complete evidence statements and independent proposed reasoning.
 
     Rejected prose is observable partial delivery. A surviving fact is never
@@ -291,9 +291,11 @@ def compose_blocks(blocks, known, projection):
     if not 1<=len(blocks)<=8:
         raise ValueError('Invalid answer blocks')
     from answer_fragments import select, DependencyState
+    from claim_evidence import already_delivered
     dependency=DependencyState()
     content=[];tokens=[];rejected=[];pending=False;retained_reasoning=False
     context='\n\n'.join(b['reasoning'] for b in blocks if isinstance(b,dict) and isinstance(b.get('reasoning'),str))
+    skipped_fact=False
     for index,block in enumerate(blocks):
         if not isinstance(block,dict) or len(block)!=1:
             raise ValueError('Invalid answer block schema')
@@ -302,7 +304,12 @@ def compose_blocks(blocks, known, projection):
             if not isinstance(fid,str) or fid not in known:
                 raise ValueError('Unknown answer fact')
             tokens.append(fid)
-            if known[fid] not in content:content.append(known[fid])
+            if known[fid] in content:
+                continue
+            if already_delivered(known[fid], prior):
+                skipped_fact=True
+                continue
+            content.append(known[fid])
         elif set(block)=={'reasoning'}:
             prose=block['reasoning']
             if not isinstance(prose,str) or not 1<=len(prose)<=2500 or '[fact:' in prose:
@@ -319,8 +326,8 @@ def compose_blocks(blocks, known, projection):
             raise ValueError('Unknown answer block type')
     if not tokens or sum(len(p) for p in content)>10000:
         raise ValueError('Answer evidence or size invalid')
-    if rejected and not retained_reasoning:
-        content.insert(0,"I couldn't verify one proposed claim.")
+    if skipped_fact and not content:
+        content.append('The previously stated resource facts still apply.')
     return '\n\n'.join(content),tokens,rejected,retained_reasoning
 
 
@@ -346,7 +353,7 @@ def preparation_steps(steps, resource, projection):
         str(i)+'. '+descriptions[s] for i,s in enumerate(steps,1))
 
 
-def render(raw, projection, *, root=None):
+def render(raw, projection, *, root=None, prior=''):
     """Compose grounded facts and checked reasoning; advice creates no effects."""
     value=parse(raw)
     modern=isinstance(value,dict) and set(value)=={'answer','resource','steps'}
@@ -372,7 +379,7 @@ def render(raw, projection, *, root=None):
         known=projection.get('facts') or facts(projection['inventory'],missing=projection['missing_inputs'])
         rejected=[];retained_reasoning=False
         if blocked:
-            content,tokens,rejected,retained_reasoning=compose_blocks(value['answer'],known,projection)
+            content,tokens,rejected,retained_reasoning=compose_blocks(value['answer'],known,projection,prior)
         else:
             tokens=FACT_TOKEN.findall(value['answer'])
         if not blocked:
@@ -388,7 +395,7 @@ def render(raw, projection, *, root=None):
                 retained,units,_=select(prose,lambda part:safe_reasoning(part,context=prose) and feasible_reasoning(part,projection))
                 if not retained.strip():raise ValueError('Ungrounded answer composition')
                 content,tokens,rejected,retained_reasoning=compose_blocks([*[dict(fact=t) for t in dict.fromkeys(tokens)],
-                    dict(reasoning=prose)],known,projection)
+                    dict(reasoning=prose)],known,projection,prior)
                 blocked=True
         owner=projection.get('owner_context')
         if root is not None and owner and any(t.startswith('owner.') for t in tokens):
@@ -419,7 +426,11 @@ def render(raw, projection, *, root=None):
             if projection['missing_inputs'] and (not blocked or 'missing_inputs' not in tokens):
                 content+='\n\n'+known['missing_inputs']
             if rejected and not retained_reasoning:
-                content+=preparation_steps(steps,None,projection)
+                extra=preparation_steps(steps,None,projection)
+                from claim_evidence import already_delivered
+                if extra and already_delivered(extra, prior):
+                    extra='\n\nThe previously listed preparation steps still apply.'
+                content+=extra
             from claim_evidence import finish_delivery
             return finish_delivery(content),dict(resource=None,steps=steps if not rejected else [],fact_ids=tokens,execution_started=False,model_proposal_accepted=not rejected,
                 verified_preparation_steps=steps if rejected else [],partial=bool(rejected),rejected_blocks=rejected,acceptance_scope='schema and bounded claim checks; not semantic certification')
@@ -433,7 +444,12 @@ def render(raw, projection, *, root=None):
         decision.update(steps=value['steps'],fact_ids=tokens,model_proposal_accepted=not rejected,
                         partial=bool(rejected),rejected_blocks=rejected,acceptance_scope='schema and bounded claim checks; not semantic certification')
         if rejected:
-            if not retained_reasoning:content+=preparation_steps(value['steps'],resource,projection)
+            if not retained_reasoning:
+                extra=preparation_steps(value['steps'],resource,projection)
+                from claim_evidence import already_delivered
+                if extra and already_delivered(extra, prior):
+                    extra='\n\nThe previously listed preparation steps still apply.'
+                content+=extra
             decision.update(resource=None,steps=[],verified_preparation_steps=value['steps'])
         from claim_evidence import finish_delivery
         return finish_delivery(content),decision

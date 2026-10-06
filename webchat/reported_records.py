@@ -167,17 +167,22 @@ def receipt(part, *, offset, accepted, reason, subject, bindings):
                 source_bindings=bindings.get(subject, []))
 
 
-RECORD_ACTOR = re.compile(r'\b(?:I|we|you|Bob|Codex|Claude|Cursor|Gemini|MiniMax)\b', re.I)
+RECORD_ACTOR = re.compile(
+    r'\b(?:I|we|you|he|she|they|someone|somebody|Bob|Codex|Claude|Cursor|Gemini|MiniMax|'
+    r'the\s+(?:system|server|scheduler|owner|operator|dispatcher))\b', re.I)
 DESCRIPTIVE_ASSIGNED = re.compile(
-    r'\bassigned(?=\s+(?:worker|assignee|reviewer|agent)s?\b|\s+to\b)', re.I)
+    r'\bassigned(?=\s+(?:worker|assignee|reviewer|agent)s?\b)', re.I)
+FINITE_ASSIGN = re.compile(
+    r'\b(?:was|were|is|are|been|being)\s+$|'
+    r'\b(?:has|have|had)\s+(?:been\s+)?$', re.I)
 
 
 def attributed_descriptive_bindings(content, bindings):
     """Mask adjectival assignment when restating a supplied task binding.
 
-    'assigned worker ReviewWorker' and 'assigned to <role>' name the recorded
-    identity. They are not an actor assigning work. Finite I/we/system
-    predicates stay visible to the effect checks.
+    'assigned worker ReviewWorker' names the recorded identity. It is not an
+    actor assigning work. Finite I/we/system predicates and 'assigned to'
+    verbal claims stay visible to the effect checks.
     """
     if not bindings:
         return content
@@ -187,7 +192,7 @@ def attributed_descriptive_bindings(content, bindings):
     masked = list(content)
     for match in DESCRIPTIVE_ASSIGNED.finditer(content):
         local = re.split(r'[.;!?\n]', content[:match.start()])[-1]
-        if RECORD_ACTOR.search(local):
+        if RECORD_ACTOR.search(local) or FINITE_ASSIGN.search(local):
             continue
         masked[match.start():match.end()] = ' '*(match.end()-match.start())
     return ''.join(masked)

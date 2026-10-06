@@ -521,7 +521,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
             return bool(claims_dispatch(part,reference=supplied,bindings=bindings,context=content) or
                         progress_claim.search(dispatch_prose(part.strip(),reference=supplied)) or
                         PROVIDER_CLAIM.search(part))
-    from reported_records import units, presentation, foreign_label, foreign_subject, source_bindings, receipt
+    from reported_records import units, presentation, foreign_label, foreign_subject, source_bindings, receipt, ITEM
     sentences = list(units(content))
     def asserted_permission_change(part):
         for change in PERMISSION_CHANGE.finditer(part):
@@ -696,8 +696,11 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 prerequisite=bool(re.search(r'\b(?:must|should|needs? to|is required to)\b',prefix,re.I)
                     and re.search(r'\b(?:before|after)\s+(?:lifting|clearing|releasing)\s*$',prefix,re.I)
                     and not foreign_label(prefix,projects,WORKER_NAMES))
+                # Restatements may continue with remains/stays. Completed
+                # predicates (is/was/are/were lifted|granted) stay with the
+                # permission-change guard, not this object binder.
                 explicit_object=bool(re.fullmatch(r'(?:on|for|in)\s+'+subject+
-                    r'(?:\s*(?:[,;]|(?:until|while|before|after|must|should|needs? to|remains?|stays?|is|was|are|were)\b).*)?\s*[.!?]*',suffix,re.I))
+                    r'(?:\s*(?:[,;]|(?:until|while|before|after|must|should|needs? to|remains?|stays?)\b).*)?\s*[.!?]*',suffix,re.I))
                 state_modifier=bool(re.match(r'(?:still\s+)?(?:applies|active)|in\s+(?:place|force|effect)\b(?!\s+(?:on|for|in)\b)',suffix,re.I))
                 object_ok=not re.match(r'(?:on|for|in)\b',suffix,re.I) or explicit_object or state_modifier
                 directive=bool(re.fullmatch(r'(?:maintain|keep|preserve)\s*',prefix,re.I))
@@ -731,7 +734,9 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 if explicit:record_subject=next(i for i in bindings if re.search(r'\b'+re.escape(i)+r'\b',explicit[0],re.I))
                 elif foreign_subject(clean_clause,projects,WORKER_NAMES):record_subject=None
         return accepted
-    from answer_fragments import DependencyState, depends_on_rejected_unit, heading_unit, ACKNOWLEDGEMENT
+    from answer_fragments import (
+        DependencyState, depends_on_rejected_unit, heading_unit, ACKNOWLEDGEMENT,
+        prospective_plan)
     dependency=DependencyState()
     kept=[];pending_effect=False;pending_reference=False;rejected_effect=False
     decisions=[];offset=0
@@ -745,11 +750,20 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         effect=unsupported_effect(part)
         valid=not effect and not changed and (not HOLD_CLAIM.search(part) or
                 held_scope_question(part) or saved_hold_reference(part) or record_hold)
-        _,governor=dependency.consider(part,valid,offset=offset,taint=bool(effect or changed))
-        # Independent list items, headings and separate sentences are judged
-        # on their own. Only a true continuation or "therefore/so/this means"
-        # back-reference inherits a rejected unit.
+        independent,governor=dependency.consider(part,valid,offset=offset,taint=bool(effect or changed))
+        # Independent list items and headings are judged on their own. Other
+        # units still need consider()'s independent result so a rejected
+        # premise cannot license a later permission/effect or an if/once/after
+        # governor whose this/that/it consequent depends on that premise.
         dependent=depends_on_rejected_unit(part, pending=pending_reference)
+        own_merits=bool(heading_unit(part) or ITEM.match(part))
+        tainted_governor=bool(pending_reference and prospective_plan(part) and
+                              re.search(r'\b(?:this|that|it|its|they|their|these|those)\b',part,re.I))
+        if part.strip() and valid and not independent and not own_merits:
+            dependent=True
+        if tainted_governor:
+            dependent=True
+            dependency.close_plan()
         accepted=valid and not dependent
         if accepted:
             kept.append(part)

@@ -38,6 +38,9 @@ def heading_unit(unit):
     text = unit.strip()
     if not text:
         return False
+    # A prospective if/once/after governor ends with a colon but is not a heading.
+    if re.match(r'^\s*(?:once|if|when|after)\b', text, re.I):
+        return False
     label, body = presentation(unit)
     if label and not body.strip():
         return True

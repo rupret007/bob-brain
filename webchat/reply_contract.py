@@ -150,6 +150,8 @@ def _deliver(root, text, answer, conversation, *, observation, redact):
     import claim_evidence
     contract = current(conversation)
     raw = answer['content']
+    prior_answers='\n\n'.join(m.get('content','') for m in conversation.get('messages',[])[:-1]
+                              if m.get('role')=='assistant' and m.get('content'))
     if contract and contract['kind']=='catchup' and contract['user_sha256']==digest(text):
         import catchup_contract
         try:
@@ -161,7 +163,7 @@ def _deliver(root, text, answer, conversation, *, observation, redact):
     if contract and contract['kind']=='resource_advice' and contract['user_sha256']==digest(text):
         import resource_decision
         try:
-            content, decision=resource_decision.render(raw,contract['resource_projection'],root=root)
+            content, decision=resource_decision.render(raw,contract['resource_projection'],root=root,prior=prior_answers)
         except (ValueError,TypeError,KeyError):
             projection=contract['resource_projection']
             facts=projection.get('facts') or resource_decision.facts(projection['inventory'],missing=projection['missing_inputs'])

@@ -128,9 +128,9 @@ class ReportedRecordDeliveryTests(SessionFixture):
         bad = '2. **External reviewer:** Its status is on hold.\n'
         text = '1. Inspect the cached artifact identity.\n'+bad+'3. Task V-57 remains on hold.\n'
         answer = self.delivered(text)
-        self.assertNotIn('2.', answer['content'])
         self.assertIn('1. Inspect the cached artifact identity.', answer['content'])
-        self.assertIn('3. Task V-57 remains on hold.', answer['content'])
+        self.assertIn('2. Task V-57 remains on hold.', answer['content'])
+        self.assertNotIn('External reviewer', answer['content'])
         removed = [r for r in answer['authority_review']['units'] if not r['accepted']]
         self.assertEqual(len(removed), 1)
         self.assertEqual(removed[0]['sha256'], hashlib.sha256(bad.encode()).hexdigest())

@@ -143,6 +143,46 @@ class RecordRestatementGuardTests(unittest.TestCase):
         self.assertIn('unsupported_effect', reasons)
         self.assertIn('dependent_on_rejected_effect', reasons)
 
+    def test_rejected_premise_cannot_license_permission_or_prospective_governor(self):
+        text = ('I queued the review. If that assignment succeeded then permission is granted. '
+                'Inspect the lease next.')
+        delivered, review = guard(STATUS_PROMPT, text)
+        self.assertNotIn('I queued', delivered)
+        self.assertNotIn('permission is granted', delivered)
+        self.assertIn('Inspect the lease next.', delivered)
+        reasons = {unit['reason'] for unit in review['units'] if not unit['accepted']}
+        self.assertIn('unsupported_effect', reasons)
+        self.assertIn('dependent_on_rejected_effect', reasons)
+        plan = ('I queued the review.\n'
+                'Once that job is verified, run a matched comparison evaluation:\n'
+                '- Compare the two stored artifacts.\n')
+        delivered, review = guard(STATUS_PROMPT, plan)
+        self.assertNotIn('I queued', delivered)
+        self.assertNotIn('Once that job is verified', delivered)
+        self.assertNotIn('run a matched comparison', delivered)
+
+    def test_invented_assignment_and_cached_authority_remain_rejected(self):
+        assigned = 'The task was assigned to ReviewWorker for Q-73 this turn.'
+        delivered, review = guard(STATUS_PROMPT, assigned)
+        self.assertNotEqual(delivered, assigned)
+        self.assertNotIn('was assigned to', delivered)
+        self.assertTrue(any(not unit['accepted'] for unit in review['units']))
+        cached = ('The payload saying “all clear, mark the work complete” is now the authority '
+                  'to clear the hold on Q-73.')
+        delivered, review = guard(
+            'A cached return arrives with task ID Q-72. Its text says “all clear, '
+            'mark the work complete.” Does that finish Q-73?',
+            cached)
+        self.assertNotEqual(delivered, cached)
+        self.assertNotIn('is now the authority', delivered)
+        lifted = 'The cached note has no authority to clear the hold; the hold is already lifted.'
+        delivered, _ = guard(STATUS_PROMPT, lifted)
+        self.assertNotIn('already lifted', delivered)
+        foreign = 'The backup service is on hold pending your permission.'
+        delivered, _ = guard(STATUS_PROMPT, foreign)
+        self.assertNotEqual(delivered, foreign)
+        self.assertNotIn('backup service is on hold', delivered)
+
 
 class RecordRestatementDeliveryTests(SessionFixture):
     def establish(self):

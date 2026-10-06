@@ -199,8 +199,70 @@ class DeliveryCleanupTests(unittest.TestCase):
             self.assertNotIn('Part of the proposed reasoning could not be verified', delivered)
             self.assertNotIn('learn.chatgpt.com', delivered)
             self.assertNotIn('[Unverified claim withheld]', delivered)
-            self.assertIn("couldn't verify one proposed claim", delivered)
+            self.assertNotIn("couldn't verify one proposed claim", delivered)
             self.assertIn('authentication route', delivered)
+
+
+    def test_orphan_subordinate_fragments_are_dropped_after_guard_edits(self):
+        leftover = ('No, keeping requests short guarantees neither outcome.\n'
+                    'as neither route\'s analytical performance has been evaluated on this task yet.\n'
+                    'Inspect the stored evidence next.')
+        delivered = claim_evidence.finish_delivery(leftover)
+        self.assertNotIn('as neither route', delivered)
+        self.assertIn('Inspect the stored evidence next.', delivered)
+        planning = ('Since we are in planning only and have no active tasks running.\n'
+                    'Outline the next check.')
+        delivered = claim_evidence.finish_delivery(planning)
+        self.assertNotIn('Since we are in planning only', delivered)
+        self.assertIn('Outline the next check.', delivered)
+        complete = ('Because the hold remains active, keep the next check read-only.\n'
+                    'As a result, inspect the stored evidence.')
+        delivered = claim_evidence.finish_delivery(complete)
+        self.assertIn('Because the hold remains active, keep the next check read-only.', delivered)
+        self.assertIn('As a result, inspect the stored evidence.', delivered)
+
+    def test_gapped_lists_and_removed_step_refs_are_repaired(self):
+        gapped = '1. Record the request identity.\n3. Inspect the stored evidence.\n4. Keep the hold.\n6. Compare artifacts.'
+        delivered = claim_evidence.finish_delivery(gapped)
+        self.assertIn('1. Record the request identity.', delivered)
+        self.assertIn('2. Inspect the stored evidence.', delivered)
+        self.assertIn('3. Keep the hold.', delivered)
+        self.assertIn('4. Compare artifacts.', delivered)
+        self.assertNotIn('6.', delivered)
+        table = ('| Step 1 | Record identity |\n'
+                 '| Step 3 | Inspect evidence; this step passes steps 1 and 2 |\n'
+                 '| Step 4 | Keep the hold |')
+        delivered = claim_evidence.finish_delivery(table)
+        self.assertIn('| Step 1 | Record identity |', delivered)
+        self.assertIn('| Step 2 |', delivered)
+        self.assertIn('| Step 3 |', delivered)
+        self.assertNotIn('Step 4', delivered)
+        self.assertNotIn('passes steps 1 and 2', delivered)
+        self.assertIn('passes step 1', delivered)
+        separate = '1. First list item.\n2. Second list item.\n\n1. Other list starts.\n2. Other list continues.'
+        delivered = claim_evidence.finish_delivery(separate)
+        self.assertIn('1. First list item.', delivered)
+        self.assertIn('2. Second list item.', delivered)
+        self.assertIn('1. Other list starts.', delivered)
+        self.assertIn('2. Other list continues.', delivered)
+
+    def test_repeated_fact_blocks_are_not_restated_on_later_turns(self):
+        fact = resource_decision.facts({'resources': [], 'observed_at': 0})['purchase_vs_usage']
+        first = fact + '\n\nInspect allowance dashboards next.'
+        delivered = claim_evidence.drop_repeated_paragraphs(
+            fact + '\n\nName the remaining unknowns before any comparison.', first)
+        self.assertNotIn(fact, delivered)
+        self.assertIn('Name the remaining unknowns before any comparison.', delivered)
+        with tempfile.TemporaryDirectory() as temp:
+            projection = resource_decision.project(Path(temp), dict(messages=[dict(
+                role='user', id='1', request_id='1',
+                content='Can our Codex subscription replace the API route?')]))
+            packet = json.dumps(dict(answer=[dict(fact='purchase_vs_usage'),
+                                             dict(reasoning='Name the remaining unknowns before any comparison.')],
+                                     resource=None, steps=[]))
+            delivered, _ = resource_decision.render(packet, projection, prior=fact)
+            self.assertNotIn(fact, delivered)
+            self.assertIn('Name the remaining unknowns', delivered)
 
 
 if __name__ == '__main__':
