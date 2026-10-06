@@ -79,7 +79,9 @@ def http_json(url, method="GET", payload=None, headers=None, validate=None, allo
                 config_path.chmod(0o600)
                 # Reasoning responses can exceed one minute before any body
                 # arrives; retain the same bounded window for both reasoning models.
-                seconds = 180 if model_id in ("gemini-2.5-pro", "MiniMax-M2.7") else 60
+                # gemini-3.8-flash runs with thinkingLevel (HIGH for chat); its thought
+                # tokens routinely take 55-70s before any body arrives.
+                seconds = 180 if model_id in ("gemini-2.5-pro", "MiniMax-M2.7", "gemini-3.8-flash") else 60
                 if reservation and reservation.get('goal_reservation'):
                     seconds = min(seconds, budget.generation_budget.remaining(reservation['goal_reservation']))
                 cmd = ["curl", "-sS", "-m", str(seconds), "--connect-timeout", "10", "--config", str(config_path),
