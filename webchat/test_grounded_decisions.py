@@ -166,7 +166,8 @@ class ProjectionTests(unittest.TestCase):
                 answer,decision=resource_decision.render(json.dumps(dict(answer=blocks,resource=None,steps=[])),projection)
                 self.assertNotIn(bad,answer);self.assertTrue(decision['partial'])
                 self.assertFalse(decision['model_proposal_accepted']);self.assertEqual(decision['rejected_blocks'][0]['index'],1)
-                self.assertIn('answer is incomplete',answer)
+                self.assertIn("couldn't verify one proposed claim",answer)
+                self.assertNotIn('answer is incomplete',answer)
             for blocks in ([dict(fact='invented')],[dict(fact='quality_bar',reasoning='Extra field')],
                            [dict(reasoning='Keep thinking.')]):
                 with self.assertRaises(ValueError):

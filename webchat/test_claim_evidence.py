@@ -107,6 +107,7 @@ class DeliveredClaimTests(SessionFixture):
         self.assertIn('Trace the same request', answer['content'])
         self.assertIn('does not identify its cause', answer['content'])
         self.assertTrue(answer['claim_review']['partial'])
+        self.assertNotIn('[Unverified claim withheld]', answer['content'])
 
     def test_requested_commitment_and_draft_quote_do_not_become_app_effects(self):
         artifact = 'We’ll finish this workflow before adding integrations.'
@@ -120,6 +121,86 @@ class DeliveredClaimTests(SessionFixture):
         self.assertIn(artifact, answer['content'])
         self.assertNotIn('guarantees zero texting', answer['content'])
         self.assertIn('outcome is unverified', answer['content'])
+        self.assertNotIn('[Unverified claim withheld]', answer['content'])
+
+
+class DeliveryCleanupTests(unittest.TestCase):
+    def test_withheld_claims_read_as_finished_prose_without_guard_tags(self):
+        source = ('Context Architecture Assessment: this route guarantees equal quality.\n'
+                  'Next, inspect the stored evidence and name the acceptance check.')
+        delivered, findings = claim_evidence.deliver(source)
+        self.assertTrue(findings)
+        self.assertNotIn('[Unverified claim withheld]', delivered)
+        self.assertNotIn('guarantees equal quality', delivered)
+        self.assertIn('inspect the stored evidence', delivered)
+        self.assertEqual(delivered.count('The quality or continuity outcome is unverified'), 1)
+
+    def test_empty_heading_and_empty_list_item_are_dropped_and_lists_renumber(self):
+        source = ('1. Record the request identity.\n'
+                  '2. This route guarantees zero charges.\n'
+                  '3. Inspect the stored evidence.\n'
+                  '5. **Operational State & Authorization:**')
+        delivered, findings = claim_evidence.deliver(source)
+        self.assertTrue(findings)
+        self.assertNotIn('Operational State', delivered)
+        self.assertNotRegex(delivered, r'(?m)^\s*\d+[.)]\s+(?:\*\*)?[^\n:]+:(?:\*\*)?\s*$')
+        self.assertIn('1. Record the request identity.', delivered)
+        self.assertIn('Inspect the stored evidence.', delivered)
+        self.assertNotIn('guarantees zero charges', delivered)
+
+    def test_global_queue_and_process_state_need_evidence_unlike_record_scope(self):
+        safe = "This conversation hasn't started a task. No start receipt is recorded."
+        self.assertFalse(claim_evidence.violations(safe))
+        delivered, _ = claim_evidence.deliver(safe)
+        self.assertIn("hasn't started a task", delivered)
+        self.assertIn('no start receipt is recorded', delivered.lower())
+        for value in (
+            'With no active tasks or pending assignments currently queued. Draft the next check.',
+            'There are zero completed effects. Draft the next check.',
+            'Task status is Not Running. Draft the next check.',
+            'I confirmed the running source SHA. Draft the next check.',
+        ):
+            with self.subTest(value=value):
+                self.assertTrue(claim_evidence.violations(value), value)
+                text, _ = claim_evidence.deliver(value)
+                self.assertNotIn('[Unverified claim withheld]', text)
+                self.assertIn('Draft the next check.', text)
+                self.assertNotIn('currently queued', text)
+                self.assertNotIn('Not Running', text)
+                self.assertNotRegex(text.lower(), r'confirmed the running source sha')
+
+    def test_journal_cursors_and_unretrieved_links_are_not_user_facing(self):
+        source = ('Saved facts at journal cursor 57/60/66. See [pricing](https://learn.chatgpt.com/docs/pricing).\n'
+                  'Inspect the stored evidence next.')
+        delivered, _ = claim_evidence.deliver(source)
+        self.assertNotIn('57', delivered)
+        self.assertNotIn('journal cursor', delivered.lower())
+        self.assertNotIn('learn.chatgpt.com', delivered)
+        self.assertIn('Inspect the stored evidence next.', delivered)
+        asked = claim_evidence.finish_delivery(
+            'The journal cursor is 12.', source='What is the journal cursor?')
+        self.assertIn('12', asked)
+        kept = claim_evidence.finish_delivery(
+            'Source: [docs](https://example.com/retrieved)',
+            source='see https://example.com/retrieved')
+        self.assertIn('https://example.com/retrieved', kept)
+
+    def test_resource_packets_omit_incomplete_boilerplate_and_unretrieved_links(self):
+        with tempfile.TemporaryDirectory() as temp:
+            projection = resource_decision.project(Path(temp), dict(messages=[dict(
+                role='user', id='1', request_id='1',
+                content='Can our Codex subscription replace the API route?')]))
+            delivered, receipt = resource_decision.render(json.dumps(dict(
+                answer=[dict(fact='purchase_vs_usage'),
+                        dict(reasoning='This route guarantees zero charges.')],
+                resource=None, steps=['inspect_allowance'])), projection)
+            self.assertTrue(receipt['partial'])
+            self.assertNotIn('this answer is incomplete', delivered.lower())
+            self.assertNotIn('Part of the proposed reasoning could not be verified', delivered)
+            self.assertNotIn('learn.chatgpt.com', delivered)
+            self.assertNotIn('[Unverified claim withheld]', delivered)
+            self.assertIn("couldn't verify one proposed claim", delivered)
+            self.assertIn('authentication route', delivered)
 
 
 if __name__ == '__main__':

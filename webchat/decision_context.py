@@ -305,8 +305,11 @@ def render(content, projection, conversation, redact):
         context='The current planning conditions are unresolved; this recommendation is incomplete.'
         if excerpts:context+=' Your correction still needs reconciliation: '+ ' '.join(excerpts)
         if projection['truncated']:context+=' The supplied conditions exceed this bounded context projection.'
-    final=(context+'\n\n' if context else '')+content
     empty_sections=bool(re.search(r'(?m)^\s*(?:#{1,6}\s*)?(?:\*\*)?[^\n:]{1,100}:(?:\*\*)?\s*\Z',content))
+    if empty_sections:
+        from claim_evidence import drop_empty_labels
+        content=drop_empty_labels(content)
+    final=(context+'\n\n' if context else '')+content
     review=dict(scope='Visible attributed source conditions only; usefulness and next-step completeness require separate review.',
         required_ids=projection['required_ids'],rendered_ids=[r['id'] for r in displayed],
         rejected_ids=rejected,partial=bool(rejected or empty_sections),empty_final_section=empty_sections,

@@ -804,10 +804,11 @@ class Providers:
             snapshots.append(dict(path='current saved project context', modified=project.get('updated_at'),
                                   truncated=bool(project.get('omitted_fact_ids') or project.get('omitted')),
                                   text=self.redact(json.dumps(project, ensure_ascii=False))))
-            if project.get('project_id')=='web-bob':
+            if (project.get('project_id')=='web-bob' and
+                    re.search(r'\b(?:source sha|code sha|running source|build sha)\b', last_user or '', re.I)):
                 snapshots.append(dict(path='running Web Bob source identity',modified='this process',truncated=False,
                     text=json.dumps(dict(code_sha=BUILD['sha'],
-                        scope='Source of this reply server; not a passing test, deployment readiness, or service-health observation.',
+                        scope='Source of this reply server; not a passing test, deployment readiness, or service-health observation. Do not treat this as a confirmed runtime verification unless the user asked for the source identity.',
                         project_revision_is_code_revision=False))))
             import project_reports
             reports,bindings=project_reports.answer_evidence(self.context_root(conversation.get('id')),

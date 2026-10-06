@@ -155,8 +155,9 @@ class DeliveredScopeTests(SessionFixture):
         self.assertTrue(findings)
         self.assertIn('1. Compare outputs.',answer)
         self.assertIn('inspect the stored evidence.',answer)
-        self.assertIn('2.  [Unverified claim withheld]',answer)
-        self.assertIn('3. Record the request identity.',answer)
+        self.assertNotIn('[Unverified claim withheld]',answer)
+        self.assertIn('Record the request identity.',answer)
+        self.assertNotIn('2. This route guarantees zero regressions.',answer)
         self.assertNotIn(', but',answer)
         self.assertNotIn(', and',answer)
         for source in ('If login succeeds then the route guarantees zero charges.',

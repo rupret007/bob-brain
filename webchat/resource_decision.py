@@ -319,8 +319,8 @@ def compose_blocks(blocks, known, projection):
             raise ValueError('Unknown answer block type')
     if not tokens or sum(len(p) for p in content)>10000:
         raise ValueError('Answer evidence or size invalid')
-    if rejected:
-        content.insert(0,'Part of the proposed reasoning could not be verified; this answer is incomplete. The supported facts and independent next steps are below.')
+    if rejected and not retained_reasoning:
+        content.insert(0,"I couldn't verify one proposed claim.")
     return '\n\n'.join(content),tokens,rejected,retained_reasoning
 
 
@@ -402,14 +402,7 @@ def render(raw, projection, *, root=None):
         elif not bare:
             content='\n\n'.join(known[t] for t in dict.fromkeys(tokens))
         else:
-            links={'openai_api_billing':'[OpenAI pricing](https://learn.chatgpt.com/docs/pricing)',
-                   'subscription_scope':'[OpenAI pricing](https://learn.chatgpt.com/docs/pricing)'}
-            linked=set()
-            def citation(match):
-                link=links.get(match[1],'')
-                if link in linked:return ''
-                linked.add(link);return link
-            content=FACT_TOKEN.sub(citation,value['answer']).strip()
+            content=FACT_TOKEN.sub('',value['answer']).strip()
             content=re.sub(r' +([.,;:])',r'\1',content)
             content=re.sub(r' {2,}',' ',content)
         if not content:raise ValueError('Empty composed answer')
@@ -427,7 +420,8 @@ def render(raw, projection, *, root=None):
                 content+='\n\n'+known['missing_inputs']
             if rejected and not retained_reasoning:
                 content+=preparation_steps(steps,None,projection)
-            return content,dict(resource=None,steps=steps if not rejected else [],fact_ids=tokens,execution_started=False,model_proposal_accepted=not rejected,
+            from claim_evidence import finish_delivery
+            return finish_delivery(content),dict(resource=None,steps=steps if not rejected else [],fact_ids=tokens,execution_started=False,model_proposal_accepted=not rejected,
                 verified_preparation_steps=steps if rejected else [],partial=bool(rejected),rejected_blocks=rejected,acceptance_scope='schema and bounded claim checks; not semantic certification')
         validate_route(resource,value['steps'],projection,empty=True)
         decision=dict(resource=resource,missing_inputs=projection['missing_inputs'],scenario=projection['scenario'],
@@ -441,7 +435,8 @@ def render(raw, projection, *, root=None):
         if rejected:
             if not retained_reasoning:content+=preparation_steps(value['steps'],resource,projection)
             decision.update(resource=None,steps=[],verified_preparation_steps=value['steps'])
-        return content,decision
+        from claim_evidence import finish_delivery
+        return finish_delivery(content),decision
     if not isinstance(value,dict) or set(value)!= {'resource','steps'}:
         raise ValueError('Invalid resource decision')
     resource=value['resource'];steps=value['steps']

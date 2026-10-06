@@ -97,6 +97,15 @@ class StoreTests(unittest.TestCase):
         self.assertIsNone(context.projection(self.root,{'project_id':'atlas'},'Write a birthday note.'))
         self.assertEqual(context.projection(self.root,{'project_id':'atlas'},'What is our current priority?')['project_id'],'atlas')
 
+    def test_work_observations_do_not_quote_a_journal_cursor_number(self):
+        self.save('priority')
+        projection = context.projection(self.root, {}, 'Atlas')
+        raw = json.dumps(projection)
+        self.assertNotIn('journal_cursor', raw)
+        self.assertNotRegex(raw, r'cursor["\s:]+[0-9]+')
+        work = projection.get('work') or {}
+        self.assertIn('quote', json.dumps(work.get('journal') or {}))
+
 
 class ProductTests(SessionFixture):
     def test_owner_priority_correction_survives_reload_new_conversation_and_topic_change(self):

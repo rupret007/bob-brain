@@ -177,7 +177,7 @@ def _deliver(root, text, answer, conversation, *, observation, redact):
             decision['model_proposal_accepted']=False
         content=guarded
         conversation['messages'][-1]['resource_decision']=decision
-        return content,None
+        return claim_evidence.finish_delivery(content, source=text),None
     valid = bool(contract and contract['kind']=='writing' and contract['allowed_effects']==[] and
                  contract['user_sha256']==digest(text) and contract['reply_id']==conversation['messages'][-1]['id'])
     packet = None
@@ -227,6 +227,7 @@ def _deliver(root, text, answer, conversation, *, observation, redact):
             scope='Bounded protected-conclusion checks; not general semantic certification')
     guarded = enforce(root,text,dict(answer,content=bounded),conversation,observation=observation,redact=redact)
     delivered = guarded if observation else repair_hollow_progress(guarded)
+    delivered = claim_evidence.finish_delivery(delivered, source=text)
     # Legacy/plain-text providers remain guarded. They can establish a source
     # only after their entire answer survives, never after a substituted denial.
     accepted = valid and delivered == raw and not raw.lstrip().startswith(('{','['))

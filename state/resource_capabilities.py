@@ -2,8 +2,8 @@
 BILLING_FACTS = {
     'source': 'https://learn.chatgpt.com/docs/pricing',
     'verified_on': '2026-10-03',
-    'openai_api_billing': 'ChatGPT Pro does not pay for OpenAI API requests. ChatGPT-authenticated Codex uses the plan’s allowance; API-key requests are billed separately. [OpenAI pricing](https://learn.chatgpt.com/docs/pricing)',
-    'subscription_scope': 'ChatGPT Work and Codex share the applicable plan allowance. An included subscription route is not unlimited, and its remaining allowance or extra-usage settings must be observed separately.',
+    'openai_api_billing': 'ChatGPT Pro does not pay for OpenAI API requests. ChatGPT-authenticated Codex uses the plan’s allowance; API-key requests are billed separately.',
+    'subscription_scope': 'An included subscription route is not unlimited. Remaining allowance, extra-usage settings, and whether related products share a plan must be observed separately.',
 }
 ROUTES = {
     'codex': dict(tasks=['conversation', 'local coding', 'scoped project jobs'], auth='ChatGPT login or separately billed API; inspect observed mode',

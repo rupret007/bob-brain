@@ -326,7 +326,6 @@ def projection(root, conversation, text='', *, budget=6500):
 def work_observations(root, conversation, project):
     """Queue facts remain observations, distinct from durable owner decisions."""
     import task_queue
-    import alignment_events
     value = dict(observed_at=time.time(), authority='Observed work only; no new permission',
                  holds=copy.deepcopy(conversation.get('intent_state', {}).get('holds', {})),
                  active_tasks=[], completed_effects=[], pending_assignments=[])
@@ -352,8 +351,10 @@ def work_observations(root, conversation, project):
                 value['pending_assignments'].append(dict(id=contract['task_id'],owner=contract['owner'],
                     state='saved_not_dispatched',assignment_goal_revision=contract['goal_revision']))
         value['pending_assignments'] = value['pending_assignments'][-4:]
-        value['journal_cursor'] = alignment_events.latest_seq(root)
+        value['journal'] = dict(role='internal moving catch-up pointer',
+            quote='Do not quote a cursor number in answers unless the user asked for it.')
         value['source_paths'] = ['conductor/state/queue.jsonl','conductor/state/coordination-events.jsonl']
+        value['quote_scope'] = 'This conversation and project goal only; empty lists do not prove the global queue is idle.'
     except (OSError, ValueError):
         value.update(available=False,reason='Work observations unavailable; do not infer completion or fresh status')
     return value

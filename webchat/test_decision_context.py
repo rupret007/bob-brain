@@ -161,6 +161,7 @@ class ProjectionTests(unittest.TestCase):
         self.assertTrue(review['partial'])
         self.assertFalse(review['recommendation_verified'])
         self.assertIn('Proposal Alder',content)
+        self.assertNotRegex(content, r'(?m)Next Safe Step:\s*$')
         c['messages'][0]['content']='Replaced source'
         content,review=dc.render('Prepare a comparison outline.',p,c,lambda v:v)
         self.assertTrue(review['partial']);self.assertNotIn('exhausted',content)
