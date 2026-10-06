@@ -16,7 +16,8 @@ PREPARATION = re.compile(r'^\s*(?:(?:first|next|instead|independently)\s*,?\s*)?
     r'(?:(?:we|you)\s+(?:should|must|need to)\s+|'
     r'(?:the\s+)?(?:next|first)\s+(?:step|check|action)\s+is\s+to\s+)?'
     r'(?:check|verify|inspect|examine|assess|evaluate|audit|compare|measure|'
-    r'prepare|define|outline|draft|write|record|list|match|collect|obtain|assemble)\b',re.I)
+    r'prepare|define|outline|draft|write|record|list|match|collect|obtain|assemble|'
+    r'request|issue|introduce|ask|instruct)\b',re.I)
 QUESTION = re.compile(r'^\s*(?:what|which|how|where|whether)\b',re.I)
 ACKNOWLEDGEMENT = re.compile(r"^\s*(?:got it|okay|ok|understood|sure|yes)[\s.!—–,:-]*"
     r"(?:(?:I|we)(?:['’]ll| will)\s+(?:keep|make)\s+(?:it|this|the replies?|my replies?)\s+"
@@ -76,7 +77,7 @@ PLAN_ACTION = re.compile(r'^\s*(?:run|prepare|define|outline|draft|compare|evalu
 PLAN_OBJECT = re.compile(r'\b(?:comparison|evaluation|qualification|checklist|test|checks|rubric)\b',re.I)
 PLAN_STEP = re.compile(r'^\s*(?:issue|introduce|switch|ask|score|reject|accept|repeat|include|'
     r'require|keep|record|compare|evaluate|inspect|measure|trace|return|test|verify|check|'
-    r'prepare|define|outline|draft|write|collect|obtain|supply|provide|present)\b',re.I)
+    r'prepare|define|outline|draft|write|collect|obtain|supply|provide|present|request|instruct)\b',re.I)
 REFERENCE = re.compile(r'\b(?:it|its|they|their|these|those)\b',re.I)
 INTRODUCE = re.compile(r'\b(?:introduce|issue|supply|provide|present|define|prepare|write|record|'
     r'add|set)\s+(?:a|an|the)\s+([^.,;:!?]+)',re.I)
@@ -147,6 +148,11 @@ class DependencyState:
             self.close_plan()
             return False,None
         if not unit.strip():
+            return True,self.plan_start
+        if heading_unit(unit):
+            heading=unit.strip().strip('# :')
+            if re.fullmatch(r'(?:acceptance|evaluation|success)\s+criteria',heading,re.I):
+                self.criteria=True
             return True,self.plan_start
         if prospective_plan(unit):
             self.plan_start=offset

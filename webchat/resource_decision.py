@@ -45,6 +45,8 @@ never remove a provider's separate conversation adapter. An unqualified alternat
 is a candidate for a bounded comparison, not yet the recommended active chat route.
 When explaining a limitation, name the operation and adapter it applies to; do
 not turn a chat adapter's tool boundary into a denial of its scoped executor.
+Do not state present-tense live route state unless this turn includes a live
+observation; say the saved configuration lists that route as the chat route.
 Not buying another plan is distinct from incurring no charges: a comparison uses
 allowance and may trigger extra usage under unknown account settings. Preparing
 inputs or checking settings is not evidence that future generation is cost-free.
@@ -56,8 +58,14 @@ not an established diagnosis. Give a feasible preparation step now.
 For a provider comparison, prepare matched multi-turn sequences with a correction,
 a topic change and a return to the corrected task. Compare delivered usefulness,
 constraint retention and evidence quality; one isolated prompt cannot establish
-conversation continuity. Include the concrete sequence or rubric in the answer
+conversation continuity. Gate any recommended comparison or test that would call a
+model after budget admission and allowance check — never an unconditioned
+"run this comparison". Prefer a clear recommended action plus criteria over a
+bare checklist. Include the concrete sequence or rubric in the answer
 when asked for next steps, rather than merely naming a future comparison.
+Owner facts from the saved project record are recorded in the saved project record
+(not live-verified); do not present them as live-verified or as something the user
+just said.
 Return JSON only, without fences or trailing commentary.
 '''
 

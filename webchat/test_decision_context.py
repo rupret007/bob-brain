@@ -185,7 +185,9 @@ class DeliveryTests(SessionFixture):
         answer=self.send('Give me the best immediate next step. What can we prepare?')
         self.assertIn('hosted model has stopped',answer['content'])
         self.assertIn('Birch is on an inaccessible drive',answer['content'])
-        self.assertIn('Answer quality for this task',answer['content'])
+        self.assertIn('answer quality for this task',answer['content'])
+        self.assertNotIn('; For chat route', answer['content'])
+        self.assertIn('Your stated planning conditions:', answer['content'])
         self.assertIn('Outline the accessible proposal',answer['content'])
         review=answer['decision_context_review']
         self.assertEqual(set(review['required_ids']),set(review['rendered_ids']))
@@ -201,7 +203,7 @@ class DeliveryTests(SessionFixture):
             reply=self.send('For the Codex subscription route in this scenario, what is the best next preparation step?')
             self.assertEqual(self.chat.get(self.identifier)['messages'][-1]['_reply_contract']['kind'],'resource_advice')
             self.assertIn('hosted model has stopped',reply['content'])
-            self.assertIn('Answer quality for this task',reply['content'])
+            self.assertIn('answer quality for this task',reply['content'])
             self.assertIn('Prepare the accessible input',reply['content'])
             self.assertEqual(set(reply['decision_context_review']['required_ids']),set(reply['decision_context_review']['rendered_ids']))
 

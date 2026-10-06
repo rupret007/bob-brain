@@ -233,6 +233,10 @@ class DeliveryCleanupTests(unittest.TestCase):
         self.assertIn('proposed; budget-admitted; accepted/claimed (lease)', CONVERSATION_QUALITY)
         self.assertNotIn('proposed/admitted', CONVERSATION_QUALITY)
         self.assertIn('name only the lifecycle stage the record supports', CONVERSATION_QUALITY)
+        self.assertIn('recorded in the saved project record', CONVERSATION_QUALITY)
+        self.assertIn('not live-verified', CONVERSATION_QUALITY)
+        self.assertIn('after budget admission and allowance check', CONVERSATION_QUALITY)
+        self.assertIn('the identity, the hold, and any attempt bound', CONVERSATION_QUALITY)
         table = ('| Step 1 | Record identity |\n'
                  '| Step 3 | Inspect evidence; this step passes steps 1 and 2 |\n'
                  '| Step 4 | Keep the hold |')

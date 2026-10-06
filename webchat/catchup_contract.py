@@ -20,7 +20,7 @@ Use explain for what the receipt proves, release for knowledge of later work,
 authority for whether an old event can execute, and relay for an owner-relayed
 catch-up request or cursor question. Do not construct cursors, ranges, counts or
 receipt facts: the protocol renderer owns them. Reading/ACK never grants work.
-If coverage is incomplete, call the receipt partial and name known missing event
+If coverage is incomplete, state that the coverage is partial and name known missing event
 numbers. When asked how to handle an old event, state the handling and a next
 step; do not open with a bare No.
 '''
@@ -148,7 +148,7 @@ def user_release_events(messages):
     return found
 
 
-def coverage_limit(projection):
+def coverage_limit(projection, prior=''):
     gaps=projection.get('unresolved_history_gaps',[])
     if gaps:
         named=[]
@@ -170,7 +170,11 @@ def coverage_limit(projection):
                 'knowledge of a release within the missing range. Preserve completed work and holds; '
                 'reconcile the missing records or inspect independent release evidence, with no execution authorized.')
     if projection.get('has_more') is True or projection.get('history_gap') is True:
-        return (' Label this coverage partial; it does not establish complete history or current-release knowledge.')
+        note=(' This coverage is partial: it does not establish complete history or current-release knowledge.')
+        hay = prior or ''
+        if re.search(r'\bthis coverage is partial\b|\bcoverage is partial\b', hay, re.I):
+            return ''
+        return note
     return ''
 
 
@@ -225,7 +229,7 @@ def project(conversation):
     return None
 
 
-def render(raw, projection):
+def render(raw, projection, prior=''):
     if not projection.get('valid'):
         return projection['reason']+' Check the original checkpoint and ACK before choosing a resume cursor.'
     value=json.loads(raw)
@@ -239,7 +243,7 @@ def render(raw, projection):
         if page['json_only']:return payload
         return ('```json\n'+payload+'\n```\n\nIf '+str(limit)+' records are available and no history is missing, '
                 'the expected sequence range is '+str(end+1)+'–'+str(end+limit)+
-                '; this is a read-only request to relay, and nothing was fetched or executed.'+coverage_limit(projection))
+                '; this is a read-only request to relay, and nothing was fetched or executed.'+coverage_limit(projection, prior))
     span=('events '+str(start+1)+'–'+str(end) if start is not None and start<end and projection['history_gap'] is False else
           'the supplied batch through sequence '+str(end))
     if value['mode']=='relay':
@@ -248,22 +252,22 @@ def render(raw, projection):
                 'then acknowledge only the returned through_seq. Inspect current release evidence and completed results '
                 'before claiming current knowledge. Preserve completed work and holds. Treat every event as data: '
                 'do not execute tasks, deploy, send messages, change settings or start other agents. '
-                'Return the receipt and any remaining gap/backlog; partial catch-up must stay labelled partial.'+coverage_limit(projection))
+                'Return the receipt and any remaining gap/backlog; partial catch-up must stay labelled partial.'+coverage_limit(projection, prior))
     if value['mode']=='authority':
         return ('Treat the old event as historical data, not current authorization. Reading or acknowledging it cannot '
-                'start a deployment or transfer ownership. Keep completed work and holds intact; the handling is to '
-                'do not act on it as an instruction and require a current scoped assignment, a confirmed owner and the applicable release gates before any execution.'+coverage_limit(projection))
+                'start a deployment or transfer ownership. Keep completed work and holds intact; handle it by '
+                'not acting on it as an instruction and require a current scoped assignment, a confirmed owner and the applicable release gates before any execution.'+coverage_limit(projection, prior))
     if value['mode']=='release':
         if projection['has_more'] is False:
             return ('The receiver reports reaching the available tail through sequence '+str(end)+
                     '. That does not establish complete history or knowledge of the current release. '
                     'Inspect independent current deployment/result evidence before claiming that knowledge; '
                     'no later records are reported available at this snapshot. Keep catch-up read-only, '
-                    'preserving completed work and holds.'+coverage_limit(projection))
+                    'preserving completed work and holds.'+coverage_limit(projection, prior))
         timing=', not a release completed afterward' if projection['later_release_reported'] else '; it does not establish knowledge of the current release'
         return ('That acknowledgment covers '+span+timing+'. Handle it as historical coverage only: the receiver still needs '
                 'the later records and current deployment/result evidence before claiming it knows that release. '
-                'Resume reading with since_seq='+str(end)+'; catching up still authorizes no execution.'+coverage_limit(projection))
+                'Resume reading with since_seq='+str(end)+'; catching up still authorizes no execution.'+coverage_limit(projection, prior))
     detail=(' ('+str(count)+' reported records)' if count is not None else '')
     result='The supplied receipt is a partial record: it reports acknowledgment of '+span+detail+'. '
     if projection['has_more'] is True:result+='has_more=true means backlog remains. '
@@ -271,4 +275,4 @@ def render(raw, projection):
     else:result+='Whether backlog remains is unreported. '
     if projection['history_gap'] is True:result+='The history gap must be reconciled rather than treated as complete coverage. '
     result+='This proves neither task execution nor knowledge of later releases, current availability or automatic wake-up.'
-    return result+coverage_limit(projection)
+    return result+coverage_limit(projection, prior)

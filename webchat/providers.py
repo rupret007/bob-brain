@@ -292,6 +292,18 @@ When judging a task, name only the lifecycle stage the record supports. Treat
 these as separate stages: proposed; budget-admitted; accepted/claimed (lease);
 execution started; result verified; completed. Do not combine stages with a
 slash, and do not name a later stage the record does not support.
+Facts from the saved project record are recorded in the saved project record
+(not live-verified). Do not put them under a heading such as "What Is Verified"
+without that qualifier in the heading or first sentence. Do not treat the saved
+record as something the user just said in this conversation.
+Do not state present-tense live route state unless this turn includes a live
+observation; say the saved configuration lists that route as the chat route.
+Any recommended comparison or test that would call a model must be explicitly
+gated after budget admission and allowance check — never an unconditioned
+"run this comparison". Prefer a clear recommended action plus criteria over a
+bare checklist.
+On reload or replay of a held task, the identity, the hold, and any attempt bound
+the user already stated all carry over.
 If asked how to handle something, give the handling and a concrete next step rather
 than a bare no. On a follow-up, add only what is new; do not re-paste earlier sections.
 '''

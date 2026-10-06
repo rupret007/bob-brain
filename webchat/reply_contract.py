@@ -155,9 +155,9 @@ def _deliver(root, text, answer, conversation, *, observation, redact):
     if contract and contract['kind']=='catchup' and contract['user_sha256']==digest(text):
         import catchup_contract
         try:
-            content=catchup_contract.render(raw,contract['catchup_projection'])
+            content=catchup_contract.render(raw,contract['catchup_projection'], prior=prior_answers)
         except (ValueError,TypeError,KeyError):
-            content=catchup_contract.render('{"mode":"explain"}',contract['catchup_projection'])
+            content=catchup_contract.render('{"mode":"explain"}',contract['catchup_projection'], prior=prior_answers)
         conversation['messages'][-1]['catchup_observation']=contract['catchup_projection']
         return content,None
     if contract and contract['kind']=='resource_advice' and contract['user_sha256']==digest(text):

@@ -825,9 +825,10 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                               clean_clause,re.I) and
                     re.search(
                         r'\b(?:lifecycle stage|active status|currently on hold|has not executed|'
-                        r'has not reached|do(?:es)? not (?:clear|lift|release|bypass)|'
+                        r'has not reached|do(?:es)? not (?:clear|lift|release|bypass|override)|'
                         r'still applies|'
-                        r'remains?\s+(?:(?:explicitly|currently|still)\s+)*(?:active|in (?:force|place|effect)|on hold|held)|'
+                        r'remains?\s+(?:(?:explicitly|currently|still)\s+)*(?:active|in (?:force|place|effect)|on hold|held|paused)|'
+                        r'(?:the (?:saved |reported |owner[- ]placed )?hold\s+)?(?:is|remains?)\s+in (?:place|force|effect)|'
                         r'was placed(?:\s+before)?)\b',
                         clean_clause,re.I) and
                     not foreign_subject(clean_clause,projects,WORKER_NAMES) and
@@ -866,9 +867,10 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                     r'\bno authority to\s+(?:override|clear|lift|release)\b',prefix,re.I))
                 remaining_hold=bool((record_subject or explicit_object) and noun and object_ok and re.search(
                     r'\b(?:still applies|'
-                    r'remains?\s+(?:(?:explicitly|currently|still)\s+)*(?:active|recorded|in (?:force|place|effect)|on hold|held)|'
-                    r'stays?\s+(?:(?:explicitly|currently|still)\s+)*(?:active|in (?:force|place|effect)|on hold|held)|'
-                    r'is still\s+(?:active|in (?:force|place|effect)|on hold|held))\b',
+                    r'remains?\s+(?:(?:explicitly|currently|still)\s+)*(?:active|recorded|in (?:force|place|effect)|on hold|held|paused)|'
+                    r'stays?\s+(?:(?:explicitly|currently|still)\s+)*(?:active|in (?:force|place|effect)|on hold|held|paused)|'
+                    r'is still\s+(?:active|in (?:force|place|effect)|on hold|held|paused)|'
+                    r'(?:is|remains?)\s+in (?:place|force|effect))\b',
                     prefix+' '+suffix,re.I))
                 if not (identified or task_directive or described or anaphor or described_status or
                         inherited and not noun or noun_reference or denied_lift or remaining_hold or
@@ -879,6 +881,8 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                     record_subject=next(i for i in bindings if re.search(r'\b'+re.escape(i)+r'\b',prefix,re.I))
                 elif explicit_object:
                     record_subject=next(i for i in bindings if re.search(r'\b'+re.escape(i)+r'\b',suffix,re.I))
+                elif (described or in_force_restatement or remaining_hold) and record_topic and not record_subject:
+                    record_subject=record_topic
             if not HOLD_CLAIM.search(clean_clause):
                 # Coordinated predicates may share an explicit preceding
                 # record subject, but not a different service's subject.

@@ -96,7 +96,9 @@ IMPERATIVE = re.compile(r'^\s*(?:[-*]\s*|\d+[.)]\s*)?(?:compare|check|inspect|pr
 METHOD_OBJECT = re.compile(r'\b(?:bias|rushing|omission|drift|skew|overreach)\b', re.I)
 REJECTED_NOMINAL = re.compile(
     r'\b(?:rejecting|denying|refusing|declining|withdraw(?:ing)?)\b[^.!?]{0,48}\b(?:guarantees?|promises?|assurances?)\b', re.I)
-EPISTEMIC_WITHOUT = re.compile(r'^\s*(?:establishing|preserving|assuming|claiming|promising|proving)\b', re.I)
+EPISTEMIC_WITHOUT = re.compile(
+    r'^\s*(?:establishing|preserving|assuming|claiming|promising|proving|inventing|fabricating|introducing)\b',
+    re.I)
 QUALIFICATIONS = {
     'cost': 'The cost or capacity outcome is unverified from what’s available here. Check the actual route, allowance and billing controls before admitting generation.',
     'quality': 'The quality or continuity outcome is unverified from what’s available here.',
@@ -142,8 +144,47 @@ BARE_OBSERVED_EPOCH = re.compile(
     re.I)
 SAVED_RECORD_PHRASE = 'the saved project record loaded with this chat (as of the saved record)'
 EMPTY_LABEL = re.compile(
-    r'^(?:#{1,6}\s+)?(?:\d+[.)]\s+|[-*+]\s+)?(?:\*\*[^*\n]{1,80}\*\*|__[^_\n]{1,80}__|[^\n:]{1,80}):(?:\*\*|__)?\s*$')
+    r'^(?:#{1,6}\s+)?(?:\d+[.)]\s+|[-*+]\s+)?(?:\*\*[^*\n]{1,80}\*\*|__[^_\n]{1,80}__):(?:\*\*|__)?\s*$')
+HEADING_LABEL = re.compile(
+    r'^(?:#{1,6}\s+)?(?:\d+[.)]\s+|[-*+]\s+)?(?P<label>[A-Z0-9][A-Za-z0-9/&\' ]{0,60}):(?:\*\*|__)?\s*$')
 ITEM_START = re.compile(r'^(?:#{1,6}\s+|\d+[.)]\s+|[-*+]\s+)')
+COUNT_WORDS = {
+    'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+    'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
+}
+WORD_FOR = {value: word for word, value in COUNT_WORDS.items()}
+COUNT_LEADIN = re.compile(
+    r'\b(?P<verb>take|list|need|require|recommend|perform|complete|include)\s+'
+    r'(?P<count>one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+'
+    r'(?P<noun>(?:preparatory\s+)?(?:actions?|steps?|items?|checks?))\s*:'
+    r'(?P<ws>\s*)(?P<body>(?:\d+[.)][^\n]*(?:\n|$))+)',
+    re.I)
+ALREADY_STATED = re.compile(
+    r"\b(?:unverified|not verified|not evaluated|not established|not guaranteed|"
+    r"cannot guarantee|can['’]t guarantee|unknown|"
+    r"have not been (?:evaluated|verified|checked|established|measured))\b",
+    re.I)
+
+
+def is_empty_label(stripped):
+    """True for orphan headings/list labels, not colon-ended intro sentences."""
+    if not stripped:
+        return False
+    if EMPTY_LABEL.match(stripped):
+        return True
+    core = re.sub(r'[*_`]', '', stripped).strip()
+    core = re.sub(r'^(?:#{1,6}\s+|\d+[.)]\s+|[-*+]\s+)', '', core).strip()
+    match = re.fullmatch(r'([^:]{1,80}):\s*', core)
+    if not match:
+        return False
+    label = match[1].strip()
+    if not label or ',' in label or ';' in label:
+        return False
+    if re.search(r'\b(?:here|this|that|following|below)\b', label, re.I) and re.search(
+            r'\b(?:is|are|was|were)\b', label, re.I):
+        return False
+    from claim_scope import FINITE
+    return bool(re.match(r'^[A-Z0-9]', label)) and not FINITE.search(label)
 
 
 def _plain(text):
@@ -247,6 +288,14 @@ def violations(content, *, source='', trusted_facts=(), artifact=False):
                             and re.search(r'\b(?:set|ensure|check|inspect|verify|require|prepare)\b.{0,80}\bto\s+$',
                                           clause[:predicate.start()], re.I)):
                         continue
+                    if (predicate[0].lower() == 'without'
+                            and re.match(r'^\s*(?:[-*+]\s+|\d+[.)]\s+)?(?:(?:we|you)\s+(?:should|must|need to)\s+)?'
+                                         r'(?:check|inspect|verify|confirm|prepare|require)\b', clause, re.I)
+                            and re.search(r'\bto\s+(?:confirm|verify|check|ensure|establish)\b',
+                                          clause[:predicate.start()], re.I)):
+                        continue
+                    if re.search(r'\b(?:not that|not because)\b', clause[:predicate.start()], re.I):
+                        continue
                     if predicate[0].lower() in ('preserving', 'protecting', 'maintaining', 'preserve', 'protect', 'maintain'):
                         rest = clause[predicate.start():]
                         if re.search(r'\b(?:is|as)\s+(?:an?\s+)?(?:testing|acceptance|quality)\s+requirement\b|'
@@ -280,9 +329,17 @@ def violations(content, *, source='', trusted_facts=(), artifact=False):
                     copular = any(p.span('state') == predicate.span() for p in states)
                     if disposition(part, predicate.start(), predicate.end(), predicate[0], copular=copular):
                         continue
+                    # A rubric label such as "Reasoning Quality" is not itself an
+                    # outcome assertion. The body must still govern a protected object
+                    # or use a positive assurance verb.
+                    positive = predicate[0].lower() in (
+                        'guarantee', 'guarantees', 'ensure', 'ensures', 'preserve', 'preserves',
+                        'protect', 'protects', 'maintain', 'maintains', 'equivalent', 'equal',
+                        'unchanged', 'zero', 'free', 'no')
+                    labelled_outcome = labelled and (objects.search(clause) or positive)
                     # A predicate must govern an outcome in this clause. A cost
                     # noun before "without buying" cannot change that operation.
-                    if labelled or _assurance_governs_outcome(clause, predicate, objects) or re.search(
+                    if labelled_outcome or _assurance_governs_outcome(clause, predicate, objects) or re.search(
                             r'\b(?:is|are|stays?|remains?|will be)\s*$', clause[:predicate.start()], re.I):
                         categories.add(kind)
                         claims.append(dict(start=part.start+predicate.start(), end=part.start+predicate.end(),
@@ -342,14 +399,19 @@ def drop_empty_labels(text):
     while i < len(lines):
         stripped = lines[i].strip()
         numbered = bool(re.match(r'^\d+[.)]\s+', stripped))
-        if stripped and EMPTY_LABEL.match(stripped):
+        if stripped and is_empty_label(stripped):
             j = i + 1
             while j < len(lines) and not lines[j].strip():
                 j += 1
             nxt = lines[j].strip() if j < len(lines) else ''
-            next_heading = bool(nxt and (EMPTY_LABEL.match(nxt) or re.match(r'^#{1,6}\s+', nxt)))
+            next_heading = bool(nxt and (is_empty_label(nxt) or re.match(r'^#{1,6}\s+', nxt)))
             next_number = bool(nxt and re.match(r'^\d+[.)]\s+', nxt))
-            if not nxt or next_heading or (numbered and next_number):
+            cur_item = bool(re.match(r'^(?:\d+[.)]\s+|[-*+]\s+)', stripped))
+            next_item = bool(nxt and re.match(r'^(?:\d+[.)]\s+|[-*+]\s+)', nxt))
+            cur_indent = len(lines[i]) - len(lines[i].lstrip())
+            next_indent = (len(lines[j]) - len(lines[j].lstrip())) if j < len(lines) else 0
+            sibling_item = cur_item and next_item and next_indent <= cur_indent
+            if not nxt or next_heading or (numbered and next_number) or sibling_item:
                 dropped_number = dropped_number or numbered
                 i += 1
                 continue
@@ -577,6 +639,39 @@ def rewrite_unsourced_file_observations(text):
     return text
 
 
+def _repair_count_leadins(text):
+    """When a guard drops numbered items, keep the lead-in count consistent."""
+    if not text:
+        return text
+
+    def noun_for(noun, count):
+        base = re.sub(r's$', '', noun, flags=re.I) if re.search(r'(?i)s$', noun) and not re.search(
+            r'(?i)ss$', noun) else noun
+        if count == 1:
+            return base
+        return noun if re.search(r'(?i)s$', noun) else base + 's'
+
+    def repl(match):
+        items = re.findall(r'(?m)^\d+[.)]\s+', match.group('body'))
+        actual = len(items)
+        stated = COUNT_WORDS.get(match.group('count').lower())
+        if stated is None:
+            stated = int(match.group('count'))
+        if actual == stated or actual == 0:
+            return match[0]
+        count_out = WORD_FOR.get(actual, str(actual))
+        if match.group('count')[0].isdigit():
+            count_out = str(actual)
+        elif match.group('count')[0].isupper():
+            count_out = count_out.capitalize()
+        noun_out = noun_for(match.group('noun'), actual)
+        if match.group('noun')[0].isupper():
+            noun_out = noun_out[0].upper() + noun_out[1:]
+        return match.group('verb') + ' ' + count_out + ' ' + noun_out + ':' + match.group('ws') + match.group('body')
+
+    return COUNT_LEADIN.sub(repl, text)
+
+
 def finish_delivery(text, *, source='', trusted_facts=()):
     """Final user-facing cleanup: no leaked tags, empty labels, or unretrieved links."""
     text = (text or '').replace('[Unverified claim withheld]', '')
@@ -587,6 +682,7 @@ def finish_delivery(text, *, source='', trusted_facts=()):
     text = drop_empty_labels(text)
     text = drop_orphan_fragments(text)
     text = _repair_step_lists(text)
+    text = _repair_count_leadins(text)
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
@@ -594,14 +690,17 @@ def finish_delivery(text, *, source='', trusted_facts=()):
 def _outcome_already_qualified(text, category, prior=''):
     note = QUALIFICATIONS.get(category)
     hay = '\n'.join(part for part in (text, prior) if part)
-    if note and note in hay:
+    if note and (note in hay or (category == 'quality' and
+                                 'The quality or continuity outcome is unverified' in hay)):
+        return True
+    if category == 'quality' and ALREADY_STATED.search(hay):
         return True
     patterns = {
         'cost': r"cannot guarantee either outcome|"
                 r"(?:cost|capacity|billing|overage|charges?).{0,80}(?:unverified|not guaranteed)|"
                 r"(?:cannot|can['’]t)\s+guarantee.{0,100}(?:charges?|billing|overages?|either outcome)",
         'quality': r"cannot guarantee either outcome|"
-                   r"(?:quality|continuity).{0,80}(?:unverified|not guaranteed|not (?:an )?inherent outcome)|"
+                   r"(?:quality|continuity)[\s\S]{0,120}(?:unverified|not guaranteed|not (?:an )?inherent outcome)|"
                    r"(?:cannot|can['’]t)\s+guarantee.{0,100}(?:quality|continuity|either outcome)",
     }
     pattern = patterns.get(category)

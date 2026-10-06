@@ -293,9 +293,24 @@ def render(content, projection, conversation, redact):
     for property,subjects in unchecked.items():
         grouped.setdefault(tuple(sorted(set(subjects))),[]).append(property)
     for subjects,properties in grouped.items():
-        statements.append('For '+ ' and '.join(subjects)+', '+ ', '.join(properties)+' have not been checked in the supplied example')
+        statements.append('For '+ ' and '.join(subjects)+', '+ ', '.join(
+            (p[:1].lower()+p[1:] if p else p) for p in properties)+' have not been checked in the supplied example')
     statements=list(dict.fromkeys(statements))
-    context='Your stated planning conditions: '+ '; '.join(statements)+'.' if statements else ''
+    if statements:
+        def as_sentence(value, *, first):
+            value = value.strip(' .;')
+            if not value:
+                return ''
+            if first:
+                return value[0].lower()+value[1:] if value[0].isupper() and not value.startswith('For ') else value
+            return value[0].upper()+value[1:] if value[0].islower() else value
+        first = as_sentence(statements[0], first=True)
+        rest = [as_sentence(item, first=False) for item in statements[1:]]
+        context = 'Your stated planning conditions: '+first+'.'
+        if rest:
+            context += ' '+ ' '.join(item+'.' for item in rest)
+    else:
+        context = ''
     if ambiguous:
         excerpts=[]
         for reference in projection['ambiguous_corrections']:
