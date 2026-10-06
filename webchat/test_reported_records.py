@@ -139,7 +139,8 @@ class ReportedRecordDeliveryTests(SessionFixture):
     def test_requirement_does_not_hide_completed_permission_change(self):
         self.establish()
         valid = '2. **Evidence to obtain:** The work must occur after lifting the hold.'
-        self.assertEqual(self.delivered(valid)['content'], valid)
+        self.assertEqual(self.delivered(valid)['content'],
+                         '1. **Evidence to obtain:** The work must occur after lifting the hold.')
         for invalid in (' I cleared your real hold.', ' The permission is now granted.',
                         ' Verification that the hold was lifted has been received.'):
             answer = self.delivered(valid+invalid)

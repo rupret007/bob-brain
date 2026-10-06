@@ -324,7 +324,7 @@ def compose_blocks(blocks, known, projection, prior=''):
                 rejected.append(dict(index=index,reason='unsupported_assertion',sha256=hashlib.sha256(prose.encode()).hexdigest(),
                                      claim_findings=violations(prose),units=units))
             if retained.strip():
-                content.append(retained.strip());retained_reasoning=True
+                content.append(qualify_route_restatement(retained.strip()));retained_reasoning=True
         else:
             raise ValueError('Unknown answer block type')
     if not tokens or sum(len(p) for p in content)>10000:
@@ -359,6 +359,23 @@ def preparation_steps(steps, resource, projection):
 SAME_UNAVAILABLE = 'Same constraints as above: unavailable routes are unchanged.'
 SAME_MISSING_INPUTS = 'Same missing-input limit as above: needed project inputs remain unavailable until supplied.'
 SAME_STEPS = 'The previously listed preparation steps still apply.'
+ROUTE_MENTION = re.compile(
+    r'\b(?:conversation adapter|scoped executors?|route registry|supported (?:chat |conversation )?route)\b',
+    re.I)
+ROUTE_QUALIFIED = re.compile(
+    r'\b(?:configured, not|not (?:a claim that|verified)|availability[/ ]sign-in not verified|'
+    r'sign-in(?: status)? is unverified|availability.{0,40}not verified)\b',
+    re.I)
+ROUTE_NOTE = 'That listing is configured in Web Bob’s route registry; availability and sign-in are not verified.'
+
+
+def qualify_route_restatement(text):
+    """Carry configured-not-verified whenever a route-registry fact is restated."""
+    if not text or not ROUTE_MENTION.search(text) or ROUTE_QUALIFIED.search(text):
+        return text
+    if ROUTE_NOTE.lower() in text.lower():
+        return text
+    return text.rstrip() + ('' if text.rstrip()[-1:] in '.!?' else '.') + ' ' + ROUTE_NOTE
 
 
 def maybe_append(content, block, prior, *, reference=''):
@@ -385,8 +402,30 @@ def finish_resource_content(content, projection, known, prior, *, observation=''
     if observation:
         content = maybe_append(content, observation, prior)
     if steps_text:
-        content = maybe_append(content, steps_text, prior, reference=SAME_STEPS)
+        content = append_preparation_steps(content, steps_text, prior)
     return content
+
+
+def append_preparation_steps(content, steps_text, prior):
+    """Keep novel steps; replace an already-delivered checklist with one line."""
+    from claim_evidence import already_delivered
+    steps_text = (steps_text or '').strip()
+    if not steps_text:
+        return content
+    numbered = []
+    for line in steps_text.split('\n'):
+        match = re.match(r'\d+\.\s+(.*)', line)
+        if match:
+            numbered.append(match[1].strip())
+    prior_has_steps = bool(re.search(r'Proposed preparation steps \(not started\)', prior or '', re.I))
+    novel = [step for step in numbered if not already_delivered(step, prior)]
+    if prior_has_steps and not novel:
+        return maybe_append(content, steps_text, prior, reference=SAME_STEPS)
+    if prior_has_steps and novel and len(novel) < len(numbered):
+        block = 'Additional preparation (not started):\n' + '\n'.join(
+            str(i)+'. '+step for i, step in enumerate(novel, 1))
+        return maybe_append(content, block, prior, reference=SAME_STEPS)
+    return maybe_append(content, steps_text, prior, reference=SAME_STEPS)
 
 
 def render(raw, projection, *, root=None, prior=''):

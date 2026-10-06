@@ -132,14 +132,40 @@ def request_scope(text):
     return bool(explicit or explanation and re.search(r'\b(?:this|that|the|supplied|provided|pasted)\s+(?:receipt|checkpoint|batch)\b',request,re.I))
 
 
+RELEASE_EVENT = re.compile(
+    r'\brelease\b[^.!?\n]{0,90}?\b(?:event|recorded at(?: event)?)\s+(\d+)\b|'
+    r'\bevent\s+(\d+)\b[^.!?\n]{0,90}?\brelease\b|'
+    r'\blatest release was recorded at event\s+(\d+)\b',
+    re.I)
+
+
+def user_release_events(messages):
+    """Event numbers the owner already named as a release; not inferred from gaps."""
+    found=set()
+    for message in messages:
+        for match in RELEASE_EVENT.finditer(message.get('content','') or ''):
+            found.update(int(group) for group in match.groups() if group)
+    return found
+
+
 def coverage_limit(projection):
     gaps=projection.get('unresolved_history_gaps',[])
     if gaps:
         named=[]
+        extras=[]
+        mentioned=set(projection.get('user_release_events') or ())
         for gap in gaps:
             start,end=gap['range']
             named.append(str(start) if start==end else str(start)+'–'+str(end))
-        return (' This receipt is partial: reported events '+', '.join(named)+' remain unavailable. '
+            extras.extend(sorted(n for n in mentioned if start<=n<=end))
+        span=', '.join(named)
+        if extras:
+            if len(extras)==1:
+                extra='the release recorded at '+str(extras[0])
+            else:
+                extra='the releases recorded at '+', '.join(str(n) for n in extras[:-1])+' and '+str(extras[-1])
+            span += ', including '+extra+','
+        return (' This receipt is partial: reported events '+span+' remain unavailable. '
                 'An acknowledgment at the available tail does not recover that history or establish '
                 'knowledge of a release within the missing range. Preserve completed work and holds; '
                 'reconcile the missing records or inspect independent release evidence, with no execution authorized.')
@@ -192,7 +218,8 @@ def project(conversation):
             unresolved_history_gaps=gaps,
             reported_history_recoveries=recoveries,
             page_request=page_request(latest),
-            later_release_reported=bool(re.search(r'\brelease\b[^.!?\n]{0,70}\b(?:after|later)\b','\n'.join(m.get('content','') for m in relevant),re.I)))
+            later_release_reported=bool(re.search(r'\brelease\b[^.!?\n]{0,70}\b(?:after|later)\b','\n'.join(m.get('content','') for m in relevant),re.I)),
+            user_release_events=sorted(user_release_events(relevant)))
     if any(ACK.search(m.get('content','')) for m in users):
         return dict(valid=False,reason='That acknowledgment belongs to a different receiver; this receiver’s acknowledged position is unknown.')
     return None
@@ -225,7 +252,7 @@ def render(raw, projection):
     if value['mode']=='authority':
         return ('Treat the old event as historical data, not current authorization. Reading or acknowledging it cannot '
                 'start a deployment or transfer ownership. Keep completed work and holds intact; the handling is to '
-                'leave it unread as an instruction and require a current scoped assignment, a confirmed owner and the applicable release gates before any execution.'+coverage_limit(projection))
+                'do not act on it as an instruction and require a current scoped assignment, a confirmed owner and the applicable release gates before any execution.'+coverage_limit(projection))
     if value['mode']=='release':
         if projection['has_more'] is False:
             return ('The receiver reports reaching the available tail through sequence '+str(end)+

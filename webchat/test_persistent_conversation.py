@@ -87,7 +87,7 @@ class PersistentConversationTests(SessionFixture):
             'Verification that the hold was lifted is required before accepting execution evidence.',
             'Evidence that the hold was cleared must come from the permission record.',
             'First verify that the hold was lifted before considering a result.',
-            '2. **Execution and Hold State:** Verification that the hold was lifted is required before accepting execution evidence.',
+            '1. **Execution and Hold State:** Verification that the hold was lifted is required before accepting execution evidence.',
             '**Uncertainties:** The reviewer may still be active. **Next Safe Step:** Maintain the hold on K-63.',
             '**Checks before accepting K-63:**\n1. **Identity and Source Match:** Check the assigned snapshot.\n2. **Execution and Hold State:** Verification that the hold was lifted is required before accepting execution evidence.',
         ):

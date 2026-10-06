@@ -644,6 +644,12 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                     if standalone:return False
                     if (projects(match[0]) and (not subject or re.fullmatch(r'While|As|Because',subject,re.I))) or any(re.fullmatch(r'(?:(?:While|As|Because)\s+)?'+re.escape(p)+r'(?:\s+(?:is|was))?',subject,re.I) for p in named):continue
                 if re.fullmatch(r'You\s+(?:set|put|placed)\s+(?:the\s+)?(?:execution|work)',subject,re.I):continue
+                # A matching saved hold may be restated as still in force.
+                # This does not invent a hold or describe a lift/clear/release.
+                if (scopes and not named and not foreign_subject(clause,projects,WORKER_NAMES) and
+                        re.search(r'\b(?:execution|work)\b',prefix+' '+subject,re.I) and
+                        re.search(r'\b(?:on hold|held|paused)\b',match[0]+' '+suffix,re.I)):
+                    continue
                 return False
         return True
     record_ids=set(bindings)
@@ -685,7 +691,24 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 # actor performing a permission change.
                 described_status=bool(record_subject and re.search(
                     r'\b(?:(?:its|the|this|that)\s+)?(?:(?:task|assignment|record|current|recorded|reported)\s+)*'
-                    r'(?:status|state)\s+'+predicate+r'(?:on hold|held|paused)\b',clean_clause,re.I))
+                    r'(?:status|state|lifecycle stage)\s+(?:of\s+)?'+predicate+r'(?:on hold|held|paused)\b',clean_clause,re.I))
+                in_force_restatement=bool(
+                    (record_subject or re.search(r'\b'+identity+r'\b',clean_clause,re.I)) and
+                    re.search(r'\b(?:on hold|held|paused)\b|\bthe (?:saved |reported |owner[- ]placed )?hold\b',
+                              clean_clause,re.I) and
+                    re.search(
+                        r'\b(?:lifecycle stage|active status|currently on hold|has not executed|'
+                        r'has not reached|execution started|do(?:es)? not (?:clear|lift|release|bypass)|'
+                        r'reload|resubmission|still applies|'
+                        r'remains?\s+(?:(?:explicitly|currently|still)\s+)*(?:active|in (?:force|place|effect)|on hold|held)|'
+                        r'was placed(?:\s+before)?)\b',
+                        clean_clause,re.I) and
+                    not foreign_subject(clean_clause,projects,WORKER_NAMES))
+                named_subject=re.match(
+                    r'^\s*(?:(?:task|assignment|record|lease|source|snapshot|revision|artifact)\s+)?'
+                    r'([A-Za-z][\w]*-\d+)\b',clean_clause,re.I)
+                if in_force_restatement and named_subject and named_subject[1] != record_subject:
+                    in_force_restatement=False
                 # References/advice/checks about a hold have a bounded object;
                 # "the hold on the backup service" cannot borrow this scope.
                 noun=bool(re.fullmatch(r'(?:the|this|that|earlier|previous)(?:\s+(?:earlier|previous|existing|current|owner(?:-placed)?|recorded|reported))?\s+hold',claim[0],re.I))
@@ -720,7 +743,8 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                     r'is still\s+(?:active|in (?:force|place|effect)|on hold|held))\b',
                     prefix+' '+suffix,re.I))
                 if not (identified or task_directive or described or anaphor or described_status or
-                        inherited and not noun or noun_reference or denied_lift or remaining_hold):
+                        inherited and not noun or noun_reference or denied_lift or remaining_hold or
+                        in_force_restatement):
                     accepted=False
                     record_subject=None
                 elif identified or task_directive:
@@ -815,6 +839,10 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
             content = (content + "\n\n" if content else "") + hold_reply(scopes)
         elif not content:
             content = "I could not produce a useful answer to that request. Please retry."
+    if not scopes:
+        # A user-reported hold is not a product-saved hold. Restate it as a
+        # hold, never as something this product stored.
+        content=re.sub(r'\bthe saved hold\b','the hold',content,flags=re.I)
     if sticky_reply(text, content):
         content = "I could not produce a useful answer to that request. Please retry."
     if blocked:

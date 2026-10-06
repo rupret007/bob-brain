@@ -58,6 +58,17 @@ class ProvenanceDeliveryTests(SessionFixture):
             with self.subTest(content=content):
                 self.fake.reply_text=content
                 self.assertEqual(self.send('Explain the evidence for Z-71 and Z-72.')['content'],content)
+        denial = (
+            '* **Provenance boundary:** Retain it as a historical or mismatched claim record only. '
+            'It does not constitute evidence of prior work completed for `Z-72`, nor does it alter '
+            'current permissions or state.'
+        )
+        self.fake.reply_text = denial
+        answer = self.send('Explain the evidence for Z-71 and Z-72.')
+        self.assertEqual(answer['content'], denial)
+        self.assertNotIn('The supplied material refers to', answer['content'])
+        self.assertNotIn('only.The', answer['content'])
+        self.assertNotIn('\n, nor does it', answer['content'])
 
     def test_previous_assistant_prose_never_becomes_result_evidence(self):
         self.establish()

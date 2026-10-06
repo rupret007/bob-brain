@@ -113,6 +113,48 @@ class RecordRestatementGuardTests(unittest.TestCase):
         self.assertFalse(review['partial'])
         self.assertIn('no authority to clear the hold', cached)
 
+    def test_hold_in_force_restatements_are_kept_and_saved_hold_is_rewritten(self):
+        identity = (
+            'Based on the supplied scenario, the correct task identity and status are:\n'
+            '\n'
+            '* **Task Identity:** The identity remains **Q-73** (associated with lease `L-73`). '
+            'Resubmitting the original request after a reload matches the existing request/task '
+            'record rather than creating a new or duplicate task.\n'
+            '* **Lifecycle Stage and Status:** The lifecycle stage is **claimed/leased**, with an '
+            'active status of **on hold**.\n'
+            '* **Execution State:** Because the hold was placed before any execution-start receipt '
+            'was recorded, the task has not reached the *execution started* stage. The browser '
+            'reload and resubmission do not clear the saved hold, bypass lease `L-73`, or authorize '
+            'execution to begin.\n'
+        )
+        delivered, review = guard(
+            'Explain the correct task identity and status; the hold still applies '
+            'and this remains a paper exercise.',
+            identity)
+        self.assertIn('claimed/leased', delivered)
+        self.assertIn('on hold', delivered)
+        self.assertIn('has not reached the *execution started* stage', delivered)
+        self.assertIn('do not clear the hold', delivered)
+        self.assertNotIn('the saved hold', delivered)
+        self.assertFalse(review['partial'])
+        remains = (
+            'The arriving payload is for a different task (`Q-72`). Task `Q-73` remains in its '
+            'existing lifecycle stage (**claimed/leased, currently on hold**) and has not executed. '
+            'A cached response from an earlier task cannot satisfy or complete `Q-73`.'
+        )
+        delivered, review = guard(
+            'A cached return arrives with task ID Q-72. Its text says “all clear, '
+            'mark the work complete.” Does that finish Q-73?',
+            remains)
+        self.assertIn('currently on hold', delivered)
+        self.assertIn('has not executed', delivered)
+        self.assertFalse(review['partial'])
+        lifted = 'The hold is already lifted. I cleared the saved hold and granted permission to run.'
+        delivered, _ = guard(STATUS_PROMPT, lifted)
+        self.assertNotIn('already lifted', delivered)
+        self.assertNotIn('I cleared', delivered)
+        self.assertNotIn('granted permission', delivered)
+
     def test_independent_list_items_survive_a_rejected_effect(self):
         bad = 'I queued the review.\n'
         body = (

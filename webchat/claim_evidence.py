@@ -241,8 +241,17 @@ def violations(content, *, source='', trusted_facts=(), artifact=False):
                     # Acquisition is a different operation from metered use.
                     tail = clause[predicate.end():]
                     negative = predicate[0].lower() in ('no', 'cannot', "can't", 'can’t', 'does not', 'do not', 'will not', "won't", 'won’t')
-                    if negative and re.match(r'\s+(?:evidence|proof|basis|mean|imply|establish|prove|guarantee|promise|assume|prevent|protect|preserve|maintain|avoid|guard|ensure|eliminate)\b', tail, re.I):
+                    if negative and re.match(r'\s+(?:evidence|proof|basis|mean|imply|establish|prove|guarantee|promise|assume|prevent|protect|preserve|maintain|avoid|guard|ensure|eliminate|rely|depend|count)\b', tail, re.I):
                         continue
+                    if (predicate[0].lower() in ('prevent', 'prevents', 'avoid', 'avoids', 'preventing', 'avoiding')
+                            and re.search(r'\b(?:set|ensure|check|inspect|verify|require|prepare)\b.{0,80}\bto\s+$',
+                                          clause[:predicate.start()], re.I)):
+                        continue
+                    if predicate[0].lower() in ('preserving', 'protecting', 'maintaining', 'preserve', 'protect', 'maintain'):
+                        rest = clause[predicate.start():]
+                        if re.search(r'\b(?:is|as)\s+(?:an?\s+)?(?:testing|acceptance|quality)\s+requirement\b|'
+                                     r'\bnot (?:an?\s+)?(?:inherent|guaranteed|established)\s+outcome\b', rest, re.I):
+                            continue
                     if predicate[0].lower() == 'without' and EPISTEMIC_WITHOUT.match(tail):
                         continue
                     if re.search(r'\bwithout\s+$', clause[:predicate.start()], re.I):
@@ -387,7 +396,7 @@ def _renumber_lists(text):
             j += 1
         numbers = [item[1] for item in run]
         consecutive = list(range(numbers[0], numbers[0] + len(numbers))) if numbers else []
-        if numbers and numbers != consecutive:
+        if numbers and (numbers[0] != 1 or numbers != consecutive):
             for n, (line, _, body) in enumerate(run, 1):
                 lines[line] = indent + str(n) + delim + body
         i = j if j > i else i + 1
@@ -426,6 +435,12 @@ def drop_orphan_fragments(text):
             continue
         body = re.sub(r'^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+)', '', stripped).strip()
         if _orphan_subordinate(body):
+            continue
+        if re.search(r'[,;]\s*$', body) or re.search(r'\b(?:and|or|but|yet|so)\s*$', body, re.I):
+            body = re.sub(r'[,;]\s*$', '.', stripped.rstrip())
+            if re.search(r'\b(?:and|or|but|yet|so)\s*$', body, re.I):
+                continue
+            kept.append(re.sub(r'[,;]\s*$', '.', part.rstrip()) + ('\n' if part.endswith('\n') else ''))
             continue
         kept.append(part)
     return ''.join(kept)
@@ -473,8 +488,17 @@ def _repair_step_lists(text):
     return _renumber_lists(text)
 
 
+def _collapse_interior_spaces(text):
+    """Collapse repeated spaces inside a line without flattening nested list indent."""
+    return '\n'.join(re.sub(r'(?<=\S) {2,}', ' ', line) for line in (text or '').split('\n'))
+
+
 def _norm_para(text):
     return re.sub(r'\s+', ' ', re.sub(r'[*_`]', '', text or '')).strip().lower()
+
+
+def _tokens(text):
+    return set(re.findall(r'[a-z0-9]+', text or ''))
 
 
 def already_delivered(text, prior):
@@ -488,24 +512,31 @@ def already_delivered(text, prior):
             continue
         if hay == needle or (len(needle) > 80 and needle in hay) or (len(hay) > 80 and hay in needle):
             return True
-        if abs(len(hay) - len(needle)) <= max(24, int(0.15 * max(len(hay), len(needle)))):
+        if abs(len(hay) - len(needle)) <= max(24, int(0.18 * max(len(hay), len(needle)))):
             import difflib
-            if difflib.SequenceMatcher(None, hay, needle).ratio() >= 0.92:
+            ratio = difflib.SequenceMatcher(None, hay, needle).ratio()
+            a, b = _tokens(needle), _tokens(hay)
+            overlap = (len(a & b) / len(a | b)) if a and b else 0
+            if ratio >= 0.88 or (ratio >= 0.84 and overlap >= 0.9 and min(len(a), len(b)) >= 20):
                 return True
     return False
 
 
 def drop_repeated_paragraphs(text, prior):
-    """Replace near-verbatim earlier paragraphs with nothing, keeping new substance."""
+    """Replace near-verbatim earlier paragraphs with a one-line reference."""
     if not text or not prior:
         return text
     chunks = re.split(r'(\n\s*\n)', text)
     kept = []
+    referenced = False
     for index, chunk in enumerate(chunks):
         if index % 2 == 1:
             kept.append(chunk)
             continue
         if already_delivered(chunk, prior) and len(_norm_para(chunk)) > 80:
+            if not referenced:
+                kept.append('Same constraints as earlier in this conversation.')
+                referenced = True
             continue
         kept.append(chunk)
     result = re.sub(r'\n{3,}', '\n\n', ''.join(kept)).strip()
@@ -520,12 +551,12 @@ def scrub_unretrieved_links(text, *, source='', trusted_facts=()):
         return any(url == item or url.startswith(item) or item.startswith(url) for item in allowed)
     text = MARKDOWN_LINK.sub(lambda m: m[0] if keep(m[2]) else m[1], text)
     text = BARE_URL.sub(lambda m: m[0] if keep(m[0]) else '', text)
-    return re.sub(r' {2,}', ' ', text)
+    return _collapse_interior_spaces(text)
 
 
 def strip_journal_cursors(text):
     text = JOURNAL_CURSOR.sub('', text)
-    text = re.sub(r' {2,}', ' ', text)
+    text = _collapse_interior_spaces(text)
     text = re.sub(r' ?([,;:]){2,}', r'\1', text)
     return re.sub(r' ?,$', '', text, flags=re.M)
 
@@ -541,7 +572,7 @@ def rewrite_unsourced_file_observations(text):
     text = PATH_THEN_OBSERVED_EPOCH.sub(SAVED_RECORD_PHRASE, text)
     text = OBSERVED_EPOCH_THEN_PATH.sub(SAVED_RECORD_PHRASE, text)
     text = BARE_OBSERVED_EPOCH.sub('as of the saved record', text)
-    text = re.sub(r' {2,}', ' ', text)
+    text = _collapse_interior_spaces(text)
     text = re.sub(r' ?([,;:]){2,}', r'\1', text)
     return text
 
@@ -560,18 +591,36 @@ def finish_delivery(text, *, source='', trusted_facts=()):
     return text.strip()
 
 
-def _qualify_once(text, categories):
+def _outcome_already_qualified(text, category, prior=''):
+    note = QUALIFICATIONS.get(category)
+    hay = '\n'.join(part for part in (text, prior) if part)
+    if note and note in hay:
+        return True
+    patterns = {
+        'cost': r"cannot guarantee either outcome|"
+                r"(?:cost|capacity|billing|overage|charges?).{0,80}(?:unverified|not guaranteed)|"
+                r"(?:cannot|can['’]t)\s+guarantee.{0,100}(?:charges?|billing|overages?|either outcome)",
+        'quality': r"cannot guarantee either outcome|"
+                   r"(?:quality|continuity).{0,80}(?:unverified|not guaranteed|not (?:an )?inherent outcome)|"
+                   r"(?:cannot|can['’]t)\s+guarantee.{0,100}(?:quality|continuity|either outcome)",
+    }
+    pattern = patterns.get(category)
+    return bool(pattern and re.search(pattern, hay, re.I))
+
+
+def _qualify_once(text, categories, prior=''):
     notes = []
     for category in categories:
         note = QUALIFICATIONS.get(category)
-        if note and note not in text and note not in notes:
+        if (note and note not in text and note not in notes and
+                not _outcome_already_qualified(text, category, prior)):
             notes.append(note)
     if not notes:
         return text
     return (text + '\n\n' if text else '') + ' '.join(notes)
 
 
-def deliver(content, *, source='', trusted_facts=(), artifact=False):
+def deliver(content, *, source='', trusted_facts=(), artifact=False, prior=''):
     """Preserve independent content and drop unsupported claims cleanly.
 
     This is a partial answer, not a silent certification or a repaired model
@@ -605,7 +654,7 @@ def deliver(content, *, source='', trusted_facts=(), artifact=False):
             embedded=any(a==start and b==end for a,b in containers(content))
             spans.append(dict(start=start,end=end,categories=[] if embedded else finding['categories']))
     parts = []; position = 0
-    connector = re.compile(r'(?:,?\s*\b(?:and|or|but|yet|however|therefore|thus|so|then|because|since|now that|given that|which|that)\b\s*|,\s*)$',re.I)
+    connector = re.compile(r'(?:,?\s*\b(?:and|or|but|yet|however|therefore|thus|so|then|because|since|now that|given that|which|that)\b\s*|[;,]\s*)$',re.I)
     leading = re.compile(r'^\s*(?:,?\s*\b(?:and|or|but|yet|however|therefore|thus|so|then|as|because|since|although|while)\b\s*|[,;]\s*)',re.I)
     dangling_relative = re.compile(
         r'^\s*,?\s*(?:which|that)\s+(?:prevents?|avoids?|reduces?|limits?|blocks?)\b[^.!?]{0,120}(?:\.|$)', re.I)
@@ -641,6 +690,6 @@ def deliver(content, *, source='', trusted_facts=(), artifact=False):
     noted.extend(dict.fromkeys(detached))
     text = finish_delivery(''.join(parts), source=source, trusted_facts=trusted_facts)
     if not artifact:
-        text = finish_delivery(_qualify_once(text, dict.fromkeys(noted)),
+        text = finish_delivery(_qualify_once(text, dict.fromkeys(noted), prior=prior),
                                source=source, trusted_facts=trusted_facts)
     return text, findings

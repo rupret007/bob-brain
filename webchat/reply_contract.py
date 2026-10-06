@@ -223,7 +223,7 @@ def _deliver(root, text, answer, conversation, *, observation, redact):
         return visible, dict(accepted=True, kind='writing', label='Draft',
                              text=artifact, sha256=digest(artifact), source=source, commentary=commentary,
                              claims_partial=bool(conversation['messages'][-1].get('claim_review')))
-    bounded, findings = claim_evidence.deliver(raw, source=text)
+    bounded, findings = claim_evidence.deliver(raw, source=text, prior=prior_answers)
     if findings:
         conversation['messages'][-1]['claim_review'] = dict(partial=True, findings=findings,
             scope='Bounded protected-conclusion checks; not general semantic certification')

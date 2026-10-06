@@ -100,3 +100,35 @@ class HoldScopeTests(SessionFixture):
         self.fake.reply_text='The hold still applies to all projects.'
         self.assertNotIn('all projects',self.send('Explain the Web Bob decision.')['content'])
         self.assertFalse(task_queue.tasks(self.root))
+
+    def test_saved_hold_keeps_in_force_list_item_and_renumbers_after_a_drop(self):
+        self.prepare_hold()
+        raw = (
+            '### Two Largest Gaps\n'
+            '1. **Unselected Scope and Execution Hold:** Execution is on hold pending your scope '
+            'decision. Until a scope (such as Option A or Option B) is chosen and released, no diagnostic '
+            'queries or read-only checks can be dispatched.\n'
+            '2. **Recorded Intent vs. Live Runtime Evidence:** The saved record contains saved '
+            'owner policies, not runtime telemetry.\n'
+        )
+        self.fake.reply_text = raw
+        answer = self.send('What are the two largest gaps?')
+        self.assertIn('Execution is on hold pending your scope decision', answer['content'])
+        self.assertRegex(answer['content'], r'(?m)^1\. \*\*Unselected Scope')
+        self.assertRegex(answer['content'], r'(?m)^2\. \*\*Recorded Intent')
+        mixed = (
+            '### Two Largest Gaps\n'
+            '1. **Unselected Scope and Execution Hold:** Execution is on hold pending your scope '
+            'decision. Until a scope is chosen, no diagnostic queries can be dispatched.\n'
+            '2. **Foreign hold:** The backup service is on hold pending your permission.\n'
+            '3. **Recorded Intent vs. Live Runtime Evidence:** The saved record contains saved '
+            'owner policies, not runtime telemetry.\n'
+        )
+        self.fake.reply_text = mixed
+        answer = self.send('Name the gaps again.')
+        self.assertNotIn('backup service is on hold', answer['content'])
+        self.assertIn('Execution is on hold pending your scope decision', answer['content'])
+        self.assertRegex(answer['content'], r'(?m)^1\. \*\*Unselected Scope')
+        self.assertRegex(answer['content'], r'(?m)^2\. \*\*Recorded Intent')
+        self.assertNotRegex(answer['content'], r'(?m)^3\. ')
+        self.assertFalse(task_queue.tasks(self.root))

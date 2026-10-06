@@ -229,6 +229,10 @@ class DeliveryCleanupTests(unittest.TestCase):
         self.assertIn('3. Keep the hold.', delivered)
         self.assertIn('4. Compare artifacts.', delivered)
         self.assertNotIn('6.', delivered)
+        from providers import CONVERSATION_QUALITY
+        self.assertIn('proposed; budget-admitted; accepted/claimed (lease)', CONVERSATION_QUALITY)
+        self.assertNotIn('proposed/admitted', CONVERSATION_QUALITY)
+        self.assertIn('name only the lifecycle stage the record supports', CONVERSATION_QUALITY)
         table = ('| Step 1 | Record identity |\n'
                  '| Step 3 | Inspect evidence; this step passes steps 1 and 2 |\n'
                  '| Step 4 | Keep the hold |')
@@ -321,6 +325,74 @@ class DeliveryCleanupTests(unittest.TestCase):
             self.assertNotIn(projection['facts']['quality_bar'], second)
             self.assertNotIn('Proposed preparation steps (not started)', second)
             self.assertIn('The previously listed preparation steps still apply.', second)
+
+    def test_advisory_cost_checks_and_nested_lists_survive_delivery(self):
+        nested = (
+            '1. **Identity and Provenance Binding:**\n'
+            '   * Match the task ID (`R-41`), lease ID (`L-41`), and source revision (`rev-41`).\n'
+            '   * Verify the artifact identity specifically matches `readiness-rev-41.md`.\n'
+        )
+        delivered = claim_evidence.finish_delivery(nested)
+        self.assertIn('   * Match the task ID', delivered)
+        self.assertNotIn('\n * Match the task ID', delivered)
+        gapped = '2. Inspect the stored evidence.\n3. Keep the hold.'
+        delivered = claim_evidence.finish_delivery(gapped)
+        self.assertIn('1. Inspect the stored evidence.', delivered)
+        self.assertIn('2. Keep the hold.', delivered)
+        self.assertNotIn('3.', delivered)
+        raw = (
+            'No, keeping requests short and running them one at a time cannot guarantee either outcome.\n'
+            '\n'
+            '* **Safe handling:** Check the dashboard directly to verify whether an active balance '
+            'remains and ensure overage limits or spend caps are set to prevent unexpected billing.\n'
+            '* **Why it is not guaranteed:** Preserving baseline quality is a testing requirement, '
+            'not an inherent outcome of short prompts.\n'
+            '**Concrete Next Step:** Check the account billing and overage toggles first; do not rely '
+            'on prompt size or sequence to govern billing or output quality.\n'
+        )
+        delivered, findings = claim_evidence.deliver(raw)
+        self.assertFalse(findings)
+        self.assertIn('spend caps are set to prevent unexpected billing', delivered)
+        self.assertIn('Preserving baseline quality is a testing requirement', delivered)
+        self.assertIn('do not rely on prompt size or sequence to govern billing', delivered)
+        self.assertNotIn('unverified from what’s available here', delivered)
+        self.assertNotRegex(delivered, r'first;\s*$')
+        note = claim_evidence.QUALIFICATIONS['cost']
+        again, _ = claim_evidence.deliver(
+            'This route guarantees zero charges. Inspect billing next.', prior=note)
+        self.assertIn('Inspect billing next.', again)
+        self.assertEqual(again.count('unverified from what’s available here'), 0)
+
+    def test_route_restatement_carries_configured_not_verified_and_steps_dedupe(self):
+        with tempfile.TemporaryDirectory() as temp:
+            conversation = dict(messages=[dict(role='user', id='1', request_id='1',
+                content='Suppose Gemini is depleted and Grok is unavailable. What can our subscriptions do?')])
+            projection = resource_decision.project(Path(temp), conversation)
+            first_packet = json.dumps(dict(answer=[dict(fact='route_boundaries'),
+                dict(reasoning='Inspect allowance dashboards next.')],
+                resource=None, steps=['inspect_allowance', 'preserve_standard']))
+            first, _ = resource_decision.render(first_packet, projection)
+            self.assertIn('configured, not a claim', first.lower().replace('this is what is ', ''))
+            restated = json.dumps(dict(answer=[dict(reasoning=
+                'A limitation in reading local files belongs specifically to the conversation adapter, '
+                'which relies on supplied context, rather than the separate scoped executors configured '
+                'for local coding assignments in Codex or Cursor.'),
+                dict(fact='missing_inputs')],
+                resource=None, steps=['inspect_allowance', 'provide_inputs', 'preserve_standard']))
+            missing = dict(projection, missing_inputs=True,
+                           facts=dict(projection['facts'],
+                                      missing_inputs=resource_decision.facts({'resources': [], 'observed_at': 0}, missing=True)['missing_inputs']))
+            second, _ = resource_decision.render(restated, missing, prior=first)
+            self.assertIn('configured in Web Bob', second)
+            self.assertRegex(second, r'availability.{0,40}not verified|sign-in are not verified')
+            self.assertNotIn('Proposed preparation steps (not started)', second)
+            adapter = json.dumps(dict(answer=[dict(reasoning=
+                'What is known from configured route data is that Web Bob has a supported conversation '
+                'adapter for Codex alongside a separate executor for scoped coding assignments.'),
+                dict(fact='purchase_vs_usage')], resource=None, steps=[]))
+            third, _ = resource_decision.render(adapter, projection)
+            self.assertIn('supported conversation adapter for Codex', third)
+            self.assertIn('availability and sign-in are not verified', third.lower())
 
 
 if __name__ == '__main__':

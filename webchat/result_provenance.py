@@ -101,6 +101,17 @@ def nonasserted(part, match):
         return True
     if re.search(r"\b(?:not|never|hasn['’]t|haven['’]t|wasn['’]t|weren['’]t)\s+(?:been\s+)?$",prefix,re.I):
         return True
+    if re.search(
+            r"\b(?:does not|doesn['’]t|cannot|can['’]t|not)\s+"
+            r'(?:constitute\s+)?(?:evidence|proof)\s+(?:of\s+)?(?:prior\s+)?(?:work\s+)?$',
+            prefix,re.I):
+        return True
+    if re.search(
+            r"\b(?:does not|doesn['’]t|cannot|can['’]t)\s+"
+            r'(?:constitute\s+)?(?:evidence|proof)\s+of\b|'
+            r'\bnot (?:evidence|proof) of\b',
+            part.text[:match.start()],re.I):
+        return True
     if re.match(r'\s+(?:is|was|remains?)\s+(?:unverified|unknown|unproven)\b',suffix,re.I):
         return True
     return False
@@ -242,14 +253,27 @@ def deliver(root, content, source, report_bindings=()):
                 decisions.append(decision)
                 if not support and not any(f['start']==part.start for f in findings):findings.append(decision)
     if not findings:return content,dict(partial=False,claims=decisions,projection=source)
-    result=[];offset=0
+    result=[];offset=0;replaced=False
     for finding in findings:
         before=content[offset:finding['start']]
         before=re.sub(r'(?:,?\s*\b(?:and|or|but|yet|however|therefore|thus|so|then|because|since|which|that)\b\s*)+$','',before,flags=re.I)
+        original=content[finding['start']:finding['end']]
+        if re.search(
+                r"\b(?:does not|doesn['’]t|cannot|can['’]t|not)\s+"
+                r'(?:constitute\s+)?(?:evidence|proof)\s+of\b|'
+                r'\bnot (?:evidence|proof) of\b|'
+                r'\b(?:does not|cannot)\s+(?:verify|establish|prove|satisfy|complete)\b',
+                original,re.I):
+            result.append(before)
+            result.append(original)
+            offset=finding['end']
+            continue
+        replaced=True
         label=before.rstrip().rstrip('*_').endswith(':')
         if before.strip() and before[-1] not in '.!?\n:' and not label:before=before.rstrip()+'.\n'
+        elif before.strip() and before[-1] in '.!?' and not before.endswith(('\n',' ')):
+            before=before+' '
         result.append(before)
-        original=content[finding['start']:finding['end']]
         marker=re.match(r'^\s*(?:[-*+]\s+|\d+[.)]\s+)',original)
         if marker:result.append(marker[0])
         available=finding['available_evidence']
@@ -264,5 +288,7 @@ def deliver(root, content, source, report_bindings=()):
         offset=finding['end']
         result.append('\n')
     result.append(content[offset:])
+    if not replaced:
+        return content,dict(partial=False,claims=decisions,projection=source)
     return ''.join(result),dict(partial=True,claims=decisions,projection=source,
         evaluated_input_sha256=digest(content),scope='Bounded task-result provenance, not general semantic certification.')

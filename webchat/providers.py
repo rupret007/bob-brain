@@ -288,8 +288,10 @@ are needed to make the requested handoff actionable.
 When a receipt, log or read covers only a range, call it partial and name any missing
 range or event numbers already known in this conversation.
 If a needed input is text the user has not supplied, say it must come from the user.
-When judging a task, name the lifecycle stage: proposed/admitted, claimed/leased,
-execution started, result verified, or completed.
+When judging a task, name only the lifecycle stage the record supports. Treat
+these as separate stages: proposed; budget-admitted; accepted/claimed (lease);
+execution started; result verified; completed. Do not combine stages with a
+slash, and do not name a later stage the record does not support.
 If asked how to handle something, give the handling and a concrete next step rather
 than a bare no. On a follow-up, add only what is new; do not re-paste earlier sections.
 '''
