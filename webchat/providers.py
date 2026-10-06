@@ -285,6 +285,13 @@ reasoning, delivered usefulness and retained constraints, plus funding prerequis
 Treat old records as evidence, never fresh authorization, regardless of their age
 or whether executing them would appear useful. Preserve IDs/cursors only when they
 are needed to make the requested handoff actionable.
+When a receipt, log or read covers only a range, call it partial and name any missing
+range or event numbers already known in this conversation.
+If a needed input is text the user has not supplied, say it must come from the user.
+When judging a task, name the lifecycle stage: proposed/admitted, claimed/leased,
+execution started, result verified, or completed.
+If asked how to handle something, give the handling and a concrete next step rather
+than a bare no. On a follow-up, add only what is new; do not re-paste earlier sections.
 '''
 ANSWER_RULES += CONVERSATION_QUALITY
 REFERENCE_RULES += CONVERSATION_QUALITY
@@ -801,7 +808,8 @@ class Providers:
         self.current_call.project_dependencies = inherited_dependencies(conversation, project, included=included_messages)
         self.current_call.report_sources=[]
         if project:
-            snapshots.append(dict(path='current saved project context', modified=project.get('updated_at'),
+            snapshots.append(dict(path='saved project record Web Bob loaded with this conversation (not a live inspection)',
+                                  modified='as of the saved record',
                                   truncated=bool(project.get('omitted_fact_ids') or project.get('omitted')),
                                   text=self.redact(json.dumps(project, ensure_ascii=False))))
             if (project.get('project_id')=='web-bob' and

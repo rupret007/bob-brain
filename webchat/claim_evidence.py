@@ -128,6 +128,19 @@ JOURNAL_CURSOR = re.compile(
     r'\bjournal_cursor\s*[:=]\s*\d+\b|'
     r'\bcursor\s+\d+(?:\s*/\s*\d+)+\b',
     re.I)
+PATH_THEN_OBSERVED_EPOCH = re.compile(
+    r'`?(?:conductor/[\w./-]+\.(?:json|jsonl)|[\w./-]*projects\.json)`?'
+    r'\s*\(?\s*(?:observed(?:\s+(?:timestamp|at)|[ _]?at)\s*[:=]?\s*)[`\'"]?\d{9,12}(?:\.\d+)?[`\'"]?\s*\)?',
+    re.I)
+OBSERVED_EPOCH_THEN_PATH = re.compile(
+    r'(?:observed(?:\s+(?:timestamp|at)|[ _]?at)\s*[:=]?\s*)[`\'"]?\d{9,12}(?:\.\d+)?[`\'"]?'
+    r'(?:\s+(?:for|in|of|at|from)\s+)'
+    r'`?(?:conductor/[\w./-]+\.(?:json|jsonl)|[\w./-]*projects\.json)`?',
+    re.I)
+BARE_OBSERVED_EPOCH = re.compile(
+    r'(?:observed(?:\s+(?:timestamp|at)|[ _]?at)\s*[:=]?\s*)[`\'"]?\d{9,12}(?:\.\d+)?[`\'"]?',
+    re.I)
+SAVED_RECORD_PHRASE = 'the saved project record loaded with this chat (as of the saved record)'
 EMPTY_LABEL = re.compile(
     r'^(?:#{1,6}\s+)?(?:\d+[.)]\s+|[-*+]\s+)?(?:\*\*[^*\n]{1,80}\*\*|__[^_\n]{1,80}__|[^\n:]{1,80}):(?:\*\*|__)?\s*$')
 ITEM_START = re.compile(r'^(?:#{1,6}\s+|\d+[.)]\s+|[-*+]\s+)')
@@ -517,12 +530,29 @@ def strip_journal_cursors(text):
     return re.sub(r' ?,$', '', text, flags=re.M)
 
 
+def rewrite_unsourced_file_observations(text):
+    """Rewrite path+epoch 'observed' claims as saved-record attribution.
+
+    Raw internal epochs and inventory paths are not user-facing live-read
+    evidence. Timing, if it matters, is 'as of the saved record'.
+    """
+    if not text:
+        return text
+    text = PATH_THEN_OBSERVED_EPOCH.sub(SAVED_RECORD_PHRASE, text)
+    text = OBSERVED_EPOCH_THEN_PATH.sub(SAVED_RECORD_PHRASE, text)
+    text = BARE_OBSERVED_EPOCH.sub('as of the saved record', text)
+    text = re.sub(r' {2,}', ' ', text)
+    text = re.sub(r' ?([,;:]){2,}', r'\1', text)
+    return text
+
+
 def finish_delivery(text, *, source='', trusted_facts=()):
     """Final user-facing cleanup: no leaked tags, empty labels, or unretrieved links."""
     text = (text or '').replace('[Unverified claim withheld]', '')
     text = scrub_unretrieved_links(text, source=source, trusted_facts=trusted_facts)
     if not _user_asked_cursors(source):
         text = strip_journal_cursors(text)
+    text = rewrite_unsourced_file_observations(text)
     text = drop_empty_labels(text)
     text = drop_orphan_fragments(text)
     text = _repair_step_lists(text)

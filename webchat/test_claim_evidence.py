@@ -264,6 +264,64 @@ class DeliveryCleanupTests(unittest.TestCase):
             self.assertNotIn(fact, delivered)
             self.assertIn('Name the remaining unknowns', delivered)
 
+    def test_observed_path_epochs_are_attributed_to_the_saved_record(self):
+        source = ('Project memory: `conductor/webchat/memory/projects.json` '
+                  '(observed timestamp `1791312692.083752`).\n\n'
+                  'Queue state: conductor/state/queue.jsonl observed at 1791312692.\n\n'
+                  'Inspect the stored evidence next.')
+        delivered = claim_evidence.finish_delivery(source)
+        self.assertNotIn('1791312692', delivered)
+        self.assertNotIn('observed timestamp', delivered.lower())
+        self.assertNotIn('conductor/webchat/memory/projects.json', delivered)
+        self.assertIn('saved project record loaded with this chat', delivered)
+        self.assertIn('as of the saved record', delivered)
+        self.assertIn('Inspect the stored evidence next.', delivered)
+        kept = 'Sign-in was observed recently. Remaining allowance is unverified until observed.'
+        self.assertEqual(claim_evidence.finish_delivery(kept), kept)
+
+    def test_repeated_resource_blocks_become_one_line_refs_when_facts_are_unchanged(self):
+        with tempfile.TemporaryDirectory() as temp:
+            conversation = dict(messages=[dict(role='user', id='1', request_id='1',
+                content='Suppose Gemini is depleted and Grok is unavailable. What can our subscriptions do?')])
+            projection = resource_decision.project(Path(temp), conversation)
+            packet = json.dumps(dict(answer=[dict(fact='availability'),
+                dict(reasoning='Prepare a bounded comparison before any generation.')],
+                resource=None, steps=['inspect_allowance', 'preserve_standard']))
+            first, _ = resource_decision.render(packet, projection)
+            self.assertIn('unavailable', first)
+            self.assertNotIn('Same constraints as above', first)
+            self.assertNotIn('BOTH', resource_decision.facts({'resources': [], 'observed_at': 0})['route_boundaries'])
+            self.assertIn('configured route registry', resource_decision.facts({'resources': [], 'observed_at': 0})['route_boundaries'])
+            second, _ = resource_decision.render(packet, projection, prior=first)
+            self.assertNotIn(projection['facts']['availability'], second)
+            self.assertIn('Same constraints as above', second)
+            self.assertIn('Prepare a bounded comparison before any generation.', second)
+            self.assertTrue(second.index('Prepare a bounded comparison') < second.index('Same constraints as above'))
+            changed = dict(projection, unavailable=['gemini'], facts=dict(projection['facts'],
+                availability='According to the current supplied constraints, gemini is unavailable. Preserve the quality standard, but do not depend on an unavailable route for generation. Prepare evidence and qualify an available candidate before switching; no alternative is qualified by subscription ownership alone.'))
+            third, _ = resource_decision.render(json.dumps(dict(answer=[dict(fact='availability'),
+                dict(reasoning='Name the remaining allowance check.')], resource=None, steps=[])),
+                changed, prior=first + '\n\n' + second)
+            self.assertIn('gemini is unavailable', third)
+            self.assertIn('Name the remaining allowance check.', third)
+
+    def test_repeated_preparation_steps_and_quality_bar_are_not_restated(self):
+        with tempfile.TemporaryDirectory() as temp:
+            projection = resource_decision.project(Path(temp), dict(messages=[dict(
+                role='user', id='1', request_id='1',
+                content='Can our Codex subscription replace the API route?')]))
+            packet = json.dumps(dict(answer=[dict(fact='quality_bar'),
+                dict(reasoning='This route guarantees zero charges.')],
+                resource=None, steps=['inspect_allowance', 'preserve_standard']))
+            first, receipt = resource_decision.render(packet, projection)
+            self.assertTrue(receipt['partial'])
+            self.assertIn('Proposed preparation steps (not started)', first)
+            self.assertIn(projection['facts']['quality_bar'], first)
+            second, _ = resource_decision.render(packet, projection, prior=first)
+            self.assertNotIn(projection['facts']['quality_bar'], second)
+            self.assertNotIn('Proposed preparation steps (not started)', second)
+            self.assertIn('The previously listed preparation steps still apply.', second)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -34,8 +34,10 @@ choices from allowed_steps. Describe the useful proposed next step in answer;
 these fields neither start it nor change routing. prepare_report supports Claude
 only; qualify_chat needs a selected provider. General inspection/preparation
 steps do not require a provider selection. A billing premise needs an answer, not an
-unrequested recommendation. On follow-up, advance the reasoning rather than
-repeating the last answer. Preserve missing inputs and explicit route restrictions.
+unrequested recommendation. On follow-up, lead with what answers the current question. Do not re-paste resource
+facts, availability, preparation steps or the quality-standard paragraph when an
+earlier assistant turn already delivered the same block; unchanged constraints may
+be referenced in one line. Preserve missing inputs and explicit route restrictions.
 Use only needed facts; do not paste the whole inventory or all caveats. No invented
 inspection, execution, file reach, remaining allowance, free usage or equal-quality
 guarantees. Supported operations are independent: report-executor restrictions
@@ -67,7 +69,7 @@ def facts(inventory, *, missing=False):
     result = {
         'openai_api_billing': BILLING_FACTS['openai_api_billing'],
         'subscription_scope': BILLING_FACTS['subscription_scope'],
-        'route_boundaries': 'Web Bob supports BOTH Codex/Cursor conversation adapters using supplied context AND their separate scoped executors for assigned local file/coding work. Tool limits apply to the named adapter, not the whole resource. Voice and images require their own supported operation. Signing in does not make routes interchangeable or authorize file work.',
+        'route_boundaries': 'Web Bob’s configured route registry lists Codex and Cursor conversation adapters that use supplied context, and separate scoped executors for assigned local file or coding work. This is what is configured, not a claim that either route is signed in, available, or working. Tool limits apply to the named adapter, not the whole resource. Voice and images require their own supported operation. Signing in does not make routes interchangeable or authorize file work.',
         'quality_bar': 'Preserve the answer-quality standard and reasoning requirements. A representative comparison must qualify an alternative before changing the default. A cheaper price or successful login does not establish equivalent answers. Keeping a configuration does not establish that its provider is currently usable.',
         'capacity_and_pacing': 'Pacing may reduce demand; it cannot establish remaining allowance or prevent quota exhaustion. Capacity and extra-usage settings need current observations before admission.',
         'purchase_vs_usage': 'An existing subscription avoids purchasing another plan; it does not establish that another model invocation has no incremental charge. Extra-usage settings and remaining allowance are unverified until observed. Prepare evidence and inspect settings before admitting a comparison.',
@@ -228,7 +230,8 @@ def project(root, conversation):
     import project_context
     owner=project_context.projection(root,conversation,latest)
     if owner and owner.get('available') and not owner.get('omitted'):
-        owner_context={k:owner[k] for k in ('project_id','revision','source_path')}
+        owner_context={k:owner[k] for k in ('project_id','revision')}
+        owner_context['attribution']='saved project record loaded with this conversation (not a live inspection)'
         owner_context['facts']={}
         for fact in owner.get('facts',[]):
             fid='owner.'+fact['id'].replace('-','_')
@@ -353,6 +356,39 @@ def preparation_steps(steps, resource, projection):
         str(i)+'. '+descriptions[s] for i,s in enumerate(steps,1))
 
 
+SAME_UNAVAILABLE = 'Same constraints as above: unavailable routes are unchanged.'
+SAME_MISSING_INPUTS = 'Same missing-input limit as above: needed project inputs remain unavailable until supplied.'
+SAME_STEPS = 'The previously listed preparation steps still apply.'
+
+
+def maybe_append(content, block, prior, *, reference=''):
+    """Keep a block once per conversation; otherwise a one-line reminder or omit."""
+    from claim_evidence import already_delivered
+    block = (block or '').strip()
+    if not block:
+        return content
+    if block in (content or ''):
+        return content
+    if already_delivered(block, prior):
+        if reference and reference not in (content or '') and not already_delivered(reference, prior):
+            return ((content or '') + '\n\n' + reference).strip()
+        return content
+    return ((content or '') + '\n\n' + block).strip()
+
+
+def finish_resource_content(content, projection, known, prior, *, observation='', steps_text=''):
+    """Restore one-line constraint refs instead of restating unchanged blocks."""
+    if projection.get('unavailable'):
+        content = maybe_append(content, known.get('availability'), prior, reference=SAME_UNAVAILABLE)
+    if projection.get('missing_inputs'):
+        content = maybe_append(content, known.get('missing_inputs'), prior, reference=SAME_MISSING_INPUTS)
+    if observation:
+        content = maybe_append(content, observation, prior)
+    if steps_text:
+        content = maybe_append(content, steps_text, prior, reference=SAME_STEPS)
+    return content
+
+
 def render(raw, projection, *, root=None, prior=''):
     """Compose grounded facts and checked reasoning; advice creates no effects."""
     value=parse(raw)
@@ -413,8 +449,6 @@ def render(raw, projection, *, root=None, prior=''):
             content=re.sub(r' +([.,;:])',r'\1',content)
             content=re.sub(r' {2,}',' ',content)
         if not content:raise ValueError('Empty composed answer')
-        if projection['unavailable'] and (not blocked or 'availability' not in tokens):
-            content+='\n\n'+known['availability']
         resource=value['resource']
         if resource is None:
             steps=value['steps']
@@ -423,34 +457,25 @@ def render(raw, projection, *, root=None, prior=''):
                         s not in projection.get('allowed_steps',STEPS) for s in steps) or
                     len(set(steps))!=len(steps)):
                 raise ValueError('Invalid general advice steps')
-            if projection['missing_inputs'] and (not blocked or 'missing_inputs' not in tokens):
-                content+='\n\n'+known['missing_inputs']
+            extra=''
             if rejected and not retained_reasoning:
                 extra=preparation_steps(steps,None,projection)
-                from claim_evidence import already_delivered
-                if extra and already_delivered(extra, prior):
-                    extra='\n\nThe previously listed preparation steps still apply.'
-                content+=extra
+            content=finish_resource_content(content,projection,known,prior,steps_text=extra)
             from claim_evidence import finish_delivery
             return finish_delivery(content),dict(resource=None,steps=steps if not rejected else [],fact_ids=tokens,execution_started=False,model_proposal_accepted=not rejected,
                 verified_preparation_steps=steps if rejected else [],partial=bool(rejected),rejected_blocks=rejected,acceptance_scope='schema and bounded claim checks; not semantic certification')
         validate_route(resource,value['steps'],projection,empty=True)
         decision=dict(resource=resource,missing_inputs=projection['missing_inputs'],scenario=projection['scenario'],
                       execution_started=False,observation_time=projection['inventory']['observed_at'])
-        if projection['missing_inputs'] and (not blocked or 'missing_inputs' not in tokens):
-            content+='\n\n'+known['missing_inputs']
-        if resource in ('codex','claude','cursor'):
-            content+='\n\n'+known[resource+'.observation']
+        observation=known[resource+'.observation'] if resource in ('codex','claude','cursor') else ''
+        extra=''
         decision.update(steps=value['steps'],fact_ids=tokens,model_proposal_accepted=not rejected,
                         partial=bool(rejected),rejected_blocks=rejected,acceptance_scope='schema and bounded claim checks; not semantic certification')
         if rejected:
             if not retained_reasoning:
                 extra=preparation_steps(value['steps'],resource,projection)
-                from claim_evidence import already_delivered
-                if extra and already_delivered(extra, prior):
-                    extra='\n\nThe previously listed preparation steps still apply.'
-                content+=extra
             decision.update(resource=None,steps=[],verified_preparation_steps=value['steps'])
+        content=finish_resource_content(content,projection,known,prior,observation=observation,steps_text=extra)
         from claim_evidence import finish_delivery
         return finish_delivery(content),decision
     if not isinstance(value,dict) or set(value)!= {'resource','steps'}:

@@ -218,7 +218,8 @@ class VoiceCalls:
             project = project_projection(chat.ledger_root(conversation_id), conversation)
             snapshots = list(snapshots)
             if project:
-                snapshots.append(dict(path='current saved project context', text=project))
+                snapshots.append(dict(path='saved project record Web Bob loaded with this conversation (not a live inspection)',
+                                      text=project))
             from project_context import model_view as project_model_view
             private_view = project_model_view(chat.ledger_root(conversation_id), chat.texting.provider_view(conversation))
             from project_context import inherited_dependencies

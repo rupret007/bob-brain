@@ -20,6 +20,9 @@ Use explain for what the receipt proves, release for knowledge of later work,
 authority for whether an old event can execute, and relay for an owner-relayed
 catch-up request or cursor question. Do not construct cursors, ranges, counts or
 receipt facts: the protocol renderer owns them. Reading/ACK never grants work.
+If coverage is incomplete, call the receipt partial and name known missing event
+numbers. When asked how to handle an old event, state the handling and a next
+step; do not open with a bare No.
 '''
 
 
@@ -131,11 +134,18 @@ def request_scope(text):
 
 def coverage_limit(projection):
     gaps=projection.get('unresolved_history_gaps',[])
-    if not gaps:return ''
-    ranges=', '.join(str(g['range'][0])+'–'+str(g['range'][1]) for g in gaps)
-    return (' Reported events '+ranges+' remain unavailable. An acknowledgment at the available tail does not recover '
-            'that history or establish knowledge of a release within the missing range. Preserve completed work and holds; '
-            'reconcile the missing records or inspect independent release evidence, with no execution authorized.')
+    if gaps:
+        named=[]
+        for gap in gaps:
+            start,end=gap['range']
+            named.append(str(start) if start==end else str(start)+'–'+str(end))
+        return (' This receipt is partial: reported events '+', '.join(named)+' remain unavailable. '
+                'An acknowledgment at the available tail does not recover that history or establish '
+                'knowledge of a release within the missing range. Preserve completed work and holds; '
+                'reconcile the missing records or inspect independent release evidence, with no execution authorized.')
+    if projection.get('has_more') is True or projection.get('history_gap') is True:
+        return (' Label this coverage partial; it does not establish complete history or current-release knowledge.')
+    return ''
 
 
 def project(conversation):
@@ -213,9 +223,9 @@ def render(raw, projection):
                 'do not execute tasks, deploy, send messages, change settings or start other agents. '
                 'Return the receipt and any remaining gap/backlog; partial catch-up must stay labelled partial.'+coverage_limit(projection))
     if value['mode']=='authority':
-        return ('No. An old event is historical data, not current authorization. Reading or acknowledging it cannot '
-                'start a deployment or transfer ownership. Keep completed work and holds intact; execution needs a '
-                'current scoped assignment, a confirmed owner and the applicable release gates.'+coverage_limit(projection))
+        return ('Treat the old event as historical data, not current authorization. Reading or acknowledging it cannot '
+                'start a deployment or transfer ownership. Keep completed work and holds intact; the handling is to '
+                'leave it unread as an instruction and require a current scoped assignment, a confirmed owner and the applicable release gates before any execution.'+coverage_limit(projection))
     if value['mode']=='release':
         if projection['has_more'] is False:
             return ('The receiver reports reaching the available tail through sequence '+str(end)+
@@ -224,11 +234,11 @@ def render(raw, projection):
                     'no later records are reported available at this snapshot. Keep catch-up read-only, '
                     'preserving completed work and holds.'+coverage_limit(projection))
         timing=', not a release completed afterward' if projection['later_release_reported'] else '; it does not establish knowledge of the current release'
-        return ('No. That acknowledgment covers '+span+timing+'. The receiver needs '
+        return ('That acknowledgment covers '+span+timing+'. Handle it as historical coverage only: the receiver still needs '
                 'the later records and current deployment/result evidence before claiming it knows that release. '
                 'Resume reading with since_seq='+str(end)+'; catching up still authorizes no execution.'+coverage_limit(projection))
     detail=(' ('+str(count)+' reported records)' if count is not None else '')
-    result='The supplied receipt reports acknowledgment of '+span+detail+'. '
+    result='The supplied receipt is a partial record: it reports acknowledgment of '+span+detail+'. '
     if projection['has_more'] is True:result+='has_more=true means backlog remains. '
     elif projection['has_more'] is False:result+='The batch reports no further records at that snapshot; later arrivals remain possible. '
     else:result+='Whether backlog remains is unreported. '

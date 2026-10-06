@@ -101,10 +101,20 @@ class StoreTests(unittest.TestCase):
         self.save('priority')
         projection = context.projection(self.root, {}, 'Atlas')
         raw = json.dumps(projection)
-        self.assertNotIn('journal_cursor', raw)
-        self.assertNotRegex(raw, r'cursor["\s:]+[0-9]+')
         work = projection.get('work') or {}
         self.assertIn('quote', json.dumps(work.get('journal') or {}))
+        self.assertNotIn('journal_cursor', raw)
+        self.assertNotRegex(raw, r'cursor["\s:]+[0-9]+')
+        self.assertNotIn('conductor/webchat/memory/projects.json', raw)
+        self.assertNotIn('queue.jsonl', raw)
+        self.assertNotIn('source_path', raw)
+        self.assertNotIn('"observed_at"', raw)
+        self.assertIn('not a live inspection', raw)
+        self.assertEqual(projection['as_of'], 'saved_record')
+        self.assertEqual(work.get('as_of'), 'saved_record')
+        for fact in projection.get('facts') or []:
+            self.assertNotIn('observed_at', fact)
+            self.assertNotIn('updated_at', fact)
 
 
 class ProductTests(SessionFixture):
@@ -123,6 +133,9 @@ class ProductTests(SessionFixture):
         self.assertIn('Keep delivery working',prompt)
         self.assertNotIn('context continuity',prompt)
         self.assertIn('not execution permission',prompt)
+        self.assertIn('not a live inspection',prompt)
+        self.assertNotIn('conductor/webchat/memory/projects.json',prompt)
+        self.assertNotIn('observed timestamp',prompt)
         self.assertFalse(__import__('task_queue').tasks(self.root))
 
     def test_private_memory_and_context_values_do_not_enter_journal(self):
