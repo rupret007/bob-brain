@@ -31,6 +31,7 @@ RECEIVED = re.compile(r'\b(?:cached|incoming|received|imported|payload|return(?:
 ATTRIBUTED = re.compile(r'\b(?:claims|claimed|says|said|states|stated|alleges|alleged|asserts|asserted|reports|reported)\s+(?:that\s+)?|\baccording to\b', re.I)
 COMPLETED = re.compile(r'\b(?:completed|finished|succeeded|executed)\b|'
                        r'\b(?:is|was|has been|remains)\s+(?:now\s+)?(?:complete|done|successful)\b|'
+                       r'\bmarked\b.{0,40}\bcomplete\b|'
                        r'\b(?:execution|completion)\s+(?:was|is|has been)\s+(?:verified|confirmed|proven)\b|'
                        r'\b(?:result|artifact|output)\s+(?:was|is|has been)\s+accepted\b', re.I)
 IDENTITY = re.compile(r'\b(?:[A-Za-z][\w]*-\d+|webchat-[a-f0-9]{32})\b')

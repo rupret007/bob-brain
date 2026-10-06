@@ -113,9 +113,15 @@ def update(conversation, message):
                      and m.get('request_id',m.get('id'))==origin.get('request_id')),{})
         old_ids=set(re.findall(r'\b[A-Za-z][\w]*-\d+\b',source.get('content','')))
         new_ids=set(re.findall(r'\b[A-Za-z][\w]*-\d+\b',text))
-        continuing=bool(state.get('origin') and was_reported and
-                        (not REPORTED.search(instructions(text)) or correction(text) or
-                         (old_ids & new_ids and not re.search(r'\b(?:new|another|different)\s+(?:fictional\s+|reported\s+)?(?:record|case|scenario)\b',text,re.I))))
+        new_record=bool(re.search(r'\b(?:new|another|different)\s+(?:fictional\s+|reported\s+)?(?:record|case|scenario)\b',text,re.I))
+        overlapping=bool(old_ids & new_ids)
+        introduced=bool(new_ids) and not overlapping
+        # A same-record follow-up may say "paper exercise" or "the hold still
+        # applies" without repeating the task id. Only a disjoint new record
+        # or an explicit new/different scenario replaces the origin.
+        continuing=bool(state.get('origin') and was_reported and not new_record and
+                        (overlapping or not introduced or correction(text) or
+                         not REPORTED.search(instructions(text))))
         state['reference']=True
         if continuing:state['corrections']=(state['corrections']+[reference])[-6:]
         else:state.update(origin=reference,corrections=[],projects=named_projects)

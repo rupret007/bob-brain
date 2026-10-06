@@ -33,6 +33,32 @@ def consequence_of_rejected_reference(unit):
         r'means?|proceed|resume|start|run|execute)\b',body,re.I))
 
 
+def heading_unit(unit):
+    """A section title is not a consequence of a prior rejected claim."""
+    text = unit.strip()
+    if not text:
+        return False
+    label, body = presentation(unit)
+    if label and not body.strip():
+        return True
+    if re.match(r'^#{1,6}\s+\S', text):
+        return True
+    return bool(re.fullmatch(r'(?:\*\*[^*\n]{1,80}\*\*|__[^_\n]{1,80}__)[:\s]*', text))
+
+
+def continues_rejected_clause(unit):
+    """Only fragments that continue the rejected clause are dependent on it."""
+    _, body = presentation(unit)
+    return bool(re.match(r'^\s*(?:and|but|yet|which|or)\b', body, re.I))
+
+
+def depends_on_rejected_unit(unit, *, pending):
+    """Independent list items, headings and sentences are judged on their own."""
+    if not pending or not unit.strip() or heading_unit(unit):
+        return False
+    return consequence_of_rejected_reference(unit) or continues_rejected_clause(unit)
+
+
 def independent_after_rejection(unit):
     label,body=presentation(unit)
     if DEPENDENT.search(body) or DEPENDENT.search(label):

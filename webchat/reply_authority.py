@@ -12,7 +12,9 @@ DIRECT_QUEUE_CLAIM = re.compile(
     r".{0,160}\b(?:job|task|work|review|fix|council|inbox|queue|it|this|that|codex|claude|cursor|gemini|minimax)\b|"
     r"^\s*(?:queued|scheduled|launched|started|submitted|assigned)\b|"
     r"\b(?:codex|claude|cursor|gemini|minimax)(?:['’]s|\s+(?:is|has started))\s+(?:working|running|reviewing|fixing|on it)\b|"
-    r"\b(?:codex|claude|cursor|gemini|minimax)\s+has\s+(?:your|the|this)\s+(?:[\w-]+\s+){0,6}(?:job|task|work|review)\b", re.I)
+    r"\b(?:codex|claude|cursor|gemini|minimax)\s+has\s+(?:your|the|this)\s+(?:[\w-]+\s+){0,6}(?:job|task|work|review)\b|"
+    r"\b(?:i|we)(?:['’]ve| have)?\s+(?:(?:just|already|now)\s+)?(?:marked|completed|finished)\b"
+    r".{0,80}\b(?:complete|done|finished|task|work|it|this|that)\b", re.I)
 QUEUE_CLAIM = re.compile(DIRECT_QUEUE_CLAIM.pattern + r"|"
     r"\b(?:job|task|council)\b[^:.;!?\n]{0,120}\b(?:created|queued|scheduled|launched|started|assigned|builder inbox|picked up|in progress|running)\b"
     r"(?!\s+(?:when|if|until)\b)|"
@@ -677,11 +679,16 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 identified=re.fullmatch(subject+r'\s*'+predicate,prefix,re.I)
                 task_directive=re.fullmatch(r'(?:keep|maintain)\s+'+subject+r'\s*',prefix,re.I)
                 described=bool(re.fullmatch(nominal+r'\s*'+predicate,prefix,re.I))
-                anaphor=record_subject and bool(re.fullmatch(r'(?:it|(?:its|the|this|that)\s+(?:(?:current|recorded|reported)\s+)?(?:status|state))\s*'+predicate,prefix,re.I))
+                anaphor=record_subject and bool(re.fullmatch(r'(?:it|(?:its|the|this|that)\s+(?:(?:task|assignment|record|current|recorded|reported)\s+)*(?:status|state))\s*'+predicate,prefix,re.I))
                 inherited=record_subject and bool(re.fullmatch(predicate,prefix,re.I))
+                # A supplied record may restate its own hold/status without an
+                # actor performing a permission change.
+                described_status=bool(record_subject and re.search(
+                    r'\b(?:(?:its|the|this|that)\s+)?(?:(?:task|assignment|record|current|recorded|reported)\s+)*'
+                    r'(?:status|state)\s+'+predicate+r'(?:on hold|held|paused)\b',clean_clause,re.I))
                 # References/advice/checks about a hold have a bounded object;
                 # "the hold on the backup service" cannot borrow this scope.
-                noun=bool(re.fullmatch(r'(?:the|this|that|earlier|previous)(?:\s+(?:earlier|previous|existing|current))?\s+hold',claim[0],re.I))
+                noun=bool(re.fullmatch(r'(?:the|this|that|earlier|previous)(?:\s+(?:earlier|previous|existing|current|owner(?:-placed)?|recorded|reported))?\s+hold',claim[0],re.I))
                 governing=bool(re.fullmatch(r'(?:(?:maintain|keep|preserve)\s*|(?:(?:obtain|require|seek)\s+)?(?:verification|confirmation|evidence)\s+that\s*|(?:first\s+)?(?:verify|check|confirm)\s+(?:that|whether)\s*)?',prefix,re.I))
                 # Requirements describe evidence still needed; they do not
                 # assert that a permission change actually occurred. The
@@ -689,8 +696,9 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 prerequisite=bool(re.search(r'\b(?:must|should|needs? to|is required to)\b',prefix,re.I)
                     and re.search(r'\b(?:before|after)\s+(?:lifting|clearing|releasing)\s*$',prefix,re.I)
                     and not foreign_label(prefix,projects,WORKER_NAMES))
-                explicit_object=bool(re.fullmatch(r'(?:on|for|in)\s+'+subject+r'(?:\s*(?:[,;]|(?:until|while|before|after|must|should|needs? to)\b).*)?\s*[.!?]*',suffix,re.I))
-                state_modifier=bool(re.match(r'in\s+(?:place|force|effect)\b(?!\s+(?:on|for|in)\b)',suffix,re.I))
+                explicit_object=bool(re.fullmatch(r'(?:on|for|in)\s+'+subject+
+                    r'(?:\s*(?:[,;]|(?:until|while|before|after|must|should|needs? to|remains?|stays?|is|was|are|were)\b).*)?\s*[.!?]*',suffix,re.I))
+                state_modifier=bool(re.match(r'(?:still\s+)?(?:applies|active)|in\s+(?:place|force|effect)\b(?!\s+(?:on|for|in)\b)',suffix,re.I))
                 object_ok=not re.match(r'(?:on|for|in)\b',suffix,re.I) or explicit_object or state_modifier
                 directive=bool(re.fullmatch(r'(?:maintain|keep|preserve)\s*',prefix,re.I))
                 from reported_records import prospective_hold_check
@@ -698,7 +706,18 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 prospective_tail=suffix[bound_target.end():] if bound_target else suffix
                 prospective=bool(record_topic and prospective_hold_check(prefix,prospective_tail))
                 noun_reference=(record_subject or explicit_object or (directive or prospective) and record_topic) and noun and (governing or prerequisite or prospective) and object_ok
-                if not (identified or task_directive or described or anaphor or inherited and not noun or noun_reference):
+                denied_lift=bool((record_subject or explicit_object) and noun and object_ok and re.search(
+                    r"\b(?:do(?:es)? not|cannot|can['’]t|has no(?:\s+\w+){0,4}\s+authority to|will not|did not)\s+"
+                    r'(?:override|clear|lift|release|revoke|cancel)\b|'
+                    r'\bno authority to\s+(?:override|clear|lift|release)\b',prefix,re.I))
+                remaining_hold=bool((record_subject or explicit_object) and noun and object_ok and re.search(
+                    r'\b(?:still applies|'
+                    r'remains?\s+(?:(?:explicitly|currently|still)\s+)*(?:active|recorded|in (?:force|place|effect)|on hold|held)|'
+                    r'stays?\s+(?:(?:explicitly|currently|still)\s+)*(?:active|in (?:force|place|effect)|on hold|held)|'
+                    r'is still\s+(?:active|in (?:force|place|effect)|on hold|held))\b',
+                    prefix+' '+suffix,re.I))
+                if not (identified or task_directive or described or anaphor or described_status or
+                        inherited and not noun or noun_reference or denied_lift or remaining_hold):
                     accepted=False
                     record_subject=None
                 elif identified or task_directive:
@@ -712,7 +731,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 if explicit:record_subject=next(i for i in bindings if re.search(r'\b'+re.escape(i)+r'\b',explicit[0],re.I))
                 elif foreign_subject(clean_clause,projects,WORKER_NAMES):record_subject=None
         return accepted
-    from answer_fragments import DependencyState, consequence_of_rejected_reference, ACKNOWLEDGEMENT
+    from answer_fragments import DependencyState, depends_on_rejected_unit, heading_unit, ACKNOWLEDGEMENT
     dependency=DependencyState()
     kept=[];pending_effect=False;pending_reference=False;rejected_effect=False
     decisions=[];offset=0
@@ -726,10 +745,12 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         effect=unsupported_effect(part)
         valid=not effect and not changed and (not HOLD_CLAIM.search(part) or
                 held_scope_question(part) or saved_hold_reference(part) or record_hold)
-        independent,governor=dependency.consider(part,valid,offset=offset,taint=bool(effect or changed))
-        dependent=bool(part.strip() and (valid and not independent or
-                       pending_reference and consequence_of_rejected_reference(part)))
-        accepted=valid and independent and not dependent
+        _,governor=dependency.consider(part,valid,offset=offset,taint=bool(effect or changed))
+        # Independent list items, headings and separate sentences are judged
+        # on their own. Only a true continuation or "therefore/so/this means"
+        # back-reference inherits a rejected unit.
+        dependent=depends_on_rejected_unit(part, pending=pending_reference)
+        accepted=valid and not dependent
         if accepted:
             kept.append(part)
         elif part.strip():
@@ -747,6 +768,22 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         decisions[-1].update(context_record=context_record,context_source_bindings=bindings.get(context_record,[]))
         decisions[-1]['prospective_governor_start']=governor
         offset+=len(part)
+    # A heading whose body survived is not a rejected consequence.
+    for index,part in enumerate(sentences):
+        decision=decisions[index]
+        if decision['accepted'] or decision['reason'] not in (
+                'dependent_on_rejected_effect','dependent_on_unresolved_reference'):
+            continue
+        if not heading_unit(part):
+            continue
+        for follow,follow_decision in zip(sentences[index+1:],decisions[index+1:]):
+            if heading_unit(follow):
+                break
+            if follow_decision['accepted'] and follow.strip():
+                decision['accepted']=True
+                decision['reason']='supported_reference_or_nonclaim'
+                break
+    kept=[part for part,decision in zip(sentences,decisions) if decision['accepted'] or not part.strip()]
     if conversation and (reported or len(kept)!=len(sentences)):
         message=conversation.get('messages',[])[-1:]
         if message and message[0].get('role')=='assistant':

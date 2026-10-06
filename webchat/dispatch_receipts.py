@@ -394,10 +394,14 @@ def claims_dispatch(text, *, reference='', bindings=None, context=''):
     # Do not use the passive proximity heuristic for a conceptual answer: a
     # definition can describe assignment without asserting a particular job.
     claim = REFERENCE_EFFECT if reference else CLAIM
-    from reported_records import attributed_parentheticals
+    from reported_records import attributed_parentheticals, attributed_descriptive_bindings
     scoped = attributed_parentheticals(text, bindings) if reference else text
+    if reference:
+        scoped = attributed_descriptive_bindings(scoped, bindings)
     actor_prose=verbal_effects(dispatch_prose(scoped))
     surrounding=attributed_parentheticals(context,bindings) if reference else context
+    if reference:
+        surrounding = attributed_descriptive_bindings(surrounding, bindings)
     actor_context=verbal_effects(dispatch_prose(surrounding))
     has_actor=bool(re.search(ACTOR,actor_prose+'\n'+actor_context,re.I))
     # A finite continuation retains its subject across a long subordinate
