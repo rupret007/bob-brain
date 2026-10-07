@@ -73,6 +73,15 @@ class TestLaneBPromptStructure(unittest.TestCase):
             self.assertIn('Never infer "no execution ran because no server receipt was issued"', quality)
             self.assertIn('say external execution is unverified when receipt absence is the only evidence', quality)
 
+    def test_receipt_uncertainty_governs_every_restatement(self):
+        from providers import ANSWER_RULES, REFERENCE_RULES
+        for rules in (ANSWER_RULES, REFERENCE_RULES):
+            quality = flat(rules)
+            self.assertIn('Whenever restating that no execution-start receipt is supplied', quality)
+            self.assertIn('keep the unverified or not-established qualifier in the same sentence', quality)
+            self.assertIn('never shorten it to a bare claim that execution "has not started" or that a receipt "was not issued"', quality)
+            self.assertIn('in any sentence of the answer, not only the one about hold timing', quality)
+
     def test_concrete_check_and_continuous_numbering_guidance(self):
         from providers import CONVERSATION_QUALITY
         quality = flat(CONVERSATION_QUALITY)

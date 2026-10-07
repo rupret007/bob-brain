@@ -350,6 +350,10 @@ state only that it preceded any receipt of that stage, never the stage's actual
 occurrence or absence.
 Never infer "no execution ran because no server receipt was issued"; say external
 execution is unverified when receipt absence is the only evidence.
+Whenever restating that no execution-start receipt is supplied, keep the unverified
+or not-established qualifier in the same sentence; never shorten it to a bare claim
+that execution "has not started" or that a receipt "was not issued", in any sentence
+of the answer, not only the one about hold timing.
 Facts from the saved project record are recorded in the saved project record
 (not live-verified). Do not put them under a heading such as "What Is Verified"
 without that qualifier in the heading or first sentence. Do not treat the saved

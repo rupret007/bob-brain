@@ -263,7 +263,7 @@ def _rejected_nominal_assurance(clause, predicate):
 
 
 def violations(content, *, source='', trusted_facts=(), artifact=False):
-    from claim_scope import clauses, disposition
+    from claim_scope import clauses, disposition, DIRECTIVE
     findings = []
     trusted = {_plain(value).strip() for value in trusted_facts}
     quoted = _quoted_source(content, source)
@@ -295,8 +295,18 @@ def violations(content, *, source='', trusted_facts=(), artifact=False):
                         claims.append(dict(start=part.start+start,end=part.start+end,
                                            category=kind,disposition='asserted_without_support'))
                 for predicate in ASSURANCE.finditer(clause):
-                    # Acquisition is a different operation from metered use.
                     tail = clause[predicate.end():]
+                    # Keeping a standard is a requirement, not a claim that
+                    # the route meets it. Bind the noun head, not its modifier.
+                    standard = re.match(r'\s+(?:(?:the|our|your|existing|current|answer)\s+)*'
+                                        r'quality\s+(?:bar|standards?|requirements?)\b', tail, re.I)
+                    proposed = DIRECTIVE.match(clause) or re.search(
+                        r'\b(?:recommendation|next step|plan)\s+is\s+to\b', clause[:predicate.start()], re.I)
+                    if (kind == 'quality' and proposed and standard
+                            and re.fullmatch(r'(?:preserv(?:e|ing)|(?:maintain|protect)(?:ing)?)', predicate[0], re.I)
+                            and not objects.search(tail[standard.end():])):
+                        continue
+                    # Acquisition is a different operation from metered use.
                     negative = predicate[0].lower() in ('no', 'cannot', "can't", 'can’t', 'does not', 'do not', 'will not', "won't", 'won’t')
                     if negative and re.match(r'\s+(?:evidence|proof|basis|mean|imply|establish|prove|guarantee|promise|assume|prevent|protect|preserve|maintain|avoid|guard|ensure|eliminate|rely|depend|count)\b', tail, re.I):
                         continue

@@ -1,6 +1,7 @@
 """Complete propositions and independent plans survive real answer delivery."""
 import hashlib
 import json
+from pathlib import Path
 
 import claim_evidence
 import resource_decision
@@ -57,6 +58,37 @@ PLAN = ('Once funding settings are verified, run a matched 4-turn qualification 
 
 
 class IntactDeliveryTests(SessionFixture):
+    def test_complete_qualification_sequences_survive_rejected_assurances(self):
+        from answer_fragments import independent_after_rejection
+
+        samples = json.loads((Path(__file__).parent / 'fixtures' / 'qualification_answers.json').read_text())
+        for blocks in samples:
+            with self.subTest(blocks=blocks):
+                known = {b['fact']: 'Recorded resource fact.' for b in blocks if 'fact' in b}
+                delivered, _, rejected, _ = resource_decision.compose_blocks(blocks, known, self.projection())
+                protocol = blocks[-1]['reasoning']
+                # Preserve original numbering and the entire rubric, not just a count.
+                start = protocol.index('1. ')
+                end = protocol.find(' The saved project record', start)
+                self.assertIn(protocol[start:end if end >= 0 else None], delivered)
+                self.assertTrue(rejected)  # Billing assurances still lack evidence.
+        self.assertFalse(claim_evidence.violations('Keep the existing route while preserving our quality bar.'))
+        for claim in ('Keeping the existing route preserves quality.',
+                      'The existing route preserves our quality bar.',
+                      'Testing ensures we incur no unexpected billing.',
+                      'Preserving the quality bar guarantees equivalent answers.',
+                      'The route preserves the quality bar and continuity.'):
+            self.assertTrue(claim_evidence.violations(claim), claim)
+        self.assertTrue(independent_after_rejection('Introduce a sample and check whether it meets the format.'))
+        self.assertFalse(independent_after_rejection('Check whether it can take over everything.'))
+        for child in ('- Switching all conversation traffic to the candidate.',
+                      'Acceptance criteria: The candidate qualifies only if checks pass, '
+                      'and the candidate should handle all requests.'):
+            blocks = [dict(fact='quality_bar'), dict(reasoning='The route guarantees zero charges.'),
+                      dict(reasoning='Prepare a qualification comparison:\n'+child)]
+            delivered, _, _, _ = resource_decision.compose_blocks(blocks, {'quality_bar': 'Keep the standard.'}, self.projection())
+            self.assertNotIn(child, delivered)
+
     def projection(self):
         return resource_decision.project(self.root,dict(messages=[dict(role='user',request_id='owner',
             content='Can our Codex subscription replace the API route without lowering the quality standard?')]))

@@ -65,7 +65,9 @@ def depends_on_rejected_unit(unit, *, pending):
 
 def independent_after_rejection(unit):
     label,body=presentation(unit)
-    if DEPENDENT.search(body) or DEPENDENT.search(label):
+    # A pronoun bound inside this check does not refer to rejected prose.
+    local_body = REFERENCE.sub('', body) if local_check_references(body) else body
+    if DEPENDENT.search(local_body) or DEPENDENT.search(label):
         return False
     from claim_scope import clauses
     statements=list(clauses(body))
@@ -75,12 +77,34 @@ def independent_after_rejection(unit):
 
 PLAN_ACTION = re.compile(r'^\s*(?:run|prepare|define|outline|draft|compare|evaluate|design)\b',re.I)
 PLAN_OBJECT = re.compile(r'\b(?:comparison|evaluation|qualification|checklist|test|checks|rubric)\b',re.I)
-PLAN_STEP = re.compile(r'^\s*(?:issue|introduce|switch|ask|score|reject|accept|repeat|include|'
-    r'require|keep|record|compare|evaluate|inspect|measure|trace|return|test|verify|check|'
-    r'prepare|define|outline|draft|write|collect|obtain|supply|provide|present|request|instruct)\b',re.I)
+PLAN_VERBS = ('issue introduce switch ask score reject accept repeat include require keep record '
+    'compare evaluate inspect measure trace return test verify check prepare define outline draft '
+    'write collect obtain supply provide present request instruct prompt').split()
+GERUNDS = {(verb[:-1] if verb.endswith('e') else verb)+'ing': verb for verb in PLAN_VERBS}
+PLAN_STEP = re.compile(r'^\s*(?:'+'|'.join([*PLAN_VERBS, *GERUNDS])+r')\b',re.I)
 REFERENCE = re.compile(r'\b(?:it|its|they|their|these|those)\b',re.I)
 INTRODUCE = re.compile(r'\b(?:introduce|issue|supply|provide|present|define|prepare|write|record|'
-    r'add|set)\s+(?:a|an|the)\s+([^.,;:!?]+)',re.I)
+    r'add|set|instruct|prompt)\s+(?:a|an|the)\s+([^.,;:!?]+)',re.I)
+CRITERIA = re.compile(r'(?:acceptance|evaluation|success)\s+(?:criteria|rubric)',re.I)
+
+
+def local_check_references(body):
+    """Resolve only locally introduced check objects; ambiguous references fail."""
+    from claim_scope import clauses, verification_governs
+    introduced = False
+    for clause in clauses(body):
+        value = re.sub(r'\b(?:'+'|'.join(GERUNDS)+r')\b',
+                       lambda m: GERUNDS[m[0].lower()], clause.text, flags=re.I)
+        for reference in REFERENCE.finditer(value):
+            prefix = value[:reference.start()]
+            local = INTRODUCE.search(prefix)
+            verification = re.search(r'\b(?:check|verify|test|assess|evaluate)\b', prefix, re.I)
+            if not verification or not (introduced or local):
+                return False
+            if not verification_governs(value[verification.start():reference.start()]):
+                return False
+        introduced = introduced or bool(INTRODUCE.search(value))
+    return True
 
 
 def prospective_plan(unit):
@@ -106,28 +130,19 @@ def prospective_plan(unit):
 
 def attached_step(body):
     """Every proposition must describe a check, not just its opening verb."""
-    from claim_scope import clauses, verification_governs
-    introduced=False
+    from claim_scope import clauses
+    if not local_check_references(body):
+        return False
     for clause in clauses(body):
         value=clause.text.strip()
         if not PLAN_STEP.match(value):
             return False
-        switch=re.match(r'^switch\s+(?:to\s+)?',value,re.I)
+        switch=re.match(r'^switch(?:ing)?\s+(?:to\s+)?',value,re.I)
         if switch:
             object_phrase=re.split(r'\b(?:to|from|for|with|under|before|after)\b',value[switch.end():],maxsplit=1,flags=re.I)[0]
             heads=re.findall(r'[\w-]+',object_phrase)
             if not heads or heads[-1].lower() not in ('topic','question','prompt','subject'):
                 return False
-        for reference in REFERENCE.finditer(value):
-            local=INTRODUCE.search(value[:reference.start()])
-            verification=re.search(r'\b(?:check|verify|verifying|test|assess|evaluate)\b',value[:reference.start()],re.I)
-            if not verification or not (introduced or local):
-                return False
-            # A new asserted sentence cannot inherit a previous check's verb.
-            complement=value[verification.start():reference.start()]
-            if not verification_governs(re.sub(r'^verifying\b','verify',complement,flags=re.I)):
-                return False
-        introduced=introduced or bool(INTRODUCE.search(value))
     return True
 
 
@@ -149,25 +164,31 @@ class DependencyState:
             return False,None
         if not unit.strip():
             return True,self.plan_start
-        if heading_unit(unit):
-            heading=unit.strip().strip('# :')
-            if re.fullmatch(r'(?:acceptance|evaluation|success)\s+criteria',heading,re.I):
-                self.criteria=True
-            return True,self.plan_start
         if prospective_plan(unit):
             self.plan_start=offset
             self.criteria=False
+            return True,self.plan_start
+        if heading_unit(unit):
+            heading=unit.strip().strip('# :')
+            if CRITERIA.fullmatch(heading):
+                self.criteria=True
             return True,self.plan_start
         label,body=presentation(unit)
         causal=bool(CAUSAL.search(label+' '+body))
         attached=False
         if self.plan_start is not None and not causal:
+            from claim_scope import clauses, finite_predicate, DIRECTIVE
             heading=unit.strip().strip('# :')
-            if re.fullmatch(r'(?:acceptance|evaluation|success)\s+criteria',heading,re.I):
+            if CRITERIA.fullmatch(heading):
                 self.criteria=True
                 return True,self.plan_start
-            if ITEM.match(unit):
-                from claim_scope import finite_predicate, DIRECTIVE
+            if CRITERIA.fullmatch(label) and re.match(
+                    r'^\s*[\w -]+\s+qualifies?\s+only\s+if\b', body, re.I):
+                condition=re.split(r'\bonly\s+if\b', body, maxsplit=1, flags=re.I)[1]
+                # Parse the condition as a proposed check; an appended new
+                # assertion must not inherit the acceptance-criterion label.
+                attached=len(list(clauses('Check whether '+condition))) == 1
+            if ITEM.match(unit) or re.match(r'^\s*•\s+', unit):
                 if self.criteria:
                     attached=not finite_predicate(body) and not DIRECTIVE.match(body) and not REFERENCE.search(label+' '+body)
                 elif PLAN_STEP.match(body):
