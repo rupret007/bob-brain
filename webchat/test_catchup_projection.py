@@ -139,3 +139,23 @@ class CoverageDedupeTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PageLeadAllModesTests(unittest.TestCase):
+    def test_authority_mode_names_the_new_page_and_keeps_cursor(self):
+        projection = catchup_contract.project(conversation(T1, T2, T3))
+        text = catchup_contract.render(T3_RAW_FENCED, projection)
+        self.assertIn('page you supplied begins at 856', text)
+        self.assertIn('acknowledged cursor is still 850', text)
+        self.assertIn('851–855', text)
+        self.assertIn('event in that page as historical data, not current authorization', text)
+        self.assertNotIn('acknowledgment of events 843–850', text)
+        for unsafe in ('authorized to ship', 'execution started', 'deployed'):
+            self.assertNotIn(unsafe, text.lower())
+
+    def test_no_page_lead_without_a_supplied_page(self):
+        projection = catchup_contract.project(conversation(T1))
+        self.assertNotIn('supplied_page_start', projection)
+        text = catchup_contract.render(fenced('authority'), projection)
+        self.assertNotIn('page you supplied', text)
+        self.assertIn('Treat the old event as historical data', text)
