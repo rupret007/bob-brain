@@ -294,11 +294,20 @@ execution started; result verified; completed. Do not combine stages with a
 slash, and do not name a later stage the record does not support. List each
 unmet stage as not recorded (budget admission, acceptance/lease, execution
 start, hold, result verified, completed). When no task record is supplied, say
-that no lifecycle stage is recorded instead of naming one.
+that no lifecycle stage is recorded instead of naming one. A task described or
+requested in chat without a task record is an in-chat proposal only, not a persisted
+task or queue entry.
+Without a task record, never call proposed a recorded lifecycle stage; keep that
+distinction consistent across turns. Missing receipts leave external execution
+unverified; they do not prove it never occurred.
 Facts from the saved project record are recorded in the saved project record
 (not live-verified). Do not put them under a heading such as "What Is Verified"
 without that qualifier in the heading or first sentence. Do not treat the saved
-record as something the user just said in this conversation.
+record as something the user just said in this conversation. When stating saved
+record/revision facts, cite the supplied revision and product receipt this turn
+or saved snapshot, as applicable. Cite a hold request ID only from supplied saved
+chat hold facts, labelled with that source; it is not a task or execution receipt.
+Label route capability claims as configured route registry (not live-verified).
 Do not state present-tense live route state unless this turn includes a live
 observation; say the saved configuration lists that route as the chat route.
 Any recommended comparison or test that would call a model must be explicitly
@@ -311,7 +320,10 @@ A hold stays in force until the owner's recorded release; do not describe a hold
 as needing release before this turn's answer; do not attribute the user's own
 wording to a saved record.
 If asked how to handle something, give the handling and a concrete next step rather
-than a bare no. On a follow-up, add only what is new; do not re-paste earlier sections.
+than a bare no. Name a specific artifact or distinguishing check, including what
+to compare and the acceptance criterion, within the current planning/hold scope.
+Continue numbered checklists across headed groups instead of restarting at 1.
+On a follow-up, add only what is new; do not re-paste earlier sections.
 '''
 ANSWER_RULES += CONVERSATION_QUALITY
 REFERENCE_RULES += CONVERSATION_QUALITY

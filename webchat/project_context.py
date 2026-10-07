@@ -281,7 +281,7 @@ def recover(root, conversation):
         if receipt['source'] != intent['source']:
             raise OSError('Interrupted context source differs from its saved receipt.')
         finish_intent(conversation, intent, receipt)
-        text = 'Recovered the saved project context change at revision ' + str(receipt['revision']) + '. Inspect project context for current values.'
+        text = 'Recovered the saved project context change at revision ' + str(receipt['revision']) + ' (saved product receipt recovered this turn). Inspect project context for current values.'
     else:
         conversation.pop('_project_intent', None)
         text = 'The interrupted project context change has no committed receipt. Inspect context and submit a new correction if needed.'
@@ -434,7 +434,7 @@ def handle(chat, conversation, text, request_id, *, provider='auto', worker=None
                 raise ContextError('That request identity already changed different context.')
             conversation['project_id'] = prior['project_id']
             return respond('This context change was already saved at revision ' + str(prior['revision']) +
-                           '. Inspect project context for its current values; no repeated change or task was started.')
+                           ' (saved product receipt retrieved this turn). Inspect project context for its current values; no repeated change or task was started.')
         if view:
             row = data['projects'].get(project_id(view[1])) if view[1] else select(data, conversation, '')
             if not row:
@@ -442,7 +442,7 @@ def handle(chat, conversation, text, request_id, *, provider='auto', worker=None
                 return respond('No project selected. ' + ('Saved projects: ' + names + '. ' if names else '') +
                                'Say “For the [name] project, remember the priority: …” to save project context.')
             conversation['project_id'] = row['project_id']
-            lines = ['Saved project context for ' + row['name'] + ' — revision ' + str(row['revision']) + ':']
+            lines = ['Saved project context for ' + row['name'] + ' — revision ' + str(row['revision']) + ' (saved product record retrieved this turn; not live-verified):']
             for f in row['facts'].values():
                 if f['status'] == 'current':
                     lines.append('\n' + f['kind'].capitalize() + ': ' + f['value'] + '\nFact: ' + f['id'] +
@@ -490,7 +490,7 @@ def handle(chat, conversation, text, request_id, *, provider='auto', worker=None
         receipt = change(root, name, ops, source, expected_revision=revision)
         finish_intent(conversation, intent, receipt)
         return respond(('Removed the saved project fact' if confirmation else 'Saved ' + name.strip() + ' project context') +
-                       ' at revision ' + str(receipt['revision']) + '.\n\n' +
+                       ' at revision ' + str(receipt['revision']) + ' (product receipt this turn).\n\n' +
                        ('It will no longer be retrieved as current context. Historical chat remains.' if confirmation else
                         '\n'.join(op['kind'].capitalize() + ': ' + op['value'] for op in ops) +
                         '\n\nI can use this in later conversations about this project. No task was started.'))

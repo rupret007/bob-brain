@@ -118,6 +118,15 @@ class StoreTests(unittest.TestCase):
 
 
 class ProductTests(SessionFixture):
+    def test_save_and_retrieval_receipts_label_their_product_source(self):
+        answer = self.send('For the Atlas project, remember the priority: context continuity.')
+        self.assertIn('revision 1 (product receipt this turn)', answer['content'])
+        row = context.read(self.root)['projects']['atlas']
+        self.assertEqual(row['revision'], 1)
+        view = self.send('show saved project context')
+        self.assertIn('revision 1 (saved product record retrieved this turn; not live-verified)', view['content'])
+        self.assertFalse(__import__('task_queue').tasks(self.root))
+
     def test_owner_priority_correction_survives_reload_new_conversation_and_topic_change(self):
         answer=self.send('For the Atlas project, remember the priority: context continuity. Keep delivery working.')
         self.assertEqual(answer['provider'],'project-context')
@@ -202,6 +211,7 @@ class ProductTests(SessionFixture):
         self.assertNotIn('_project_intent',conv)
         self.assertEqual(conv['messages'][-1]['status'],'done')
         self.assertIn('Recovered',conv['messages'][-1]['content'])
+        self.assertIn('revision 1 (saved product receipt recovered this turn)',conv['messages'][-1]['content'])
         source=next(iter(row['facts'].values()))['source']
         self.assertTrue(any(m['id']==source['message_id'] for m in conv['messages']))
         import alignment_events

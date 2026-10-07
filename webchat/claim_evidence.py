@@ -770,7 +770,7 @@ def deliver(content, *, source='', trusted_facts=(), artifact=False, prior=''):
         line_end=content.find('\n',end)
         if line_end<0:line_end=len(content)
         if content[line_start:line_end].strip().startswith('|'):
-            start,end=line_start,line_end
+            start,end=line_start,line_end + (line_end < len(content))
         if spans and start<=spans[-1]['end']:
             spans[-1]['end']=max(end,spans[-1]['end'])
             spans[-1]['categories']=sorted(set(spans[-1]['categories']+finding['categories']))

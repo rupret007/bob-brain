@@ -12,6 +12,26 @@ import resource_inventory
 
 
 class ProjectionTests(unittest.TestCase):
+    def test_provider_display_case_does_not_change_unavailable_routes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            projection = resource_decision.project(Path(temp), self.conversation(
+                'Suppose Gemini is depleted and Grok is unavailable. What can our subscriptions do?'))
+            self.assertEqual(set(projection['unavailable']), {'gemini', 'grok'})
+            self.assertIn('Gemini, Grok are unavailable', projection['facts']['availability'])
+            with self.assertRaises(ValueError):
+                resource_decision.validate_route('gemini', ['qualify_chat'], projection)
+
+    def test_relay_returns_information_without_queue_ack_write(self):
+        for request in ('Draft a read-only catch-up relay.', 'Draft a read-only catch-up relay and save the checkpoint.'):
+            projection = catchup_contract.project(self.conversation('Grok ACK through 149.', request))
+            answer = catchup_contract.render('{"mode":"relay"}', projection)
+            self.assertIn('Return checkpoint/acknowledgment information only', answer)
+            self.assertIn('if the user explicitly requested that save', answer)
+            self.assertIn('Do not write a queue acknowledgment or change task state', answer)
+            self.assertNotIn('then acknowledge', answer)
+            self.assertIn('Preserve completed work and holds', answer)
+            self.assertIn('do not execute tasks, deploy, send messages', answer)
+
     def conversation(self, *texts):
         return dict(messages=[dict(role='user',id=str(i),request_id=str(i),content=t) for i,t in enumerate(texts)])
 
@@ -401,6 +421,8 @@ class DeliveredTests(SessionFixture):
         self.assertIn('reliable continuity comes first',answer['content'])
         self.assertNotIn('useful daily work',answer['content'])
         self.assertIn('Owner statement',answer['content'])
+        self.assertIn('saved project record revision 2',answer['content'])
+        self.assertIn('not live-verified or execution authority',answer['content'])
         projection=self.chat.get(self.identifier)['messages'][-1]['_reply_contract']['resource_projection']
         self.assertEqual(projection['owner_context']['revision'],2)
         self.assertEqual(projection['owner_context']['facts']['owner.priority']['revision'],2)

@@ -22,6 +22,26 @@ def transport_raw(chain, turn):
 
 
 class TestLaneBPromptStructure(unittest.TestCase):
+    def test_unrecorded_chat_plan_and_inline_provenance(self):
+        from providers import CONVERSATION_QUALITY
+        quality = flat(CONVERSATION_QUALITY)
+        self.assertIn('in-chat proposal only, not a persisted task or queue entry', quality)
+        self.assertIn('never call proposed a recorded lifecycle stage', quality)
+        self.assertIn('Missing receipts leave external execution unverified', quality)
+        self.assertIn('product receipt this turn or saved snapshot, as applicable', quality)
+        self.assertIn('hold request ID only from supplied saved chat hold facts', quality)
+        self.assertIn('configured route registry (not live-verified)', quality)
+
+    def test_concrete_check_and_continuous_numbering_guidance(self):
+        from providers import CONVERSATION_QUALITY
+        quality = flat(CONVERSATION_QUALITY)
+        self.assertIn('specific artifact or distinguishing check', quality)
+        self.assertIn('what to compare and the acceptance criterion', quality)
+        self.assertIn('current planning/hold scope', quality)
+        self.assertIn('Continue numbered checklists across headed groups', quality)
+        from resource_decision import RULES
+        self.assertIn('do not narrow or redefine its operations in reasoning', flat(RULES))
+
     def test_conversation_quality_lifecycle_and_hold_rules(self):
         from providers import CONVERSATION_QUALITY
 

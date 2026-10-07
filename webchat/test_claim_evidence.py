@@ -10,6 +10,31 @@ import resource_decision
 
 
 class ClaimScopeTests(unittest.TestCase):
+    def test_rejected_table_rows_leave_one_contiguous_table(self):
+        header = '| Stage | Action |\n|---|---|\n'
+        safe = ['| Baseline | Prepare inputs. |', '| Followup | Compare criteria. |']
+        bad = '| Prerequisites | This route guarantees no unbudgeted spend risk. |'
+        for position in range(3):
+            for trailing in ('', '\n'):
+                rows = safe.copy(); rows.insert(position, bad)
+                raw = header + '\n'.join(rows) + trailing
+                delivered, findings = claim_evidence.deliver(raw)
+                self.assertTrue(findings)
+                self.assertNotIn(bad, delivered)
+                self.assertIn(header + '\n'.join(safe), delivered)
+                self.assertIn(claim_evidence.QUALIFICATIONS['cost'], delivered)
+
+    def test_configured_route_paraphrases_keep_provenance_on_each_turn(self):
+        for prose in ('Codex only has configured routes for CLI replies.',
+                      'Cursor has scoped workspace assignments.'):
+            first = resource_decision.qualify_route_restatement(prose)
+            second = resource_decision.qualify_route_restatement(prose, prior=first)
+            self.assertIn(resource_decision.ROUTE_NOTE, first)
+            self.assertIn(resource_decision.ROUTE_NOTE, second)
+            self.assertEqual(resource_decision.qualify_route_restatement(first), first)
+        facts = resource_decision.facts({'resources': []})
+        self.assertIn('configured route registry (not live-verified)', facts['route_boundaries'])
+
     def test_outcome_predicates_do_not_depend_on_modifiers(self):
         for words in ('unverified generation', 'future marginal API', 'previously unobserved provider', ''):
             value = 'Planning proceeds without incurring ' + words + ' charges.'

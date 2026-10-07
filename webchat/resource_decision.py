@@ -25,6 +25,8 @@ and only the few facts needed to answer this turn. The server renders fact block
 verbatim; never build a sentence around a fact ID or put citation tokens in prose.
 Use fact blocks for capability, availability, billing, access, quality evidence
 and owner priorities. Do not paraphrase those as new factual claims in reasoning.
+For route capabilities, select route_boundaries; do not narrow or redefine its
+operations in reasoning, including on later turns.
 Owner facts are attributed statements, not verified operations or authority.
 Reasoning should advance the discussion using these facts, not repeat their caveats.
 Do not infer guarantees from login, pacing, price or retention of a configuration.
@@ -78,7 +80,7 @@ def facts(inventory, *, missing=False):
         'openai_api_billing': BILLING_FACTS['openai_api_billing'].rstrip('.')
             + ' (as documented; not checked for this account).',
         'subscription_scope': BILLING_FACTS['subscription_scope'],
-        'route_boundaries': 'Web Bob’s configured route registry lists Codex and Cursor conversation adapters that use supplied context, and separate scoped executors for assigned local file or coding work. This is what is configured, not a claim that either route is signed in, available, or working. Tool limits apply to the named adapter, not the whole resource. Voice and images require their own supported operation. Signing in does not make routes interchangeable or authorize file work.',
+        'route_boundaries': 'Web Bob’s configured route registry (not live-verified) lists Codex and Cursor conversation adapters that use supplied context, and separate scoped executors for assigned local file or coding work. This is what is configured, not a claim that either route is signed in, available, or working. Tool limits apply to the named adapter, not the whole resource. Voice and images require their own supported operation. Signing in does not make routes interchangeable or authorize file work.',
         'quality_bar': 'Preserve the answer-quality standard and reasoning requirements. A representative comparison must qualify an alternative before changing the default. A cheaper price or successful login does not establish equivalent answers. Keeping a configuration does not establish that its provider is currently usable.',
         'capacity_and_pacing': 'Pacing may reduce demand; it cannot establish remaining allowance or prevent quota exhaustion. Capacity and extra-usage settings need current observations before admission.',
         'purchase_vs_usage': 'An existing subscription avoids purchasing another plan; it does not establish that another model invocation has no incremental charge. Extra-usage settings and remaining allowance are unverified until observed. Prepare evidence and inspect settings before admitting a comparison.',
@@ -234,7 +236,7 @@ def project(root, conversation):
         allowed_steps.remove('keep_current')
     if unavailable:
         label='In the supplied scenario' if re.search(r'\b(?:suppose|scenario|what if)\b',source,re.I) else 'According to the current supplied constraints'
-        known['availability']=label+', '+', '.join(sorted(unavailable))+' '+('is' if len(unavailable)==1 else 'are')+' unavailable. Preserve the quality standard, but do not depend on an unavailable route for generation. Prepare evidence and qualify an available candidate before switching; no alternative is qualified by subscription ownership alone.'
+        known['availability']=label+', '+', '.join({'minimax':'MiniMax'}.get(name, name.title()) for name in sorted(unavailable))+' '+('is' if len(unavailable)==1 else 'are')+' unavailable. Preserve the quality standard, but do not depend on an unavailable route for generation. Prepare evidence and qualify an available candidate before switching; no alternative is qualified by subscription ownership alone.'
     owner_context=None
     import project_context
     owner=project_context.projection(root,conversation,latest)
@@ -244,7 +246,7 @@ def project(root, conversation):
         owner_context['facts']={}
         for fact in owner.get('facts',[]):
             fid='owner.'+fact['id'].replace('-','_')
-            known[fid]='Owner-saved '+fact['kind']+' for '+owner['name']+': '+fact['value']+' (Owner statement; not verified operations or execution authority.)'
+            known[fid]='Owner-saved '+fact['kind']+' for '+owner['name']+': '+fact['value']+' (saved project record revision '+str(owner['revision'])+'; Owner statement, not live-verified or execution authority.)'
             owner_context['facts'][fid]=dict(fact_id=fact['id'],revision=fact['revision'],
                 source=fact['source'],value_sha256=hashlib.sha256(fact['value'].encode()).hexdigest())
     return dict(version=3,inventory=inventory,facts=known,current_route=current_route,
@@ -369,22 +371,20 @@ SAME_UNAVAILABLE = 'Same constraints as above: unavailable routes are unchanged.
 SAME_MISSING_INPUTS = 'Same missing-input limit as above: needed project inputs remain unavailable until supplied.'
 SAME_STEPS = 'The previously listed preparation steps still apply.'
 ROUTE_MENTION = re.compile(
-    r'\b(?:conversation adapter|scoped executors?|route registry|supported (?:chat |conversation )?route)\b',
+    r'\b(?:conversation adapter|scoped executors?|route registry|configured routes? for|scoped workspace assignments|supported (?:chat |conversation )?route)\b',
     re.I)
 ROUTE_QUALIFIED = re.compile(
-    r'\b(?:configured, not|not (?:a claim that|verified)|availability[/ ]sign-in not verified|'
+    r'\b(?:configured, not|not live-verified|not (?:a claim that|verified)|availability[/ ]sign-in not verified|'
     r'sign-in(?: status)? is unverified|availability.{0,40}not verified)\b',
     re.I)
 ROUTE_NOTE = 'That listing is configured in Web Bob’s route registry; availability and sign-in are not verified.'
 
 
 def qualify_route_restatement(text, prior=''):
-    """Carry configured-not-verified on the first unqualified route mention."""
+    """Carry configured-not-verified on each turn that restates a route claim."""
     if not text or not ROUTE_MENTION.search(text) or ROUTE_QUALIFIED.search(text):
         return text
     if ROUTE_NOTE.lower() in text.lower():
-        return text
-    if prior and ROUTE_NOTE.lower() in prior.lower():
         return text
     return text.rstrip() + ('' if text.rstrip()[-1:] in '.!?' else '.') + ' ' + ROUTE_NOTE
 

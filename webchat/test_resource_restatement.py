@@ -18,7 +18,7 @@ ROUTE_REASONING = (
 
 
 class ResourceRestatementTests(unittest.TestCase):
-    def test_route_note_appears_once_and_same_as_above_is_omitted(self):
+    def test_route_note_appears_once_per_turn_and_same_as_above_is_omitted(self):
         with tempfile.TemporaryDirectory() as temp:
             conversation = dict(messages=[dict(
                 role='user', id='1', request_id='1',
@@ -33,11 +33,12 @@ class ResourceRestatementTests(unittest.TestCase):
             self.assertNotIn('Same missing-input limit as above', first)
             second, _ = resource_decision.render(packet, projection, prior=first)
             combined = first + '\n\n' + second
-            self.assertEqual(combined.count(resource_decision.ROUTE_NOTE), 1)
+            self.assertEqual(second.count(resource_decision.ROUTE_NOTE), 1)
+            self.assertEqual(combined.count(resource_decision.ROUTE_NOTE), 2)
             self.assertNotIn('Same constraints as above', second)
             self.assertNotIn('Same missing-input limit as above', second)
             third, _ = resource_decision.render(packet, projection, prior=combined)
-            self.assertNotIn(resource_decision.ROUTE_NOTE, third)
+            self.assertEqual(third.count(resource_decision.ROUTE_NOTE), 1)
             self.assertNotIn('Same constraints as above', third)
             self.assertNotIn('Same … as above', third)
             self.assertNotIn('Same constraints as above', first + second + third)
@@ -51,7 +52,7 @@ class ResourceRestatementTests(unittest.TestCase):
         text = resource_decision.qualify_route_restatement(ROUTE_REASONING)
         self.assertIn(resource_decision.ROUTE_NOTE, text)
         again = resource_decision.qualify_route_restatement(ROUTE_REASONING, prior=text)
-        self.assertEqual(again, ROUTE_REASONING)
+        self.assertEqual(again, text)
 
 
 if __name__ == '__main__':
