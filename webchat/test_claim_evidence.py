@@ -255,7 +255,7 @@ class DeliveryCleanupTests(unittest.TestCase):
         self.assertIn('4. Compare artifacts.', delivered)
         self.assertNotIn('6.', delivered)
         from providers import CONVERSATION_QUALITY
-        self.assertIn('proposed; budget-admitted; accepted/claimed (lease)', CONVERSATION_QUALITY)
+        self.assertIn('proposed; budget-admitted; accepted; leased', CONVERSATION_QUALITY)
         self.assertNotIn('proposed/admitted', CONVERSATION_QUALITY)
         self.assertIn('name only the lifecycle stage the record supports', CONVERSATION_QUALITY)
         quality = ' '.join(CONVERSATION_QUALITY.split())

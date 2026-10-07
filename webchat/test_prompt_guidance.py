@@ -5,6 +5,9 @@ from pathlib import Path
 
 from test_delivery_false_positives import HELD_PROMPT
 from test_reply_authority_records import guard
+from test_webbob_replyq_1856 import SessionFixture
+from providers import Providers
+from texting import Texting
 
 HOLDOUT_SAMPLE = Path(__file__).resolve().parent / 'fixtures' / 'lane_b_raw_answers.json'
 
@@ -86,7 +89,7 @@ class TestLaneBPromptStructure(unittest.TestCase):
         quality = flat(CONVERSATION_QUALITY)
         self.assertIn('name only the lifecycle stage the record supports', quality)
         self.assertIn('List each unmet stage as not recorded', quality)
-        self.assertIn('budget admission, acceptance/lease, execution start', quality)
+        self.assertIn('budget admission, acceptance, lease, execution start', quality)
         self.assertIn('no lifecycle stage is recorded instead of naming one', quality)
         self.assertIn('A hold stays in force until the owner\'s recorded release', quality)
         self.assertIn('do not attribute the user\'s own wording to a saved record', quality)
@@ -103,6 +106,62 @@ class TestLaneBPromptStructure(unittest.TestCase):
         from reply_contract import RULES
 
         self.assertIn('about 20 words or fewer each', flat(RULES))
+
+
+class TestEvidencePromptAssembly(SessionFixture):
+    """Check instructions reaching the model, without making model calls."""
+
+    def prompt(self):
+        provider = Providers(self.root, self.chat.redact)
+        prompt = provider.prompt(Texting.provider_view(self.chat.get(self.identifier)), fast=True)
+        return prompt, flat(provider.current_call.instructions)
+
+    def test_saved_project_completion_keeps_missing_receipts_unverified(self):
+        self.send('For the Atlas project, remember the priority: reliable reports.')
+        self.send('Help plan a read-only Atlas report. Hold execution until I choose its scope.')
+        self.send('Include source identity, verification evidence, and the largest gaps. No changes.')
+        self.send('What have you actually finished, and what is waiting for me?')
+        prompt, rules = self.prompt()
+        self.assertIn('reliable reports', prompt)
+        self.assertIn('saved chat hold facts', prompt)
+        self.assertIn('plan used the saved project record', rules)
+        self.assertNotIn('no live inspection or execution ran', rules)
+        self.assertIn('live inspection and execution remain unverified without supporting receipts', rules)
+        self.assertIn('absence of a receipt does not prove they never occurred', rules)
+
+    def test_depleted_credit_does_not_guarantee_billing_in_followup(self):
+        self.send('Planning example only: the hosted model credit is exhausted. '
+                  'Subscription allowance and optional overage settings are unchecked. '
+                  'What can we prepare without calling a model?')
+        self.send('Would short requests, one at a time, guarantee avoiding extra charges?')
+        prompt, rules = self.prompt()
+        self.assertIn('credit is exhausted', prompt)
+        self.assertIn('Depleted base credit does not establish that overage is enabled', rules)
+        self.assertIn('or that a future request will be billed', rules)
+        self.assertIn('billing outcome is unverified without account evidence', rules)
+        self.assertIn('never guarantee either charges or free usage from depletion alone', rules)
+
+    def test_acceptance_and_lease_are_distinct_recorded_stages(self):
+        self.send('Reason about this fictional task only: task Q-82 was accepted by '
+                  'ReviewWorker, but no lease or execution start is recorded. '
+                  'What is established and what remains missing? Do not create work.')
+        prompt, rules = self.prompt()
+        self.assertIn('no lease or execution start is recorded', prompt)
+        self.assertIn('proposed; budget-admitted; accepted; leased; execution started', rules)
+        self.assertIn('budget admission, acceptance, lease, execution start', rules)
+        self.assertNotIn('accepted/claimed', rules)
+        self.assertNotIn('acceptance/lease', rules)
+        self.assertIn('Never list a stage or hold as not recorded', rules)
+
+    def test_file_tool_limit_requires_candidate_specific_executor_evidence(self):
+        self.send('Compare our Codex, Cursor and Claude subscriptions as alternatives '
+                  'for conversation. Planning only; do not call a model or switch routes.')
+        self.send('What if an alternative cannot read the needed project files?')
+        prompt, rules = self.prompt()
+        self.assertIn('configured route registry', prompt)
+        self.assertIn('Scope any claim of a separate executor to the specific candidates', rules)
+        self.assertIn('whose supplied registry entries list that executor', rules)
+        self.assertIn('do not generalize it to every alternative with a conversation adapter', rules)
 
 
 class TestLaneBSampleRawGuardStability(unittest.TestCase):
