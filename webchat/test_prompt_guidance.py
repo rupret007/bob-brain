@@ -182,6 +182,50 @@ class TestEvidencePromptAssembly(SessionFixture):
         self.assertNotIn('acceptance/lease', rules)
         self.assertIn('Never list a stage or hold as not recorded', rules)
 
+    def test_unselected_scope_cannot_establish_other_stages_absent(self):
+        self.send('Help plan a read-only Web Bob readiness report. '
+                  'Hold execution until I choose its scope.')
+        self.send("Include source identity, what's verified, and the two largest gaps. "
+                  'No texting or changes.')
+        prompt, rules = self.prompt()
+        self.assertIn('Hold execution until I choose its scope', prompt)
+        self.assertIn('the two largest gaps', prompt)
+        self.assertIn('An unresolved prerequisite does not establish the absence of a separate lifecycle stage', rules)
+        self.assertIn("Support each stage's not-recorded status with its own evidence", rules)
+        self.assertIn('never infer it from another unresolved condition via "meaning", "therefore" or "thus"', rules)
+        self.assertIn('Use only the named lifecycle stages, not synonyms such as "queued"', rules)
+
+    def test_proof_criteria_require_positive_evidence_for_every_branch(self):
+        self.send('Here is a report: the source revision is abc123, there are 4 passing '
+                  'checks and 1 failed browser check. Someone says it is ready because '
+                  'most passed. Assess this report only.')
+        self.send('The failed browser check lost a delivery result after reload. '
+                  'Does that change your recommendation?')
+        self.send("Actually the 4 passes were on yesterday's revision def456, not abc123. "
+                  'Correct the assessment.')
+        self.send('What is the single highest-value next investigation, and what would '
+                  "count as proof? Don't run it.")
+        prompt, rules = self.prompt()
+        self.assertIn('not abc123', prompt)
+        self.assertIn('what would count as proof', prompt)
+        self.assertIn('every branch must state its own positive evidence condition before any "Rules out" line', rules)
+        self.assertIn("Never leave a branch's evidence condition blank or supply only exclusions", rules)
+        self.assertIn('proposed instrumentation has not produced that evidence', rules)
+
+    def test_resource_scenario_covers_named_resources_and_concrete_next_step(self):
+        self.send('Suppose Grok is unavailable and Gemini says the prepaid balance is '
+                  'depleted. We still have ChatGPT Pro, Cursor and Claude subscriptions. '
+                  'What should Web Bob do? Treat this as a scenario.')
+        prompt, rules = self.prompt()
+        for name in ('Grok', 'Gemini', 'ChatGPT Pro', 'Cursor', 'Claude'):
+            self.assertIn(name, prompt)
+        self.assertIn('When first answering a resource scenario or updating changed availability', rules)
+        self.assertIn('name every resource the user states as unavailable or available', rules)
+        self.assertIn('preserving those as supplied conditions rather than live observations', rules)
+        self.assertIn('Give one concrete next step using a named still-available candidate', rules)
+        self.assertIn('subscription ownership alone does not establish usable allowance or task quality', rules)
+        self.assertIn('after budget admission and allowance check', rules)
+
     def test_file_tool_limit_requires_candidate_specific_executor_evidence(self):
         self.send('Compare our Codex, Cursor and Claude subscriptions as alternatives '
                   'for conversation. Planning only; do not call a model or switch routes.')
@@ -191,6 +235,19 @@ class TestEvidencePromptAssembly(SessionFixture):
         self.assertIn('Scope any claim of a separate executor to the specific candidates', rules)
         self.assertIn('whose supplied registry entries list that executor', rules)
         self.assertIn('do not generalize it to every alternative with a conversation adapter', rules)
+
+    def test_access_limitation_stays_scoped_to_the_observed_candidate(self):
+        self.send('Suppose Grok is unavailable and Gemini says the prepaid balance is '
+                  'depleted. We still have ChatGPT Pro, Cursor and Claude subscriptions. '
+                  'What should Web Bob do? Treat this as a scenario.')
+        self.send("Use resources we already pay for, but don't assume they have unlimited usage.")
+        self.send('What if the alternative cannot read the needed project files?')
+        prompt, rules = self.prompt()
+        self.assertIn('cannot read the needed project files', prompt)
+        self.assertIn('Scope an observed access limitation to the specific candidate and operation', rules)
+        self.assertIn('never generalize it to the conversation adapter category as a whole', rules)
+        self.assertIn('If the candidate is unspecified or the limitation hypothetical, keep it conditional', rules)
+        self.assertIn('do not assign a cause without evidence', rules)
 
 
 class TestLaneBSampleRawGuardStability(unittest.TestCase):
