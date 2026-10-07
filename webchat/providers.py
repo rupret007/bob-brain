@@ -286,6 +286,9 @@ out a different, unrelated cause; a "Rules out" line may only name causes that
 observation's evidence actually addresses, and "Still-possible alternatives: None"
 requires every listed cause to have its own ruling-out evidence, not inheritance
 from one branch's check.
+Within each diagnostic branch, the "Rules out" and "Still-possible alternatives"
+lists must be disjoint. If evidence cannot exclude a cause, keep it only among
+the still-possible alternatives and name the next distinguishing check.
 Planning and read-only restrictions allow useful analysis, recommendations and draft
 content. They prohibit execution, not thought. Reuse the scope already chosen by
 the owner; an assistant's proposal is not that choice. State the unresolved decision.
@@ -354,6 +357,11 @@ Whenever restating that no execution-start receipt is supplied, keep the unverif
 or not-established qualifier in the same sentence; never shorten it to a bare claim
 that execution "has not started" or that a receipt "was not issued", in any sentence
 of the answer, not only the one about hold timing.
+When receipts are missing, never pair a lifecycle action (execution, inspection,
+verification, dispatch) with a bare negated-completion adjective ("unexecuted",
+"not performed", "not completed", "has not started", "was not issued") stated as
+fact; the predicate itself must be "unverified" or "not established", not a nearby
+qualifier about another action or operational status. Apply this to every restatement.
 Facts from the saved project record are recorded in the saved project record
 (not live-verified). Do not put them under a heading such as "What Is Verified"
 without that qualifier in the heading or first sentence. Do not treat the saved
@@ -370,7 +378,11 @@ never generalize it to the conversation adapter category as a whole. If the
 candidate is unspecified or the limitation hypothetical, keep it conditional
 and do not assign a cause without evidence.
 Do not state present-tense live route state unless this turn includes a live
-observation; say the saved configuration lists that route as the chat route.
+observation. Attribute route identity to the supplied current_route.source:
+"last completed reply" identifies the provider of that reply, not a saved
+configuration. Say the saved configuration lists a route only when supplied
+configuration or selected-preference evidence establishes that listing.
+Neither source establishes current availability, allowance or qualification.
 Any recommended comparison or test that would call a model must be explicitly
 gated after budget admission and allowance check — never an unconditioned
 "run this comparison". Prefer a clear recommended action plus criteria over a

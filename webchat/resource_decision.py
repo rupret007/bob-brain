@@ -48,7 +48,11 @@ is a candidate for a bounded comparison, not yet the recommended active chat rou
 When explaining a limitation, name the operation and adapter it applies to; do
 not turn a chat adapter's tool boundary into a denial of its scoped executor.
 Do not state present-tense live route state unless this turn includes a live
-observation; say the saved configuration lists that route as the chat route.
+observation. Attribute route identity to the supplied current_route.source:
+"last completed reply" identifies the provider of that reply, not a saved
+configuration. Say the saved configuration lists a route only when supplied
+configuration or selected-preference evidence establishes that listing.
+Neither source establishes current availability, allowance or qualification.
 Not buying another plan is distinct from incurring no charges: a comparison uses
 allowance and may trigger extra usage under unknown account settings. Preparing
 inputs or checking settings is not evidence that future generation is cost-free.

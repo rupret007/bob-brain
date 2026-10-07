@@ -199,13 +199,39 @@ class DependencyState:
         return not self.pending or independent_after_rejection(unit),None
 
 
+def drop_incomplete_promises(parts, decisions):
+    """A filtered list cannot retain a promise of its original cardinality.
+
+    Only remove the lead-in; never admit a child that failed either check.
+    Keep original offsets and expose the removal in the delivery receipt.
+    """
+    from claim_evidence import COUNT_WORDS
+    counted = re.compile(r'\b(?P<count>'+ '|'.join(COUNT_WORDS) + r'|\d+)'
+        r'(?:\s+(?:acceptance|evaluation|success)\s+criteria\b|[- ]turn\b)', re.I)
+    for index, (part, decision) in enumerate(zip(parts, decisions)):
+        promise = counted.search(part)
+        if not decision['accepted'] or not promise or not part.rstrip().endswith(':'):
+            continue
+        count = promise['count'].lower()
+        expected = COUNT_WORDS.get(count, int(count) if count.isdigit() else 0)
+        retained = 0
+        for child, receipt in zip(parts[index+1:], decisions[index+1:]):
+            if not child.strip():
+                continue
+            if not (ITEM.match(child) or re.match(r'^\s*(?:•\s+|Turn\s+\d+\b)', child, re.I)):
+                break
+            retained += receipt['accepted']
+        if retained != expected:
+            decision.update(accepted=False, reason='incomplete_counted_list')
+
+
 def select(content, acceptable, *, pending=False, state=None):
     """Return original kept bytes, offset receipts and unresolved dependency."""
     state=state or DependencyState(pending=pending)
     # Separate structured paragraphs cannot silently inherit list attachment.
     state.close_plan()
-    kept=[];decisions=[];offset=0
-    for part in units(content):
+    parts=list(units(content));decisions=[];offset=0
+    for part in parts:
         valid=bool(acceptable(part))
         accepted,governor=state.consider(part,valid,offset=offset)
         dependent=valid and not accepted
@@ -213,10 +239,6 @@ def select(content, acceptable, *, pending=False, state=None):
                               reason='unsupported_unit' if not valid else
                               'dependent_on_rejected_reasoning' if dependent else 'independent_or_supported',
                               prospective_governor_start=governor))
-        if accepted:
-            kept.append(part)
-            # A proposed check supplies no result supporting a later causal
-            # recommendation. Keep the rejected-premise state for the rest
-            # of this answer, while accepting each independent next step.
         offset+=len(part)
-    return ''.join(kept),decisions,state.pending
+    drop_incomplete_promises(parts, decisions)
+    return ''.join(part for part, receipt in zip(parts, decisions) if receipt['accepted']),decisions,state.pending

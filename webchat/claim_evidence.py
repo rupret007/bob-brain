@@ -105,7 +105,12 @@ QUALIFICATIONS = {
     'operation_mode': 'That execution mode is unverified from what’s available here. Inspect the exact command’s writes, network access and isolation contract before treating a test run as read-only.',
     'diagnostic_cause': 'A missing result does not identify its cause from what’s available here. Match the request and source across save, stored state, access, retrieval and rendering.',
     'operational_state': "I can’t confirm live queue, task, or process state from what’s available here.",
+    'lifecycle_absence': 'External execution, inspection, verification and dispatch remain unverified without supporting evidence; missing receipts do not prove they never occurred.',
 }
+LIFECYCLE_ABSENCE = re.compile(
+    r'\b(?:execution|inspection|verification|dispatch)\s+'
+    r'(?:(?:is|was|remains?|still)\s+)*'
+    r'(?P<predicate>unexecuted|not\s+(?:performed|completed)|has\s+not\s+started|was\s+not\s+issued)\b', re.I)
 # Global inventory and process-status overclaims. Conversation-scoped denials
 # such as "no task was started" are a different, permitted effect boundary.
 QUEUE_INVENTORY = re.compile(
@@ -262,9 +267,35 @@ def _rejected_nominal_assurance(clause, predicate):
     return bool(REJECTED_NOMINAL.search(clause[:predicate.end()]))
 
 
+def contradictory_exclusions(content):
+    """Withhold an exclusion list contradicting its adjacent alternative list.
+
+    Exact cause names only: no inference that related causes are equivalent,
+    and no propagation across diagnostic branch boundaries.
+    """
+    from reported_records import presentation
+    pending = None
+    offset = 0
+    for line in content.splitlines(keepends=True):
+        label, body = presentation(line)
+        names = {re.sub(r'\s+', ' ', name).strip(' .').casefold()
+                 for name in re.split(r'[,;]', body) if name.strip(' .\n')}
+        if label.strip().casefold() == 'rules out':
+            pending = (offset, offset+len(line), names)
+        elif line.strip():
+            if (pending and label.strip().casefold() == 'still-possible alternatives'
+                    and pending[2] & names):
+                start, end, _ = pending
+                yield dict(start=start, end=end, categories=['diagnostic_exclusion'], claims=[],
+                           sha256=hashlib.sha256(content[start:end].encode()).hexdigest(),
+                           reason='contradictory_diagnostic_exclusion')
+            pending = None
+        offset += len(line)
+
+
 def violations(content, *, source='', trusted_facts=(), artifact=False):
     from claim_scope import clauses, disposition, DIRECTIVE
-    findings = []
+    findings = list(contradictory_exclusions(content)) if not artifact else []
     trusted = {_plain(value).strip() for value in trusted_facts}
     quoted = _quoted_source(content, source)
     technical_artifact = bool(TECHNICAL.search(content + '\n' + source))
@@ -393,6 +424,14 @@ def violations(content, *, source='', trusted_facts=(), artifact=False):
                                            category='diagnostic_cause', disposition='asserted_without_support'))
             if not artifact:
                 haystack = source + '\n' + '\n'.join(trusted)
+                for predicate in LIFECYCLE_ABSENCE.finditer(clause):
+                    start, end = predicate.span('predicate')
+                    if (_established(predicate[0], haystack) or
+                            disposition(part, start, end, predicate['predicate'])):
+                        continue
+                    categories.add('lifecycle_absence')
+                    claims.append(dict(start=part.start+start, end=part.start+end,
+                                       category='lifecycle_absence', disposition='asserted_without_support'))
                 scoped = bool(CONVO_SCOPED.search(clause))
                 for pattern, kind in ((QUEUE_INVENTORY, 'operational_state'), (PROCESS_STATE, 'operational_state')):
                     if kind == 'operational_state' and pattern is QUEUE_INVENTORY and scoped:
