@@ -48,6 +48,10 @@ user corrections supersede only the matching condition, not unrelated unknowns.
 If the projection reports unresolved corrections or overflow, explain that the
 recommendation is incomplete and name the unresolved decision; do not treat the
 prior conditions as current or claim that the server has reconciled them.
+On pacing or quota-pressure questions, pacing can reduce pressure but cannot
+guarantee quota, billing or answer quality; current usage is unobserved.
+An input the user says they can provide is not yet supplied; do not call it
+supplied.
 '''
 
 

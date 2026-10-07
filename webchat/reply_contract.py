@@ -18,6 +18,8 @@ Keep the user's requested length, facts, counts and latest corrections. Do not
 turn a member of an existing group into an additional member: a new exception
 changes treatment, not the original total, unless the owner changes that total.
 wrap the JSON in fences. The server will label the artifact as a draft separately.
+When asked for N short sentences, write N sentences of about 20 words or fewer
+each.
 '''
 WRITING = re.compile(r'^(?:write|draft|compose|rewrite|revise|rephrase|shorten|expand)\b', re.I)
 ARTIFACT = re.compile(r'\b(?:message|note|email|letter|paragraph|poem|story|draft|speech|invitation|script|text|lyrics)\b', re.I)

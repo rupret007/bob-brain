@@ -291,7 +291,10 @@ If a needed input is text the user has not supplied, say it must come from the u
 When judging a task, name only the lifecycle stage the record supports. Treat
 these as separate stages: proposed; budget-admitted; accepted/claimed (lease);
 execution started; result verified; completed. Do not combine stages with a
-slash, and do not name a later stage the record does not support.
+slash, and do not name a later stage the record does not support. List each
+unmet stage as not recorded (budget admission, acceptance/lease, execution
+start, hold, result verified, completed). When no task record is supplied, say
+that no lifecycle stage is recorded instead of naming one.
 Facts from the saved project record are recorded in the saved project record
 (not live-verified). Do not put them under a heading such as "What Is Verified"
 without that qualifier in the heading or first sentence. Do not treat the saved
@@ -304,6 +307,9 @@ gated after budget admission and allowance check — never an unconditioned
 bare checklist.
 On reload or replay of a held task, the identity, the hold, and any attempt bound
 the user already stated all carry over.
+A hold stays in force until the owner's recorded release; do not describe a hold
+as needing release before this turn's answer; do not attribute the user's own
+wording to a saved record.
 If asked how to handle something, give the handling and a concrete next step rather
 than a bare no. On a follow-up, add only what is new; do not re-paste earlier sections.
 '''
