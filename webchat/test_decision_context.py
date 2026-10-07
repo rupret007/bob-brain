@@ -27,6 +27,12 @@ class ProjectionTests(unittest.TestCase):
         c={'messages':[]}; add(c,ORIGIN); add(c,INPUTS)
         return c
 
+    def test_nonsenario_conversation_does_not_raise(self):
+        self.assertIsNone(dc.project({'messages':[]}, lambda v: v))
+        c={'messages':[]}
+        add(c,'Hi.')
+        self.assertIsNone(dc.project(c,lambda v:v))
+
     def test_conditions_keep_subject_provenance_and_separate_unknowns(self):
         c=self.scenario();p=dc.project(c,lambda v:v)
         facts={r['key']:r for r in p['facts']}
@@ -201,6 +207,23 @@ class ProjectionTests(unittest.TestCase):
         content,_=dc.render('Prepare a bounded comparison.',p,c,lambda v:v)
         self.assertIn('API key credit is exhausted', content)
         self.assertNotIn('aPI key', content)
+
+    def test_pacing_followup_keeps_projection_and_appends_capacity_fact_once(self):
+        c=self.scenario()
+        add(c,'I want to use what is already paid for. Would keeping the requests short and '
+            'doing them one at a time guarantee that we avoid extra charges and keep the same '
+            'answer quality?')
+        p=dc.project(c,lambda v:v)
+        self.assertIsNotNone(p)
+        self.assertIn('funding.hosted model',{r['key'] for r in p['facts']})
+        raw=('No, keeping requests short and sequential does not guarantee avoiding extra charges '
+             'or preserving answer quality.')
+        content,_=dc.render(raw,p,c,lambda v:v)
+        self.assertIn('Pacing may reduce demand', content)
+        self.assertIn('cannot establish remaining allowance', content)
+        self.assertEqual(content.count('Pacing may reduce demand'), 1)
+        again,_=dc.render(content,p,c,lambda v:v)
+        self.assertEqual(again.count('Pacing may reduce demand'), 1)
 
 
 class DeliveryTests(SessionFixture):

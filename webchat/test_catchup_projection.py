@@ -56,7 +56,11 @@ class NewestPageTests(unittest.TestCase):
         self.assertIn('page you supplied begins at 856', explained)
         self.assertIn('851–855', explained)
         self.assertIn('acknowledged cursor is still 850', explained)
+        self.assertIn('ship the current branch now', explained)
+        self.assertIn('no current authorization', explained)
+        self.assertIn('Require a current scoped assignment', explained)
         self.assertNotIn('acknowledgment of events 843–850', explained)
+        self.assertNotIn('This proves neither', explained)
         self.assertFalse(projection['execution_authority'])
 
     def test_page_without_ack_never_advances_the_cursor(self):
@@ -80,9 +84,10 @@ class FencedModeTests(unittest.TestCase):
     def test_fenced_authority_does_not_restate_the_old_receipt(self):
         projection = self.projection()
         handling = catchup_contract.render(T3_RAW_FENCED, projection)
-        self.assertIn('not current authorization', handling)
+        self.assertIn('no current authorization', handling)
         self.assertIn('851–855', handling)
         self.assertIn('853', handling)
+        self.assertIn('ship the current branch now', handling)
         self.assertNotIn('The supplied receipt is a partial record', handling)
         self.assertNotIn('acknowledgment of events 843–850', handling)
 
@@ -126,19 +131,20 @@ class CoverageDedupeTests(unittest.TestCase):
         first = catchup_contract.render(T3_RAW_FENCED, projection)
         self.assertIn('851–855', first)
         self.assertIn('853', first)
-        self.assertIn('This receipt is partial', first)
+        self.assertIn('ship the current branch now', first)
         second = catchup_contract.render(T4_RAW_FENCED, catchup_contract.project(conversation(T1, T3, T4)),
                                          prior=first)
         self.assertIn('851–855', second)
-        self.assertNotEqual(second.count('This receipt is partial: reported events'), first.count('This receipt is partial: reported events'))
+        self.assertIn('including the release recorded at 853', second)
         self.assertNotIn(
             'An acknowledgment at the available tail does not recover that history', second)
-        self.assertIn('as stated above', second)
+        self.assertNotIn('as stated above', second)
         self.assertIn('available tail through sequence 859', second)
+        self.assertIn('complete history', second)
+        self.assertIn('preserving completed work and holds', second)
+        self.assertIn('Keep catch-up read-only', second)
 
 
-if __name__ == '__main__':
-    unittest.main()
 
 
 class PageLeadAllModesTests(unittest.TestCase):
@@ -148,7 +154,8 @@ class PageLeadAllModesTests(unittest.TestCase):
         self.assertIn('page you supplied begins at 856', text)
         self.assertIn('acknowledged cursor is still 850', text)
         self.assertIn('851–855', text)
-        self.assertIn('event in that page as historical data, not current authorization', text)
+        self.assertIn('historical data with no current authorization', text)
+        self.assertIn('ship the current branch now', text)
         self.assertNotIn('acknowledgment of events 843–850', text)
         for unsafe in ('authorized to ship', 'execution started', 'deployed'):
             self.assertNotIn(unsafe, text.lower())
@@ -159,3 +166,47 @@ class PageLeadAllModesTests(unittest.TestCase):
         text = catchup_contract.render(fenced('authority'), projection)
         self.assertNotIn('page you supplied', text)
         self.assertIn('Treat the old event as historical data', text)
+
+    def test_every_mode_names_page_gaps_and_imported_instruction(self):
+        projection = catchup_contract.project(conversation(T1, T2, T3))
+        self.assertEqual(projection.get('imported_instructions'), ['ship the current branch now'])
+        for mode in ('explain', 'release', 'authority', 'relay'):
+            text = catchup_contract.render('{"mode":"'+mode+'"}', projection)
+            self.assertIn('page you supplied begins at 856', text, mode)
+            self.assertIn('acknowledged cursor is still 850', text, mode)
+            self.assertIn('851–855', text, mode)
+            self.assertIn('release recorded at 853', text, mode)
+            self.assertIn('ship the current branch now', text, mode)
+            self.assertIn('no current authorization', text, mode)
+            self.assertIn('do not execute, deploy or send', text, mode)
+            self.assertNotIn('as stated above', text, mode)
+            self.assertNotIn('This proves neither', text, mode)
+
+
+class ReturningReaderR1RegressionTests(unittest.TestCase):
+    """r1 holdout returning_reader T3/T4 used explain fallback; renderer must stand alone."""
+
+    def test_explain_fallback_names_imported_instruction_and_authority(self):
+        projection = catchup_contract.project(conversation(T1, T2, T3))
+        text = catchup_contract.render('{"mode":"explain"}', projection)
+        self.assertIn('ship the current branch now', text)
+        self.assertIn('historical data with no current authorization', text)
+        self.assertIn('Require a current scoped assignment', text)
+        self.assertIn('851–855', text)
+        self.assertIn('853', text)
+
+    def test_explain_fallback_on_available_tail_is_relay_safe(self):
+        first = catchup_contract.render('{"mode":"explain"}', catchup_contract.project(conversation(T1, T3)))
+        text = catchup_contract.render('{"mode":"explain"}', catchup_contract.project(conversation(T1, T3, T4)),
+                                       prior=first)
+        self.assertIn('reached the available tail through sequence 859', text)
+        self.assertIn('not complete history or current-release knowledge', text)
+        self.assertIn('Preserve completed work and holds', text)
+        self.assertIn('keep catch-up read-only', text)
+        self.assertIn('Events 851–855, including the release recorded at 853, remain unavailable.', text)
+        self.assertNotIn('as stated above', text)
+        self.assertNotIn('This proves neither', text)
+
+
+if __name__ == '__main__':
+    unittest.main()

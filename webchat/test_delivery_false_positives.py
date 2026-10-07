@@ -90,6 +90,33 @@ class HoldRestatementFalsePositiveTests(unittest.TestCase):
         self.assertNotIn('execution started', delivered.lower())
         self.assertTrue(any(not unit['accepted'] for unit in review['units']))
 
+    def test_r1_held_reload_omitting_the_hold_is_restated(self):
+        omitted = (
+            'In this scenario, the task identity and status are as follows:\n'
+            '\n'
+            '* **Task Identity**: The identity remains **R-41**. On a browser reload or request '
+            'replay, the original task identity carries over rather than generating a new task. '
+            'The previously defined constraints—one execution attempt and the 900-second ceiling—'
+            'also carry over.\n'
+            '* **Lifecycle Stage**: The lifecycle stage supported by the record is '
+            '**accepted/claimed (lease)** (held by ReviewWorker under lease L-41).\n'
+            '\n'
+            'Each unmet stage is:\n'
+            '* **budget admission**: not recorded\n'
+            '* **execution start**: not recorded\n'
+            '* **result verified**: not recorded\n'
+            '* **completed**: not recorded\n'
+        )
+        delivered, _ = guard(HELD_PROMPT, omitted, origin=HELD_ORIGIN)
+        self.assertIn('Reload does not clear the hold.', delivered)
+        self.assertNotIn('the saved hold', delivered)
+        lifted = omitted + ' The reload clears the hold, so execution started.'
+        delivered, review = guard(HELD_PROMPT, lifted, origin=HELD_ORIGIN)
+        self.assertNotIn('clears the hold', delivered)
+        self.assertNotIn('execution started', delivered.lower())
+        self.assertIn('Reload does not clear the hold.', delivered)
+        self.assertTrue(any(not unit['accepted'] for unit in review['units']))
+
 
 class OutageEvidenceFalsePositiveTests(unittest.TestCase):
     def test_plan_forward_intro_and_reasoning_quality_criterion_are_kept(self):

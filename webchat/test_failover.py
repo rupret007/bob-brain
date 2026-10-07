@@ -292,7 +292,7 @@ class FailoverTests(Fixture):
             for thread in threads:
                 thread.join(4)
         self.assertEqual(sorted(observed), [7, 29])
-        self.assertEqual(self.provider.timeouts["gemini"], 120)
+        self.assertEqual(self.provider.timeouts["gemini"], 180)
 
 
 class QueueTests(Fixture):

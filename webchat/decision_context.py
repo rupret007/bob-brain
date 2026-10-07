@@ -15,6 +15,9 @@ FOLLOWUP = re.compile(r'\b(?:prepare|preparation|conclude|comparison|compare|pro
     r'decision|constraint|paid for|access|guarantee\w*)\b',re.I)
 DECISION = re.compile(r'\b(?:next steps?|way forward|recommend\w*|sensible|prepare|preparation|'
                       r'what (?:should|can)|decision|conclude)\b',re.I)
+PACING = re.compile(
+    r'\b(?:pac(?:e|ing)|one at a time|keep(?:ing)? (?:the )?requests? short|'
+    r'short(?:er)? requests?|quota[- ]pressure)\b', re.I)
 CHECKS = {
     'allowance': re.compile(r'\b(?:remaining (?:allowance|capacity|usage)|quota)\b',re.I),
     'overage': re.compile(r'\b(?:(?:optional |extra[- ]usage )?overage settings|extra[- ]usage settings|billing settings|extra charges)\b',re.I),
@@ -260,13 +263,32 @@ def project(conversation, redact):
             if row['key'] in facts:
                 superseded.append(dict(old=facts[row['key']]['id'],new=row['id']))
             facts[row['key']]=row
-    if not active or not current or not facts or not DECISION.search(current.get('content','')):
+    if not active or not current or not facts:
+        return None
+    latest=current.get('content','') or ''
+    if not (DECISION.search(latest) or PACING.search(latest)):
         return None
     bounded=list(facts.values())[:12]
     return dict(version=1,scope='user-supplied planning example, not live observations',origin=origin,
         request_id=current.get('request_id',current.get('id')),facts=bounded,superseded=superseded,
         ambiguous_corrections=ambiguous[-3:],required_ids=[v['id'] for v in bounded],
         truncated=len(facts)>12,omitted_conditions=max(0,len(facts)-12),authority='No execution, routing, budget or permission authority.')
+
+
+def _with_pacing_fact(content, conversation):
+    """Append the capacity_and_pacing fact once when this turn asks about pacing."""
+    users=[m for m in (conversation or {}).get('messages',[]) if m.get('role')=='user']
+    latest=(users[-1].get('content','') if users else '')
+    if not PACING.search(latest):
+        return content
+    from resource_decision import facts as resource_facts
+    note=resource_facts({'resources': []}).get('capacity_and_pacing','')
+    if not note:
+        return content
+    hay=content or ''
+    if note in hay or re.search(r'\bpacing (?:may|can) reduce\b|\breduce (?:demand|pressure)\b', hay, re.I):
+        return content
+    return (hay.rstrip()+' '+note).strip()
 
 
 def render(content, projection, conversation, redact):
@@ -349,6 +371,7 @@ def render(content, projection, conversation, redact):
     if empty_sections:
         from claim_evidence import drop_empty_labels
         content=drop_empty_labels(content)
+    content=_with_pacing_fact(content, conversation)
     final=(context+'\n\n' if context else '')+content
     review=dict(scope='Visible attributed source conditions only; usefulness and next-step completeness require separate review.',
         required_ids=projection['required_ids'],rendered_ids=[r['id'] for r in displayed],

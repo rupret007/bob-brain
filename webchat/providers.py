@@ -551,7 +551,7 @@ class Providers:
         self.overlay_pins = overlay_pins if overlay_pins is not None else {}
         self.env = clean_env()
         self.timeout = max(15, min(600, int(os.environ.get("BOB_WEBCHAT_TIMEOUT", "180"))))
-        self.timeouts = {name: max(15, min(600, int(os.environ.get("BOB_WEBCHAT_TIMEOUT_" + name.upper(), str(self.timeout if name in ("codex", "cursor") else 120))))) for name in (*ORDER, "claude")}
+        self.timeouts = {name: max(15, min(600, int(os.environ.get("BOB_WEBCHAT_TIMEOUT_" + name.upper(), str(self.timeout if name in ("codex", "cursor", "gemini") else 120))))) for name in (*ORDER, "claude")}
         self.resume_supported = None
         self.current_call = threading.local()
         self.circuit = Circuit(root / "conductor/webchat/sessions/provider-health.json", root / "logs/webchat-failover.log")

@@ -195,6 +195,47 @@ def rewrite_unsaved_hold_authorship(content):
     return content
 
 
+RELOAD_TURN = re.compile(
+    r'\b(?:(?:browser\s+)?reload|replay|resubmi(?:t|ssion|tted)|submitted again)\b', re.I)
+USER_REPORTED_HOLD = re.compile(
+    r'\b(?:I (?:placed|put|set) \S+ on hold|placed \S+ on hold|on hold before(?: any)?|'
+    r'keep(?:ing)? (?:my |the |this )?hold in force|the hold still applies)\b', re.I)
+USER_HOLD_LIFT = re.compile(
+    r'\b(?:I (?:lifted|cleared|released|removed) (?:the )?hold|'
+    r'(?:please )?(?:lift|clear|release) (?:the )?hold now)\b', re.I)
+HOLD_ALREADY_RESTATED = re.compile(
+    r'\b(?:still applies|reload does not clear|'
+    r'do(?:es)? not (?:clear|lift|release|override) (?:the )?hold|'
+    r'remains? (?:on hold|in force|paused)|'
+    r'(?:is|remains?|stays?)\s+(?:currently\s+)?(?:on hold|\*\*on hold\*\*)|'
+    r'task is on hold)\b', re.I)
+
+
+def restated_hold_on_reload(text, content, conversation, scopes):
+    """Composer: a user-reported hold still applies after reload/replay.
+
+    Does not grant lifts, clears, execution, or claim the product saved a hold.
+    """
+    if scopes or not conversation or not content:
+        return content
+    if content.startswith('I could not produce a useful answer'):
+        return content
+    if not RELOAD_TURN.search(text or ''):
+        return content
+    if USER_HOLD_LIFT.search(text or ''):
+        return content
+    users=[m.get('content','') or '' for m in conversation.get('messages',[]) if m.get('role')=='user']
+    if not USER_REPORTED_HOLD.search('\n'.join(users)):
+        return content
+    hay=_claim_text(content)
+    if HOLD_ALREADY_RESTATED.search(hay):
+        return content
+    note='Reload does not clear the hold.'
+    if note.lower() in hay.lower():
+        return content
+    return content.rstrip()+' '+note
+
+
 def sticky_reply(text, content):
     # A literal-output request is content, not an accidental greeting.
     literal = (re.search(r"\b(?:say|reply|return|write|print|output)\s+(?:with\s+)?"
@@ -978,6 +1019,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         # A user-reported hold is not a product-saved hold. Restate it as a
         # hold, never as something this product stored or registered.
         content = rewrite_unsaved_hold_authorship(content)
+        content = restated_hold_on_reload(text, content, conversation, scopes)
     if sticky_reply(text, content):
         content = "I could not produce a useful answer to that request. Please retry."
     if blocked:
