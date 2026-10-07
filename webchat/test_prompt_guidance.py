@@ -6,10 +6,7 @@ from pathlib import Path
 from test_delivery_false_positives import HELD_PROMPT
 from test_reply_authority_records import guard
 
-HOLDOUT_SAMPLE = Path(
-    '/Users/jeffstory/Documents/bob-overnight-inject/conductor/goal-1006/'
-    'WEBBOB-GOAL-1006c-r4-holdout-sample-recovery-4.json'
-)
+HOLDOUT_SAMPLE = Path(__file__).resolve().parent / 'fixtures' / 'lane_b_raw_answers.json'
 
 
 def flat(text):
@@ -18,7 +15,7 @@ def flat(text):
 
 def transport_raw(chain, turn):
     data = json.loads(HOLDOUT_SAMPLE.read_text())
-    for tr in data['transports']:
+    for tr in data:
         if tr['chain'] == chain and tr['turn'] == turn:
             return tr['raw_answer']
     raise KeyError(chain, turn)
