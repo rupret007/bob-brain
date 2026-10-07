@@ -1,8 +1,13 @@
 """Complete pending decisions and contrary claims through actual Chat delivery."""
 import copy
+import json
+from pathlib import Path
 
 from test_webbob_replyq_1856 import SessionFixture
 import task_queue
+
+HOLD_RESUME_T2 = json.loads(Path(__file__).with_name('fixtures').joinpath(
+    'hold_resume_delivery_1006d.json').read_text())
 
 
 class HoldScopeTests(SessionFixture):
@@ -131,4 +136,25 @@ class HoldScopeTests(SessionFixture):
         self.assertRegex(answer['content'], r'(?m)^1\. \*\*Unselected Scope')
         self.assertRegex(answer['content'], r'(?m)^2\. \*\*Recorded Intent')
         self.assertNotRegex(answer['content'], r'(?m)^3\. ')
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_exposed_hold_resume_raw_keeps_both_named_gaps(self):
+        self.prepare_hold()
+        raw = HOLD_RESUME_T2['raw_answer']
+        self.assertIn('* **Gap 2:', raw)
+        self.assertEqual(HOLD_RESUME_T2['finish_reasons'], ['STOP'])
+        self.fake.reply_text = raw
+        answer = self.send(HOLD_RESUME_T2['prompt'])
+        self.assertIn('### Two Largest Gaps', answer['content'])
+        self.assertIn('Gap 1:', answer['content'])
+        self.assertIn('Gap 2:', answer['content'])
+        self.assertIn('no read-only verification task can be leased, scheduled, or executed',
+                      answer['content'])
+        self.assertNotIn('I queued', answer['content'])
+        mixed = raw.rstrip() + '\nI queued the inspection task.\n'
+        self.fake.reply_text = mixed
+        guarded = self.send('Name the gaps again.')
+        self.assertIn('Gap 2:', guarded['content'])
+        self.assertIn('leased, scheduled, or executed', guarded['content'])
+        self.assertNotIn('I queued the inspection task', guarded['content'])
         self.assertFalse(task_queue.tasks(self.root))

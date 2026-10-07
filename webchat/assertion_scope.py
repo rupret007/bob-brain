@@ -25,8 +25,10 @@ PURPOSE_HEAD = re.compile(r'^(?:preserve|protect|maintain|avoid|prevent|eliminat
 def negative_passive_effects(text, effect):
     """Yield effect spans governed by one negative passive subject.
 
-    A relative clause or fresh subject ends the relation. Only the immediate
-    effect is masked; later predicates, actor claims and receipts remain.
+    A relative clause or fresh subject ends the relation. Coordinated
+    non-effect participles of the same subject ("leased, scheduled") do not.
+    Only those immediate coordinated effects are masked; later predicates,
+    actor claims and receipts remain.
     """
     modifier = (r'(?!(?:that|which|who|whose|where|when|and|or|but|yet|then|'
                 r'is|are|was|were|has|have|had|will|would|can|could|may|might|'
@@ -37,15 +39,29 @@ def negative_passive_effects(text, effect):
     passive = (r'(?:(?:is|are|was|were)\s+(?:being\s+)?|'
                r'(?:has|have|had)\s+been\s+|'
                r'(?:will|would|can|could|may|might)\s+(?:have\s+been|be)\s+)')
+    coordinator = r'(?:\s*,\s*|\s+(?:and|or)\s+)'
+    skipped = (r'(?:(?!(?:'+effect+r'))(?!(?:that|which|who|whose|where|when|'
+               r'because|since|therefore|thus|'
+               r'I|we|you|he|she|it|they|'
+               r'Codex|Claude|Cursor|Gemini|MiniMax|Bob)\b)[\w-]+'+coordinator+r')*')
     pattern = re.compile(r'\b(?:no|zero|0)\s+(?P<subject>(?:'+modifier+r'\s+){0,10}'
         +modifier+r')\s+'+passive+
         r'(?:(?:yet|ever|actually|already|currently)\s+){0,3}'
+        +skipped+
         r'(?P<effect>'+effect+r')',re.I)
+    more = re.compile(r'^'+coordinator+skipped+r'(?P<effect>'+effect+r')',re.I)
     for match in pattern.finditer(text):
         from claim_scope import finite_predicate
         if (not finite_predicate(match['subject']) and
                 re.search(r'(?:ed|sent|put|picked up|kicked off)$',match['effect'],re.I)):
             yield match.span('effect')
+            pos = match.end()
+            while True:
+                nxt = more.match(text[pos:])
+                if not nxt:
+                    break
+                yield pos+nxt.start('effect'), pos+nxt.end('effect')
+                pos += nxt.end()
 
 
 def purpose_governs(prefix):
