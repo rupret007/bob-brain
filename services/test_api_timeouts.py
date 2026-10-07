@@ -30,7 +30,7 @@ class ModelResponseTimeoutTests(unittest.TestCase):
         sleep.assert_not_called()
 
     def test_reasoning_models_have_a_longer_response_window(self):
-        for model, seconds in (("MiniMax-M2.7", 180), ("gemini-2.5-pro", 180),
+        for model, seconds in (("MiniMax-M2.7", 180), ("gemini-2.5-pro", 180), ("gemini-3.8-flash", 180),
                                ("gemini-2.5-flash", 60), (None, 60)):
             def transport(argv, **kwargs):
                 self.assertEqual(argv[argv.index("-m") + 1], str(seconds))

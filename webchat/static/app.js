@@ -403,6 +403,10 @@ if ($("login-form")) {
     setBottomTab("chat");
     submitChatText("show my saved memories");
   });
+  $("project-context")?.addEventListener("click", () => {
+    setBottomTab("chat");
+    submitChatText("show saved project context");
+  });
   const messageText = new WeakMap();
   function render(conversation) {
     if (conversation.id !== current) return;
@@ -440,9 +444,35 @@ if ($("login-form")) {
       else article.setAttribute("aria-label", message.provider ? `Assistant, ${providers[message.provider] || "Bob"}` : "Assistant");
       const body = document.createElement("div"); body.className = "body";
       if (pending) body.textContent = providers[message.provider] ? `${providers[message.provider]} is replying…` : "One moment…";
-      else if (message.role === "assistant" && !message.texting && !message.private_memory) body.innerHTML = renderMarkdown(message.content || "");
+      else if (message.role === "assistant" && !message.texting && !message.private_memory) {
+        if (message.artifact?.accepted && message.artifact?.kind === "writing") {
+          const label = document.createElement("div");
+          label.className = "artifact-label";
+          label.textContent = "Draft";
+          body.append(label);
+          const content = document.createElement("div");
+          content.innerHTML = renderMarkdown(message.artifact.text || message.content || "");
+          body.append(content);
+          if (message.artifact.commentary) {
+            const note = document.createElement("p");
+            note.className = "artifact-commentary";
+            note.textContent = message.artifact.commentary;
+            body.append(note);
+          }
+        } else body.innerHTML = renderMarkdown(message.content || "");
+      }
       else body.textContent = message.private_memory && message.memory_action_label || message.content;
       article.append(body);
+      if (message.private_memory && Array.isArray(message.project_facts)) {
+        for (const fact of message.project_facts) {
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.textContent = `Review removal: ${fact.kind}`;
+          remove.addEventListener("click", () => submitChatText(
+            `forget project fact ${fact.project_id} ${fact.id} at revision ${fact.revision}`));
+          article.append(remove);
+        }
+      }
       if (message.private_memory && Array.isArray(message.memory_notes)) {
         for (const note of message.memory_notes) {
           const card = document.createElement("div"); card.className = "action-card memory-note";
@@ -486,6 +516,43 @@ if ($("login-form")) {
         messageTools.append(hint);
       }
       article.append(messageTools);
+      if (message.handoff_receipt?.handoff_id) {
+        const handoff = message.handoff_receipt;
+        const query = new URLSearchParams({conversation_id: current, handoff_id: handoff.handoff_id});
+        const tools = document.createElement('div'); tools.className = 'action-card-actions';
+        const download = document.createElement('a'); download.className = 'job-result-link';
+        download.href = '/api/project-handoffs/export?' + query;
+        download.textContent = 'Download handoff'; download.download = 'webbob-handoff.json';
+        tools.append(download);
+        if (handoff.state === 'returned_unverified') {
+          const returned = document.createElement('a'); returned.className = 'job-result-link';
+          returned.href = '/api/project-handoffs/return?' + query;
+          returned.textContent = 'Download returned review'; returned.download = 'webbob-review.json';
+          tools.append(returned);
+        } else {
+          const picker = document.createElement('input'); picker.type = 'file'; picker.accept = '.json,application/json';
+          picker.hidden = true;
+          const importButton = document.createElement('button'); importButton.type = 'button';
+          importButton.textContent = 'Import returned review';
+          importButton.addEventListener('click', () => picker.click());
+          picker.addEventListener('change', async () => {
+            const file = picker.files?.[0]; if (!file) return;
+            const conversationId = query.get('conversation_id');
+            importButton.disabled = true;
+            try {
+              if (file.size > 170000) throw new Error('The returned review is too large.');
+              const artifact = JSON.parse(await file.text());
+              if (artifact.handoff_id !== handoff.handoff_id) throw new Error('This return belongs to another handoff.');
+              await api('/api/project-handoffs/import', {conversation_id: conversationId, artifact});
+              if (current === conversationId) render(await api('/api/conversations/' + conversationId));
+              $('notice').textContent = 'Review imported. The claimed author remains unverified.';
+            } catch (error) { $('notice').textContent = error.message || 'The returned review could not be imported.'; }
+            finally { importButton.disabled = false; picker.value = ''; }
+          });
+          tools.append(importButton, picker);
+        }
+        article.append(tools);
+      }
       if (message.status === "waiting" && message.retry_at) {
         const retry = document.createElement("div"); retry.className = "attempt";
         retry.textContent = `Queued · retry after ${new Date(message.retry_at * 1000).toLocaleTimeString()}`;
@@ -506,18 +573,19 @@ if ($("login-form")) {
           const actions = document.createElement("div"); actions.className = "action-card-actions";
           const council = /council/i.test(message.action_card.reason || "");
           const removal = message.action_card.kind === "memory-remove";
+          const projectRemoval = message.action_card.kind === "project-forget";
           const memory = message.action_card.kind === "memory" || /^memory:/i.test(message.action_card.reason || "");
           const proposalId = message.action_card.proposal_id || message.action_card.id || "";
           const approve = document.createElement("button");
           approve.type = "button"; approve.className = "action-approve";
-          approve.textContent = removal ? "Remove this note" : memory ? "Save memory" : council ? "Start review" : "Start job";
+          approve.textContent = projectRemoval ? "Forget this fact" : removal ? "Remove this note" : memory ? "Save memory" : council ? "Start review" : "Start job";
           approve.addEventListener("click", () => {
             const suffix = proposalId ? ` proposal ${proposalId}` : "";
-            submitChatText(removal ? `yes, remove saved note${suffix}` : memory ? `yes, save memory${suffix}` : council ? `yes, run council${suffix}` : `yes, start job${suffix}`);
+            submitChatText(projectRemoval ? `yes, forget project fact${suffix}` : removal ? `yes, remove saved note${suffix}` : memory ? `yes, save memory${suffix}` : council ? `yes, run council${suffix}` : `yes, start job${suffix}`);
           });
           const deny = document.createElement("button");
           deny.type = "button"; deny.className = "action-deny";
-          deny.textContent = removal ? "Keep note" : memory ? "Dismiss" : council ? "Dismiss" : "Not now";
+          deny.textContent = projectRemoval ? "Keep fact" : removal ? "Keep note" : memory ? "Dismiss" : council ? "Dismiss" : "Not now";
           deny.addEventListener("click", () => {
             submitChatText(removal || memory ? "never mind memory" : council ? "never mind council" : "never mind");
           });

@@ -139,6 +139,7 @@ class FocusTests(SessionFixture):
     def test_reference_subject_and_negation_stay_in_native_user_input(self):
         import copy
         from providers import REFERENCE_RULES
+        from claim_evidence import RULES as EVIDENCE_STRENGTH_RULES
         text = 'Do not recalibrate. Just explain the term.'
         self.send(text)
         conversation = copy.deepcopy(self.chat.get(self.identifier))
@@ -147,7 +148,7 @@ class FocusTests(SessionFixture):
         provider.prompt(conversation, fast=True)
         payload = provider.current_call.api_input
         self.assertEqual(payload['messages'][-1], dict(role='user', content=text))
-        self.assertEqual(payload['system'], REFERENCE_RULES)
+        self.assertEqual(payload['system'], REFERENCE_RULES + '\n' + EVIDENCE_STRENGTH_RULES)
         self.assertNotIn('recalibrate', payload['system'])
         self.assertNotIn('SERVER SAVED CHAT PERMISSIONS', payload['system'])
         self.assertNotIn('SERVER SAVED CHAT PERMISSIONS', payload['context'])

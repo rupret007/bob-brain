@@ -78,6 +78,16 @@ class DispatchTests(unittest.TestCase):
             queue.enqueue(self.root, "conversation", "one", "Different request")
         self.assertEqual(len(queue.tasks(self.root)), 1)
 
+    def test_policy_changed_after_claim_blocks_before_workspace_or_model_effects(self):
+        row=self.enqueue(worker='codex');claim=queue.claim(self.root,'codex',identifier=row['id'])
+        policy=self.core/'state/generation-policy.json'
+        policy.write_text(json.dumps(dict(budget_id='overnight',accounting_root=str(self.root),purpose='product')))
+        with patch.object(dispatch_worker,'prepare_task') as prepare,patch.object(dispatch_worker,'ask') as ask:
+            self.assertEqual(dispatch_worker.execute(row['id'],claim['claim_token']),1)
+        prepare.assert_not_called();ask.assert_not_called()
+        saved=queue.tasks(self.root)[row['id']]
+        self.assertEqual(saved['status'],'failed');self.assertIsNone(saved.get('execution_started_at'))
+
     def test_attempt_limit_is_durable_at_admission_and_part_of_request_identity(self):
         args = (self.root, 'conversation', 'bounded', 'Run webchat/test_answer_intent.py')
         row = queue.enqueue(*args, worker='mini', attempt_limit=1)

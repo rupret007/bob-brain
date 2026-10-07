@@ -188,6 +188,8 @@ class Chat(TaskDispatch):
             self.conversations[value["id"]] = value
             migrated_intent = "intent_state" not in value
             chat_intent.state_for(value)
+            from project_context import recover as recover_project_context
+            recovered_context = recover_project_context(self.ledger_root(value['id']), value)
             interrupted = False
             for message in value["messages"]:
                 if message.get("status") in ("queued", "running"):
@@ -197,7 +199,7 @@ class Chat(TaskDispatch):
                 value["codex_thread_id"] = None
                 from self_improvement import recover_research
                 recover_research(value)
-            if interrupted or migrated_intent or value.get("_coordination_outbox"):
+            if interrupted or migrated_intent or recovered_context or value.get("_coordination_outbox"):
                 self.save(value)
         if not self.conversations:
             self.new_conversation()
@@ -211,6 +213,11 @@ class Chat(TaskDispatch):
             # is cleared or the process restarts.
             conversation['_coordination_excluded'] = True
         pending = conversation.setdefault('_coordination_outbox', {})
+        private_requests = {m.get('request_id') for m in conversation.get('messages', [])
+                            if m.get('private_memory') or m.get('texting')}
+        for event_id, record in list(pending.items()):
+            if record.get('kind') == 'answer-delivered' and record.get('request_id') in private_requests:
+                pending.pop(event_id)
         for record in self.coordination_records(conversation):
             pending.setdefault(record['event_id'], record)
         path = self.state / (conversation["id"] + ".json")
@@ -260,7 +267,8 @@ class Chat(TaskDispatch):
             return []
         user = next((m for m in reversed(messages) if m.get('role') == 'user'
                      and m.get('request_id') == last.get('request_id')), {})
-        if not user or last.get('texting') or user.get('texting'):
+        if (not user or last.get('texting') or user.get('texting') or
+                last.get('private_memory') or user.get('private_memory')):
             return []
         records = []
         permission = conversation.get('intent_state', {}).get('last_permission') or {}
@@ -282,6 +290,9 @@ class Chat(TaskDispatch):
                 summary='Delivered a chat answer; this is not a verified external action.',
                 conversation_id=conversation['id'], request_id=user['request_id'], message_id=last['id'],
                 answer_excerpt=content[:1000], answer_sha256=digest))
+            if last.get('project_dependencies') or last.get('project_dependency'):
+                records[-1].pop('answer_excerpt')
+                records[-1]['project_dependencies'] = last.get('project_dependencies', [last.get('project_dependency')])
         return records
 
     def ledger_root(self, conversation_id: str | None = None) -> Path:
@@ -336,10 +347,14 @@ class Chat(TaskDispatch):
 
     def public(self, value):
         excluded = {"_coordination_outbox", "_coordination_excluded", "_coordination_prepared_batches", "codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job",
-                    "pending_memory", "pending_memory_id", "pending_memory_removal"}
+                    "pending_memory", "pending_memory_id", "pending_memory_removal", "_project_edit", "_project_removal", "_project_intent", "_report_inputs",
+                    "_project_handoffs", "_project_returns"}
         # Extensions never see core-private state or mutable conversation objects.
         filtered = {k: copy.deepcopy(v) for k, v in value.items() if k not in excluded}
         public = {k: v for k, v in self.texting.public(filtered).items() if k not in excluded}
+        for message in public.get('messages', []):
+            message.pop('_generation', None)
+            message.pop('_reply_contract', None)
         info = self.workers.get(value["id"])
         public["reply_stopping"] = bool(info and info["cancel"].is_set())
         return public
@@ -561,9 +576,11 @@ class Chat(TaskDispatch):
             self.sessions[digest] = {"expires": now + SESSION_SECONDS, "csrf": secrets.token_urlsafe(32), "digest": digest}
             return token
 
-    def submit(self, identifier, text, request_id, provider="auto", worker=None, actor=None, attachments=None, source_voice=None):
+    def submit(self, identifier, text, request_id, provider="auto", worker=None, actor=None, attachments=None, source_voice=None, provider_mode='fallback'):
         if provider not in ("auto", "minimax", "gemini", "codex", "claude", "cursor"):
             raise RequestError(400, "Choose auto, minimax, gemini, codex, claude, or cursor.")
+        if provider_mode not in ('fallback', 'only') or provider_mode == 'only' and provider == 'auto':
+            raise RequestError(400, 'Choose one provider for provider-only mode.')
         if not isinstance(text, str):
             raise RequestError(400, "Write a message between 1 and 6,000 characters.")
         text = text.strip()
@@ -596,6 +613,7 @@ class Chat(TaskDispatch):
             for message in conversation["messages"]:
                 if message.get("request_id") == request_id:
                     if (message["content"] != text or message.get("preferred_provider", "auto") != provider
+                            or message.get('provider_mode', 'fallback') != provider_mode
                             or message.get("requested_worker") != worker
                             or message.get("attachments", []) != public_attachments):
                         raise RequestError(409, "That request ID was already used for a different message.")
@@ -610,9 +628,21 @@ class Chat(TaskDispatch):
             intent_state = chat_intent.state_for(conversation)
             was_held = bool(intent_state["holds"])
             conversation["preferred_provider"] = provider
+            conversation['provider_mode'] = provider_mode
+            import generation_budget
+            try:
+                admitted = generation_budget.binding(self.root, request_id, actor, text, require_active=False)
+            except generation_budget.AdmissionDenied:
+                # Broken or expired generation settings cannot block hold,
+                # cancel, context removal or other deterministic controls.
+                # Generation/dispatch boundaries revalidate before effects.
+                admitted = None
             user_message = {"id": str(uuid.uuid4()), "request_id": request_id, "preferred_provider": provider,
                             "role": "user", "content": text, "status": "done", "created_at": time.time(),
                             "requested_worker": worker}
+            user_message['provider_mode'] = provider_mode
+            if admitted:
+                user_message['_generation'] = admitted
             if public_attachments:
                 user_message["attachments"] = public_attachments
             reply_message = {"id": str(uuid.uuid4()), "request_id": request_id, "role": "assistant", "content": "",
@@ -644,6 +674,13 @@ class Chat(TaskDispatch):
                                          provider=provider, worker=worker, attachments=public_attachments)
             if removal is not None:
                 return removal
+            from project_context import handle as project_context_turn
+            from project_context import observe as observe_project
+            observe_project(self.ledger_root(identifier), conversation, text)
+            context_reply = project_context_turn(self, conversation, text, request_id, provider=provider,
+                worker=worker, attachments=public_attachments, source_voice=source_voice)
+            if context_reply is not None:
+                return context_reply
             if VERSION_QUESTION.search(text):
                 self.texting.invalidate(conversation)
                 return self.intent_reply(conversation, BUILD["short_sha"])
@@ -718,6 +755,14 @@ class Chat(TaskDispatch):
                 cancelled_task = self.cancel_task_turn(conversation, text)
                 if cancelled_task is not None:
                     return cancelled_task
+                from project_handoffs import handle as project_handoff_turn
+                handoff_reply = project_handoff_turn(self, conversation, text, request_id)
+                if handoff_reply is not None:
+                    return handoff_reply
+                from project_reports import handle as project_report_turn
+                report_reply = project_report_turn(self, conversation, text, request_id)
+                if report_reply is not None:
+                    return report_reply
                 from self_improvement import handle as improvement_turn
                 improvement = improvement_turn(self, conversation, text, request_id)
                 if improvement is not None:
@@ -908,12 +953,14 @@ class Chat(TaskDispatch):
                 if not state_ledger._DRILL_NOISE_RE.search(text):
                     state_ledger.record_webchat_turn(ledger, ask=text, provider="inbox", request_id=request_id)
                 return self.public(conversation)
-            from reply_authority import HOLD_QUESTION, STATUS_QUESTION
+            from reply_authority import HOLD_QUESTION, live_status_question
             from answer_intent import conceptual
-            if HOLD_QUESTION.match(text):
+            from conversation_focus import reference_scope
+            from resource_inventory import question as resource_question
+            if HOLD_QUESTION.match(text) and not reference_scope(conversation,text):
                 scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
                 return self.intent_reply(conversation, chat_intent.hold_reply(scopes) if scopes else "There are no active conversation holds.")
-            if ledger == self.root and STATUS_QUESTION.search(text) and not conceptual(text):
+            if ledger == self.root and live_status_question(text,conversation) and not resource_question(text):
                 return self.status_reply(conversation, text)
             if ledger == self.root:
                 try:
@@ -943,7 +990,7 @@ class Chat(TaskDispatch):
                             commits=[], confirmations=[], refusals=[], open_items=[], request_id=request_id)
                 state_ledger.record_webchat_turn(ledger, ask=text, provider="state", request_id=request_id)
                 return self.public(conversation)
-            local_status = state_ledger.try_status_reply(ledger, text) if provider == "auto" and not conceptual(text) else None
+            local_status = state_ledger.try_status_reply(ledger, text) if provider == "auto" and live_status_question(text,conversation) and not resource_question(text) else None
             if local_status:
                 conversation["messages"][-1].update(status="done", content=local_status, provider="state")
                 self.save(conversation)
@@ -966,7 +1013,22 @@ class Chat(TaskDispatch):
             cancel = threading.Event()
             if identifier in self.overlay_roots:
                 self.overlay_pins[identifier] = self.overlay_roots[identifier]
-            snapshot = copy.deepcopy(self.get(identifier))
+            value = self.get(identifier)
+            import reply_contract
+            value['messages'][-1].setdefault('_reply_contract', reply_contract.derive(value, self.redact,self.ledger_root(identifier)))
+            user = next((m for m in reversed(value['messages']) if m.get('role')=='user'), {})
+            if '_generation' not in user:
+                import generation_budget
+                try:
+                    binding = generation_budget.binding(self.root,user.get('request_id'),'saved-owner-request',user.get('content',''))
+                except generation_budget.AdmissionDenied:
+                    value['messages'][-1].update(status='error',content='The active generation allowance does not admit this reply.')
+                    self.save(value)
+                    return
+                if binding:
+                    user['_generation'] = binding
+            self.save(value)
+            snapshot = copy.deepcopy(value)
             worker = threading.Thread(target=self.complete, args=(identifier, cancel, snapshot), daemon=True)
             self.workers[identifier] = {"thread": worker, "cancel": cancel, "started_at": time.time(),
                                         "reply_id": self.get(identifier)["messages"][-1]["id"]}
@@ -1012,7 +1074,12 @@ class Chat(TaskDispatch):
                     raise Cancelled("Reply stopped.")
                 reply(value).update(status="running", provider=None, attempts=[])
                 self.save(value)
-            answer = self.providers.reply(self.texting.provider_view(conversation), cancel, progress)
+            from project_context import model_view as project_model_view, projection as project_projection
+            model_conversation = project_model_view(self.ledger_root(identifier), self.texting.provider_view(conversation))
+            project_prompt = next((m['content'] for m in reversed(model_conversation['messages']) if m['role']=='user'), '')
+            project_snapshot = project_projection(self.ledger_root(identifier), model_conversation, project_prompt)
+            model_conversation['_project_snapshot'] = project_snapshot
+            answer = self.providers.reply(model_conversation, cancel, progress)
             with self.lock:
                 value = self.get(identifier)
                 # Check after acquiring the lock: Stop/timeout may have won it
@@ -1025,17 +1092,32 @@ class Chat(TaskDispatch):
                 value.pop("retry_prompt", None)
                 # Provider metadata cannot mint receipts or dispatcher authority.
                 answer = {key: answer[key] for key in ("content", "provider", "attempts") if key in answer}
+                from project_context import inherited_dependencies
+                deps = getattr(getattr(self.providers, 'current_call', None), 'project_dependencies', None)
+                if deps is None:
+                    deps = inherited_dependencies(model_conversation, project_snapshot)
+                if deps:
+                    answer['project_dependencies'] = deps
                 answer["content"] = self.redact(answer["content"])
                 user_msg = next((m for m in value["messages"] if m["role"] == "user" and m.get("request_id") == reply(value).get("request_id")), {})
                 from reply_authority import enforce
                 from status_observation import bind_observation
                 observation = {}
-                answer["content"] = self.redact(enforce(self.ledger_root(identifier), user_msg.get("content", ""), answer, value,
-                                                       observation=observation, redact=self.redact))
+                from reply_contract import deliver
+                report_bindings=getattr(getattr(self.providers,'current_call',None),'report_sources',[]) or []
+                delivered, artifact = deliver(self.ledger_root(identifier), user_msg.get('content',''), answer, value,
+                                               observation=observation, redact=self.redact,report_bindings=report_bindings)
+                from project_reports import render_citations
+                report_sources=[]
+                if report_bindings:
+                    delivered,report_sources=render_citations(self.ledger_root(identifier),delivered,report_bindings)
+                if report_sources:
+                    answer['report_sources']=report_sources
+                answer['content'] = self.redact(delivered)
+                if artifact:
+                    answer['artifact'] = artifact
                 if observation:
                     answer["status_observation"] = bind_observation(observation, value)
-                else:
-                    answer["content"] = repair_hollow_progress(answer["content"])
                 cleaned, outbound = strip_assistant_attachment_markers(answer["content"])
                 answer.pop("attachments", None)  # Provider metadata cannot bypass ownership checks.
                 from chat_media import requested_attachment_ids
@@ -1062,6 +1144,11 @@ class Chat(TaskDispatch):
                     if unavailable:
                         cleaned += "\n\nOne or more requested attachments could not be included. Please reattach the file in this conversation."
                 answer["content"] = cleaned
+                import decision_context
+                contract=reply(value).get('_reply_contract') or {}
+                answer['content'],context_review=decision_context.render(answer['content'],contract.get('decision_context'),value,self.redact)
+                if context_review:
+                    answer['decision_context_review']=context_review
                 rid = user_msg.get("request_id")
                 reply(value).update(answer, status="done")
                 if rid:
@@ -1090,6 +1177,18 @@ class Chat(TaskDispatch):
             with self.lock:
                 value = self.get(identifier)
                 if not pending(value):
+                    return
+                import generation_budget
+                user = next((m for m in reversed(value['messages']) if m['role']=='user'
+                             and m.get('request_id')==reply(value).get('request_id')), {})
+                try:
+                    generation_budget.request_available(user.get('_generation'))
+                except generation_budget.AdmissionDenied as exhausted:
+                    value.pop('retry_prompt', None)
+                    reply(value).update(status='error', provider=None, content=str(exhausted), attempts=exc.attempts)
+                    reply(value).pop('retry_at', None)
+                    self.save(value)
+                    release_worker()
                     return
                 value["codex_thread_id"] = None
                 if cancel.is_set():
@@ -1777,6 +1876,21 @@ class Handler(BaseHTTPRequestHandler):
             if result is None:
                 raise RequestError(404, "No saved result for this job.")
             return self.send(200, json.loads(chat.redact(json.dumps(result))))
+        if route in ('/api/project-handoffs/export', '/api/project-handoffs/return'):
+            import project_handoffs
+            query = parse_qs(urlsplit(self.path).query)
+            cid = query.get('conversation_id', [''])[0]
+            hid = query.get('handoff_id', [''])[0]
+            try:
+                if route.endswith('/return'):
+                    data = project_handoffs.returned(chat, cid, hid)
+                else:
+                    handoff = project_handoffs.export(chat, cid, hid)
+                    data = dict(handoff=handoff, return_template=project_handoffs.return_template(handoff))
+            except ValueError as exc:
+                raise RequestError(404, str(exc)) from None
+            return self.send(200, data, headers={'Cache-Control': 'no-store',
+                                               'Content-Disposition': 'attachment; filename="webbob-handoff.json"'})
         if route == "/api/handback":
             return self.send(200, chat.handback())
         if route == "/api/panel":
@@ -1873,6 +1987,14 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/conversations":
             self.body()
             return self.send(201, chat.new_conversation())
+        if route == '/api/project-handoffs/import':
+            import project_handoffs
+            data = self.body(limit=project_handoffs.MAX_BYTES)
+            try:
+                value = project_handoffs.import_return(chat, data.get('conversation_id'), data.get('artifact'))
+            except (TypeError, ValueError) as exc:
+                raise RequestError(400, str(exc)) from None
+            return self.send(200, value)
         if route.startswith("/api/voice/"):
             data = self.body(limit=128 * 1024)
             owner = session["digest"]
@@ -1898,6 +2020,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(202, chat.submit(
                 data.get("conversation_id"), data.get("message", ""), data.get("request_id"),
                 data.get("provider", "auto"), worker=data.get("worker"), actor=session["digest"], attachments=data.get("attachments"),
+                provider_mode=data.get('provider_mode', 'fallback'),
             ))
         if route == "/api/cancel":
             chat.stop(self.body().get("conversation_id"))

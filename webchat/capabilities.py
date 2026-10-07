@@ -2,18 +2,23 @@
 import re
 import json
 
+INTEGRATION_NEED = re.compile(
+    r'^(?:i|we)\s+(?:want|need|would like)\s+'
+    r'(?:(?:(?:it|you|web bob|grok(?: bot)?|this)\s+)?(?:to\s+)?(?:be able to\s+)?'
+    r'(?:coordinate|connect|interface|integrate|catch up)\b|'
+    r'(?:coordination|integration|a connection)\s+(?:with|between)\b)',re.I)
+
 
 def needs_grounding(text):
     """Ground capability questions and stated integration needs in actual code."""
     from answer_intent import instructions, requires_execution
+    from resource_inventory import question as resource_question
+    if resource_question(text):
+        return True
     value = instructions(text).strip()
     question = re.match(r'^(?:(?:ok|okay|hey bob)[,!. ]+)*(?:(?:can|could|do|are|will) you\b|'
                          r'what (?:can you|are your)\b|how (?:can|do|does) (?:you|web bob)\b)', value, re.I)
-    integration_need = (re.match(
-        r'^(?:i|we)\s+(?:want|need|would like)\s+'
-        r'(?:(?:(?:it|you|web bob|grok(?: bot)?|this)\s+)?(?:to\s+)?(?:be able to\s+)?'
-        r'(?:coordinate|connect|interface|integrate|catch up)\b|'
-        r'(?:coordination|integration|a connection)\s+(?:with|between)\b)', value, re.I)
+    integration_need = (INTEGRATION_NEED.match(value)
         and re.search(r'\b(?:Grok|Web Bob)\b', value, re.I))
     return bool((question or integration_need)
                 and re.search(r'\b(?:capabilit\w*|featur\w*|interface|integrat\w*|connect|coordinat\w*|'
@@ -54,9 +59,10 @@ def prepare_coordination(chat, conversation, text, request_id):
     it neither contacts a receiver nor changes any acknowledgment or work scope.
     The private payload stays out of model context and public conversation exports.
     """
-    from answer_intent import instructions
+    from answer_intent import instructions, requires_execution
     value = instructions(text).strip()
-    if (not needs_grounding(text) or not re.match(r'^(?:i|we)\s+(?:want|need|would like)\b', value, re.I)
+    if (not INTEGRATION_NEED.match(value)
+            or requires_execution(value)
             or not re.search(r'\bGrok\b', value, re.I)
             or re.search(r"\b(?:do not|don't|don’t|not yet|just explain|only explain)\b", value, re.I)
             or re.search(r'\b(?:eventually|for now|later|wait|await|only if|not until|'
@@ -146,6 +152,14 @@ def grounding(root, reply_providers, conversation_id=None):
         source='Implemented Web Bob handlers in this code version; not proof of current provider health.',
         reply_providers=list(reply_providers),
         capabilities=[
+            dict(name='persistent project context', source='webchat/project_context.py',
+                 path='Versioned owner priorities and corrections, selective retrieval, inspect/remove through chat; facts do not grant execution permission.'),
+            dict(name='bounded subscription reports', source='webchat/project_reports.py; services/subscription_report.py',
+                 path='Explicit read-only Web Bob reports with one pinned owner, exact source snapshot, one attempt and a verified saved artifact.',
+                 limitation='Claude subscription route is implemented; current login/quota and real output quality require observed evidence.'),
+            dict(name='review handoff and returned artifact', source='webchat/project_handoffs.py',
+                 path='Prepared owner-relayed handoff with context and bounded journal delta; strict assignment/source-bound return import.',
+                 limitation='Prepared is not accepted; imported authorship remains unverified; no automatic native Dot/Grok dispatch.'),
             dict(name='writing and reasoning', source='webchat/providers.py',
                  path='Replies and revisions in this conversation using configured model providers.'),
             dict(name='research', source='webchat/bob_gaps.py; webchat/task_dispatch.py',
@@ -159,7 +173,7 @@ def grounding(root, reply_providers, conversation_id=None):
                  limitation='No verified direct native Grok chat transport or automatic wake-up is configured. '
                             'Only current Web Bob publishers contribute after the retained legacy import; '
                             'older external publishers and already-trimmed history are not covered.'),
-        ], coordination=observations,
+        ], coordination=observations, resources=__import__('resource_inventory').observe(root),
         comparison='Grok feature parity and answer superiority require matched evidence; not established here.')
 
 

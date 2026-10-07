@@ -68,10 +68,11 @@ def deployed_project_context(root):
     # Both services must select this running checkout; an arbitrary/stale pin
     # or a rollback copy without Git evidence is not enough to assign a report.
     try:
+        running_code = CODE_ROOT.resolve(strict=True)
         for name in ("webchat", "dispatch"):
             value = (root / "conductor/state" / (name + "-code-root")).read_text().strip()
             path = Path(value)
-            if not path.is_absolute() or path.resolve(strict=True) != CODE_ROOT:
+            if not path.is_absolute() or path.resolve(strict=True) != running_code:
                 return None
     except (OSError, ValueError, RuntimeError):
         return None

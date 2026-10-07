@@ -69,7 +69,14 @@ def probe(root, output, url=None, engines=('chromium', 'webkit')):
                 # stay at their configured path; no copies or CLI/model fallback.
                 if argv != [sys.executable, str(CODE / 'webchat/api_call.py'), 'gemini']:
                     raise RuntimeError('Voice proof permits only the Gemini product API')
-                kwargs['env'] = dict(kwargs['env'], BOB_ROOT=str(root))
+                env = dict(kwargs['env'], BOB_ROOT=str(root))
+                # The private Chat binds ordinary requests as product work.
+                # This operator-owned controller probe restores its admitted
+                # attempt identity; the HTTP adapter verifies it before curl.
+                if os.environ.get('BOB_GENERATION_PURPOSE') == 'controller':
+                    for key in ('BOB_GENERATION_PURPOSE','BOB_GENERATION_CONTROLLER_ATTEMPT'):
+                        env[key] = os.environ[key]
+                kwargs['env'] = env
                 return run(argv, **kwargs)
             providers = Providers(private, lambda value: value, runner=product_api)
             providers.route_order = lambda _conversation: ('gemini',)

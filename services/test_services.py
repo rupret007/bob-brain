@@ -199,8 +199,24 @@ class ServicesTest(unittest.TestCase):
     def test_cursor_login_auto_activation(self):
         binary=self.root/'cursor';binary.touch()
         for output,expected in [('Not logged in','needs_login'),('Logged in','ready')]:
-            with patch.object(lanes,'CURSOR',binary),patch.object(lanes,'run',return_value=NS(returncode=0,stdout=output,stderr='')):
+            with patch.dict(os.environ,{},clear=True),patch.object(lanes,'CURSOR',binary),patch.object(lanes,'run',return_value=NS(returncode=0,stdout=output,stderr='')):
                 self.assertEqual(lanes.refresh()['cursor']['state'],expected)
+    def test_goal_polling_never_spends_native_metadata_allowance(self):
+        binary=self.root/'cursor';binary.touch()
+        policy=self.core/'state/generation-policy.json';policy.parent.mkdir()
+        valid=dict(budget_id='fixture',accounting_root=str(self.root),purpose='product')
+        cases=[({},json.dumps(valid)),({},'{broken'),
+               ({'BOB_GENERATION_BUDGET':'fixture','BOB_GENERATION_BUDGET_ROOT':str(self.root)},None),
+               ({'BOB_REQUIRE_GENERATION_BUDGET':'1'},None)]
+        for env,body in cases:
+            if body is None:policy.unlink(missing_ok=True)
+            else:policy.write_text(body)
+            with self.subTest(env=env,body=body),patch.dict(os.environ,env,clear=True),patch.object(lanes,'CURSOR',binary),patch.object(lanes,'run') as probe:
+                for _ in range(2):
+                    row=lanes.refresh()['cursor']
+                    self.assertEqual(row['state'],'unverified')
+                    self.assertIn('deferred',row['detail'])
+                probe.assert_not_called()
     def test_lane_lease_shared_with_council_and_reviews(self):
         with state.lock('lane-cursor'),patch.object(lanes,'cli') as cli:
             with self.assertRaises(BlockingIOError):lanes.ask('cursor','prompt')

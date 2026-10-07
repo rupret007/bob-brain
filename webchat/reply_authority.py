@@ -12,9 +12,13 @@ DIRECT_QUEUE_CLAIM = re.compile(
     r".{0,160}\b(?:job|task|work|review|fix|council|inbox|queue|it|this|that|codex|claude|cursor|gemini|minimax)\b|"
     r"^\s*(?:queued|scheduled|launched|started|submitted|assigned)\b|"
     r"\b(?:codex|claude|cursor|gemini|minimax)(?:['’]s|\s+(?:is|has started))\s+(?:working|running|reviewing|fixing|on it)\b|"
-    r"\b(?:codex|claude|cursor|gemini|minimax)\s+has\s+(?:your|the|this)\s+(?:[\w-]+\s+){0,6}(?:job|task|work|review)\b", re.I)
+    r"\b(?:codex|claude|cursor|gemini|minimax)\s+has\s+(?:your|the|this)\s+(?:[\w-]+\s+){0,6}(?:job|task|work|review)\b|"
+    r"\b(?:i|we)(?:['’]ve| have)?\s+(?:(?:just|already|now)\s+)?(?:marked|completed|finished)\b"
+    r".{0,80}\b(?:complete|done|finished|task|work|it|this|that)\b", re.I)
 QUEUE_CLAIM = re.compile(DIRECT_QUEUE_CLAIM.pattern + r"|"
-    r"\b(?:job|task|council|work)\b.{0,120}\b(?:created|queued|scheduled|launched|started|assigned|builder inbox|picked up|in progress|running)\b"
+    r"\b(?:job|task|council)\b[^:.;!?\n]{0,120}\b(?:created|queued|scheduled|launched|started|assigned|builder inbox|picked up|in progress|running)\b"
+    r"(?!\s+(?:when|if|until)\b)|"
+    r"\bwork\s+(?:is|was|has been|is now)\s+(?:created|queued|scheduled|launched|started|assigned|picked up|in progress|running)\b"
     r"(?!\s+(?:when|if|until)\b)", re.I)
 NO_JOB_NOTICE = re.compile(
     r"\bno (?:server[- ]confirmed )?(?:jobs?|tasks?)\s+(?:(?:was|were|has been|are)\s+)?(?:created|queued|started|running)\b|"
@@ -46,11 +50,57 @@ PROVIDER_CLAIM = re.compile(
 HOLD_CLAIM = re.compile(
     r"\b(?:your|the|earlier|previous)\s+(?:(?:earlier|previous|existing|current)\s+)?hold\b|"
     r"\b(?:on hold|still (?:paused|held)|remain(?:s)? (?:paused|held))\b|"
+    r"\b(?:daemons?|services?|workers?|reviewers?|process(?:es)?|servers?|systems?|agents?)\s+"
+    r"(?:is|are|was|were)\s+(?:(?:now|still|currently)\s+)?(?:held|paused)\b|"
     r"\b(?:" + PROJECT.pattern + r"|work|coding|jobs?|tasks?)\s+(?:is|are|has been|have been)\s+(?:paused|held)\b|"
     r"\b(?:awaiting|pending)\s+(?:your\s+)?(?:permission|approval|go[- ]ahead)\b|"
     r"\b(?:until you (?:say (?:go|resume)|resume|give (?:the )?go[- ]ahead)|waiting for (?:your|permission)|"
     r"(?:need|require) (?:your |fresh |renewed |explicit )*(?:permission|approval|go[- ]ahead))\b", re.I)
 HOLD_QUESTION = re.compile(r"^(?:(?:are|is|am|do|does|why)\b[^.!]*\b(?:on hold|holds? (?:still )?active|paused|need.{0,20}permission)\b[^.!]*|what holds? are active)\??$", re.I)
+STATE_ADVERB = r'(?:already|now|just|still|yet|[a-z]+ly)'
+MODAL_PERFECT = r'must\s+(?:'+STATE_ADVERB+r'\s+){0,3}have\s+(?:'+STATE_ADVERB+r'\s+){0,3}been'
+PERMISSION_CHANGE = re.compile(
+    r'\b(?:hold|permission|approval)\b[^,;!?]{0,30}'
+    r'\b(?:is|was|has been|'+MODAL_PERFECT+r'|now|already)\s+(?:'+STATE_ADVERB+r'\s+){0,3}(?:lifted|cleared|released|granted)\b|'
+    r'\b(?:I|we|you)(?:[’\']ve|\s+have)?\s+(?:(?:already|now)\s+)?'
+    r'(?:lifted|cleared|released|granted)\s+(?:(?:the|your|our|my|real|actual|current|existing)\s+){0,3}'
+    r'(?:hold|permission|approval)\b|'
+    r'\bhold\s+(?:lifted|cleared|released|removed|ended|expired)\b|'
+    r'\b(?:clears|lifts|releases|removes|ends|expires|cleared|lifted|released|removed|ended|expired)\s+'
+    r'(?:(?:the|your|our|my|this|that|saved|reported|owner[- ]placed)\s+)+hold\b|'
+    r'\b(?:I|we)(?:[’\']ve|\s+have)?\s+(?:(?:already|now|just)\s+)?'
+    r'(?:lifted|cleared|released|removed|ended)\s+it\b|'
+    r'\b(?:the hold expired|the hold no longer applies|lifts automatically)\b', re.I)
+HOLD_RELEASE_CLAIM = re.compile(
+    r'\b(?:clears|lifts|releases|removes|ends|expires|cleared|lifted|released|removed|ended|expired)\s+'
+    r'(?:(?:the|your|our|my|this|that|saved|reported|owner[- ]placed)\s+)+hold\b|'
+    r'\b(?:the|your|our|my|this|that|saved|reported|owner[- ]placed)\s+hold\b'
+    r'(?:(?!\b(?:but|yet|however)\b)[^.;!?\n]){0,80}'
+    r'\b(?:cleared|lifted|released|removed|ended|expired|lifts?|clears?|no longer applies)\b|'
+    r'\bhold\s+(?:is |was |has been |will be |now |already )?(?:lifted|cleared|released|removed|ended|expired)\b|'
+    r'\b(?:it\s+)?lifts automatically\b|'
+    r'\bthe hold expired\b|'
+    r'\b(?:I|we)(?:[’\']ve|\s+have)?\s+(?:(?:already|now|just)\s+)?'
+    r'(?:lifted|cleared|released|removed|ended)\s+(?:(?:the|your|our|my|this|that|saved)\s+)*(?:hold|it)\b',
+    re.I)
+EXECUTION_START_CLAIM = re.compile(
+    r'\bexecution(?:\s+has)?\s+(?:start(?:s|ed)|begins?|began|is running|resumed|was authorized)\b|'
+    r'\b(?:start(?:s|ed)|begins?|began)\s+execution\b|'
+    r'\bexecution\s+to\s+begin\b|'
+    r'\bthe\s+workers?\s+(?:starts?|started|is running|resumed)\b|'
+    r'\bI resumed(?:\s+it)?\b', re.I)
+PRODUCT_HOLD_AUTHORSHIP = re.compile(
+    r"\b(?:I|we)(?:['’]ve|\s+have)?\s+(?:(?:just|already|now)\s+)?"
+    r"(?:registered|saved|placed|filed|put)\b.{0,50}\b(?:a |the |your )?(?:saved )?hold\b|"
+    r'\bsaved the hold in (?:the|this) product\b', re.I)
+CLAIM_NEGATION = re.compile(
+    r"(?:^|\b)(?:do(?:es)? not|did not|cannot|can['’]t|has not|have not|will not|never|"
+    r"not reached|has no(?:\s+\w+){0,6}\s+authority to|no authority to|"
+    r"before(?:\s+any)?|without|not (?:yet|been))\b", re.I)
+PERMISSION_REQUIREMENT = re.compile(
+    r'\b(?:must|should|needs? to|is required)\b|'
+    r'\b(?:verification|confirmation|evidence)\s+that\b|'
+    r'\b(?:first\s+)?(?:verify|check|confirm|obtain|seek|require)\b', re.I)
 PURE_GREETING = re.compile(r"(?:hi|hey|hello|good (?:morning|afternoon|evening))"
                            r"(?:[, ]+(?:bob|there))?[.!? ]*", re.I)
 GREETING_OPERATIONS = re.compile(
@@ -62,6 +112,128 @@ GREETING_OPERATIONS = re.compile(
 
 STICKY_REPLY = re.compile(r"(?:(?:ready when you are|(?:hi|hey|hello)(?:[, ]+Jeff)?|"
                          r"(?:I(?:['’]m| am) )?ready to help)[.!,\s]*)+", re.I)
+
+
+def _claim_text(text):
+    return re.sub(r'[*_`]', '', text or '')
+
+
+def _contrast_clauses(text):
+    return re.split(r'[;]|\s*[,;]?\s*\b(?:but|yet|however)\b', text or '', flags=re.I)
+
+
+def _claim_negated(prefix):
+    return bool(CLAIM_NEGATION.search(prefix or ''))
+
+
+def unnegated_hold_release(text):
+    """A clause that asserts a hold is/was/will be lifted, cleared, or ended."""
+    text = _claim_text(text)
+    for clause in _contrast_clauses(text):
+        if (PERMISSION_REQUIREMENT.search(clause) and
+                not re.search(r'\b(?:now|already|automatically)\b', clause, re.I) and
+                not re.search(r'\bmust\s+have\s+been\b', clause, re.I)):
+            continue
+        for match in HOLD_RELEASE_CLAIM.finditer(clause):
+            prefix = clause[:match.start()]
+            if re.search(r'\b(?:if|unless)\b', prefix, re.I):
+                continue
+            if not _claim_negated(prefix):
+                return True
+    return False
+
+
+def unnegated_execution_start(text):
+    """A clause that asserts execution started, began, is running, or resumed."""
+    text = _claim_text(text)
+    for clause in _contrast_clauses(text):
+        for match in EXECUTION_START_CLAIM.finditer(clause):
+            if re.match(r'-start\b', clause[match.end():], re.I):
+                continue
+            if not _claim_negated(clause[:match.start()]):
+                return True
+    return False
+
+
+def in_force_hold_restatement_ok(text):
+    """True only when the restatement does not also lift the hold or start work."""
+    return not unnegated_hold_release(text) and not unnegated_execution_start(text)
+
+
+def split_mixed_hold_units(parts, item_pattern):
+    """Keep a negated hold-denial when a later clause lifts the hold or starts work."""
+    expanded = []
+    splitter = re.compile(
+        r'(?s)^(?P<head>.*?\b(?:do(?:es)? not|cannot|has no(?:\s+\w+){0,6}\s+authority to)\s+'
+        r'(?:clear|lift|release|bypass|override)\s+(?:the\s+)?(?:saved\s+)?hold)'
+        r'\s*[,;]?\s*(?:but|yet|however)\s+(?P<tail>.+)$', re.I)
+    for part in parts:
+        if item_pattern.match(part):
+            expanded.append(part)
+            continue
+        match = splitter.match(part)
+        if match and in_force_hold_restatement_ok(match['head']) and (
+                unnegated_hold_release(match['tail']) or unnegated_execution_start(match['tail'])):
+            head = match['head'].rstrip()
+            if not re.search(r'[.!?]$', head):
+                head += '.'
+            newline = '\n' if part.endswith('\n') else ''
+            expanded.append(head + newline)
+            expanded.append(match['tail'])
+            continue
+        expanded.append(part)
+    return expanded
+
+
+def rewrite_unsaved_hold_authorship(content):
+    """A user-reported hold is not something this product registered."""
+    content = re.sub(r'\bthe saved hold\b', 'the hold', content, flags=re.I)
+    content = re.sub(
+        r'\s+under the hold I (?:registered|saved|placed|filed)(?:\s+for it)?',
+        ' as you reported',
+        content, flags=re.I)
+    return content
+
+
+RELOAD_TURN = re.compile(
+    r'\b(?:(?:browser\s+)?reload|replay|resubmi(?:t|ssion|tted)|submitted again)\b', re.I)
+USER_REPORTED_HOLD = re.compile(
+    r'\b(?:I (?:placed|put|set) \S+ on hold|placed \S+ on hold|on hold before(?: any)?|'
+    r'keep(?:ing)? (?:my |the |this )?hold in force|the hold still applies)\b', re.I)
+USER_HOLD_LIFT = re.compile(
+    r'\b(?:I (?:lifted|cleared|released|removed) (?:the )?hold|'
+    r'(?:please )?(?:lift|clear|release) (?:the )?hold now)\b', re.I)
+HOLD_ALREADY_RESTATED = re.compile(
+    r'\b(?:still applies|reload does not clear|'
+    r'do(?:es)? not (?:clear|lift|release|override) (?:the )?hold|'
+    r'remains? (?:on hold|in force|paused)|'
+    r'(?:is|remains?|stays?)\s+(?:currently\s+)?(?:on hold|\*\*on hold\*\*)|'
+    r'task is on hold)\b', re.I)
+
+
+def restated_hold_on_reload(text, content, conversation, scopes):
+    """Composer: a user-reported hold still applies after reload/replay.
+
+    Does not grant lifts, clears, execution, or claim the product saved a hold.
+    """
+    if scopes or not conversation or not content:
+        return content
+    if content.startswith('I could not produce a useful answer'):
+        return content
+    if not RELOAD_TURN.search(text or ''):
+        return content
+    if USER_HOLD_LIFT.search(text or ''):
+        return content
+    users=[m.get('content','') or '' for m in conversation.get('messages',[]) if m.get('role')=='user']
+    if not USER_REPORTED_HOLD.search('\n'.join(users)):
+        return content
+    hay=_claim_text(content)
+    if HOLD_ALREADY_RESTATED.search(hay):
+        return content
+    note='Reload does not clear the hold.'
+    if note.lower() in hay.lower():
+        return content
+    return content.rstrip()+' '+note
 
 
 def sticky_reply(text, content):
@@ -344,14 +516,82 @@ CRITICISM = re.compile(r"^(?:this|that|it|your (?:answer|reply|response|update))
                        r"^(?:do better|be more specific|try again|fix your (?:answer|reply))\b", re.I)
 
 
+def live_status_question(text, conversation=None):
+    """Require a request to observe, not an operational noun in an instruction.
+
+    Use the same classification before generation and before delivery. Quoted,
+    conditional and prohibited observations cannot select a server reply.
+    """
+    from answer_intent import conceptual, instructions, request_clauses, live_observation
+    from conversation_focus import reference_scope
+    if conceptual(text) or reference_scope(conversation,text):return False
+    target = r'(?:workers?|models?|LLMs?|jobs?|tasks?|services?|resources?|queue|system|status)'
+    # A dash inside an antecedent does not turn its consequent into a new
+    # unconditional request. Sentence boundaries can start a fresh request.
+    parts=[]
+    for sentence in re.split(r'[.!?;]\s+|\n+',instructions(text)):
+        first=request_clauses(sentence)
+        if not first:continue
+        if re.match(r"^(?:if|unless|until|when|once|before|suppose|imagine|do not|don['’]t|never|without)\b",first[0],re.I):continue
+        if re.search(r'\b(?:only if|unless|until|once|provided that)\b',sentence,re.I):continue
+        head=re.split(r'\b(?:and|but|then)\b',sentence,maxsplit=1,flags=re.I)[0]
+        if re.search(r'\b(?:if|when)\b|\bafter\s+(?:I|we|you|they|it|he|she)\b',head,re.I):continue
+        parts.extend(first)
+    for part in parts:
+        part=re.sub(r'^no[, ]+((?:is|are|what|which|how)\b)',r'\1',part,flags=re.I)
+        part=re.sub(r'^(?:I|we)\s+(?:want|need)\s+to\s+(?:also\s+)?(?:know|see)\s+', '',part,flags=re.I)
+        if re.match(r"^(?:if|unless|until|when|once|before|suppose|imagine|do not|don['’]t|never|without)\b",part,re.I):
+            continue
+        from answer_intent import ANSWER
+        observe = re.match(r'^(?:check|show|inspect|tell me)\b',part,re.I)
+        separate_directive = ANSWER.match(part) and not re.search(r'\b(?:whether|if|how to)\b',part,re.I)
+        if (observe or separate_directive) and live_observation(part):return True
+        if not STATUS_QUESTION.search(part):continue
+        # Short direct observations can carry presentation constraints, but
+        # field lists and requested status-report prose are not observations.
+        if re.fullmatch(r'(?:(?:current|live|brief|quick)\s+)*(?:(?:service|disk|storage)\s+status|'
+                        r'status(?: update)?|diagnostics?|resources? (?:usage|utilization|availability|health))'
+                        r'(?:\s+(?:with|without)\s+[^.!?]+)?(?:[, ]+please)?[.!? ]*',part,re.I):return True
+        if re.fullmatch(r'(?:give|show|tell) me\s+(?:(?:a|the|brief|short|current|quick)\s+)*'
+                        r'(?:status|update|status update)(?:\s+(?:please|now))?[.!?]*',part,re.I):return True
+        if re.match(r'^what(?:[\'’]s| is)\s+(?:(?:the|our|my|current|live)\s+)*'
+                    r'(?:[\w-]+\s+){0,3}status\b',part,re.I):return True
+        if re.match(r'^(?:what(?:[\'’]s| is| are)|which|who(?:[\'’]s| is))\s+'
+                    r'(?:(?:the|our|my|current|live)\s+)*(?:status|running|moving|happening|going on|'
+                    r'working on what|answering|responding|'+target+r')\b',part,re.I):return True
+        if re.match(r'^what are you working on\b',part,re.I):return True
+        names=r'(?:Gemini|MiniMax|Codex|Claude|Cursor)'
+        if re.fullmatch(r'what about '+names+r'(?:\s*(?:,|and|or|&)\s*'+names+r')*[.!? ]*',part,re.I):return True
+        if re.match(r'^how(?:[\'’]s| is| are| we)?\s+(?:(?:the|our|my)\s+)?'
+                    r'(?:everything|it going|we doing|'+target+r')\b',part,re.I):return True
+        if re.match(r'^(?:is|are)\s+(?:(?:the|our|my|current|live)\s+)*'
+                    r'(?:it|anything|everything|things|work|'+target+r'|Gemini|MiniMax|Codex|Claude|Cursor)\b'
+                    r'.{0,60}\b(?:going|moving|running|making progress|being performed|healthy|failing|working)\b',part,re.I):return True
+        if re.match(r'^(?:are we|we) using\b|^(?:any|making) progress\b|^works? on all (?:workers|models|LLMs)\b',part,re.I):return True
+    return False
+
+
 def correcting_status(text, conversation):
     if not CRITICISM.search(text.strip()):
         return False
-    previous = [m["content"] for m in (conversation or {}).get("messages", []) if m["role"] == "user"]
-    if previous and previous[-1] == text:
-        previous.pop()
-    previous = [ask for ask in previous if not CRITICISM.search(ask)]
-    return bool(previous and STATUS_QUESTION.search(previous[-1]))
+    messages=(conversation or {}).get('messages',[])
+    previous=next((m for m in reversed(messages) if m.get('role')=='user'
+                   and m.get('content')!=text and not CRITICISM.search(m.get('content',''))),None)
+    if not previous:return False
+    # A valid receipt proves what was observed, not that the old routing was
+    # appropriate. Do not perpetuate a wrongly classified owner request.
+    if not live_status_question(previous.get('content','')):return False
+    replies=[m for m in messages if m.get('role')=='assistant' and
+             m.get('request_id')==previous.get('request_id')]
+    if not replies:
+        # Old callers without a completed answer have no mutable focus to trust.
+        return live_status_question(previous['content'])
+    answer=replies[-1];observed=answer.get('status_observation') or {}
+    from status_observation import snapshot_digest
+    return bool(observed.get('message_id')==answer.get('id') and
+                observed.get('request_id')==previous.get('request_id') and
+                observed.get('conversation_id')==(conversation or {}).get('id') and
+                observed.get('snapshot') and observed.get('snapshot_sha256')==snapshot_digest(observed['snapshot']))
 
 
 def operational_reply(root, provider, text="", *, observation=None, redact=lambda value: value):
@@ -394,7 +634,13 @@ def unperformed_restart(root, text):
 def enforce(root, text, answer, conversation=None, *, observation=None, redact=lambda value: value):
     content = answer["content"]
     from answer_intent import conceptual, wants_answer, LIVE_REQUEST
-    reference = conceptual(text)
+    from conversation_focus import reference_scope
+    reported=reference_scope(conversation,text)
+    from conversation_focus import focus
+    from reported_records import source_bindings, topic_record
+    record=focus(conversation or {}) if reported else None
+    bindings=source_bindings(record)
+    reference = conceptual(text) or reported
     from worker_assignment import requested_workers
     blocked = dispatch_block(conversation)
     if requested_workers(text, conversation) and not blocked:
@@ -402,7 +648,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         return "I haven't assigned a worker from this reply. No new job was queued."
     state = state_for(conversation if conversation is not None else {})
     scopes = blocked_scopes(state, projects(text))
-    if HOLD_QUESTION.match(text.strip()):
+    if HOLD_QUESTION.match(text.strip()) and not reported:
         return hold_reply(scopes) if scopes else "There are no active conversation holds."
     from task_dispatch import CHAT_STYLE, PREAMBLE
     # A style preference calls for a simple acknowledgement, never a status
@@ -411,7 +657,8 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         return "Got it."
     if PURE_GREETING.fullmatch(text.strip()):
         content = greeting_content(content)
-    if not reference and (STATUS_QUESTION.search(text) or correcting_status(text, conversation)):
+    from resource_inventory import question as resource_question
+    if not reference and not resource_question(text) and (live_status_question(text,conversation) or correcting_status(text, conversation)):
         return operational_reply(root, answer["provider"], text, observation=observation, redact=redact)
     else:
         from dispatch_receipts import claims_dispatch, dispatch_prose, reference_context, NO_DISPATCH
@@ -428,25 +675,351 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         # Reference answers still reject direct effects, concrete IDs and
         # asserted progress; they do not need the proximity-only heuristic.
         progress_claim = REFERENCE_PROGRESS_CLAIM if reference else QUEUE_CLAIM
-        if claims_dispatch(content, reference=supplied) or progress_claim.search(dispatch_prose(content, reference=supplied)):
-            return blocked or unperformed_restart(root, text)
-        # Keep the useful answer; remove unsupported effects and boilerplate
-        # without adding a system notice to ordinary chat.
-        # Keep original whitespace so removing a footer doesn't flatten the
-        # useful answer's paragraphs, lists, or code formatting.
-        sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
-        kept = [part for part in sentences if not PROVIDER_CLAIM.search(part)]
-        if len(kept) != len(sentences):
-            content = "".join(kept).strip() or "What would you like me to work on?"
-    sentences = re.split(r"(?<=[.!?])(?=\s)|(?<=\n)", content)
-    kept = [part for part in sentences if not HOLD_CLAIM.search(part)]
+        def unsupported_effect(part):
+            return bool(claims_dispatch(part,reference=supplied,bindings=bindings,context=content) or
+                        progress_claim.search(dispatch_prose(part.strip(),reference=supplied)) or
+                        PROVIDER_CLAIM.search(part) or
+                        unnegated_execution_start(part))
+    from reported_records import units, presentation, foreign_label, foreign_subject, source_bindings, receipt, ITEM
+    if not scopes:
+        content = rewrite_unsaved_hold_authorship(content)
+    sentences = split_mixed_hold_units(list(units(content)), ITEM)
+    def asserted_permission_change(part):
+        for change in PERMISSION_CHANGE.finditer(part):
+            # A conditional governs its own predicate, not a subsequent
+            # assertion across punctuation or a coordinating conjunction.
+            prefix=part[:change.start()]
+            local_negation=re.split(r'[;:.!?\n]|\b(?:and|but|yet|however)\b',prefix,flags=re.I)[-1]
+            if _claim_negated(local_negation):
+                continue
+            conditional=re.search(r'\b(?:if|when|once|before|until)\b'
+                                  r'(?:(?!\b(?:and|but|yet|however|now that)\b)[^,;:.!?\n])*$',prefix,re.I)
+            # A requested verification is not a completed permission change.
+            # Anchor its governing predicate locally so a subsequent actual
+            # assertion cannot borrow a preceding check or conditional.
+            local=re.split(r'[;:.!?\n]|\b(?:and|but|yet|however)\b',prefix,flags=re.I)[-1]
+            local=re.sub(r'[*_`]', '', local).strip()
+            verification=re.fullmatch(
+                r'(?:(?:first\s+)?(?:verify|check|confirm)\s+(?:that|whether)|'
+                r'(?:(?:obtain|require|seek)\s+)?(?:verification|confirmation|evidence)\s+that|'
+                r'(?:we|you)\s+(?:must|should|need to)\s+(?:verify|check|confirm)\s+(?:that|whether))(?:\s+the)?\s*',
+                local,re.I)
+            if verification and re.match(r'^(?:verification|confirmation|evidence)\b',local,re.I):
+                tail=part[change.end():].strip()
+                # A bare checklist item can name evidence to obtain. A noun
+                # phrase with a completed main predicate instead asserts that
+                # evidence exists; it cannot masquerade as an instruction.
+                for tail_clause in re.split(r'[,;]|\b(?:and|but|yet|however)\b',tail,flags=re.I):
+                    required=re.match(r'^\s*(?:is required|must\b|should\b|needs? to\b)',tail_clause,re.I)
+                    completed=re.search(r'\b(?:is|was|has|have|exists?|now|already|recorded|obtained|received|confirmed)\b',tail_clause,re.I)
+                    if completed and not required:verification=None
+            if change.group(0) and re.search(r'\bautomatically\b', change.group(0)+part[change.end():change.end()+24], re.I):
+                conditional=False
+            if not conditional and not verification:
+                return True
+        return False
+
+    def held_scope_question(part):
+        # A real hold may be discussed while choosing the remaining scope.
+        # Preserve that question, not arbitrary model status or permission
+        # claims; the ordinary effect guard has already run above.
+        mentioned=projects(part)
+        question=re.sub(r'^\s*(?:[-*+]\s+|\d+[.)]\s+)?', '', part).strip()
+        # Normalize a bounded Markdown label for recognition only. Every
+        # effect/permission check still sees the original, including its label.
+        question=re.sub(r'^(?:\*\*[^*\n!?]{1,64}:\*\*|__[^_\n!?]{1,64}:__)\s*', '', question)
+        asks_scope=re.fullmatch(r'(?:(?:when|if|before|once)\b[^,;!?]{0,180},\s*)?'
+                               r'(?:which|what|should|could|would|can)\b[^;!?]*\?',question,re.I)
+        return bool(scopes and asks_scope and not asserted_permission_change(part) and
+                    (not mentioned or all(blocked_scopes(state,[name]) for name in mentioned)))
+    def saved_hold_reference(part):
+        part=re.sub(r'^\s*(?:[-*+]\s+|\d+[.)]\s+)', '', part)
+        # Referencing a matching saved hold is not an acknowledgment of a new
+        # permission change. Effect/dispatch checks still examine all prose.
+        if not scopes or asserted_permission_change(part):return False
+        if not in_force_hold_restatement_ok(part):return False
+        from hold_scope import GLOBAL_REFERENCE, pending_reference
+        mentioned=projects(part)
+        if any(not blocked_scopes(state,[name]) for name in mentioned):return False
+        if pending_reference(part,state,scopes,HOLD_CLAIM):return True
+        if re.search(r'\b(?:'+ '|'.join(re.escape(n) for n in WORKER_NAMES)+r')\b',part,re.I):return False
+        global_hold=state['holds'].get('all')
+        if (not global_hold or global_hold.get('released_projects')) and GLOBAL_REFERENCE.search(part):return False
+        qualifier=re.match(r'\s*For\s+([^,;:]+),',part,re.I)
+        if qualifier and qualifier[1].strip() not in state['holds']:return False
+        # A bare reference is allowed only within the current held project;
+        # arbitrary external subjects cannot borrow that project's permission.
+        for clause in re.split(r';|\b(?:and|but|yet|however)\b',part,flags=re.I):
+            for match in HOLD_CLAIM.finditer(clause):
+                prefix=clause[:match.start()];suffix=clause[match.end():]
+                if re.search(r'\b(?:your|the|this|that|earlier|previous)\s+(?:(?:earlier|previous|existing|current)\s+)?hold\b',match[0],re.I):
+                    # A labelled pending decision is a noun phrase, not an
+                    # unsupported hold on an arbitrary external service.
+                    label=re.fullmatch(r'\s*(?:\*\*)?releasing\s*',prefix,re.I) and re.match(r'\s*\*\*?:|\s*:\*\*',suffix)
+                    simple=not prefix.strip(' *\n') and re.match(r'\s+(?:remains?\s+(?:active|in place)|still applies)[.!?\s]*$',suffix,re.I)
+                    if label or simple:continue
+                    # A dependent prepositional reference names the existing
+                    # constraint; it does not assert a new hold or release.
+                    incidental = re.search(r'\b(?:under|within|during|subject to)\s*$',prefix,re.I)
+                    target = re.match(r'\s+(?:on|for|in)\s+(.+)',suffix,re.I)
+                    tail = suffix
+                    if target:
+                        bound = next((re.match(re.escape(name)+r'\b',target[1],re.I)
+                                      for name in mentioned if blocked_scopes(state,[name]) and
+                                      re.match(re.escape(name)+r'\b',target[1],re.I)),None)
+                        if not bound:return False
+                        tail = target[1][bound.end():]
+                    # A relative clause changes what is asserted about the
+                    # hold. A declarative 'X remains under' asserts its subject
+                    # is held; neither is just an incidental reference.
+                    reference_tail = (not tail.strip(' .!?\n') or
+                                      re.fullmatch(r'\s+before\s+\w+ing\b[^,;.!?]*[.!?\s]*',tail,re.I))
+                    from claim_scope import DIRECTIVE, QUESTION, plain
+                    preparing = DIRECTIVE.match(plain(prefix)) or QUESTION.match(plain(prefix))
+                    # Coordination of objects may leave a relative noun phrase
+                    # after "and" ("files and checks you want examined"). It
+                    # retains its question/directive governor, not a new actor.
+                    relative_object = (DIRECTIVE.match(plain(part)) or QUESTION.match(plain(part))) and re.match(
+                        r'^\s*(?:[\w-]+\s+){1,4}(?:you|we)\s+(?:want|need|choose)\b',plain(prefix),re.I)
+                    predicate_prefix=prefix[:incidental.start()] if incidental else ''
+                    asserted_subject=re.search(r'\b(?:is|are|was|were|has|have|remains?|stays?|falls?)\b\s*'
+                                               r'(?:[\w-]+\s+){0,3}$',predicate_prefix,re.I)
+                    from assertion_scope import nonasserted
+                    from claim_scope import CONNECTOR, ASSERTED_LINK
+                    links=[m for m in CONNECTOR.finditer(predicate_prefix)
+                           if ASSERTED_LINK.fullmatch(m[0].strip(' ,'))]
+                    local_prefix=predicate_prefix[links[-1].end():] if links else predicate_prefix
+                    uncertain = nonasserted(local_prefix,'held',sentence_start=True)
+                    # An introductory bound PP may precede its actual check.
+                    # Check that remaining instruction separately for effects.
+                    introductory = incidental and not prefix[:incidental.start()].strip(' *\n')
+                    following = re.match(r'\s*,\s*(.+)',tail,re.S)
+                    preposed = introductory and following and DIRECTIVE.match(plain(following[1]))
+                    if (incidental and (not asserted_subject or uncertain) and
+                            ((reference_tail and (preparing or relative_object)) or preposed) and
+                            not foreign_subject(clause,projects,WORKER_NAMES)):
+                        continue
+                    return False
+                subject=re.split(r'[,;:]',prefix)[-1].strip(' *\n')
+                named=projects(match[0]) or projects(subject)
+                if named and all(blocked_scopes(state,[p]) for p in named):
+                    # Bare operational status belongs to the saved-state
+                    # renderer. Contextual discussion may reference that hold
+                    # without replacing the rest of a useful answer.
+                    standalone = not suffix.strip(' .!?\n') and (not subject or any(
+                        re.fullmatch(re.escape(p)+r'(?:\s+(?:is|was))?',subject,re.I) for p in named))
+                    if standalone:return False
+                    if (projects(match[0]) and (not subject or re.fullmatch(r'While|As|Because',subject,re.I))) or any(re.fullmatch(r'(?:(?:While|As|Because)\s+)?'+re.escape(p)+r'(?:\s+(?:is|was))?',subject,re.I) for p in named):continue
+                if re.fullmatch(r'You\s+(?:set|put|placed)\s+(?:the\s+)?(?:execution|work)',subject,re.I):continue
+                # A matching saved hold may be restated as still in force.
+                # This does not invent a hold or describe a lift/clear/release.
+                if (scopes and not named and not foreign_subject(clause,projects,WORKER_NAMES) and
+                        re.search(r'\b(?:execution|work)\b',prefix+' '+subject,re.I) and
+                        re.search(r'\b(?:on hold|held|paused)\b',match[0]+' '+suffix,re.I) and
+                        in_force_hold_restatement_ok(clause)):
+                    continue
+                return False
+        return True
+    record_ids=set(bindings)
+    # The server-bound focus supplies the referent for "its status" and
+    # "the hold" across corrections. It does not authorize any real effect.
+    record_topic=topic_record(record,bindings)
+    record_subject=record_topic
+    def attributed_record_hold(part):
+        nonlocal record_subject
+        if not reported or not record_ids:return False
+        label,plain=presentation(part)
+        # Neutral presentation never erases a bound record. An actual actor
+        # label breaks inheritance, but an explicit body subject may rebind it.
+        # Every effect/permission check still examines the unmodified text.
+        if label:
+            if foreign_label(label,projects,WORKER_NAMES):record_subject=None
+        identity='(?:'+'|'.join(re.escape(i) for i in sorted(record_ids))+')'
+        subject=r'(?:(?:task|assignment|record)\s+)?'+identity
+        nominal=r'(?:the|this|that)\s+(?:(?:supplied|reported|fictional|hypothetical)\s+)?(?:task|assignment|record)'
+        predicate=r'(?:(?:is|was|remains?|stays?)\b\s*)?(?:(?:still|explicitly|currently)\b\s*)?(?:(?:recorded|reported|described|listed|marked)\s+as\s*)?'
+        accepted=True
+        for clause in re.split(r'[.!?;]\s*|\b(?:and|but|yet|however)\b',plain,flags=re.I):
+            # A new named app/worker/real-world subject cannot inherit a
+            # fictional record's state, including after a conjunction.
+            if projects(clause) or re.search(r'\b(?:'+ '|'.join(re.escape(n) for n in WORKER_NAMES)+r'|your|our|my|actual|real|this chat|this conversation)\b',clause,re.I):
+                record_subject=None
+                if HOLD_CLAIM.search(clause):accepted=False
+                continue
+            clean_clause=re.sub(r'^\s*(?:In the (?:supplied|reported|fictional|hypothetical) (?:record|case|scenario),?\s*|(?:Because|While|Whereas)\s+)','',clause,flags=re.I).strip()
+            for claim in HOLD_CLAIM.finditer(clean_clause):
+                prefix=clean_clause[:claim.start()].strip()
+                suffix=clean_clause[claim.end():].strip()
+                identified=re.fullmatch(subject+r'\s*'+predicate,prefix,re.I)
+                task_directive=re.fullmatch(r'(?:keep|maintain)\s+'+subject+r'\s*',prefix,re.I)
+                described=bool(re.fullmatch(nominal+r'\s*'+predicate,prefix,re.I))
+                anaphor=record_subject and bool(re.fullmatch(r'(?:it|(?:its|the|this|that)\s+(?:(?:task|assignment|record|current|recorded|reported)\s+)*(?:status|state))\s*'+predicate,prefix,re.I))
+                inherited=record_subject and bool(re.fullmatch(predicate,prefix,re.I))
+                # A supplied record may restate its own hold/status without an
+                # actor performing a permission change.
+                described_status=bool(record_subject and re.search(
+                    r'\b(?:(?:its|the|this|that)\s+)?(?:(?:task|assignment|record|current|recorded|reported)\s+)*'
+                    r'(?:status|state|lifecycle stage)\s+(?:of\s+)?'+predicate+r'(?:on hold|held|paused)\b',clean_clause,re.I))
+                in_force_restatement=bool(
+                    (record_subject or re.search(r'\b'+identity+r'\b',clean_clause,re.I)) and
+                    re.search(r'\b(?:on hold|held|paused)\b|\bthe (?:saved |reported |owner[- ]placed )?hold\b',
+                              clean_clause,re.I) and
+                    re.search(
+                        r'\b(?:lifecycle stage|active status|currently on hold|has not executed|'
+                        r'has not reached|do(?:es)? not (?:clear|lift|release|bypass|override)|'
+                        r'still applies|'
+                        r'remains?\s+(?:(?:explicitly|currently|still)\s+)*(?:active|in (?:force|place|effect)|on hold|held|paused)|'
+                        r'(?:the (?:saved |reported |owner[- ]placed )?hold\s+)?(?:is|remains?)\s+in (?:place|force|effect)|'
+                        r'was placed(?:\s+before)?)\b',
+                        clean_clause,re.I) and
+                    not foreign_subject(clean_clause,projects,WORKER_NAMES) and
+                    in_force_hold_restatement_ok(clean_clause))
+                named_subject=re.match(
+                    r'^\s*(?:(?:task|assignment|record|lease|source|snapshot|revision|artifact)\s+)?'
+                    r'([A-Za-z][\w]*-\d+)\b',clean_clause,re.I)
+                if in_force_restatement and named_subject and named_subject[1] != record_subject:
+                    in_force_restatement=False
+                # References/advice/checks about a hold have a bounded object;
+                # "the hold on the backup service" cannot borrow this scope.
+                noun=bool(re.fullmatch(r'(?:the|this|that|earlier|previous)(?:\s+(?:earlier|previous|existing|current|owner(?:-placed)?|recorded|reported))?\s+hold',claim[0],re.I))
+                governing=bool(re.fullmatch(r'(?:(?:maintain|keep|preserve)\s*|(?:(?:obtain|require|seek)\s+)?(?:verification|confirmation|evidence)\s+that\s*|(?:first\s+)?(?:verify|check|confirm)\s+(?:that|whether)\s*)?',prefix,re.I))
+                # Requirements describe evidence still needed; they do not
+                # assert that a permission change actually occurred. The
+                # separate change guard checks the entire original unit.
+                prerequisite=bool(re.search(r'\b(?:must|should|needs? to|is required to)\b',prefix,re.I)
+                    and re.search(r'\b(?:before|after)\s+(?:lifting|clearing|releasing)\s*$',prefix,re.I)
+                    and not foreign_label(prefix,projects,WORKER_NAMES))
+                # Restatements may continue with remains/stays. Completed
+                # predicates (is/was/are/were lifted|granted) stay with the
+                # permission-change guard, not this object binder.
+                explicit_object=bool(re.fullmatch(r'(?:on|for|in)\s+'+subject+
+                    r'(?:\s*(?:[,;]|(?:until|while|before|after|must|should|needs? to|remains?|stays?)\b).*)?\s*[.!?]*',suffix,re.I))
+                state_modifier=bool(re.match(r'(?:still\s+)?(?:applies|active)|in\s+(?:place|force|effect)\b(?!\s+(?:on|for|in)\b)',suffix,re.I))
+                object_ok=not re.match(r'(?:on|for|in)\b',suffix,re.I) or explicit_object or state_modifier
+                directive=bool(re.fullmatch(r'(?:maintain|keep|preserve)\s*',prefix,re.I))
+                from reported_records import prospective_hold_check
+                bound_target=re.match(r'(?:on|for|in)\s+'+subject+r'(?=\s|$)',suffix,re.I) if explicit_object else None
+                prospective_tail=suffix[bound_target.end():] if bound_target else suffix
+                prospective=bool(record_topic and prospective_hold_check(prefix,prospective_tail))
+                noun_reference=(record_subject or explicit_object or (directive or prospective) and record_topic) and noun and (governing or prerequisite or prospective) and object_ok
+                denied_lift=bool((record_subject or explicit_object) and noun and object_ok and re.search(
+                    r"\b(?:do(?:es)? not|cannot|can['’]t|has no(?:\s+\w+){0,4}\s+authority to|will not|did not)\s+"
+                    r'(?:override|clear|lift|release|revoke|cancel)\b|'
+                    r'\bno authority to\s+(?:override|clear|lift|release)\b',prefix,re.I))
+                remaining_hold=bool((record_subject or explicit_object) and noun and object_ok and re.search(
+                    r'\b(?:still applies|'
+                    r'remains?\s+(?:(?:explicitly|currently|still)\s+)*(?:active|recorded|in (?:force|place|effect)|on hold|held|paused)|'
+                    r'stays?\s+(?:(?:explicitly|currently|still)\s+)*(?:active|in (?:force|place|effect)|on hold|held|paused)|'
+                    r'is still\s+(?:active|in (?:force|place|effect)|on hold|held|paused)|'
+                    r'(?:is|remains?)\s+in (?:place|force|effect))\b',
+                    prefix+' '+suffix,re.I))
+                if not (identified or task_directive or described or anaphor or described_status or
+                        inherited and not noun or noun_reference or denied_lift or remaining_hold or
+                        in_force_restatement):
+                    accepted=False
+                    record_subject=None
+                elif identified or task_directive:
+                    record_subject=next(i for i in bindings if re.search(r'\b'+re.escape(i)+r'\b',prefix,re.I))
+                elif explicit_object:
+                    record_subject=next(i for i in bindings if re.search(r'\b'+re.escape(i)+r'\b',suffix,re.I))
+                elif (described or in_force_restatement or remaining_hold) and record_topic and not record_subject:
+                    record_subject=record_topic
+            if not HOLD_CLAIM.search(clean_clause):
+                # Coordinated predicates may share an explicit preceding
+                # record subject, but not a different service's subject.
+                explicit=re.search(r'(?:^|\bwhereas\s+)'+subject+r'\s+(?:is|was|are|were|remains?|stays?|has|have|requires?|needs?|must|should|may|can|could|will)\b',clean_clause,re.I)
+                if explicit:record_subject=next(i for i in bindings if re.search(r'\b'+re.escape(i)+r'\b',explicit[0],re.I))
+                elif foreign_subject(clean_clause,projects,WORKER_NAMES):record_subject=None
+        return accepted
+    from answer_fragments import (
+        DependencyState, depends_on_rejected_unit, heading_unit, ACKNOWLEDGEMENT,
+        prospective_plan)
+    dependency=DependencyState()
+    kept=[];pending_effect=False;pending_reference=False;rejected_effect=False
+    decisions=[];offset=0
+    for part in sentences:
+        # Track intervening subjects even when a sentence has no hold claim.
+        # Otherwise "a service is offline. It is on hold" could inherit the
+        # fictional task's referent across the first sentence's short circuit.
+        context_record=record_subject
+        record_hold=attributed_record_hold(part)
+        changed=asserted_permission_change(part)
+        effect=unsupported_effect(part)
+        invented_hold = (not scopes and PRODUCT_HOLD_AUTHORSHIP.search(part))
+        valid=not effect and not changed and not invented_hold and (not HOLD_CLAIM.search(part) or
+                held_scope_question(part) or saved_hold_reference(part) or record_hold)
+        independent,governor=dependency.consider(part,valid,offset=offset,taint=bool(effect or changed))
+        # Independent list items and headings are judged on their own. Other
+        # units still need consider()'s independent result so a rejected
+        # premise cannot license a later permission/effect or an if/once/after
+        # governor whose this/that/it consequent depends on that premise.
+        dependent=depends_on_rejected_unit(part, pending=pending_reference)
+        own_merits=bool(heading_unit(part) or ITEM.match(part))
+        tainted_governor=bool(pending_reference and prospective_plan(part) and
+                              re.search(r'\b(?:this|that|it|its|they|their|these|those)\b',part,re.I))
+        if part.strip() and valid and not independent and not own_merits:
+            dependent=True
+        if tainted_governor:
+            dependent=True
+            dependency.close_plan()
+        accepted=valid and not dependent
+        if accepted:
+            kept.append(part)
+        elif part.strip():
+            # An unresolved reference is not evidence of a fabricated effect.
+            # Preserve independently checked payload/proof/requirement prose;
+            # its original referents and final provenance remain checked.
+            if effect or changed:pending_effect=True
+            pending_reference=True
+            rejected_effect=rejected_effect or effect or dependent
+        decisions.append(receipt(part,offset=offset,accepted=bool(accepted),
+            reason='unsupported_effect' if effect else
+                ('dependent_on_rejected_effect' if pending_effect else 'dependent_on_unresolved_reference') if dependent else
+                'unsupported_permission_change' if changed else 'supported_reference_or_nonclaim' if accepted else 'unbound_hold_claim',
+            subject=record_subject,bindings=bindings))
+        decisions[-1].update(context_record=context_record,context_source_bindings=bindings.get(context_record,[]))
+        decisions[-1]['prospective_governor_start']=governor
+        offset+=len(part)
+    # A heading whose body survived is not a rejected consequence.
+    for index,part in enumerate(sentences):
+        decision=decisions[index]
+        if decision['accepted'] or decision['reason'] not in (
+                'dependent_on_rejected_effect','dependent_on_unresolved_reference'):
+            continue
+        if not heading_unit(part):
+            continue
+        for follow,follow_decision in zip(sentences[index+1:],decisions[index+1:]):
+            if heading_unit(follow):
+                break
+            if follow_decision['accepted'] and follow.strip():
+                decision['accepted']=True
+                decision['reason']='supported_reference_or_nonclaim'
+                break
+    kept=[part for part,decision in zip(sentences,decisions) if decision['accepted'] or not part.strip()]
+    if conversation and (reported or len(kept)!=len(sentences)):
+        message=conversation.get('messages',[])[-1:]
+        if message and message[0].get('role')=='assistant':
+            import hashlib
+            message[0]['authority_review']=dict(partial=len(kept)!=len(sentences),units=decisions,
+                evaluated_input_sha256=hashlib.sha256(content.encode()).hexdigest(),
+                stage='original_units_effect_hold_and_permission',
+                scope='Reported-record and permission delivery checks; no execution authority')
     if len(kept) != len(sentences):
         content = "".join(kept).strip()
+        if rejected_effect and (not content or ACKNOWLEDGEMENT.fullmatch(content)):
+            return blocked or unperformed_restart(root,text)
         # Only the saved state may explain an operational hold.
         if scopes:
             content = (content + "\n\n" if content else "") + hold_reply(scopes)
         elif not content:
             content = "I could not produce a useful answer to that request. Please retry."
+        from claim_evidence import _renumber_lists, drop_orphan_fragments
+        content = drop_orphan_fragments(_renumber_lists(content))
+    if not scopes:
+        # A user-reported hold is not a product-saved hold. Restate it as a
+        # hold, never as something this product stored or registered.
+        content = rewrite_unsaved_hold_authorship(content)
+        content = restated_hold_on_reload(text, content, conversation, scopes)
     if sticky_reply(text, content):
         content = "I could not produce a useful answer to that request. Please retry."
     if blocked:

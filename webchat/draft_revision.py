@@ -46,7 +46,9 @@ def source(conversation, redact):
     ids = {m['request_id'] for m in retained['user_excerpts']}
     if not latest or latest.get('request_id') not in ids or latest.get('provider') in ('dispatcher', 'planner', 'state'):
         return None
-    original = redact(latest.get('content', ''))
+    if latest.get('_reply_contract',{}).get('kind')=='writing' and not latest.get('artifact',{}).get('accepted'):
+        return None
+    original = redact(latest.get('artifact',{}).get('text',latest.get('content', '')))
     if not original.strip() or len(original) > LIMIT or '<bob-webchat-attachment' in original:
         return None
     # A new subject is not an edit merely because the turn begins "change".
@@ -64,7 +66,8 @@ def apply(value, bound):
     """Validate completely before reconstructing; never mutate the saved draft."""
     if not isinstance(value, str) or len(value) > LIMIT * 3:
         raise ValueError('Invalid edit size')
-    patch = json.loads(value)
+    from structured_reply import loads
+    patch = loads(value)
     if not isinstance(patch, dict) or set(patch) != {'source_sha256', 'edits'} or patch['source_sha256'] != bound['source_sha256']:
         raise ValueError('Edit source does not match')
     edits = patch['edits']

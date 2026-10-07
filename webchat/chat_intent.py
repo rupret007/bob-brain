@@ -47,12 +47,39 @@ def new_state():
 
 def apply_turn(state, text, request_id):
     """Apply only an explicit user directive; never scan for a stray 'go'."""
-    normalized = command(text)
+    from answer_intent import instructions
+    # A quoted project name is a literal argument, not a quoted instruction.
+    # Unwrap only exact names before removing reference material. Never scan
+    # the raw reference tail to recover a target discarded by instructions().
+    scoped = text
+    for pattern in (r'"([^"\n]*)"', r'“([^”\n]*)”', r'`([^`\n]*)`',
+                    r"(?<!\w)'([^'\n]*)'(?!\w)", r'‘([^’\n]*)’'):
+        scoped = re.sub(pattern, lambda m: m[1] if PROJECT.fullmatch(
+            normalize_projects(m[1].strip())) else m[0], scoped)
+    normalized = command(instructions(scoped))
     # Scope comes from the directive, not explanations in following sentences.
-    directive = re.split(r"[.!?]\s", normalized, maxsplit=1)[0]
+    # Newlines may wrap a command's target, e.g. 'Clear the hold on\nWeb Bob'.
+    directive = re.split(r"[.!?;]\s*", normalized, maxsplit=1)[0]
     names = projects(directive)
+    if not names and (HOLD.match(normalized) or RELEASE.match(normalized) or LIFT.match(normalized) or PUSH.match(normalized)):
+        raw_directive = re.split(r"[.!?;]\s*", command(scoped), maxsplit=1)[0]
+        if (re.search(r'\b(?:on|for|with)\s*$', directive, re.I) or
+                any(mark in raw_directive for mark in ('"', '“', "'", '‘', '`'))):
+            return None  # A missing/quoted unknown target cannot mean every hold.
+    # A plan and an explicit execution hold may share one message. Persist
+    # that negative instruction before answering the plan, without treating
+    # quoted/imported imperatives or a proposed hold as owner authority.
+    if re.match(r'^(?:help (?:me )?(?:plan|outline)|plan|outline|discuss)\b',normalized,re.I):
+        clauses=re.split(r'[.!?;]\s*|\n',normalized)
+        embedded=next((part for part in clauses[1:] if re.match(
+            r'^(?:please\s+)?(?:hold|pause)\s+(?:execution|(?:the |this )?(?:work|implementation))\b',part,re.I)),None)
+        if embedded:
+            for scope in projects(embedded) or names or ['all']:
+                state['holds'][scope]=dict(request_id=request_id,reason=embedded,released_projects=[])
+            state['last_permission']=dict(action='hold',request_id=request_id)
+            return 'planning_hold'
     if PUSH.match(normalized):
-        names = project_targets(text, state)
+        names = project_targets(directive, state)
         # A push only grants permission for its resolved projects. Asking for
         # missing targets (including an empty exclusion) must preserve holds.
         if not names:

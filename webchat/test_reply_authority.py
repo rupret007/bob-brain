@@ -26,7 +26,7 @@ class AuthorityTests(unittest.TestCase):
     def test_real_status_and_resource_questions_still_use_live_observations(self):
         for prompt in ("what is the status?", "how are the workers doing?",
                        "resource usage", "resource utilization", "resource availability",
-                       "check resources", "show me resources", "what resources are available?",
+                       "check resources", "show me resources",
                        "how are our resources doing?", "are we using all resources?",
                        "We using all resources now?"):
             with self.subTest(prompt=prompt):

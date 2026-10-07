@@ -7,17 +7,50 @@ WORKERS = r"(?:Codex|Claude|Cursor|Gemini|MiniMax|the (?:system|dispatcher|worke
 PLACEMENT_VERB = r"(?:put(?:ting)?|plac(?:e|ed|ing)|add(?:ed|ing)?|mov(?:e|ed|ing)|send(?:ing)?|sent|transfer(?:red|ring)?|submit(?:ted|ting)?)"
 QUEUE_PLACEMENT = (PLACEMENT_VERB + r"\b[^.;!?\n]{0,70}\b(?:in(?:to)?|to)\s+"
                    r"(?:(?:a|an|the|my|your|our|this|that)\s+)?queue\b")
-EFFECT = r"(?:start(?:ed|ing)?|creat(?:e|ed|ing)\b[^.!?\n]{0,60}\b(?:jobs?|tasks?)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|add(?:ed|ing)? work|put .{0,40} to work|kick(?:ed|ing)? off|" + QUEUE_PLACEMENT + r")"
+# A causative result requires an object followed by its resulting state.
+# Retrieving attributively described inputs ("get the assigned files") has
+# a following noun head and is not such an operation.
+RESULT_HEAD = (r'(?!(?:the|a|an|my|our|your|their|its|his|her|this|that|these|those|'
+               r'and|or|but|of|from|for|to|with|without|by|in|on|at)\b)[\w-]+')
+RESULT_OBJECT = r'(?:(?!\b(?:restarted|dispatched|assigned)\b)[^.!?\n]){0,115}?\b' + RESULT_HEAD
+RESULT_END = (r'(?=$|[.;!?\n]|\s+(?:now|today|tonight|by|before|after|without|for|so|and|but|yet|then)\b|'
+              r',\s+(?:and|but|yet|then|so|before|after)\b)')
+CAUSATIVE_RESULT = r'get\s+' + RESULT_OBJECT + r'\s+(?:restarted|dispatched|assigned)\b' + RESULT_END
+EFFECT = r"(?:(?:re)?start(?:ed|ing)?|creat(?:e|ed|ing)\b[^.!?\n]{0,60}\b(?:jobs?|tasks?)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|" + CAUSATIVE_RESULT + r"|add(?:ed|ing)? work|put .{0,40} to work|kick(?:ed|ing)? off|" + QUEUE_PLACEMENT + r")"
 CLAUSE_START = r"(?:^|[.;!?\n–—]\s*|\b(?:and|then|but|yet)\s+)"
-BARE_EFFECT = CLAUSE_START + r"(?:queued|assigned|started|dispatched|launched|scheduled)\b"
+BARE_EFFECT = CLAUSE_START + r"(?:queued|assigned|started|restarted|dispatched|launched|scheduled)\b"
+# Project IDs and paths are not speaking actors. A heading boundary also
+# cannot make an actor in that heading the subject of a later assignment.
+ACTOR = r"(?<![\w./-])(?:[_*]{1,2})?(?:I|we|Bob|" + WORKERS + r")(?:[_*]{1,2})?(?![\w/-])"
+# A speaking subject must govern the effect predicate. An arbitrary later noun
+# ("we keep discussing memory and queue state") is not an action by that subject.
+ACTOR_PREDICATE = (r"(?:['’](?:ve|ll|d|m|re|s))?\s*(?:[*_]*\s*:\s*[*_]*\s*)?"
+                   r"(?:(?:has|have|had|is|are|was|were|will|would|can|could|may|might|must|should|did|do|"
+                   r"just|now|already|also|still|finally|[a-z]+ly|been|being|get|got)\s+){0,6}")
+CAUSATIVE = r'(?:(?:ask(?:ed)?|tell|told|instruct(?:ed)?|use[ds]?)\s+(?:Bob|'+WORKERS+r')\s+to\s+)'
+ACTOR_EFFECT = ACTOR + ACTOR_PREDICATE + r'(?:'+CAUSATIVE+r')?' + EFFECT + r"\b"
+# An undertaking governs its predicate. A purpose infinitive later in a
+# proposed comparison ("run a test to ensure ...") is not that undertaking.
+# Preserve coordinated promises rather than matching only the first verb.
+UNDERTAKING = r"(?:make sure|ensure|utiliz\w*|prioritiz\w*|keep [^.!?\n]{0,35}busy|maximize|adding work)"
+FUTURE_ACTOR = r"\b(?:I['’]ll|I will|we['’]ll|we will|the system (?:will|is))\s+"
+COMMITMENT = (FUTURE_ACTOR +
+              r"(?:(?:now|also|always|actively|definitely|certainly)\s+){0,3}"
+              r"(?:" + UNDERTAKING + r"|"
+              r"(?:(?!\b(?:to|if|when|unless)\b)[^.;!?\n]){1,100}"
+              r"\b(?:and|then|but|yet)\s+(?:will\s+)?"
+              r"(?:(?:now|also|always|actively|definitely|certainly)\s+){0,3}" + UNDERTAKING + r")|"
+              + FUTURE_ACTOR + r"[^.;!?\n]{0,160}\b(?:and|then|but|yet)\s+will\s+"
+              r"(?:(?:now|also|always|actively|definitely|certainly)\s+){0,3}" + UNDERTAKING)
 CLAIM = re.compile(
-    r"\b(?:I|we|Bob|" + WORKERS + r")\b[^.!?\n]{0,90}\b" + EFFECT + r"\b|"
+    ACTOR_EFFECT + r"|"
     + BARE_EFFECT + r"|"
-    r"\b(?:work|jobs?|tasks?|reviews?|audits?|tests?)\b[^.!?\n]{0,80}\b(?:has|have|is|are|was|were|being|been)\b"
+    r"\b(?:work|jobs?|tasks?|reviews?|audits?|tests?)\b[^:.!?\n]{0,80}\b(?:has|have|is|are|was|were|being|been)\b"
     r"[^.!?\n]{0,30}\b" + EFFECT + r"\b|"
-    r"\b(?:I['’]ll|I will|we['’]ll|we will|the system (?:will|is))\b[^.!?\n]{0,100}"
-    r"\b(?:make sure|ensure|utiliz|prioritiz|keep .{0,35}busy|maximize|adding work)|"
-    r"\b" + WORKERS + r"\b.{0,45}\b(?:is|are) (?:now )?(?:working|running|busy|on it)\b|"
+    r"\b(?:work|jobs?|tasks?|reviews?|audits?|tests?)\b[*_]*\s*:\s*[*_]*\s*"
+    r"(?:(?:has|have|is|are|was|were|been|now|just|already)\s+){0,4}" + EFFECT + r"\b|"
+    + COMMITMENT + r"|"
+    r"\b" + WORKERS + r"\b[^.;!?\n]{0,45}\b(?:is|are) (?:now )?(?:working|running|busy|on it)\b|"
     r"\b(?:I['’]ve|I have|we['’]ve|we have) (?:put|got|set)\b[^.!?\n]{0,60}\b(?:working|busy|work|task|job)\b",
     re.I,
 )
@@ -42,8 +75,9 @@ REFERENCE_TARGET = (r"\b(?:your|our|my)\s+(?:" + TARGET_MODIFIER + r"){0,4}(?:jo
                     r"(?:" + TARGET_MODIFIER + r"){1,4}(?:job|task)\b")
 ASSERTION_AUX = r"(?:is|are|was|were|has|have|had|be|been|being|will|would|shall|should|can|could|may|might|must|get|gets|got)"
 ASSERTION_ADVERB = r"(?:now|just|already|still|also|then|[a-z]+ly)"
+CONTINUATION_JOIN = r'(?:\b(?:and|then|but|yet)|[;–—])\s+'
 COORDINATED_EFFECT = re.compile(
-    r'(?:\b(?:and|then|but|yet)|[;–—])\s+'
+    CONTINUATION_JOIN +
     r'(?:(?:I|we|he|she|it|they)\s+)?'
     r'(?:(?:' + ASSERTION_AUX + r'|' + ASSERTION_ADVERB + r')\s+){0,4}' + EFFECT + r'\b', re.I)
 QUEUE_STATE = (r"in\s+(?:(?:a|an|the|my|your|our|this|that|[\w]+['’]s)\s+)?"
@@ -75,8 +109,12 @@ REFERENCE_EFFECT = re.compile(
     r"\b(?:the|a)\s+(?:(?:queued|running|started|scheduled|assigned|waiting)\s+){1,4}(?:job|task)\b"
     r"(?=[^.;!?\n]{0,120}\b(?:now|just|already|currently|today|here)\b)" + TARGET_PREDICATE, re.I)
 DIRECT_CLAIM = re.compile(
-    r"\b(?:I|we|Bob|" + WORKERS + r")\b[^.!?\n]{0,90}\b" + EFFECT + r"\b|"
-    r"\b" + WORKERS + r"\b.{0,45}\b(?:is|are) (?:now )?(?:working|running|busy|on it)\b|"
+    ACTOR_EFFECT + r"|"
+    # A clause-leading completed receipt can refer back to work as "it".
+    # Do not match a conditional ("if it's been scheduled") or a negation.
+    r"(?:^|[.;!?\n]\s*)it(?:['’]s|\s+has)\s+been\s+"
+    r"(?:queued|scheduled|launched|started|assigned|dispatched)\b|"
+    r"\b" + WORKERS + r"\b[^.;!?\n]{0,45}\b(?:is|are) (?:now )?(?:working|running|busy|on it)\b|"
     r"\b(?:I['’]ve|I have|we['’]ve|we have) (?:put|got|set)\b[^.!?\n]{0,60}\b(?:working|busy|work|task|job)\b",
     re.I,
 )
@@ -133,21 +171,49 @@ def unasserted_prose(prose):
     its original wording. Contrast, coordination and punctuation end the scope;
     a disclaimer cannot shelter an appended action or receipt.
     """
+    # Access to assigned inputs describes reach; 'assigned' is an adjective,
+    # not an act of assignment by the earlier named provider. Preserve every
+    # later predicate and receipt, including shared-subject actual effects.
+    prose = re.sub(r'\b(?P<prefix>(?:for|in|within|inside|from|through|access(?:es|ing)?(?:\s+to)?|'
+                   r'read(?:s|ing)?|inspect(?:s|ing)?)\s+)assigned'
+                   r'(?=\s+(?:worktrees?|repositories|repos?|files?|inputs?|evidence)\b)',
+                   lambda m: m['prefix']+' '*len('assigned'),prose,flags=re.I)
+    # An exact zero-count noun phrase cannot acknowledge a positive effect.
+    # Replace only that phrase; preserve a following actor, ID or predicate.
+    prose = re.sub(r'\b(?:0|zero|no)\s+(?:(?:live|active|claimed|queued|running)\s+){0,3}'
+                   r'(?:workers?|jobs?|tasks?)\b(?:\(s\))?(?:\s+(?:running|queued|claimed))?',
+                   'no recorded items',prose,flags=re.I)
     # Match one immediate predicate, never a tail of arbitrary words. In
     # particular, EFFECT contains object-spanning forms such as create...job
     # that must not be used to erase the scope of a negation.
-    verb = (r'(?:start(?:ed|ing)?|creat(?:e|ed|ing)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|'
+    verb = (r'(?:(?:re)?start(?:ed|ing)?|creat(?:e|ed|ing)|assign(?:ed|ing)?|queue(?:d|ing)?|queuing|'
             r'dispatch(?:ed|ing)?|launch(?:ed|ing)?|schedul(?:e|ed|ing)|delegat(?:e|ed|ing)|'
             + PLACEMENT_VERB + r'|kick(?:ed|ing)? off|running|working|in progress|picked up)\b')
+    from assertion_scope import negative_passive_effects
+    spans=list(negative_passive_effects(prose,verb))
+    for start,end in reversed(spans):
+        prose=prose[:start]+' '* (end-start)+prose[end:]
     denial = (r"\b(?:(?:does|do|did|would|could)(?: not|n['’]t)|cannot|can['’]t)\s+"
-              r"(?:prove|establish|show|confirm|mean|demonstrate|indicate)\b|"
+              r"(?:prove|establish|show|confirm|mean|demonstrate|indicate|assume)\b|"
               r"\bno (?:evidence|proof|record)\s+(?:shows?|proves?|establishes?|confirms?|that)\b|"
               r"\bnot that\b")
-    subject = (r'(?:(?:the|a|your|our|my|this|that)\s+)?(?:work|jobs?|tasks?|tests?)|'
+    subject = (r'(?:(?:the|a|your|our|my|this|that)\s+)?'
+               r'(?:(?:background|bounded|pending|requested|assigned)\s+){0,2}(?:work|jobs?|tasks?|tests?)|'
                r'I|we|Bob|' + WORKERS)
-    predicate = (r'\s+(?:that\s+)?(?:' + subject + r')\s+'
-                 r'(?:(?:has|have|had|is|are|was|were)\s+)?(?:been\s+)?' + verb)
-    prose = re.sub(r'(?:' + denial + ')' + predicate, 'unproven assertion', prose, flags=re.I)
+    proposition = (r'(?P<prefix>(?:' + denial + r')\s+(?:that\s+)?(?:' + subject + r')\s+)'
+                   r'(?:(?:has|have|had|is|are|was|were|been|being|already|now|currently|just)\s+){0,4}' + verb)
+    def denied_proposition(match):
+        end=re.search(r'[.!?\n]',prose[match.end():])
+        tail=prose[match.end():match.end()+end.start()] if end else prose[match.end():]
+        # Keep the subject when a later shared-subject affirmative needs it.
+        # Otherwise this immediate denied proposition is explanatory data;
+        # its complementizer ("not that work...") is not a deictic owner.
+        affirmative=re.compile(CONTINUATION_JOIN +
+                               r'(?:(?:it|they)\s+)?(?:(?:'+ASSERTION_AUX+r'|'+ASSERTION_ADVERB+r')\s+){0,4}'+verb,re.I)
+        if affirmative.search(tail):
+            return match['prefix']+'has no established action'
+        return 'unproven assertion'
+    prose = re.sub(proposition, denied_proposition, prose, flags=re.I)
     # Auxiliary negation belongs to this predicate only, not the sentence.
     prose = re.sub(r"\b(?:(?:is|are|was|were|has|have|had|will|would|can|could|may|might|must|should)"
                    r"(?: not|n['’]t)|cannot|won['’]t|can['’]t|shan['’]t)\s+"
@@ -212,7 +278,7 @@ def dispatch_prose(text, *, reference=''):
     prose = unasserted_prose(prose)
     # An instruction to ask an actor for work is not that actor performing it.
     # Normalize only the infinitive predicate, preserving every later clause.
-    infinitive = (r'(?:start|create|assign|queue|dispatch|launch|schedule|delegate|'
+    infinitive = (r'(?:start|restart|create|assign|queue|dispatch|launch|schedule|delegate|'
                   r'submit|send|put|kick off)\b')
     prose = re.sub(r'(?:^|(?<=[.;!?\n])\s*)(?:please\s+)?(?:ask|tell|instruct)\s+'
                    r'(?:Bob|' + WORKERS + r')\s+to\s+' + infinitive,
@@ -238,8 +304,29 @@ def dispatch_prose(text, *, reference=''):
     # A conditional offer is not a claim that work was done.
     # Remove only the actor/modal and its immediate verb; never swallow the
     # rest of an offer or denial, which may contain a separate effect claim.
-    prose = re.sub(r"\bI (?:can(?:not|['’]t)?|could(?: not|n['’]t)?|did(?: not|n['’]t)|have(?: not|n['’]t))"
+    prose = re.sub(r"\bI (?:did(?: not|n['’]t)|have(?: not|n['’]t))"
                    r"\s+(?:been\s+)?[a-z]+\b", 'unasserted predicate', prose, flags=re.I)
+    # A capability or proposal is not a receipt or an unconditional promise.
+    # Only its base-form predicates inherit this modal. Past/finite effects in
+    # a continuation remain independently visible, including shared subjects.
+    base_action=r'(?:start|restart|create|assign|queue|dispatch|launch|schedule|delegate|add|put|send|transfer|submit|review|inspect|ask|tell|instruct|use|get)'
+    modal=re.compile(r'(?P<actor>'+ACTOR+r')\s+(?:can|could|should|may|might)\s+'
+                     r'(?:(?:not|[a-z]+ly)\s+){0,3}(?P<verb>'+base_action+r')\b',re.I)
+    def possible_actions(match):
+        tail=match['tail']
+        def shared(candidate):
+            prefix=tail[:candidate.start()]
+            # An intervening actor, finite action or contrast ends the modal's
+            # scope. Never mask an actual effect asserted after the proposal.
+            new_predicate=ACTOR+ACTOR_PREDICATE+r'(?:[a-z]+ed|read|saw|took|found|sent|put|'+EFFECT+r')\b'
+            if (re.search(new_predicate,prefix,re.I) or
+                    re.search(r'\b(?:he|she|it|they|but|yet|then|will|have|has|had|did|queued|assigned|delegated|sent)\b',prefix,re.I)):
+                return candidate[0]
+            return candidate['join']+'a possible action'
+        tail=re.sub(r'(?P<join>\band\s+)(?:'+base_action+r')\b',shared,tail,flags=re.I)
+        return match['actor']+' describes a possible action'+tail
+    modal_clause=re.compile(modal.pattern+r'(?P<tail>[^.;!?\n]*)',re.I)
+    prose=modal_clause.sub(possible_actions,prose)
     # Replace only the explicitly excluded verb. Separate positive claims
     # remain visible to the guard, including after a semicolon or conjunction.
     prose = re.sub(r'\bwithout\s+(?:starting|creating|assigning|queueing|queuing|dispatching|'
@@ -301,14 +388,48 @@ def dispatch_prose(text, *, reference=''):
     return prose
 
 
-def claims_dispatch(text, *, reference=''):
+def claims_dispatch(text, *, reference='', bindings=None, context=''):
+    # Sentence selectors preserve their original leading whitespace. The
+    # normalization grammar must see the same sentence boundary when called
+    # on that original unit as when called on the entire answer.
+    text=text.strip()
     # Direct actors and concrete IDs never receive a reference exemption.
     original = dispatch_prose(text)
     # Do not use the passive proximity heuristic for a conceptual answer: a
     # definition can describe assignment without asserting a particular job.
     claim = REFERENCE_EFFECT if reference else CLAIM
-    return bool(DIRECT_CLAIM.search(verbal_effects(original)) or JOB_ID.search(original)
-                or claim.search(dispatch_prose(text, reference=reference)))
+    from reported_records import attributed_parentheticals, attributed_descriptive_bindings
+    scoped = attributed_parentheticals(text, bindings) if reference else text
+    if reference:
+        scoped = attributed_descriptive_bindings(scoped, bindings)
+    actor_prose=verbal_effects(dispatch_prose(scoped))
+    surrounding=attributed_parentheticals(context,bindings) if reference else context
+    if reference:
+        surrounding = attributed_descriptive_bindings(surrounding, bindings)
+    actor_context=verbal_effects(dispatch_prose(surrounding))
+    has_actor=bool(re.search(ACTOR,actor_prose+'\n'+actor_context,re.I))
+    # A finite continuation retains its subject across a long subordinate
+    # phrase. Base-form actions still governed by can/could are proposals.
+    continuation=re.compile(r'\b(?:and|then|but|yet)\s+(?:will|have|has|had|did)\s+'+
+                            ACTOR_PREDICATE+r'(?:'+CAUSATIVE+r')?'+EFFECT+r'\b',re.I)
+    causative_continuation=re.compile(r'\b(?:and|then|but|yet)\s+'+CAUSATIVE+EFFECT+r'\b',re.I)
+    pronoun=re.compile(r'(?:^\s*|[;.!?]\s*|\b(?:and|then|but|yet)\s+)(?:he|she|it|they)\b'+ACTOR_PREDICATE+EFFECT+r'\b',re.I)
+    inherited=bool(has_actor and (continuation.search(actor_prose) or pronoun.search(actor_prose)))
+    completed_continuation=re.compile(r'\b(?:and|then|but|yet)\s+(?:started|assigned|queued|dispatched|launched|scheduled|delegated|'+QUEUE_PLACEMENT+r')\b',re.I)
+    inherited=inherited or bool(has_actor and completed_continuation.search(actor_prose))
+    inherited=inherited or bool(re.search(r"\b(?:I|we)(?:['’]ll| will| have| did)\b",actor_prose+'\n'+actor_context,re.I) and causative_continuation.search(actor_prose))
+    checked=dispatch_prose(scoped,reference=reference)
+    # The normalized denied subject may be shared by a later progress claim.
+    # The denial itself stays nonassertive; only its affirmative continuation
+    # is counted, with no exemption for reference prose.
+    progress_continuation=re.compile(CONTINUATION_JOIN + r'(?:(?:it|they)\s+)?'
+                                    r'(?:(?:is|are|was|were|has|have|had|been|being|be|will|must|'+ASSERTION_ADVERB+r')\s+){0,4}'
+                                    r'(?:running|working|in progress|picked up)\b',re.I)
+    denied_progress=any(progress_continuation.search(match['tail']) for match in re.finditer(
+        r'has no established action(?P<tail>[^.!?\n]*)',original,re.I))
+    return bool(DIRECT_CLAIM.search(verbal_effects(original)) or JOB_ID.search(original) or inherited
+                or denied_progress
+                or claim.search(checked if reference else verbal_effects(checked)))
 
 
 def receipt_errors(answer, records, conversation_id, request_id, turn_started_at):

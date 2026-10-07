@@ -10,19 +10,26 @@ import re
 ANSWER = re.compile(r'^(?:write|draft|compose|summari[sz]e|compare|analy[sz]e|explain|'
                     r'calculate|evaluate|grade|score|research|review|plan|'
                     r'(?:give|show|offer|provide) me|(?:talk|walk) me through|'
-                    r'suggest|brainstorm|outline|make sense of|choose|decide|clarify|simplify)\b', re.I)
-REVISION = re.compile(r'^(?:make|keep|rewrite|revise|shorten|expand|rephrase)\b.{0,70}\b'
-                      r'(?:reply|replies|answer|explanation|paragraph|poem|story|draft|wording|summary)\b', re.I)
+                    r'suggest|brainstorm|outline|reason about|make sense of|choose|decide|clarify|simplify)\b', re.I)
+REVISION = re.compile(r'^(?:make|keep|rewrite|revise|shorten|expand|rephrase|update|edit)\b.{0,70}\b'
+                      r'(?:reply|replies|answer|explanation|paragraph|poem|story|draft|note|message|email|wording|summary|handoff|brief)\b'
+                      r'(?!\s+(?:service|app|application|script|database|configuration)\b)', re.I)
 COMMUNICATION_REVISION = re.compile(r'^(?:make|keep)\b.{0,70}\b'
                                     r'(?:reasoning|recommendations?|criteria|rules?|options?|tradeoffs?|decisions?|instructions?)\b'
                                     r'.{0,50}\b(?:clear(?:er)?|simple(?:r)?|easy|easier|understandable|concise|'
                                     r'practical|usable|short(?:er)?|brief(?:er)?|formal|casual|friendly)\b', re.I)
 REVISION_REFERENCE = re.compile(r'^(?:make|keep|rewrite|revise|shorten|expand|rephrase)\s+'
                                 r'(?:the|this|that|these|those|your)\b', re.I)
-TEXT_DELIVERABLE = re.compile(r'^(?:make|create|prepare|put together|produce|build)\s+(?:(?:me|us)\s+)?'
+TEXT_DELIVERABLE = re.compile(r'^(?:make|create|prepare|put together|produce|build|give|offer|provide)\s+(?:(?:me|us)\s+)?'
                               r'(?:(?:a|an|the|some)\s+)?(?:[a-z]+[ -]){0,3}'
                               r'(?:checklist|outline|list|table|draft|message|note|paragraph|poem|story|'
-                              r'lyrics|email|explanation|summary|comparison|plan|invitation|guide|decision rule|decision criteria)\b', re.I)
+                              r'lyrics|email|explanation|summary|comparison|plan|invitation|guide|status update|decision rule|decision criteria)\b', re.I)
+WRITING_REVISION = re.compile(r'^(?:start|begin|end|open|close)\s+(?:(?:the|this|that|my|our|your)\s+)?'
+                              r'(?:note|draft|message|email|letter|paragraph|story|poem|speech|reply)\s+(?:with|by)\b',re.I)
+REPORTED = re.compile(r'\b(?:fictional|hypothetical|supplied|provided|pasted|reported)\s+'
+                      r'(?:(?:conductor|reviewer|task|worker|status|catch-up)\s+)?'
+                      r'(?:card|record|receipt|scenario|case|evidence|update|page)\b|\bpaper exercise\b',re.I)
+TOPIC_CHANGE = re.compile(r'^(?:different|new|another|unrelated) topic\b',re.I)
 IMPLEMENTATION_SUFFIX = re.compile(r'\s+(?:(?!(?:for|about|of|on|to|in|with|and|or)\b)[\w+#.-]+\s+){0,3}'
                                     r'(?:app|application|tool|script|service|file)\b|'
                                     r'\s+(?:in|inside|within)\s+(?:(?:a|an|the|our|my)\s+)?'
@@ -52,9 +59,9 @@ IMPLEMENTATION_STEP = re.compile(r'\b(?:and|then)\s+(?:please\s+)?'
                                   r'.{0,45}\b(?:script|file|config(?:uration)?|schema|database|service|application|app)\b', re.I)
 CURRENT_RESEARCH = re.compile(r'\b(?:latest|current|up[- ]to[- ]date|today|browse|search the web|'
                              r'cite (?:official )?sources|source links)\b', re.I)
-LIVE_REQUEST = re.compile(r'\b(?:check|show) (?:me )?(?:our|the|current|live)\b|'
+LIVE_REQUEST = re.compile(r'\b(?:check|show|inspect) (?:me )?(?:our|the|current|live|actual|real)\b|'
                          r'\b(?:are|is|what are) (?:our|my|the current|the live)\b|'
-                         r'\b(?:our|my|live|current) (?:workers?|jobs?|tasks?|status)\b', re.I)
+                         r'\b(?:our|my|live|current|actual|real) (?:workers?|jobs?|tasks?|services?|status)\b', re.I)
 PRECISION = re.compile(r'\b(?:explain|compare|comparison|analy[sz]e|calculate|evaluate|research|review|why|how|which|whether|'
                        r'prov(?:e[sd]?|ing)|proof|choos(?:e|ing)|decid(?:e|ing)|decisions?|recommendations?|'
                        r'constraints?|criteria|tradeoffs?|evidence|establish(?:ed|es)?|inference|assumptions?|'
@@ -75,16 +82,17 @@ def _without_quoted_material(text, replacement=''):
     return re.sub(r'(?m)^\s*>.*$', replacement, text)
 
 
-def instructions(text):
+def instructions(text, *, preserve_offsets=False):
     """Reference content cannot add tool requirements to an answer request."""
-    quoted = '\x00quoted-reference\x00'
-    text = _without_quoted_material(text, quoted)
+    quoted = '\x00' if preserve_offsets else '\x00quoted-reference\x00'
+    text = _without_quoted_material(text, (lambda m:quoted*len(m[0])) if preserve_offsets else quoted)
     # Plain introduced material has the same data role as a quotation. Its
     # sentences cannot become commands merely because they use imperative
     # verbs. Keep the governing request (including any action before the
     # introduction); the original material still reaches the answer model.
-    reference = re.compile(r'\b(?:(?:the|this|these|following|supplied|provided)\s+){1,3}'
-                          r'(?:text|notes?|quote|passage|excerpt|code|example|evidence|facts|data)'
+    reference = re.compile(r'\b(?:(?:the|this|these|following|supplied|provided|fictional|hypothetical|reported)\s+){1,3}'
+                          r'(?:(?:conductor|task|worker)\s+)?'
+                          r'(?:text|notes?|quote|passage|excerpt|code|example|evidence|facts|data|record|receipt|case|scenario|card)'
                           r'(?:\s+as\s+(?:data|text|reference))?\s*:', re.I)
     writing = re.compile(r'(?:^|[.!?;]\s+|[\n–—]+)(?:please\s+)?'
                         r'(?:write|draft|compose|prepare|make|create|outline|give me|show me)\b[^:\n]{0,100}'
@@ -92,7 +100,7 @@ def instructions(text):
                         r'\b[^:\n]{0,60}:', re.I)
     closed = re.compile(r'(?:^|\n)[ \t]*end(?:[ \t]+of)?[ \t]+(?:the[ \t]+)?'
                         r'(?:text|notes?|quote|passage|excerpt|code|example|evidence|facts|data|'
-                        r'checklist|instructions|directions|tutorial|procedure|message|draft|outline|list|plan)'
+                        r'checklist|instructions|directions|tutorial|procedure|message|draft|outline|list|plan|record|receipt|case|scenario|card)'
                         r'(?:[ \t]*[.:][ \t]*|[ \t]*(?:\n|$))', re.I)
     offset = 0
     while True:
@@ -102,7 +110,7 @@ def instructions(text):
             break
         introduction = min(matches, key=lambda match: match.end())
         tail = text[introduction.end():]
-        quoted_start = re.match(r'\s*' + re.escape(quoted), tail)
+        quoted_start = re.match(r'\s*' + re.escape(quoted) + ('+' if preserve_offsets else ''), tail)
         if quoted_start:
             # The quote/fence already has its own boundary. Keep commands
             # after it instead of mistaking the entire remainder for data.
@@ -110,12 +118,12 @@ def instructions(text):
             continue
         closing = closed.search(tail)
         if not closing:
-            text = text[:introduction.end()]
+            text = text[:introduction.end()] + (' '*len(tail) if preserve_offsets else '')
             break
         # An explicit end marker returns to the owner's governing request.
-        text = text[:introduction.end()] + '\n' + tail[closing.end():]
+        text = text[:introduction.end()] + (' '*closing.end() if preserve_offsets else '\n') + tail[closing.end():]
         offset = introduction.end()
-    return text.replace(quoted, '')
+    return text.replace(quoted, ' ' if preserve_offsets else '')
 
 
 def request_clauses(request):
@@ -164,7 +172,7 @@ def wants_answer(text):
     if any(implementation_deliverable(part) for part in clauses):
         return False
     return bool(any(ANSWER.match(part) or REVISION.match(part) or COMMUNICATION_REVISION.match(part)
-                    or TEXT_DELIVERABLE.match(part) for part in clauses)
+                    or TEXT_DELIVERABLE.match(part) or WRITING_REVISION.match(part) for part in clauses)
                 and not ARTIFACT_OPERATION.search(request) and not RETRIEVAL_TARGET.search(request)
                 and not requires_execution(original)
                 and not requires_research(original))
@@ -175,7 +183,9 @@ def revises_answer(text):
     from chat_intent import command
     original = command(text)
     request = instructions(original)
-    return bool(REVISION_REFERENCE.match(request) and (REVISION.match(request) or COMMUNICATION_REVISION.match(request))
+    clauses=request_clauses(request)
+    return bool(any((REVISION_REFERENCE.match(part) and (REVISION.match(part) or COMMUNICATION_REVISION.match(part)))
+                    or WRITING_REVISION.match(part) for part in clauses)
                 and not implementation_deliverable(request)
                 and not ARTIFACT_OPERATION.search(request) and not RETRIEVAL_TARGET.search(request)
                 and not requires_execution(original) and not requires_research(original))
@@ -195,8 +205,24 @@ def implementation_deliverable(text):
 def conceptual(text):
     """A request to reason about evidence/terms, not observe the live workers."""
     request = instructions(text)
-    return bool((CONCEPT.search(request) or INFERENCE.search(request))
-                and not LIVE_REQUEST.search(request) and not requires_execution(text))
+    return bool((CONCEPT.search(request) or INFERENCE.search(request) or REPORTED.search(request))
+                and not live_observation(request) and not requires_execution(text))
+
+
+def live_observation(text):
+    """An unquoted directive about the host, distinct from reported status."""
+    request=instructions(text)
+    target=r'(?:workers?|jobs?|tasks?|services?|resources?|status|queue|system)'
+    for sentence in re.split(r'[.!?;]\s+',request):
+        if re.match(r"^\s*(?:if|unless|suppose|imagine|do not|don['’]t|never|without)\b",sentence,re.I):continue
+        if re.search(r'\b(?:says?|suggests?|proposes?|contains?|quoted)\b',sentence,re.I):continue
+        for part in re.split(r'\b(?:and then|then|and now|now|and|but)\s+',sentence,flags=re.I):
+            part=part.strip(' ,')
+            if re.match(r'^(?:(?:please|can you|could you|will you)\s+)?(?:check|show|inspect|tell me)\s+(?:me\s+)?(?:(?:our|my|current|live|actual|real|the current|the live|the actual|the real)\s+)+'
+                         +target+r'\b',part,re.I) and not REPORTED.search(part):
+                return True
+            if re.fullmatch(r'(?:check|show(?: me)?) (?:the )?resources[.!? ]*',part,re.I):return True
+    return False
 
 
 def needs_precision(text):

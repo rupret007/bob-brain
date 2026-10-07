@@ -18,6 +18,10 @@ class MediaAPITests(unittest.TestCase):
                              thinkingConfig=dict(thinkingLevel='HIGH')))
             self.assertEqual(http.call_args.kwargs['max_tokens'], 8192)
             self.assertEqual(http.call_args.kwargs['model_id'], 'gemini-3.8-flash')
+            api.model_call('gemini','Supplied reference',max_tokens=16384,model_id='gemini-3.8-flash',thinking_level='high',
+                           system='Application rules',messages=[dict(role='user',content='Reason from these facts.')])
+            self.assertEqual(http.call_args.args[2]['generationConfig']['maxOutputTokens'],16384)
+            self.assertEqual(http.call_args.kwargs['max_tokens'],16384)
             for extra in (dict(thinking_budget=1024), dict(thinking_level='minimal'),
                           dict(google_search=True), dict(vision=[dict(mime='image/jpeg', data_base64='YQ==')])):
                 http.reset_mock()

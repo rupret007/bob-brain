@@ -10,6 +10,85 @@ import solo
 
 
 class CurrentModeReplayTests(unittest.TestCase):
+    def test_live_messaging_uses_only_health_and_the_protected_exact_thread(self):
+        folder=self.root/'conductor/webchat';folder.mkdir(parents=True)
+        bridge=folder/'andrea-bridge.json';bridge.write_text(json.dumps(dict(url='http://fixture',token='fixture')));bridge.chmod(0o600)
+        mapping=folder/'instinct.json';mapping.write_text(json.dumps(dict(chat_guid='iMessage;-;+12025550101',addresses=['+12025550101'])))
+        health=dict(ok=True,connected=True,paused=False,instinctReadOnly=True,sha=solo.andrea_pin()['sha'],deliveryProtocol=1)
+        gateway=Mock(spec=['exact_chat','messages'])
+        gateway.exact_chat.return_value=[dict(guid='iMessage;-;+12025550101',participants=[dict(address='+12025550101')])]
+        gateway.messages.return_value=[]
+        andrea=Mock(spec=['call']);andrea.call.return_value=health
+        with patch('texting.BlueBubbles',return_value=gateway),patch('texting.Andrea',return_value=andrea):
+            result=solo.live_messaging_reads(self.root,'improve')
+            self.assertEqual(len(result),2)
+            andrea.call.assert_called_once_with('health')
+            gateway.exact_chat.assert_called_once_with('iMessage;-;+12025550101')
+            gateway.messages.assert_called_once_with('iMessage;-;+12025550101')
+            for changed in ({},dict(chat_guid='other',addresses=['+12025550102'])):
+                mapping.write_text(json.dumps(changed))
+                with self.assertRaises(Exception):solo.live_messaging_reads(self.root,'improve')
+            mapping.write_text(json.dumps(dict(chat_guid='iMessage;-;+12025550101',addresses=['+12025550101'])))
+            for key,bad in (('sha','old'),('connected',False),('instinctReadOnly',False),('paused',True)):
+                andrea.call.return_value=dict(health,**{key:bad})
+                with self.assertRaises(Exception):solo.live_messaging_reads(self.root,'improve')
+
+    def test_live_remaining_replay_never_creates_reminders_or_reads_multiple_bands(self):
+        client=Mock();client.call.return_value={'reminders':[]}
+        def submit(client,cid,text):
+            if text in ('Karen QA status','band desk status'):
+                return {},dict(provider='teammates',content='Source: configured fixture')
+            self.assertEqual(text,'band desk digest for Fixture Band')
+            return {},dict(provider='teammates',content='Fixture digest',teammate_evidence=dict(all_read=True,band_reads=[dict(name='Fixture Band')]))
+        with patch.object(solo,'submit',side_effect=submit),patch('teammates.band_mappings',return_value=[dict(name='Fixture Band'),dict(name='Untouched')]):
+            checks=solo.remaining_replay(client,'fixture',self.root,real=True)
+        self.assertTrue(all(c['passed'] for c in checks))
+        client.call.assert_called_once_with('/api/reminders')
+
+    def test_live_memory_replay_reads_saved_bytes_without_proposals_or_capture(self):
+        from bob_gaps import profile_path
+        path=profile_path(self.root);path.parent.mkdir(parents=True,exist_ok=True);path.write_text('Keep owner memory.\n')
+        def submit(client,cid,text):
+            if text=='show my saved memories':
+                return {},dict(provider='memory',private_memory=True,content='Keep owner memory; not all profile or chat context')
+            self.assertEqual(text,'look up Python programming language')
+            return {},dict(provider='state',content='Python https://www.python.org/')
+        with patch.object(solo,'submit',side_effect=submit):
+            self.assertTrue(all(c['passed'] for c in solo.gaps_replay(Mock(),'fixture',self.root,real=True)))
+        self.assertEqual(path.read_text(),'Keep owner memory.\n')
+
+    def test_retained_delivery_requires_manifest_and_every_child_binding(self):
+        review=self.root/'conductor/reviews';review.mkdir(parents=True)
+        files={}
+        for name in ('phone_send','phone_return','owner_attestation'):
+            path=review/(name+'.json');path.write_text(json.dumps(dict(fixture=name)))
+            files[name]=dict(path=str(path),sha256=solo.digest(path))
+        proof=dict(status='PASS_OWNER_PHONE_DELIVERY',sha='historical',andrea_sha=solo.andrea_pin()['sha'],real_submissions=1,
+                   physical_receipt_without_retry=True,matching_return_read=True,synchronized_return_copy_not_used=True,
+                   evidence_hashes={k:v['sha256'] for k,v in files.items()})
+        phone=review/'phone.json';phone.write_text(json.dumps(proof));files['phone']=dict(path=str(phone),sha256=solo.digest(phone))
+        manifest=review/'manifest.json';manifest.write_text(json.dumps(dict(sha='historical',files=files)))
+        code=self.root/'code';(code/'release').mkdir(parents=True)
+        (code/'release/retained-delivery.json').write_text(json.dumps(dict(manifest=str(manifest.relative_to(self.root)),sha256=solo.digest(manifest))))
+        pin=solo.andrea_pin()
+        with patch.object(solo,'CODE',code),patch.object(solo,'andrea_pin',return_value=pin):
+            result=solo.retained_delivery_replay(self.root)[0]
+            self.assertEqual(result['source_sha'],'historical');self.assertEqual(result['real_texts_sent'],0)
+            for row in files.values():
+                path=Path(row['path']);before=path.read_bytes();path.write_bytes(before+b' ')
+                with self.assertRaises(Exception):solo.retained_delivery_replay(self.root)
+                path.write_bytes(before)
+            manifest.write_text(manifest.read_text()+' ')
+            with self.assertRaises(Exception):solo.retained_delivery_replay(self.root)
+
+    def test_synthetic_children_cannot_inherit_real_generation_admission(self):
+        env=dict(BOB_GENERATION_BUDGET='real-goal',BOB_GENERATION_BUDGET_ROOT='/real',
+                 BOB_GENERATION_PURPOSE='controller',BOB_REQUIRE_GENERATION_BUDGET='1',
+                 BOB_ROOT='/fixture',PATH='/bin')
+        result=solo.fixture_generation_environment(env)
+        self.assertEqual(result,dict(BOB_ROOT='/fixture',PATH='/bin'))
+        self.assertEqual(env['BOB_GENERATION_BUDGET'],'real-goal')
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -171,6 +250,29 @@ class TransactionTests(unittest.TestCase):
         self.versions.assert_called_with(self.root, 'b' * 40)
         self.assertFalse(json.loads(self.path.read_text())['all_pass'])
 
+    def test_scoped_live_proof_preserves_deferral_and_mixed_scope_rolls_back(self):
+        from qualification_scope import outcome, passed
+        scope=dict(path='/fixture/scope.json',sha256='fixture')
+        self.record.update(outcome(False,scope))
+        live=Mock(return_value=outcome(True,scope))
+        with patch('qualification_scope.selected',return_value=scope):
+            self.attempt(live=live)
+        record=json.loads(self.path.read_text())
+        self.assertEqual(live.call_count,2)
+        self.assertEqual(record['status'],'SCOPED_LIVE_PASS')
+        self.assertFalse(record['all_pass'])
+        self.assertTrue(passed(record,scope))
+        self.assertFalse(passed(record))
+
+    def test_scoped_round_cannot_accept_unrestricted_or_different_scope_proof(self):
+        from qualification_scope import outcome
+        scope=dict(path='/fixture/scope.json',sha256='fixture')
+        self.record.update(outcome(False,scope))
+        with patch('qualification_scope.selected',return_value=scope):
+            with self.assertRaisesRegex(Exception,'Live replay failed'):
+                self.attempt(live=Mock(side_effect=[outcome(True,scope),{'all_pass':True}]))
+        self.restart.assert_called_once_with(self.root,self.record['snapshots'])
+
     def test_partial_startup_failure_also_rolls_back(self):
         with self.assertRaisesRegex(RuntimeError, 'startup'):
             self.attempt(activate=Mock(side_effect=RuntimeError('startup')))
@@ -306,7 +408,7 @@ class EvidenceTests(unittest.TestCase):
     def test_improve_requires_voice_availability_browser_without_replacing_real_audio(self):
         self.check['feature'] = 'improve'
         for name in ('media-browser', 'voice-js', 'voice-browser', 'instinct-browser',
-                     'remaining-browser', 'cold-browser', 'startup-recovery-browser', 'bridge-contract', 'jobs-results-browser', 'reply-lifecycle-browser', 'memory-removal-browser'):
+                     'remaining-browser', 'cold-browser', 'startup-recovery-browser', 'bridge-contract', 'jobs-results-browser', 'reply-lifecycle-browser', 'memory-removal-browser', 'project-handoffs-browser'):
             self.check['results'][name] = self.check['results']['browser']
         sha = solo.andrea_pin()['sha']
         self.check['andrea'] = dict(sha=sha, results=[])
@@ -315,6 +417,7 @@ class EvidenceTests(unittest.TestCase):
         solo.atomic_json(checks, self.check)
         with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
             solo.verify_checks('a' * 40, 'improve', checks)
+
         self.check['results']['voice-availability-browser'] = self.check['results']['browser']
         solo.atomic_json(checks, self.check)
         solo.verify_checks('a' * 40, 'improve', checks)
@@ -327,6 +430,25 @@ class EvidenceTests(unittest.TestCase):
         solo.atomic_json(checks, self.check)
         with self.assertRaisesRegex(Exception, 'Missing mandatory suite'):
             solo.verify_checks('a' * 40, 'improve', checks)
+
+
+    def test_owner_voice_deferral_never_excuses_another_missing_gate(self):
+        from qualification_scope import outcome
+        scope=dict(path='/fixture/scope.json',sha256='fixture')
+        self.check['feature']='improve'
+        for name in ('media-browser','voice-js','instinct-browser','remaining-browser','cold-browser',
+                     'startup-recovery-browser','bridge-contract','jobs-results-browser','reply-lifecycle-browser',
+                     'memory-removal-browser','project-handoffs-browser','voice-availability-browser'):
+            self.check['results'][name]=self.check['results']['browser']
+        sha=solo.andrea_pin()['sha'];self.check['andrea']=dict(sha=sha,results=[])
+        solo.atomic_json(self.folder/'bridge-contract.json',dict(all_pass=True,andrea_sha=sha,real_texts_sent=0))
+        self.check.update(outcome(True,scope));checks=self.folder/'checks.json'
+        solo.atomic_json(checks,self.check)
+        with self.assertRaises(Exception):solo.verify_checks('a'*40,'improve',checks)
+        with patch('qualification_scope.selected',return_value=scope):
+            solo.verify_checks('a'*40,'improve',checks)
+            del self.check['results']['voice-availability-browser'];solo.atomic_json(checks,self.check)
+            with self.assertRaisesRegex(Exception,'Missing mandatory suite'):solo.verify_checks('a'*40,'improve',checks)
 
     def test_instinct_requires_read_only_browser_proof(self):
         self.check['feature'] = self.review['feature'] = 'instinct'
@@ -370,7 +492,7 @@ class EvidenceTests(unittest.TestCase):
         self.check['feature'] = 'improve'
         for name in ('media-browser', 'voice-js', 'voice-browser', 'instinct-browser',
                      'remaining-browser', 'bridge-contract', 'cold-browser', 'jobs-results-browser',
-                     'voice-availability-browser', 'reply-lifecycle-browser', 'memory-removal-browser', 'startup-recovery-browser'):
+                     'voice-availability-browser', 'reply-lifecycle-browser', 'memory-removal-browser', 'startup-recovery-browser', 'project-handoffs-browser'):
             self.check['results'][name] = dict(self.check['results']['browser'])
         self.check['andrea'] = {'sha': solo.andrea_pin()['sha'], 'results': []}
         solo.atomic_json(self.folder / 'bridge-contract.json', dict(
@@ -378,7 +500,7 @@ class EvidenceTests(unittest.TestCase):
         checks = self.folder / 'checks.json'
         solo.atomic_json(checks, self.check)
         solo.verify_checks('a' * 40, 'improve', checks)
-        for missing in ('jobs-results-browser', 'reply-lifecycle-browser', 'voice-browser', 'startup-recovery-browser'):
+        for missing in ('jobs-results-browser', 'reply-lifecycle-browser', 'voice-browser', 'startup-recovery-browser', 'project-handoffs-browser'):
             with self.subTest(missing=missing):
                 value = copy.deepcopy(self.check)
                 del value['results'][missing]

@@ -79,7 +79,11 @@ def http_json(url, method="GET", payload=None, headers=None, validate=None, allo
                 config_path.chmod(0o600)
                 # Reasoning responses can exceed one minute before any body
                 # arrives; retain the same bounded window for both reasoning models.
-                seconds = 180 if model_id in ("gemini-2.5-pro", "MiniMax-M2.7") else 60
+                # gemini-3.8-flash runs with thinkingLevel (HIGH for chat); its thought
+                # tokens routinely take 55-70s before any body arrives.
+                seconds = 180 if model_id in ("gemini-2.5-pro", "MiniMax-M2.7", "gemini-3.8-flash") else 60
+                if reservation and reservation.get('goal_reservation'):
+                    seconds = min(seconds, budget.generation_budget.remaining(reservation['goal_reservation']))
                 cmd = ["curl", "-sS", "-m", str(seconds), "--connect-timeout", "10", "--config", str(config_path),
                        "-X", method, "-o", str(response), "-w", "%{http_code}"]
                 if payload is not None:
@@ -97,9 +101,12 @@ def http_json(url, method="GET", payload=None, headers=None, validate=None, allo
                     raise RuntimeError("HTTP %s curl_rc=%s" % (code, result.returncode))
                 data = json.loads(response.read_text())
                 if reservation:
-                    budget.settle(lane, reservation, data)
+                    try:
+                        budget.settle(lane, reservation, data)
+                    except (OSError, ValueError, budget.generation_budget.AdmissionDenied):
+                        raise budget.BudgetExceeded('The response accounting could not be saved; reconcile the retained reservation before another call.') from None
                 return validate(data) if validate else data
-        except (ResultRejected, budget.BudgetExceeded):
+        except (ResultRejected, budget.BudgetExceeded, budget.generation_budget.AdmissionDenied):
             # A successful transport with unusable evidence is a terminal
             # quality failure, not a reason to buy the same answer repeatedly.
             raise
@@ -191,6 +198,10 @@ def model_call(model, prompt, max_tokens=8192, purpose="api", *, model_id=None, 
     if not key:
         raise RuntimeError(key_name + " missing")
     vision = vision or []
+    if vision:
+        # Reserve encoded bytes plus a conservative per-image tile allowance;
+        # settle using the actual reported token usage on the same attempt.
+        metered_prompt += '\n' + json.dumps(vision) + (' ' * (32768 * len(vision)))
     if model == "minimax":
         url = "https://api.minimax.io/v1/text/chatcompletion_v2"
         if vision:

@@ -75,7 +75,7 @@ def classify(code, text):
     text = text.lower()
     if any(value in text for value in ('refillrequired', 'gemini prepaid credits require refill', 'gemini funding needs attention')):
         return 'refill_required'
-    if any(s in text for s in ("$96 cap", "$48 cap", "minimax cap", "spend cap", "budgetexceeded", "budget exhausted")):
+    if any(s in text for s in ("$96 cap", "$48 cap", "minimax cap", "spend cap", "budgetexceeded", "budget exhausted", "admissiondenied")):
         return "budget"
     if any(s in text for s in ("blockingioerror", "lane reserved", "busy with another job")):
         return "busy"

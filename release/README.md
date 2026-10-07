@@ -1,8 +1,8 @@
 # Solo Web Bob releases
 
-Typed answer turns requiring reasoning or precise output use Gemini 3.8 Flash
+Typed conversational answer turns, including short contextual follow-ups, use Gemini 3.8 Flash
 with high thinking through the existing metered generateContent path. Ordinary,
-voice and image turns retain their checked Gemini 2.5 profile; this adds no tools.
+operational, voice and image turns retain their checked Gemini 2.5 profile; this adds no tools.
 The API uses native completed final text instead of asking the model to write
 XML transport tags. Short native answers are valid; empty, thought-only and
 truncated responses still fail. Legacy worker extraction is unchanged.
@@ -256,6 +256,19 @@ Live replay is strictly no-send and starts no workers. Synthetic messaging, disp
 and historical fixture evals are labeled as such. They do not prove real delivery
 or execution by stopped worker services. The primary-assistant goal prohibits
 texts, emails, posts, and an Andrea notification; report completion in chat.
+
+The overnight conductor gate also forbids creating real pending text drafts,
+recent-thread discovery, firing reminders, desktop capture, or appending a
+private memory merely for a test. Those controls remain in isolated staging.
+Live replay reads exact-build Andrea health, the protected explicit Instinct
+thread (no discovery fallback), one configured Band Desk digest, reminder
+listing and unchanged private-memory inspection. Instinct's direct service read
+does not certify its product digest in production. The pinned retained owner
+phone manifest and child hashes are checked without modifying the original
+conversation; that is historical delivery evidence, not a new delivery test.
+
+Retained song/audio HTTP storage and confirmation paths have isolated tests;
+they do not prove new song generation or restore removed Songs controls.
 
 An explicit request to return an unchanged upload on the current user turn can
 now attach that owned file even if the model omits its attachment marker. The

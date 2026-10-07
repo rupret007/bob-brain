@@ -410,6 +410,13 @@ class IntentTests(Fixture):
                 content = enforce(self.root, "What about Web Bob?", dict(provider="gemini", content=claim),
                                   self.chat.conversations[self.identifier])
                 self.assertEqual(content, "On hold: Web Bob. Say go or resume when you're ready.")
+                planning = 'Compare the saved evidence before choosing the report scope.'
+                content = enforce(self.root, "What about Web Bob?", dict(provider="gemini", content=claim + ' ' + planning),
+                                  self.chat.conversations[self.identifier])
+                self.assertEqual(content, planning + "\n\nOn hold: Web Bob. Say go or resume when you're ready.")
+        contextual = 'While Web Bob is paused, compare the saved evidence.'
+        self.assertEqual(enforce(self.root, "Help plan the Web Bob report.", dict(provider="gemini", content=contextual),
+                                 self.chat.conversations[self.identifier]), contextual)
         self.submit("go")
         self.reload()
         for claim in claims:
@@ -419,6 +426,59 @@ class IntentTests(Fixture):
                 self.assertEqual(content, "The next issue is the login button.")
                 self.assertFalse(self.chat.history(self.identifier)["intent_state"]["holds"])
         self.assertFalse(queue.tasks(self.root))
+
+    def test_real_hold_preserves_remaining_scope_question_but_not_other_effects(self):
+        question = 'When you lift the hold, which evidence scope should the Web Bob report inspect first?'
+        self.submit(HOLD)
+        value = self.chat.conversations[self.identifier]
+        answer = lambda content: enforce(self.root, 'Help choose the report scope for Web Bob.',
+                                        dict(provider='gemini', content=content), value)
+        self.assertIn(question, answer('The report can compare saved evidence.\n\n' + question))
+        for labelled in (
+            '* **Audit Data Boundary:** When you release the hold, should the Web Bob report inspect saved event logs or static fixtures?',
+            '- __Remaining choice:__ Before you lift the hold, could the Web Bob report compare both evidence sources?',
+            '1. **Scope:** Would the Web Bob report cover both sources after you lift the hold?',
+        ):
+            with self.subTest(labelled=labelled):
+                self.assertEqual(answer(labelled),labelled)
+                self.assertNotIn('WebJam', answer(labelled.replace('Web Bob','WebJam')))
+                for extra in (' I cleared the hold.', ' I queued the report.', ' webchat-'+'c'*32):
+                    self.assertNotIn(extra.strip(),answer(labelled+extra))
+        bad_label='* **I cleared the hold:** Should the Web Bob report inspect saved logs?'
+        self.assertNotIn('I cleared the hold',answer(bad_label))
+        bad_label='* **I queued the report:** Should the Web Bob report inspect saved logs after you lift the hold?'
+        self.assertNotIn('I queued the report',answer(bad_label))
+        self.assertNotIn('WebJam', answer(question.replace('Web Bob', 'WebJam')))
+        self.assertNotIn('I queued', answer(question + ' I queued the report task.'))
+        self.assertNotIn('lifted', answer('The hold is lifted; which evidence scope should the Web Bob report inspect first?'))
+        self.assertNotIn('lifted', answer('Which scope should the Web Bob report inspect now that the hold is lifted?'))
+        for change in ('I lifted the hold', 'you have cleared the hold', "we’ve granted approval"):
+            with self.subTest(change=change):
+                self.assertNotIn(change, answer('Which Web Bob evidence scope should we inspect now that ' + change + '?'))
+        for conditional in ('Once approval is granted, the reviewer records the decision.',
+                            'Before approval is granted, which Web Bob report section should we prepare?',
+                            'When you have lifted the hold, which Web Bob evidence scope should we inspect?'):
+            with self.subTest(conditional=conditional):
+                self.assertIn(conditional, answer(conditional))
+                self.assertNotIn('I cleared the hold', answer(conditional + ' I cleared the hold.'))
+        self.assertNotIn('I cleared the hold', answer('Once approval is granted, I cleared the hold.'))
+        self.assertNotIn('I cleared the hold', answer('Once approval is granted and I cleared the hold, which scope comes first?'))
+        self.submit('go')
+        value = self.chat.conversations[self.identifier]
+        self.assertNotIn('lift the hold', answer(question))
+        self.assertFalse(queue.tasks(self.root))
+
+    def test_global_hold_scope_question_respects_released_project_exceptions(self):
+        self.submit('Hold all work')
+        value = self.chat.conversations[self.identifier]
+        question = 'Before you lift the hold, which Web Bob evidence scope should the report inspect?'
+        answer = lambda: enforce(self.root, 'Help choose the report scope for Web Bob.',
+                                 dict(provider='gemini', content=question), value)
+        self.assertIn(question, answer())
+        self.submit('Resume Web Bob')
+        value = self.chat.conversations[self.identifier]
+        self.assertNotIn('lift the hold', answer())
+        self.assertTrue(value['intent_state']['holds'])
 
     def test_maintenance_and_worker_restrictions_still_apply_to_batches(self):
         for text, worker in (("Fix Web Bob and WebJam", "gemini"), ("Fix Web Bob and WebJam", "grok")):
