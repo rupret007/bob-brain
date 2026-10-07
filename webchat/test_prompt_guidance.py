@@ -116,6 +116,35 @@ class TestEvidencePromptAssembly(SessionFixture):
         prompt = provider.prompt(Texting.provider_view(self.chat.get(self.identifier)), fast=True)
         return prompt, flat(provider.current_call.instructions)
 
+    def test_relayed_status_classifies_receipt_subject_not_delivery_verb(self):
+        import catchup_contract
+        import reply_contract
+
+        self.fake.reply_text = '{"mode":"explain"}'
+        self.send('The receiver reports ACK through 40; events 31 through 35 are unavailable.')
+        self.send('The receiver now reports acknowledged_through 44, since_seq 44, '
+                  'events 0, history_gap false, has_more false. Write a concise status '
+                  'I can relay: distinguish reaching the available tail from complete '
+                  'history or knowledge of the release. Preserve holds and keep catch-up read-only.')
+        prompt, rules = self.prompt()
+        self.assertIn('Write a concise status I can relay', prompt)
+        self.assertIn('classified by what it asks about', rules)
+        self.assertIn('release/history knowledge -> release; what the receipt proves -> explain', rules)
+        self.assertIn('not by the word "relay" alone', rules)
+        self.assertIn('reserve mode=relay for requests to construct a new cursor/page request', rules)
+        contract = reply_contract.current(Texting.provider_view(self.chat.get(self.identifier)))
+        self.assertEqual(contract['kind'], 'catchup')
+        projection = contract['catchup_projection']
+        self.assertFalse(projection['has_more'])
+        self.assertEqual([gap['range'] for gap in projection['unresolved_history_gaps']], [[31, 35]])
+        # Check the instructed mode's renderer; offline tests cannot certify model selection.
+        answer = catchup_contract.render('{"mode":"release"}', projection)
+        self.assertIn('reaching the available tail through sequence 44', answer)
+        self.assertIn('does not establish complete history or knowledge of the current release', answer)
+        self.assertIn('31–35', answer)
+        self.assertIn('preserving completed work and holds', answer)
+        self.assertNotIn('Read one bounded catch-up batch', answer)
+
     def test_saved_project_completion_keeps_missing_receipts_unverified(self):
         self.send('For the Atlas project, remember the priority: reliable reports.')
         self.send('Help plan a read-only Atlas report. Hold execution until I choose its scope.')

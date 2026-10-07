@@ -18,7 +18,11 @@ RULES='''This question concerns the server-projected receiver receipt. Return
 only JSON with one field mode, chosen from explain, release, authority, relay.
 Use explain for what the receipt proves, release for knowledge of later work,
 authority for whether an old event can execute, and relay for an owner-relayed
-catch-up request or cursor question. Do not construct cursors, ranges, counts or
+catch-up request or cursor question. A request to write a status, report, or summary
+that the user will relay to someone else is classified by what it asks about
+(release/history knowledge -> release; what the receipt proves -> explain), not by
+the word "relay" alone; reserve mode=relay for requests to construct a new cursor/page
+request to send to the receiver. Do not construct cursors, ranges, counts or
 receipt facts: the protocol renderer owns them. Reading/ACK never grants work.
 If coverage is incomplete, state that the coverage is partial and name known missing event
 numbers. When asked how to handle an old event, state the handling and a next
