@@ -25,12 +25,50 @@ class TestLaneBPromptStructure(unittest.TestCase):
     def test_unrecorded_chat_plan_and_inline_provenance(self):
         from providers import CONVERSATION_QUALITY
         quality = flat(CONVERSATION_QUALITY)
-        self.assertIn('in-chat proposal only, not a persisted task or queue entry', quality)
+        self.assertIn('in-chat proposal only; persistence or a queue entry is unverified', quality)
         self.assertIn('never call proposed a recorded lifecycle stage', quality)
         self.assertIn('Missing receipts leave external execution unverified', quality)
         self.assertIn('product receipt this turn or saved snapshot, as applicable', quality)
         self.assertIn('hold request ID only from supplied saved chat hold facts', quality)
         self.assertIn('configured route registry (not live-verified)', quality)
+
+    def test_diagnostic_branches_require_observation_evidence(self):
+        from providers import ANSWER_RULES, REFERENCE_RULES
+        for rules in (ANSWER_RULES, REFERENCE_RULES):
+            quality = flat(rules)
+            self.assertNotIn('For each diagnostic branch name the observed trace', quality)
+            self.assertIn('Use "Observed trace:" only for an observation explicitly supplied', quality)
+            self.assertIn('or present in inspected evidence, citing that source', quality)
+            self.assertIn('If this branch holds, the trace would show:', quality)
+            self.assertIn('the still-possible alternatives, and the next distinguishing check', quality)
+            self.assertIn('never label a predicted acknowledgment, stored record or check result as observed', quality)
+
+    def test_active_hold_cannot_be_listed_as_unrecorded(self):
+        from providers import ANSWER_RULES, REFERENCE_RULES
+        for rules in (ANSWER_RULES, REFERENCE_RULES):
+            quality = flat(rules)
+            self.assertIn('Never list a stage or hold as not recorded if current or earlier supplied facts establish it as active or recorded', quality)
+            self.assertIn('absence of a task record does not negate an owner hold', quality)
+            self.assertNotIn('execution start, hold, result verified, completed', quality)
+
+    def test_fictional_records_retain_their_internal_state_without_authority(self):
+        from providers import ANSWER_RULES, REFERENCE_RULES
+        for rules in (ANSWER_RULES, REFERENCE_RULES):
+            quality = flat(rules)
+            self.assertNotIn('in-chat proposal only, not a persisted task or queue entry', quality)
+            self.assertIn('For real external-system questions', quality)
+            self.assertIn('persistence or a queue entry is unverified without evidence, not disproven', quality)
+            self.assertIn('For a supplied fictional task record, treat its internal identity and state as given within that scenario', quality)
+            self.assertIn('including a recorded proposed stage', quality)
+            self.assertIn('Scenario facts neither establish real system state nor authorize real execution', quality)
+
+    def test_missing_receipts_leave_execution_unverified(self):
+        from providers import ANSWER_RULES, REFERENCE_RULES
+        for rules in (ANSWER_RULES, REFERENCE_RULES):
+            quality = flat(rules)
+            self.assertIn('Missing receipts leave external execution unverified; they do not prove it never occurred', quality)
+            self.assertIn('Never infer "no execution ran because no server receipt was issued"', quality)
+            self.assertIn('say external execution is unverified when receipt absence is the only evidence', quality)
 
     def test_concrete_check_and_continuous_numbering_guidance(self):
         from providers import CONVERSATION_QUALITY

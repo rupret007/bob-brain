@@ -110,6 +110,10 @@ REFERENCE_EFFECT = re.compile(
     r"(?=[^.;!?\n]{0,120}\b(?:now|just|already|currently|today|here)\b)" + TARGET_PREDICATE, re.I)
 DIRECT_CLAIM = re.compile(
     ACTOR_EFFECT + r"|"
+    # A clause-leading completed receipt can refer back to work as "it".
+    # Do not match a conditional ("if it's been scheduled") or a negation.
+    r"(?:^|[.;!?\n]\s*)it(?:['’]s|\s+has)\s+been\s+"
+    r"(?:queued|scheduled|launched|started|assigned|dispatched)\b|"
     r"\b" + WORKERS + r"\b[^.;!?\n]{0,45}\b(?:is|are) (?:now )?(?:working|running|busy|on it)\b|"
     r"\b(?:I['’]ve|I have|we['’]ve|we have) (?:put|got|set)\b[^.!?\n]{0,60}\b(?:working|busy|work|task|job)\b",
     re.I,

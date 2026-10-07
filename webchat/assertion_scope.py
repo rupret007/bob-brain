@@ -40,10 +40,11 @@ def negative_passive_effects(text, effect):
                r'(?:has|have|had)\s+been\s+|'
                r'(?:will|would|can|could|may|might)\s+(?:have\s+been|be)\s+)')
     coordinator = r'(?:\s*,\s*|\s+(?:and|or)\s+)'
-    skipped = (r'(?:(?!(?:'+effect+r'))(?!(?:that|which|who|whose|where|when|'
-               r'because|since|therefore|thus|'
-               r'I|we|you|he|she|it|they|'
-               r'Codex|Claude|Cursor|Gemini|MiniMax|Bob)\b)[\w-]+'+coordinator+r')*')
+    # Skip only participles, not arbitrary words (e.g. "however,"). A fresh
+    # finite or progressive predicate must never inherit the negative subject.
+    skipped = (r'(?:(?!(?:'+effect+r'))(?=[\w-]*(?:ed|en)\b)'
+               +modifier+coordinator+r')*')
+    participle = re.compile(r'(?:ed|sent|put|picked up|kicked off)$', re.I)
     pattern = re.compile(r'\b(?:no|zero|0)\s+(?P<subject>(?:'+modifier+r'\s+){0,10}'
         +modifier+r')\s+'+passive+
         r'(?:(?:yet|ever|actually|already|currently)\s+){0,3}'
@@ -53,12 +54,12 @@ def negative_passive_effects(text, effect):
     for match in pattern.finditer(text):
         from claim_scope import finite_predicate
         if (not finite_predicate(match['subject']) and
-                re.search(r'(?:ed|sent|put|picked up|kicked off)$',match['effect'],re.I)):
+                participle.search(match['effect'])):
             yield match.span('effect')
             pos = match.end()
             while True:
                 nxt = more.match(text[pos:])
-                if not nxt:
+                if not nxt or not participle.search(nxt['effect']):
                     break
                 yield pos+nxt.start('effect'), pos+nxt.end('effect')
                 pos += nxt.end()
