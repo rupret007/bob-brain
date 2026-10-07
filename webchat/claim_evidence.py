@@ -191,11 +191,21 @@ def _plain(text):
     return re.sub(r'[*_`]', '', text)
 
 
-def _nonasserted(prefix, predicate, clause, *, sentence_start=False):
+def _criteria_label(label):
+    text = _plain(label or '').strip()
+    return bool(re.match(
+        r'(?i)(?:\d+[.)]\s*)?(?:acceptance criteria|acceptance criterion|pass|fail)\s*$', text))
+
+
+def _nonasserted(prefix, predicate, clause, *, sentence_start=False, label=''):
     from assertion_scope import nonasserted
     prefix = _plain(prefix)
     scoped_predicate = predicate + ' ' if predicate.lower() in ('preserve', 'protect', 'maintain') else predicate
     if nonasserted(prefix, scoped_predicate, sentence_start=sentence_start):
+        return True
+    if _criteria_label(label):
+        return True
+    if re.match(r'(?i)^\s*(?:acceptance criteria|acceptance criterion|pass|fail)\s*:', _plain(clause)):
         return True
     if (sentence_start and not prefix.strip() and predicate.lower() in ('preserving', 'protecting', 'maintaining')
             and re.match(r'^\w+\s+[^.!?;:]{1,60}:', _plain(clause).strip())):
@@ -203,6 +213,8 @@ def _nonasserted(prefix, predicate, clause, *, sentence_start=False):
     # A goal or check is not an assertion that its desired result is established.
     # An appended independent clause gets a new prefix in violations().
     if re.search(r'\b(?:require|aim for|target|acceptance criterion|acceptance criteria|goal|objective)\s*:?\s*$', prefix, re.I):
+        return True
+    if re.search(r'\b(?:pass|fail)\s*:\s*$', prefix, re.I):
         return True
     if re.search(r'\b(?:may|might|could)\s+(?:(?:help|partly|potentially)\s+)?$', prefix, re.I):
         return True
@@ -266,7 +278,11 @@ def violations(content, *, source='', trusted_facts=(), artifact=False):
         categories = set()
         claims = []
         for clause in (text,):
+            criteria_clause = _criteria_label(part.label) or re.match(
+                r'(?i)^\s*(?:acceptance criteria|acceptance criterion|pass|fail)\s*:', _plain(clause))
             for kind, objects in OUTCOMES.items():
+                if criteria_clause:
+                    continue
                 targets = list(objects.finditer(clause))
                 labelled = bool(objects.search(part.label))
                 if not targets and not labelled:
@@ -296,10 +312,19 @@ def violations(content, *, source='', trusted_facts=(), artifact=False):
                         continue
                     if re.search(r'\b(?:not that|not because)\b', clause[:predicate.start()], re.I):
                         continue
-                    if predicate[0].lower() in ('preserving', 'protecting', 'maintaining', 'preserve', 'protect', 'maintain'):
+                    if (predicate[0].lower() in ('preserving', 'protecting', 'maintaining', 'preserve', 'protect', 'maintain')
+                            and kind in ('quality', 'cost')):
                         rest = clause[predicate.start():]
-                        if re.search(r'\b(?:is|as)\s+(?:an?\s+)?(?:testing|acceptance|quality)\s+requirement\b|'
-                                     r'\bnot (?:an?\s+)?(?:inherent|guaranteed|established)\s+outcome\b', rest, re.I):
+                        if re.search(r'\b(?:is|as)\s+(?:(?:a|an)\s+)?(?:testing|acceptance|quality)\s+requirement\b', rest, re.I):
+                            continue
+                        not_outcome = re.search(
+                            r'\bnot (?:(?:an?)\s+)?(?:inherent|guaranteed|established)\s+outcomes?\b', rest, re.I)
+                        if not_outcome:
+                            continue
+                        requirement = re.search(
+                            r'\b(?:remain|remains|are)\s+(?:(?:a|an)\s+)?'
+                            r'(?:(?:testing|acceptance|quality|planning)\s+)?requirements?\b', rest, re.I)
+                        if requirement and re.search(r'\bnot (?:(?:an?)\s+)?guaranteed\b', rest, re.I):
                             continue
                     if predicate[0].lower() == 'without' and EPISTEMIC_WITHOUT.match(tail):
                         continue

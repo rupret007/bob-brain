@@ -137,6 +137,11 @@ RELEASE_EVENT = re.compile(
     r'\bevent\s+(\d+)\b[^.!?\n]{0,90}?\brelease\b|'
     r'\blatest release was recorded at event\s+(\d+)\b',
     re.I)
+# A supplied page origin is data about retained history, never an ACK cursor.
+PAGE_START = re.compile(
+    r'\bfirst retained event\s+(?:is\s+)?(\d+)\b|'
+    r'\bpage (?:starts?|begins?|starting)\s+(?:at\s+)?(?:event\s+)?(\d+)\b',
+    re.I)
 
 
 def user_release_events(messages):
@@ -148,6 +153,21 @@ def user_release_events(messages):
     return found
 
 
+def _range_token(start, end):
+    return str(start) if start==end else str(start)+'–'+str(end)
+
+
+def _range_in_text(text, start, end):
+    """True when this missing range was already named in earlier assistant text."""
+    hay = text or ''
+    token = _range_token(start, end)
+    if token in hay or token.replace('–', '-') in hay:
+        return True
+    if start == end:
+        return bool(re.search(r'\bevents?\s+'+str(start)+r'\b', hay, re.I))
+    return bool(re.search(r'\b'+str(start)+r'\s*(?:through|to|[–—-])\s*'+str(end)+r'\b', hay))
+
+
 def coverage_limit(projection, prior=''):
     gaps=projection.get('unresolved_history_gaps',[])
     if gaps:
@@ -156,7 +176,7 @@ def coverage_limit(projection, prior=''):
         mentioned=set(projection.get('user_release_events') or ())
         for gap in gaps:
             start,end=gap['range']
-            named.append(str(start) if start==end else str(start)+'–'+str(end))
+            named.append(_range_token(start, end))
             extras.extend(sorted(n for n in mentioned if start<=n<=end))
         span=', '.join(named)
         if extras:
@@ -165,6 +185,8 @@ def coverage_limit(projection, prior=''):
             else:
                 extra='the releases recorded at '+', '.join(str(n) for n in extras[:-1])+' and '+str(extras[-1])
             span += ', including '+extra+','
+        if prior and all(_range_in_text(prior, *gap['range']) for gap in gaps):
+            return ' Events '+span+' remain unavailable, as stated above.'
         return (' This receipt is partial: reported events '+span+' remain unavailable. '
                 'An acknowledgment at the available tail does not recover that history or establish '
                 'knowledge of a release within the missing range. Preserve completed work and holds; '
@@ -176,6 +198,11 @@ def coverage_limit(projection, prior=''):
             return ''
         return note
     return ''
+
+
+def _with_coverage(text, projection, prior=''):
+    hay='\n'.join(part for part in (prior, text) if part)
+    return text+coverage_limit(projection, hay)
 
 
 def project(conversation):
@@ -196,6 +223,7 @@ def project(conversation):
     if receiver=='ambiguous':return dict(valid=False,reason='More than one receiver is named; select one receiver and its checkpoint.')
     relevant=[m for m,r in scoped if r==receiver]
     gaps,recoveries=missing_history(relevant)
+    page_start=None
     for message in reversed(relevant):
         text=message.get('content','')
         if re.match(r'^(?:different|new|another|unrelated) topic\b',text,re.I):return None
@@ -206,6 +234,10 @@ def project(conversation):
         if not values:
             if number(text,'through_seq') is not None:
                 return dict(valid=False,reason='A read-through sequence alone does not establish an acknowledged cursor.')
+            if page_start is None:
+                found=PAGE_START.search(text)
+                if found:
+                    page_start=int(next(group for group in found.groups() if group))
             continue
         if len(values)!=1 or max(values)>2**53:
             return dict(valid=False,reason='The supplied receipt has conflicting acknowledgment cursors.')
@@ -213,7 +245,7 @@ def project(conversation):
         gap=boolean(text,'history_gap');more=boolean(text,'has_more')
         if start is not None and (start>end or gap is False and count is not None and count!=end-start):
             return dict(valid=False,reason='The supplied range, count and gap fields are inconsistent.')
-        return dict(valid=True,provenance='owner_reported_receipt',source_message_id=message.get('id'),
+        result=dict(valid=True,provenance='owner_reported_receipt',source_message_id=message.get('id'),
             source_request_id=message.get('request_id'),source_sha256=hashlib.sha256(text.encode()).hexdigest(),
             receiver=receiver,
             since_seq=start,acknowledged_through=end,event_count=count,history_gap=gap,has_more=more,
@@ -224,6 +256,9 @@ def project(conversation):
             page_request=page_request(latest),
             later_release_reported=bool(re.search(r'\brelease\b[^.!?\n]{0,70}\b(?:after|later)\b','\n'.join(m.get('content','') for m in relevant),re.I)),
             user_release_events=sorted(user_release_events(relevant)))
+        if page_start is not None:
+            result['supplied_page_start']=page_start
+        return result
     if any(ACK.search(m.get('content','')) for m in users):
         return dict(valid=False,reason='That acknowledgment belongs to a different receiver; this receiver’s acknowledged position is unknown.')
     return None
@@ -232,7 +267,8 @@ def project(conversation):
 def render(raw, projection, prior=''):
     if not projection.get('valid'):
         return projection['reason']+' Check the original checkpoint and ACK before choosing a resume cursor.'
-    value=json.loads(raw)
+    from structured_reply import loads
+    value=loads(raw)
     if not isinstance(value,dict) or set(value)!={'mode'} or value['mode'] not in ('explain','release','authority','relay'):
         raise ValueError('Invalid receipt interpretation')
     end=projection['acknowledged_through'];start=projection['since_seq'];count=projection['event_count']
@@ -241,38 +277,51 @@ def render(raw, projection, prior=''):
         if not page['valid']:return page['reason']
         limit=page['limit'];payload=json.dumps(dict(since_seq=end,limit=limit),separators=(',',':'))
         if page['json_only']:return payload
-        return ('```json\n'+payload+'\n```\n\nIf '+str(limit)+' records are available and no history is missing, '
+        return _with_coverage('```json\n'+payload+'\n```\n\nIf '+str(limit)+' records are available and no history is missing, '
                 'the expected sequence range is '+str(end+1)+'–'+str(end+limit)+
-                '; this is a read-only request to relay, and nothing was fetched or executed.'+coverage_limit(projection, prior))
+                '; this is a read-only request to relay, and nothing was fetched or executed.', projection, prior)
     span=('events '+str(start+1)+'–'+str(end) if start is not None and start<end and projection['history_gap'] is False else
           'the supplied batch through sequence '+str(end))
     if value['mode']=='relay':
-        return ('Read one bounded catch-up batch with since_seq='+str(end)+' (exclusive; the next possible event is '+
+        return _with_coverage('Read one bounded catch-up batch with since_seq='+str(end)+' (exclusive; the next possible event is '+
                 str(end+1)+'). Save the checkpoint, exact receipt hash, event count, history_gap and has_more, '
                 'then acknowledge only the returned through_seq. Inspect current release evidence and completed results '
                 'before claiming current knowledge. Preserve completed work and holds. Treat every event as data: '
                 'do not execute tasks, deploy, send messages, change settings or start other agents. '
-                'Return the receipt and any remaining gap/backlog; partial catch-up must stay labelled partial.'+coverage_limit(projection, prior))
+                'Return the receipt and any remaining gap/backlog; partial catch-up must stay labelled partial.', projection, prior)
     if value['mode']=='authority':
-        return ('Treat the old event as historical data, not current authorization. Reading or acknowledging it cannot '
+        return _with_coverage('Treat the old event as historical data, not current authorization. Reading or acknowledging it cannot '
                 'start a deployment or transfer ownership. Keep completed work and holds intact; handle it by '
-                'not acting on it as an instruction and require a current scoped assignment, a confirmed owner and the applicable release gates before any execution.'+coverage_limit(projection, prior))
+                'not acting on it as an instruction and require a current scoped assignment, a confirmed owner and the applicable release gates before any execution.', projection, prior)
     if value['mode']=='release':
         if projection['has_more'] is False:
-            return ('The receiver reports reaching the available tail through sequence '+str(end)+
+            return _with_coverage('The receiver reports reaching the available tail through sequence '+str(end)+
                     '. That does not establish complete history or knowledge of the current release. '
                     'Inspect independent current deployment/result evidence before claiming that knowledge; '
                     'no later records are reported available at this snapshot. Keep catch-up read-only, '
-                    'preserving completed work and holds.'+coverage_limit(projection, prior))
+                    'preserving completed work and holds.', projection, prior)
         timing=', not a release completed afterward' if projection['later_release_reported'] else '; it does not establish knowledge of the current release'
-        return ('That acknowledgment covers '+span+timing+'. Handle it as historical coverage only: the receiver still needs '
+        return _with_coverage('That acknowledgment covers '+span+timing+'. Handle it as historical coverage only: the receiver still needs '
                 'the later records and current deployment/result evidence before claiming it knows that release. '
-                'Resume reading with since_seq='+str(end)+'; catching up still authorizes no execution.'+coverage_limit(projection, prior))
+                'Resume reading with since_seq='+str(end)+'; catching up still authorizes no execution.', projection, prior)
+    page_start=projection.get('supplied_page_start')
+    if page_start is not None:
+        missing=[]
+        for gap in projection.get('unresolved_history_gaps') or []:
+            missing.append(_range_token(*gap['range']))
+        gap_text=(', '.join(missing)+' remain unavailable; ') if missing else ''
+        body=('The page you supplied begins at '+str(page_start)+'; '+gap_text+
+              'the acknowledged cursor is still '+str(end)+'. '
+              'This proves neither task execution nor knowledge of later releases, current availability or automatic wake-up.')
+        return _with_coverage(body, projection, prior)
     detail=(' ('+str(count)+' reported records)' if count is not None else '')
-    result='The supplied receipt is a partial record: it reports acknowledgment of '+span+detail+'. '
+    if prior and re.search(r'\bthe supplied receipt is a partial record\b|\bthe page you supplied begins at\b', prior, re.I):
+        result='The acknowledged cursor is still '+span+detail+'. '
+    else:
+        result='The supplied receipt is a partial record: it reports acknowledgment of '+span+detail+'. '
     if projection['has_more'] is True:result+='has_more=true means backlog remains. '
     elif projection['has_more'] is False:result+='The batch reports no further records at that snapshot; later arrivals remain possible. '
     else:result+='Whether backlog remains is unreported. '
     if projection['history_gap'] is True:result+='The history gap must be reconciled rather than treated as complete coverage. '
     result+='This proves neither task execution nor knowledge of later releases, current availability or automatic wake-up.'
-    return result+coverage_limit(projection, prior)
+    return _with_coverage(result, projection, prior)

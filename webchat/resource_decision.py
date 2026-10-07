@@ -75,7 +75,8 @@ FACT_TOKEN = re.compile(r'\[fact:([a-z0-9_.]+)\]')
 def facts(inventory, *, missing=False):
     """Versioned public rules and current registry evidence, not model assertions."""
     result = {
-        'openai_api_billing': BILLING_FACTS['openai_api_billing'],
+        'openai_api_billing': BILLING_FACTS['openai_api_billing'].rstrip('.')
+            + ' (as documented; not checked for this account).',
         'subscription_scope': BILLING_FACTS['subscription_scope'],
         'route_boundaries': 'Web Bob’s configured route registry lists Codex and Cursor conversation adapters that use supplied context, and separate scoped executors for assigned local file or coding work. This is what is configured, not a claim that either route is signed in, available, or working. Tool limits apply to the named adapter, not the whole resource. Voice and images require their own supported operation. Signing in does not make routes interchangeable or authorize file work.',
         'quality_bar': 'Preserve the answer-quality standard and reasoning requirements. A representative comparison must qualify an alternative before changing the default. A cheaper price or successful login does not establish equivalent answers. Keeping a configuration does not establish that its provider is currently usable.',
@@ -332,7 +333,7 @@ def compose_blocks(blocks, known, projection, prior=''):
                 rejected.append(dict(index=index,reason='unsupported_assertion',sha256=hashlib.sha256(prose.encode()).hexdigest(),
                                      claim_findings=violations(prose),units=units))
             if retained.strip():
-                content.append(qualify_route_restatement(retained.strip()));retained_reasoning=True
+                content.append(qualify_route_restatement(retained.strip(), prior));retained_reasoning=True
         else:
             raise ValueError('Unknown answer block type')
     if not tokens or sum(len(p) for p in content)>10000:
@@ -377,17 +378,19 @@ ROUTE_QUALIFIED = re.compile(
 ROUTE_NOTE = 'That listing is configured in Web Bob’s route registry; availability and sign-in are not verified.'
 
 
-def qualify_route_restatement(text):
-    """Carry configured-not-verified whenever a route-registry fact is restated."""
+def qualify_route_restatement(text, prior=''):
+    """Carry configured-not-verified on the first unqualified route mention."""
     if not text or not ROUTE_MENTION.search(text) or ROUTE_QUALIFIED.search(text):
         return text
     if ROUTE_NOTE.lower() in text.lower():
+        return text
+    if prior and ROUTE_NOTE.lower() in prior.lower():
         return text
     return text.rstrip() + ('' if text.rstrip()[-1:] in '.!?' else '.') + ' ' + ROUTE_NOTE
 
 
 def maybe_append(content, block, prior, *, reference=''):
-    """Keep a block once per conversation; otherwise a one-line reminder or omit."""
+    """Keep a block once per conversation; omit already-delivered Same-as-above lines."""
     from claim_evidence import already_delivered
     block = (block or '').strip()
     if not block:
@@ -395,7 +398,11 @@ def maybe_append(content, block, prior, *, reference=''):
     if block in (content or ''):
         return content
     if already_delivered(block, prior):
-        if reference and reference not in (content or '') and not already_delivered(reference, prior):
+        # "Same … as above" restatements add no constraint and bury this turn.
+        # Keep other one-line reminders such as previously listed steps.
+        if (reference and not reference.startswith('Same ')
+                and reference not in (content or '')
+                and not already_delivered(reference, prior)):
             return ((content or '') + '\n\n' + reference).strip()
         return content
     return ((content or '') + '\n\n' + block).strip()

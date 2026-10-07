@@ -169,6 +169,39 @@ class ProjectionTests(unittest.TestCase):
         self.assertNotIn('Birch',content)
         self.assertTrue(review['rejected_ids'])
 
+    def test_offered_later_input_is_recorded_as_not_supplied(self):
+        rows=dc.extract(dict(id='1',request_id='1',
+            content='I can provide proposal A, version 7. What useful preparation can we do now?'),
+            lambda v:v)
+        self.assertTrue(any(r['key'].startswith('input.pending.') for r in rows), rows)
+        text=' '.join(r['statement'] for r in rows)
+        self.assertIn('has not been supplied yet', text)
+        self.assertIn('must come from you', text)
+        self.assertNotIn('supplied text of Proposal A', text)
+        c=self.scenario()
+        add(c,'There is an access wrinkle: the report route receives supplied text and has no file-reading tools. '
+            'I can provide proposal A, version 7, but proposal B is on an inaccessible drive. '
+            'The decision depends on comparing both. What useful preparation can we do now, and what cannot be concluded?')
+        p=dc.project(c,lambda v:v)
+        combined=' '.join(r['statement'] for r in p['facts'])
+        self.assertIn('has not been supplied yet', combined)
+        self.assertIn('inaccessible', combined)
+
+    def test_condition_sentences_keep_acronyms_and_proper_names(self):
+        c={'messages':[]}
+        add(c,'Planning example only: Gemini says the prepaid balance is depleted. '
+            'The hosted model has stopped because its credit is exhausted. What is the next step? Do not execute anything.')
+        p=dc.project(c,lambda v:v)
+        content,_=dc.render('Prepare a bounded comparison.',p,c,lambda v:v)
+        self.assertIn('Gemini says the prepaid balance is depleted', content)
+        self.assertNotIn('gemini says', content)
+        c={'messages':[]}
+        add(c,'Planning example only: API key credit is exhausted. What is the next step? Do not execute anything.')
+        p=dc.project(c,lambda v:v)
+        content,_=dc.render('Prepare a bounded comparison.',p,c,lambda v:v)
+        self.assertIn('API key credit is exhausted', content)
+        self.assertNotIn('aPI key', content)
+
 
 class DeliveryTests(SessionFixture):
     def establish(self):

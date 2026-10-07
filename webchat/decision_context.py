@@ -26,6 +26,13 @@ UNKNOWN = re.compile(r'\b(?:nobody|no one)\s+has\s+(?:checked|verified|measured|
     r'\b(?:has|have)\s+not\s+(?:checked|verified|measured|established)\s+',re.I)
 UNKNOWN_STATE = re.compile(r'\b(?:unverified|unknown|unchecked|unmeasured|not (?:checked|verified|measured|established))\b',re.I)
 INPUT = re.compile(r'\b(?:proposal|input|document|snapshot|file|dataset)\s+[\w.-]+',re.I)
+PENDING_SUPPLY = re.compile(
+    r'\b(?:I can provide|once you supply|will send|can send)\b', re.I)
+_FOLD_STARTERS = frozenset({
+    'a','an','the','this','that','these','those','there','their','our','we','they',
+    'it','its','one','no','nobody','none','in','on','at','for','from','with',
+    'planning','correction','actually','here','his','her','my','your',
+})
 ROUTE = re.compile(r'\b(?:(?:hosted|subscription|report|chat|conversation|local|remote|primary|alternate|backup)\s+){0,3}'
                    r'(?:route|model|provider)\b',re.I)
 RULES = '''A server-owned decision-context projection accompanies this answer.
@@ -127,7 +134,8 @@ def extract(message, redact, routes=None):
             if ROUTE.search(candidate) and re.search(r'\bbecause\b',candidate,re.I):
                 start=sentence_start
                 clean=re.sub(r'^planning example(?: only)?\s*:\s*','',candidate,flags=re.I)
-        if not clean or '?' in clean or not STATE.search(clean):
+        pending_input=bool(PENDING_SUPPLY.search(clean) and INPUT.search(clean))
+        if not clean or '?' in clean or (not STATE.search(clean) and not pending_input):
             continue
         if re.match(r'^(?:if|unless|whether|when|until)\b',clean,re.I):
             continue
@@ -175,6 +183,11 @@ def extract(message, redact, routes=None):
         if re.search(r'\b(?:credits?|funding|balance|budget)\b',clean,re.I) and re.search(
                 r'\b(?:stopp?\w*|exhaust\w*|deplet\w*|restor\w*|resum\w*|unavailable)\b',clean,re.I):
             add('funding.'+subject(clean),clean,'funding',subject(clean))
+        elif pending_input:
+            match=INPUT.search(clean)
+            name=re.sub(r'\s+',' ',match[0]).strip()
+            add('input.pending.'+name.lower(),
+                name+' has not been supplied yet; it must come from you.','input')
         elif INPUT.search(clean) and re.search(r'\b(?:inaccessible|unavailable|missing|available|accessible|provided|received)\b',clean,re.I):
             add('input.'+subject(clean,INPUT),clean,'input')
         elif ROUTE.search(clean) and re.search(r'\b(?:tools?|file[- ]reading|supplied text|access)\b',clean,re.I):
@@ -301,8 +314,16 @@ def render(content, projection, conversation, redact):
             value = value.strip(' .;')
             if not value:
                 return ''
+            token = re.match(r'[A-Za-z][A-Za-z0-9]*', value)
+            word = token[0] if token else ''
             if first:
-                return value[0].lower()+value[1:] if value[0].isupper() and not value.startswith('For ') else value
+                if not value[0].isupper() or value.startswith('For '):
+                    return value
+                if word.isupper() and len(word) > 1:
+                    return value
+                if word[:1].isupper() and word[1:].islower() and word.lower() not in _FOLD_STARTERS:
+                    return value
+                return value[0].lower()+value[1:]
             return value[0].upper()+value[1:] if value[0].islower() else value
         first = as_sentence(statements[0], first=True)
         rest = [as_sentence(item, first=False) for item in statements[1:]]

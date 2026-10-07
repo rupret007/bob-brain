@@ -302,9 +302,8 @@ class DeliveryCleanupTests(unittest.TestCase):
             self.assertIn('configured route registry', resource_decision.facts({'resources': [], 'observed_at': 0})['route_boundaries'])
             second, _ = resource_decision.render(packet, projection, prior=first)
             self.assertNotIn(projection['facts']['availability'], second)
-            self.assertIn('Same constraints as above', second)
+            self.assertNotIn('Same constraints as above', second)
             self.assertIn('Prepare a bounded comparison before any generation.', second)
-            self.assertTrue(second.index('Prepare a bounded comparison') < second.index('Same constraints as above'))
             changed = dict(projection, unavailable=['gemini'], facts=dict(projection['facts'],
                 availability='According to the current supplied constraints, gemini is unavailable. Preserve the quality standard, but do not depend on an unavailable route for generation. Prepare evidence and qualify an available candidate before switching; no alternative is qualified by subscription ownership alone.'))
             third, _ = resource_decision.render(json.dumps(dict(answer=[dict(fact='availability'),

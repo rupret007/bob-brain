@@ -157,6 +157,7 @@ def _deliver(root, text, answer, conversation, *, observation, redact):
         try:
             content=catchup_contract.render(raw,contract['catchup_projection'], prior=prior_answers)
         except (ValueError,TypeError,KeyError):
+            conversation['messages'][-1]['catchup_fallback']=True
             content=catchup_contract.render('{"mode":"explain"}',contract['catchup_projection'], prior=prior_answers)
         conversation['messages'][-1]['catchup_observation']=contract['catchup_projection']
         return content,None
