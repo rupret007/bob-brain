@@ -182,6 +182,34 @@ class TestEvidencePromptAssembly(SessionFixture):
         self.assertNotIn('acceptance/lease', rules)
         self.assertIn('Never list a stage or hold as not recorded', rules)
 
+    def test_supplied_drafting_scope_overrides_old_choice_without_releasing_hold(self):
+        import copy
+        import task_queue
+
+        self.fake.reply_text = 'Choose a focused or comprehensive report scope.'
+        self.send('Help plan a read-only Web Bob readiness report. '
+                  'Hold execution until I choose its scope.')
+        held = copy.deepcopy(self.chat.get(self.identifier)['intent_state'])
+        self.assertTrue(held['holds'])
+        for turn in (
+            "Include source identity, what's verified, and the two largest gaps. No texting or changes.",
+            'Keep going with the plan, but the hold still applies.',
+            'What have you actually finished, and what is waiting for me?',
+        ):
+            with self.subTest(turn=turn):
+                self.send(turn)
+                prompt, rules = self.prompt()
+                self.assertIn('Hold execution until I choose its scope', prompt)
+                self.assertIn("Include source identity, what's verified, and the two largest gaps", prompt)
+                self.assertIn('Choose a focused or comprehensive report scope', prompt)
+                self.assertIn('not evidence that a scope question remains open once a later turn', rules)
+                self.assertIn("current or an earlier turn's instructions already specify the report's structure, fields, or boundary", rules)
+                self.assertIn('treat that as the resolved scope for drafting', rules)
+                self.assertIn("do not repeat an earlier alternative-selection request the user's own content has already answered", rules)
+                self.assertIn("A hold stays in force until the owner's recorded release", rules)
+                self.assertEqual(self.chat.get(self.identifier)['intent_state'], held)
+                self.assertFalse(task_queue.tasks(self.root))
+
     def test_unselected_scope_cannot_establish_other_stages_absent(self):
         self.send('Help plan a read-only Web Bob readiness report. '
                   'Hold execution until I choose its scope.')
@@ -210,6 +238,27 @@ class TestEvidencePromptAssembly(SessionFixture):
         self.assertIn('what would count as proof', prompt)
         self.assertIn('every branch must state its own positive evidence condition before any "Rules out" line', rules)
         self.assertIn("Never leave a branch's evidence condition blank or supply only exclusions", rules)
+        self.assertIn('proposed instrumentation has not produced that evidence', rules)
+
+    def test_diagnostic_exclusions_require_evidence_for_each_cause(self):
+        self.send('Here is a report: the source revision is abc123, there are 4 passing '
+                  'checks and 1 failed browser check. Someone says it is ready because '
+                  'most passed. Assess this report only.')
+        self.send('The failed browser check lost a delivery result after reload. '
+                  'Does that change your recommendation?')
+        self.send("Actually the 4 passes were on yesterday's revision def456, not abc123. "
+                  'Correct the assessment.')
+        self.send('What is the single highest-value next investigation, and what would '
+                  "count as proof? Don't run it.")
+        prompt, rules = self.prompt()
+        self.assertIn('lost a delivery result after reload', prompt)
+        self.assertIn("yesterday's revision def456, not abc123", prompt)
+        self.assertIn("what would count as proof? Don't run it.", prompt)
+        self.assertIn('A single confirming or disconfirming observation on one named cause does not rule out a different, unrelated cause', rules)
+        self.assertIn('a "Rules out" line may only name causes that observation\'s evidence actually addresses', rules)
+        self.assertIn('"Still-possible alternatives: None" requires every listed cause to have its own ruling-out evidence', rules)
+        self.assertIn("not inheritance from one branch's check", rules)
+        self.assertIn('verify that contract and the expected read-visibility window first', rules)
         self.assertIn('proposed instrumentation has not produced that evidence', rules)
 
     def test_resource_scenario_covers_named_resources_and_concrete_next_step(self):
