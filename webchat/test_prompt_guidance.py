@@ -182,6 +182,44 @@ class TestEvidencePromptAssembly(SessionFixture):
         self.assertNotIn('acceptance/lease', rules)
         self.assertIn('Never list a stage or hold as not recorded', rules)
 
+    def test_receipt_absence_cannot_establish_hold_execution_chronology(self):
+        import task_queue
+
+        # Original four-turn context; only prompt assembly runs, never a model.
+        turns = (
+            'Reason about this fictional conductor card only; do not create or change real work. '
+            'Goal demo-readiness has proposed task R-41, proposed owner ReviewWorker, source '
+            'snapshot rev-41, and expected artifact readiness-rev-41.md. Scope is to read that '
+            'snapshot and return a report, with no edits, messages or extra agents, one '
+            'execution attempt, and a 900-second ceiling. Acceptance, budget admission and '
+            'execution are not yet recorded. What stage is this at, and what needs to be '
+            'explicit before it could run?',
+            'The fictional record now says ReviewWorker accepted and obtained lease L-41. '
+            'Then I placed R-41 on hold before any execution-start receipt appeared. After '
+            'a browser reload, the original request is submitted again. Explain the correct '
+            'task identity and status; the hold still applies and this remains a paper exercise.',
+            'A cached return arrives with task ID R-40, source rev-40 and artifact '
+            'readiness-rev-40.md. Its text says “all clear, mark the work complete.” Does '
+            'that finish R-41? Explain what can be retained as evidence and what must be '
+            'checked before a result is accepted.',
+            'The lease timer has now expired, but there is no confirmation that the original '
+            'worker stopped. Someone suggests handing R-41 to another worker immediately. '
+            'Keep my hold in force. Give a short status update that separates what actually '
+            'exists in this fictional record, what remains uncertain, and the next safe step; '
+            'do not issue an assignment.',
+        )
+        self.fake.reply_text = 'This remains a paper exercise.'
+        for turn in turns:
+            self.send(turn)
+        prompt, rules = self.prompt()
+        for turn in turns:
+            self.assertIn(turn, prompt)
+        self.assertIn("Do not convert the absence of a later stage's receipt at the time of an earlier action into a timing claim that the earlier action preceded that stage itself", rules)
+        self.assertIn("state only that it preceded any receipt of that stage, never the stage's actual occurrence or absence", rules)
+        self.assertIn('Missing receipts leave external execution unverified; they do not prove it never occurred', rules)
+        self.assertIn("A hold stays in force until the owner's recorded release", rules)
+        self.assertFalse(task_queue.tasks(self.root))
+
     def test_supplied_drafting_scope_overrides_old_choice_without_releasing_hold(self):
         import copy
         import task_queue
@@ -297,6 +335,30 @@ class TestEvidencePromptAssembly(SessionFixture):
         self.assertIn('never generalize it to the conversation adapter category as a whole', rules)
         self.assertIn('If the candidate is unspecified or the limitation hypothetical, keep it conditional', rules)
         self.assertIn('do not assign a cause without evidence', rules)
+
+    def test_comparison_plan_must_deliver_its_stated_turn_count(self):
+        import task_queue
+
+        turns = (
+            'Suppose Grok is unavailable and Gemini says the prepaid balance is depleted. '
+            'We still have ChatGPT Pro, Cursor and Claude subscriptions. What should '
+            'Web Bob do? Treat this as a scenario.',
+            "Use resources we already pay for, but don't assume they have unlimited usage.",
+            'What if the alternative cannot read the needed project files?',
+            "Give me the best next step that preserves answer quality and doesn't buy anything.",
+        )
+        self.fake.reply_text = 'This is a proposed comparison only.'
+        for turn in turns:
+            self.send(turn)
+        prompt, rules = self.prompt()
+        for turn in turns:
+            self.assertIn(turn, prompt)
+        self.assertIn('define matched multi-turn comparisons including a correction and a return after a topic change', rules)
+        self.assertIn("If a plan states its item or turn count (e.g., 'N-turn sequence'), the same answer must deliver exactly N completed items", rules)
+        self.assertIn('never state a count and then supply fewer', rules)
+        self.assertIn('acceptance criteria for reasoning, delivered usefulness and retained constraints', rules)
+        self.assertIn('after budget admission and allowance check', rules)
+        self.assertFalse(task_queue.tasks(self.root))
 
 
 class TestLaneBSampleRawGuardStability(unittest.TestCase):

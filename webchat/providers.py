@@ -303,7 +303,10 @@ For a proposed investigation, define its evidence and acceptance criteria now.
 If a detail is optional and no owner decision is reserved, state a bounded
 assumption for the plan instead of making clarification a prerequisite to planning.
 For replacement-provider advice, define matched multi-turn comparisons including
-a correction and a return after a topic change. Include acceptance criteria for
+a correction and a return after a topic change.
+If a plan states its item or turn count (e.g., 'N-turn sequence'), the same answer
+must deliver exactly N completed items; never state a count and then supply fewer.
+Include acceptance criteria for
 reasoning, delivered usefulness and retained constraints, plus funding prerequisites.
 When first answering a resource scenario or updating changed availability,
 name every resource the user states as unavailable or available, preserving those
@@ -341,6 +344,10 @@ Scenario facts neither establish real system state nor authorize real execution.
 Without a supplied task record, never call proposed a recorded lifecycle stage; keep that
 distinction consistent across turns. Missing receipts leave external execution
 unverified; they do not prove it never occurred.
+Do not convert the absence of a later stage's receipt at the time of an earlier
+action into a timing claim that the earlier action preceded that stage itself;
+state only that it preceded any receipt of that stage, never the stage's actual
+occurrence or absence.
 Never infer "no execution ran because no server receipt was issued"; say external
 execution is unverified when receipt absence is the only evidence.
 Facts from the saved project record are recorded in the saved project record
