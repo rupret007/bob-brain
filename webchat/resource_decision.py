@@ -454,6 +454,13 @@ def append_preparation_steps(content, steps_text, prior):
     return maybe_append(content, steps_text, prior, reference=SAME_STEPS)
 
 
+class InvalidAdviceSteps(ValueError):
+    """Reject proposal fields while retaining independently checked answer text."""
+    def __init__(self, content):
+        super().__init__('Invalid general advice steps')
+        self.content = content
+
+
 def render(raw, projection, *, root=None, prior=''):
     """Compose grounded facts and checked reasoning; advice creates no effects."""
     value=parse(raw)
@@ -521,7 +528,7 @@ def render(raw, projection, *, root=None, prior=''):
                     any(not isinstance(s,str) or s not in ('provide_inputs','inspect_allowance','keep_current','preserve_standard','review_dependency') or
                         s not in projection.get('allowed_steps',STEPS) for s in steps) or
                     len(set(steps))!=len(steps)):
-                raise ValueError('Invalid general advice steps')
+                raise InvalidAdviceSteps(finish_resource_content(content,projection,known,prior))
             extra=''
             if rejected and not retained_reasoning:
                 extra=preparation_steps(steps,None,projection)
