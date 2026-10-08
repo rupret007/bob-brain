@@ -166,6 +166,26 @@ class TestEvidencePromptAssembly(SessionFixture):
         self.assertEqual(self.chat.get(self.identifier)['intent_state'], held)
         self.assertFalse(task_queue.tasks(self.root))
 
+    def test_held_report_checks_preserve_required_function_without_authorizing_use(self):
+        import copy
+        self.send('For the Web Bob project, remember the priority: reliable daily assistance. '
+                  'Keep texting working.')
+        self.send('Help plan a read-only Web Bob readiness report. '
+                  'Hold execution until I choose its scope.')
+        self.send("Include source identity, what's verified, and the two largest gaps. "
+                  'No texting or changes.')
+        held = copy.deepcopy(self.chat.get(self.identifier)['intent_state'])
+        self.send('Keep the texting constraint. Turn the two gaps into concrete checks and '
+                  'acceptance criteria; the hold still applies.')
+        prompt, rules = self.prompt()
+        self.assertIn('Keep texting working', prompt)
+        self.assertIn('No texting or changes', prompt)
+        self.assertIn("A check verifying a 'keep X working' constraint must confirm X still functions as before", rules)
+        self.assertIn('never satisfy it by showing X is blocked, disabled, or unreachable', rules)
+        self.assertIn("A hold stays in force until the owner's recorded release", rules)
+        self.assertEqual(self.chat.get(self.identifier)['intent_state'], held)
+        self.assertFalse(task_queue.tasks(self.root))
+
     def test_provider_preparation_remains_complete_after_rejected_billing_promise(self):
         import resource_decision
         self.send('Suppose Grok is unavailable and Gemini says the prepaid balance is depleted. '
@@ -383,13 +403,15 @@ class TestEvidencePromptAssembly(SessionFixture):
         self.send('Suppose Grok is unavailable and Gemini says the prepaid balance is '
                   'depleted. We still have ChatGPT Pro, Cursor and Claude subscriptions. '
                   'What should Web Bob do? Treat this as a scenario.')
+        self.send("Use resources we already pay for, but don't assume they have unlimited usage.")
         prompt, rules = self.prompt()
         for name in ('Grok', 'Gemini', 'ChatGPT Pro', 'Cursor', 'Claude'):
             self.assertIn(name, prompt)
         self.assertIn('When first answering a resource scenario or updating changed availability', rules)
         self.assertIn('name every resource the user states as unavailable or available', rules)
         self.assertIn('preserving those as supplied conditions rather than live observations', rules)
-        self.assertIn('Give one concrete next step using a named still-available candidate', rules)
+        self.assertIn('Give one concrete next step using the one named candidate whose allowance you are checking this turn', rules)
+        self.assertIn('Never label other listed candidates available or still-available without their own stated check this turn', rules)
         self.assertIn('subscription ownership alone does not establish usable allowance or task quality', rules)
         self.assertIn('after budget admission and allowance check', rules)
 
