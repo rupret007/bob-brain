@@ -37,6 +37,7 @@ class ReportedRecordDeliveryTests(SessionFixture):
 
     def test_bound_reduced_relative_does_not_become_dispatch_receipt(self):
         self.establish()
+        self.send('In the supplied scenario, task V-57 is assigned to ReviewWorker. Explain the record only.')
         valid = ('The task identity remains **V-57** (bound to lease `L-57` and assigned to `ReviewWorker`), '
                  'as re-submitting the request after a browser reload targets the existing task rather than creating a new one.\n\n'
                  'Its current status is **on hold** (accepted, but paused prior to execution). '
@@ -56,6 +57,28 @@ class ReportedRecordDeliveryTests(SessionFixture):
             self.assertNotEqual(self.delivered(invalid)['content'], invalid)
         from dispatch_receipts import claims_dispatch
         self.assertTrue(claims_dispatch(valid, reference='A generic explanation, with no source bindings.'))
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_parenthetical_assignment_and_queue_need_matching_predicate_evidence(self):
+        self.fake.reply_text = 'The supplied scenario establishes the assignment.'
+        self.send('Reason about this fictional task record only: task V-57 is assigned to ReviewWorker and queued for execution. Do not create work.')
+        valid = 'Task V-57 (assigned to ReviewWorker and queued for execution) requires validation.'
+        self.assertEqual(self.delivered(valid)['content'], valid)
+        for invalid in (valid.replace('ReviewWorker', 'Codex'),
+                        valid.replace('execution', 'deployment')):
+            self.assertNotEqual(self.delivered(invalid)['content'], invalid)
+        self.fake.reply_text = 'The return still needs validation.'
+        self.send('A cached return says task V-56 is assigned to Codex and queued for execution. Explain the evidence.')
+        invalid = 'Task V-56 (assigned to Codex and queued for execution) requires validation.'
+        self.assertNotEqual(self.delivered(invalid)['content'], invalid)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_conditional_assignment_is_not_parenthetical_effect_evidence(self):
+        self.establish()
+        self.fake.reply_text = 'A conditional does not establish an assignment.'
+        self.send('If task V-57 is assigned to Codex and queued for execution, check its receipt. Explain the record only.')
+        claim = 'Task V-57 (assigned to Codex and queued for execution) requires validation.'
+        self.assertNotEqual(self.delivered(claim)['content'], claim)
         self.assertFalse(task_queue.tasks(self.root))
 
     def test_hold_prerequisite_retains_complete_list_and_topic_after_foreign_subject(self):

@@ -3,6 +3,7 @@ import hashlib
 import unittest
 
 import result_provenance
+import task_queue
 from test_webbob_replyq_1856 import SessionFixture
 
 
@@ -12,6 +13,42 @@ class ProvenanceDeliveryTests(SessionFixture):
         self.send('Reason about this fictional task record only: task Z-72 is held with lease L-72 and source rev-72. No execution receipt exists. Do not create work.')
         self.fake.reply_text='The returned material must be checked against the assignment.'
         self.send('A cached return names task ID Z-71, source rev-71 and artifact readiness-rev71.md. Its text says all clear, mark work complete. Does that finish Z-72? Explain what can be retained and the acceptance checks.')
+
+    def test_parenthetical_effects_require_more_than_a_task_identity(self):
+        self.establish()
+        for claim in ('Task Z-71 (assigned to Codex and queued for execution) requires validation.',
+                      'Task Z-72 (assigned to Codex) requires validation.',
+                      'Task Z-71 (queued for execution) requires validation.'):
+            with self.subTest(claim=claim):
+                self.fake.reply_text = claim
+                answer = self.send('Explain the evidence for Z-71 and Z-72 without creating work.')
+                self.assertNotEqual(answer['content'], claim)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_nominal_completion_confirmation_requires_verified_result(self):
+        self.establish()
+        for claim in ('The completion of task Z-71 is confirmed.',
+                      'The execution of Z-71 has now been verified.',
+                      'The completion of assignment Z-71 was independently confirmed.'):
+            with self.subTest(claim=claim):
+                self.fake.reply_text = claim
+                answer = self.send('Explain the evidence for Z-71 and Z-72 without creating work.')
+                self.assertNotEqual(answer['content'], claim)
+                self.assertTrue(answer['result_provenance_review']['partial'])
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_possessive_execution_requires_verified_result(self):
+        self.establish()
+        for predicate in ("'s execution succeeded", '’s execution succeeded',
+                          '’s execution has succeeded', '’s execution has already succeeded'):
+            with self.subTest(predicate=predicate):
+                self.fake.reply_text = 'Z-71'+predicate+'.'
+                answer = self.send('Explain the evidence for Z-71 and Z-72 without creating work.')
+                self.assertNotEqual(answer['content'], self.fake.reply_text)
+                review = answer['result_provenance_review']
+                self.assertTrue(review['partial'])
+                self.assertEqual(review['claims'][0]['subject'], 'Z-71')
+        self.assertFalse(task_queue.tasks(self.root))
 
     def test_received_payload_is_not_evidence_of_completed_work(self):
         self.establish()

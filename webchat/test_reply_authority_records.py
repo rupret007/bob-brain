@@ -277,6 +277,23 @@ class RecordRestatementDeliveryTests(SessionFixture):
         self.fake.reply_text = 'The supplied record is held.'
         self.send(ORIGIN)
 
+    def test_reported_hold_noun_does_not_license_a_release(self):
+        self.establish()
+        for claim in ('The hold has now been lifted.',
+                      'The hold has since been removed.',
+                      'The hold had already been released.'):
+            with self.subTest(claim=claim):
+                self.fake.reply_text = claim
+                answer = self.send('Explain the state and next check for Q-73. Keep my hold in force; do not create work.')
+                self.assertNotIn(claim, answer['content'])
+                self.assertTrue(answer['authority_review']['partial'])
+        for supported in ('The hold remains in force. Check whether the worker stopped.',
+                          'The hold has not been lifted.',
+                          'Check whether the hold has been lifted.'):
+            self.fake.reply_text = supported
+            self.assertEqual(self.send(STATUS_PROMPT)['content'], supported)
+        self.assertFalse(task_queue.tasks(self.root))
+
     def test_turn_status_update_survives_ordinary_delivery(self):
         self.establish()
         self.fake.reply_text = STATUS_UPDATE
@@ -285,6 +302,14 @@ class RecordRestatementDeliveryTests(SessionFixture):
         self.assertIn('What Remains Uncertain', answer['content'])
         self.assertIn('Next Safe Step', answer['content'])
         self.assertGreater(len(answer['content']), 400)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_supplied_assignee_field_supports_only_its_own_parenthetical_assignment(self):
+        self.establish()
+        self.fake.reply_text = 'Task Q-73 (assigned to ReviewWorker) requires validation.'
+        self.assertEqual(self.send(STATUS_PROMPT)['content'], self.fake.reply_text)
+        self.fake.reply_text = 'Task Q-73 (assigned to Codex) requires validation.'
+        self.assertNotEqual(self.send(STATUS_PROMPT)['content'], self.fake.reply_text)
         self.assertFalse(task_queue.tasks(self.root))
 
     def test_invented_hold_lift_and_completion_are_still_rejected(self):

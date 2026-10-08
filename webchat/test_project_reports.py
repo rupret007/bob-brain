@@ -14,6 +14,28 @@ import task_queue
 
 
 class ProjectReportTests(Fixture):
+    def test_verified_nominal_and_possessive_results_survive_full_delivery(self):
+        from types import SimpleNamespace
+        row, _ = self.report()
+        self.finish_report(row, 'Useful saved finding with evidence.')
+        question = 'For Web Bob, what finished and what should happen next?'
+        conversation = self.chat.get(self.identifier)
+        project = project_context.projection(self.root, conversation, question)
+        _, bindings = project_reports.answer_evidence(
+            self.root, conversation, project, question, self.chat.redact)
+        self.assertTrue(bindings)
+        self.fake.current_call = SimpleNamespace(report_sources=bindings)
+        for text in ('The completion of report [report:saved-report-1] is confirmed.',
+                     'The saved report [report:saved-report-1]’s execution succeeded.'):
+            with self.subTest(text=text), patch.object(self.fake, 'reply', return_value=dict(
+                    content=text, provider='gemini', attempts=[])):
+                answer = self.submit(question)['messages'][-1]
+                review = answer['result_provenance_review']
+                self.assertFalse(review['partial'])
+                self.assertTrue(review['claims'])
+                self.assertTrue(all(claim['supported'] for claim in review['claims']))
+                self.assertIn('/api/jobs/result?id='+row['id'], answer['content'])
+
     def test_completion_support_is_bound_to_verified_saved_report_not_another_task(self):
         import result_provenance
         row,_=self.report();self.finish_report(row,'Useful saved finding with evidence.')
