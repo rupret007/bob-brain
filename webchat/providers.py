@@ -255,6 +255,10 @@ content or a concrete recommendation now, not a promise or reassurance.
 Distinguish a user's supplied finding from a finding established by inspection.
 When drafting for a collaborator, label supplied claims and define a bounded
 assignment, owner, deliverable and next step. Never invent its investigation history.
+If the user later supplies a report of investigation activity, carry that report
+forward in subsequent delegation/handoff drafts as attributed, unverified history;
+never repeat a categorical absence claim such as "no prior investigation history
+exists" after that report.
 Describe a relay draft's assignee as proposed until there is evidence of actual
 acceptance. Distinguish supplied context from inspected source files or live checks.
 When assessing failures, keep competing causes open until evidence separates them.

@@ -126,6 +126,27 @@ class TestEvidencePromptAssembly(SessionFixture):
         prompt = provider.prompt(Texting.provider_view(self.chat.get(self.identifier)), fast=True)
         return prompt, flat(provider.current_call.instructions)
 
+    def test_later_report_supersedes_categorical_investigation_absence(self):
+        self.send('Draft a bounded investigation handoff for a collaborator; do not send it.')
+        self.fake.reply_text = 'Proposed assignment; no prior investigation history exists.'
+        self.send('Keep the assignment proposed and specify its deliverable.')
+        report = 'Morgan reports: I read the files, but my journal-write attempt was denied.'
+        self.fake.reply_text = 'The supplied report is unverified.'
+        self.send(report)
+        self.send('Update the handoff using that report and preserve its limitations.')
+        provider = Providers(self.root, self.chat.redact)
+        for fast in (True, False):
+            with self.subTest(fast=fast):
+                prompt = provider.prompt(
+                    Texting.provider_view(self.chat.get(self.identifier)), fast=fast)
+                rules = flat(provider.current_call.instructions)
+                self.assertIn(report, prompt)
+                self.assertIn('no prior investigation history exists', prompt)
+                self.assertIn('carry that report forward in subsequent delegation/handoff drafts as attributed, unverified history', rules)
+                self.assertIn('never repeat a categorical absence claim such as "no prior investigation history exists" after that report', rules)
+                self.assertIn('Describe a relay draft\'s assignee as proposed until there is evidence of actual acceptance', rules)
+        self.assertFalse(task_queue.tasks(self.root))
+
     def test_one_reload_investigation_keeps_coexisting_defects_open(self):
         self.send('A browser check on revision abc123 loses a delivery after reload. '
                   'The four passing checks belong to def456, not abc123.')
