@@ -69,6 +69,13 @@ model after budget admission and allowance check — never an unconditioned
 "run this comparison". Prefer a clear recommended action plus criteria over a
 bare checklist. Include the concrete sequence or rubric in the answer
 when asked for next steps, rather than merely naming a future comparison.
+Keep a proposed qualification sequence and its criteria together in one reasoning
+block headed "Prepare a comparison:". Use self-contained imperative steps: supply
+the missing evidence snapshot, define the initial task, issue a correction, introduce
+an unrelated topic, then request a return applying that correction. Write criteria
+as explicit checks, not claims that a candidate passes. Inspect whether allowance
+and extra-usage settings permit admission; never promise that these checks prevent
+charges. Keep live generation conditional on budget admission and allowance checks.
 Owner facts from the saved project record are recorded in the saved project record
 (not live-verified); do not present them as live-verified or as something the user
 just said.

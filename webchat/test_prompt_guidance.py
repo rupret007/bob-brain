@@ -8,6 +8,7 @@ from test_reply_authority_records import guard
 from test_webbob_replyq_1856 import SessionFixture
 from providers import Providers
 from texting import Texting
+import task_queue
 
 HOLDOUT_SAMPLE = Path(__file__).resolve().parent / 'fixtures' / 'lane_b_raw_answers.json'
 
@@ -124,6 +125,76 @@ class TestEvidencePromptAssembly(SessionFixture):
         provider = Providers(self.root, self.chat.redact)
         prompt = provider.prompt(Texting.provider_view(self.chat.get(self.identifier)), fast=True)
         return prompt, flat(provider.current_call.instructions)
+
+    def test_one_reload_investigation_keeps_coexisting_defects_open(self):
+        self.send('A browser check on revision abc123 loses a delivery after reload. '
+                  'The four passing checks belong to def456, not abc123.')
+        self.fake.reply_text = (
+            'Proposed check: correlate one abc123 request across acknowledgment, durable '
+            'storage, retrieval and rendering, using matched identity and timestamps. '
+            'A reload before the visibility deadline leaves persistence untested; '
+            'a later empty read does not establish that the write never happened. '
+            'Concurrent retrieval and rendering defects remain possible. '
+            'Request the matching storage and response evidence before excluding them.')
+        answer = self.send("Propose one investigation and what it would prove. Don't run it.")
+        _, rules = self.prompt()
+        self.assertIn('Premature reload leaves durability untested, not disproved', rules)
+        self.assertIn('one matched trace timeline', rules)
+        self.assertEqual(answer['content'], self.fake.reply_text)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_held_report_draft_delivers_source_identity_and_both_gaps(self):
+        import copy
+        self.send('Help plan a read-only Web Bob readiness report. '
+                  'Hold execution until I choose its scope.')
+        held = copy.deepcopy(self.chat.get(self.identifier)['intent_state'])
+        self.fake.reply_text = (
+            'Source-code revision: unknown; a saved-chat revision does not identify code.\n'
+            'Verified runtime evidence: not supplied.\n'
+            '1. Continuity gap: cross-session retention is unverified. '
+            'Request a source-matched persistence and retrieval trace.\n'
+            '2. Texting gap: delivery health is unverified. '
+            'Request existing source-matched delivery receipts; send no test texts.\n')
+        answer = self.send("Include source identity, what's verified, and the two largest gaps. "
+                           'No texting or changes. Keep going with this plan; the hold still applies.')
+        _, rules = self.prompt()
+        self.assertIn('separate from saved-chat revision', rules)
+        self.assertIn('Keep gap descriptions separate from hold/lifecycle notices', rules)
+        self.assertIn('not another choice of report structure already specified', rules)
+        for line in self.fake.reply_text.splitlines():
+            self.assertIn(line, answer['content'])
+        self.assertEqual(self.chat.get(self.identifier)['intent_state'], held)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_provider_preparation_remains_complete_after_rejected_billing_promise(self):
+        import resource_decision
+        self.send('Suppose Grok is unavailable and Gemini says the prepaid balance is depleted. '
+                  'We still have ChatGPT Pro, Cursor and Claude subscriptions. '
+                  'What should Web Bob do? Treat this as a scenario.')
+        self.send("Use resources we already pay for, but don't assume they have unlimited usage.")
+        self.send('What if the alternative cannot read the needed project files?')
+        self.send("Give me the best next step that preserves answer quality and doesn't buy anything.")
+        _, rules = self.prompt()
+        self.assertIn('Keep a proposed qualification sequence and its criteria together', rules)
+        self.assertIn('never promise that these checks prevent charges', rules)
+        projection = resource_decision.project(self.root, self.chat.get(self.identifier))
+        plan = (
+            'Prepare a comparison:\n'
+            '1. Supply a bounded owner-provided evidence snapshot.\n'
+            '2. Inspect whether allowance and extra-usage settings permit budget admission.\n'
+            '3. Define an initial planning task grounded in the supplied snapshot.\n'
+            '4. Issue a correction to the initial planning task.\n'
+            '5. Introduce an unrelated topic in a separate turn.\n'
+            '6. Request a return to the planning task applying the correction.\n'
+            '7. Check whether the final answer retains the correction and constraints.\n'
+            '8. Check whether reasoning cites supplied evidence and delivers the requested plan.\n')
+        raw = json.dumps(dict(answer=[dict(fact='claude.observation'),
+            dict(reasoning='The allowance check guarantees no extra charges.'),
+            dict(reasoning=plan)], resource='claude', steps=['inspect_allowance']))
+        content, _ = resource_decision.render(raw, projection)
+        self.assertNotIn('guarantees no extra charges', content)
+        self.assertIn(plan.strip(), content)
+        self.assertFalse(task_queue.tasks(self.root))
 
     def test_relayed_status_classifies_receipt_subject_not_delivery_verb(self):
         import catchup_contract
