@@ -233,31 +233,36 @@ class TestEvidencePromptAssembly(SessionFixture):
         self.assertNotIn('Prepare a comparison:', answer['content'])
         self.assertFalse(task_queue.tasks(self.root))
 
-    def test_held_evidence_checks_require_passive_existing_records(self):
+    def test_held_evidence_checks_require_release_even_for_existing_records(self):
         import copy
         self.send('For the Web Bob project, remember: keep texting working. Planning only.')
         self.send('Help plan a read-only readiness report. Hold execution until I choose its scope.')
         held = copy.deepcopy(self.chat.get(self.identifier)['intent_state'])
         self.fake.reply_text = (
-            'Texting gap: request existing delivery logs and receipts matched to the source revision; '
-            'look for evidence of normal delivery. Continuity gap: request existing saved-session '
-            'and retrieval records. Missing records leave both functions unverified. '
-            'A live texting probe or new session-state test requires hold release and authorization '
-            'for those effects first; neither belongs in the current read-only plan.')
+            'Texting gap: inspecting existing delivery logs and receipts requires hold release '
+            'and authorization first; match them to the source revision and normal delivery. '
+            'Continuity gap: inspecting existing saved-session and retrieval records requires '
+            'hold release and authorization first. Missing records leave both functions unverified. '
+            'A live texting probe or new session-state test also requires hold release and '
+            'authorization first. These are pending options; the scope remains undecided.')
         answer = self.send('Draft the next evidence checks. Keep texting working; no system changes. '
                            'The hold still applies.')
         provider = Providers(self.root, self.chat.redact)
         for fast in (True, False):
             with self.subTest(fast=fast):
-                provider.prompt(Texting.provider_view(self.chat.get(self.identifier)), fast=fast)
+                prompt = provider.prompt(Texting.provider_view(self.chat.get(self.identifier)), fast=fast)
                 rules = flat(provider.current_call.instructions)
-                self.assertIn('While execution is on hold, proposed next evidence checks must be '
-                              'passive: read existing logs, state or telemetry', rules)
-                self.assertIn('Sending or receiving live test messages, writing new session/context '
-                              'state or otherwise exercising the held function is an active check', rules)
-                self.assertIn('requires hold release and authorization for those effects first, '
-                              'outside the current read-only plan', rules)
+                self.assertIn('Hold execution until I choose its scope', prompt)
+                self.assertIn('While execution is on hold, every proposed next evidence check '
+                              'requires hold release and authorization before being performed', rules)
+                self.assertIn('including passive inspection of existing logs, state or telemetry', rules)
+                self.assertIn('Passive checks are lowest-risk pending options, not exempt from the hold', rules)
+                self.assertIn('Live test messages, new session/context state or other effects '
+                              'also require authorization for those effects', rules)
+                self.assertNotIn('If only an active check would close the gap', rules)
+        # Offline instruction and delivery contract; no live model compliance claim.
         self.assertIn(self.fake.reply_text, answer['content'])
+        self.assertNotIn('requires no hold release', answer['content'])
         self.assertEqual(self.chat.get(self.identifier)['intent_state'], held)
         self.assertFalse(task_queue.tasks(self.root))
 
@@ -493,8 +498,7 @@ class TestEvidencePromptAssembly(SessionFixture):
                     Texting.provider_view(self.chat.get(self.identifier)), fast=fast)
                 rules = flat(provider.current_call.instructions)
                 self.assertIn('No query, access-scope or rendering check was performed', prompt)
-                self.assertIn('storage/persistence failure and an unrelated query, scope, or rendering defect', rules)
-                self.assertIn('a "Rules out" line for one must not list the other unless this turn\'s evidence specifically distinguishes them', rules)
+                self.assertIn("No single check's evidence may be treated as excluding a different named failure mode unless this turn specifically tested that mode", rules)
                 self.assertIn('default to naming the unaddressed cause in "Still-possible alternatives" instead', rules)
         # This offline fixture checks delivery preservation, not live model generation.
         excluded = next(line for line in answer['content'].splitlines()
@@ -505,6 +509,20 @@ class TestEvidencePromptAssembly(SessionFixture):
             self.assertNotIn(cause, excluded)
             self.assertIn(cause, alternatives)
         self.assertIn('confirms a persistence failure', answer['content'])
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_stored_record_and_failed_fetch_leave_reload_ordering_untested(self):
+        self.send('A supplied report shows a stored record and a failed fetch after reload. '
+                  'No check established whether durable commit preceded reload. '
+                  "Explain what this rules out and the next distinguishing check. Don't run it.")
+        provider = Providers(self.root, self.chat.redact)
+        for fast in (True, False):
+            with self.subTest(fast=fast):
+                prompt = provider.prompt(Texting.provider_view(self.chat.get(self.identifier)), fast=fast)
+                rules = flat(provider.current_call.instructions)
+                self.assertIn('No check established whether durable commit preceded reload', prompt)
+                self.assertIn("No single check's evidence may be treated as excluding a different named failure mode unless this turn specifically tested that mode", rules)
+                self.assertIn('Premature reload leaves durability untested, not disproved', rules)
         self.assertFalse(task_queue.tasks(self.root))
 
     def test_resource_scenario_covers_named_resources_and_concrete_next_step(self):

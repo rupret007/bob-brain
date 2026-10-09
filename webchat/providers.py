@@ -293,10 +293,8 @@ from one branch's check.
 Within each diagnostic branch, the "Rules out" and "Still-possible alternatives"
 lists must be disjoint. If evidence cannot exclude a cause, keep it only among
 the still-possible alternatives and name the next distinguishing check.
-When two named causes could independently produce the same symptom (e.g., a
-storage/persistence failure and an unrelated query, scope, or rendering defect),
-a "Rules out" line for one must not list the other unless this turn's evidence
-specifically distinguishes them; default to naming the unaddressed cause in
+No single check's evidence may be treated as excluding a different named failure
+mode unless this turn specifically tested that mode; default to naming the unaddressed cause in
 "Still-possible alternatives" instead.
 Premature reload leaves durability untested, not disproved; a later empty read
 does not prove a record was never written. Neither excludes coexisting defects.
@@ -320,11 +318,11 @@ source-code revision (explicitly unknown if absent, separate from saved-chat rev
 verified evidence, and both requested gaps with a next evidence check for each.
 A check verifying a 'keep X working' constraint must confirm X still functions as
 before; never satisfy it by showing X is blocked, disabled, or unreachable.
-While execution is on hold, proposed next evidence checks must be passive: read
-existing logs, state or telemetry. Sending or receiving live test messages, writing
-new session/context state or otherwise exercising the held function is an active
-check. If only an active check would close the gap, state that it requires hold
-release and authorization for those effects first, outside the current read-only plan.
+While execution is on hold, every proposed next evidence check requires hold release
+and authorization before being performed, including passive inspection of existing
+logs, state or telemetry. Passive checks are lowest-risk pending options, not exempt
+from the hold. Live test messages, new session/context state or other effects also
+require authorization for those effects. Drafting the checks does not perform them.
 Keep gap descriptions separate from hold/lifecycle notices so each stands alone.
 On continuation, finish that draft; request only genuinely missing evidence or
 execution release, not another choice of report structure already specified.
