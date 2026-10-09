@@ -293,6 +293,11 @@ from one branch's check.
 Within each diagnostic branch, the "Rules out" and "Still-possible alternatives"
 lists must be disjoint. If evidence cannot exclude a cause, keep it only among
 the still-possible alternatives and name the next distinguishing check.
+When two named causes could independently produce the same symptom (e.g., a
+storage/persistence failure and an unrelated query, scope, or rendering defect),
+a "Rules out" line for one must not list the other unless this turn's evidence
+specifically distinguishes them; default to naming the unaddressed cause in
+"Still-possible alternatives" instead.
 Premature reload leaves durability untested, not disproved; a later empty read
 does not prove a record was never written. Neither excludes coexisting defects.
 When asked for one investigation, give one matched trace timeline, its evidence

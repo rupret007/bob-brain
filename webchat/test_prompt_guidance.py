@@ -474,6 +474,39 @@ class TestEvidencePromptAssembly(SessionFixture):
         self.assertIn('verify that contract and the expected read-visibility window first', rules)
         self.assertIn('proposed instrumentation has not produced that evidence', rules)
 
+    def test_persistence_failure_keeps_unchecked_query_and_render_defects_open(self):
+        self.send('Assess a supplied browser report: a delivery disappears after reload.')
+        self.send('The matched storage trace confirms a persistence failure after the '
+                  'durable-commit deadline for that request and storage key.')
+        self.send('No query, access-scope or rendering check was performed.')
+        self.fake.reply_text = (
+            'Observed trace: the supplied storage report confirms a persistence failure.\n'
+            'Rules out: None of the unchecked competing causes.\n'
+            'Still-possible alternatives: Query/scope mismatch and rendering defect.\n'
+            'Next distinguishing check: inspect the matched query response and render trace.')
+        answer = self.send('Give the next investigation and explain what this finding '
+                           "rules out. Don't run it.")
+        provider = Providers(self.root, self.chat.redact)
+        for fast in (True, False):
+            with self.subTest(fast=fast):
+                prompt = provider.prompt(
+                    Texting.provider_view(self.chat.get(self.identifier)), fast=fast)
+                rules = flat(provider.current_call.instructions)
+                self.assertIn('No query, access-scope or rendering check was performed', prompt)
+                self.assertIn('storage/persistence failure and an unrelated query, scope, or rendering defect', rules)
+                self.assertIn('a "Rules out" line for one must not list the other unless this turn\'s evidence specifically distinguishes them', rules)
+                self.assertIn('default to naming the unaddressed cause in "Still-possible alternatives" instead', rules)
+        # This offline fixture checks delivery preservation, not live model generation.
+        excluded = next(line for line in answer['content'].splitlines()
+                        if line.startswith('Rules out:')).lower()
+        alternatives = next(line for line in answer['content'].splitlines()
+                            if line.startswith('Still-possible alternatives:')).lower()
+        for cause in ('query', 'render'):
+            self.assertNotIn(cause, excluded)
+            self.assertIn(cause, alternatives)
+        self.assertIn('confirms a persistence failure', answer['content'])
+        self.assertFalse(task_queue.tasks(self.root))
+
     def test_resource_scenario_covers_named_resources_and_concrete_next_step(self):
         self.send('Suppose Grok is unavailable and Gemini says the prepaid balance is '
                   'depleted. We still have ChatGPT Pro, Cursor and Claude subscriptions. '
