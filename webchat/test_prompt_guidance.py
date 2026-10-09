@@ -207,6 +207,60 @@ class TestEvidencePromptAssembly(SessionFixture):
         self.assertEqual(self.chat.get(self.identifier)['intent_state'], held)
         self.assertFalse(task_queue.tasks(self.root))
 
+    def test_direct_provider_recommendation_scopes_comparison_protocol(self):
+        # Offline contract regression: inspect the actual model instructions and
+        # deliver a compliant fixture; this does not test live model compliance.
+        self.fake.reply_text = json.dumps(dict(answer=[dict(fact='claude.observation'),
+            dict(reasoning='Start with Claude as the candidate: inspect its allowance '
+                 'and extra-usage settings before budget admission or qualification; '
+                 'keep Cursor and ChatGPT Pro as alternatives requiring their own checks.')],
+            resource='claude', steps=['inspect_allowance']))
+        answer = self.send('Suppose Grok is unavailable and Gemini prepaid credit is depleted. '
+                           'We have ChatGPT Pro, Cursor and Claude subscriptions. '
+                           'What should Web Bob do? Treat this as a scenario.')
+        provider = Providers(self.root, self.chat.redact)
+        for fast in (True, False):
+            with self.subTest(fast=fast):
+                provider.prompt(Texting.provider_view(self.chat.get(self.identifier)), fast=fast)
+                rules = flat(provider.current_call.instructions)
+                self.assertIn('Only include this comparison protocol when the current turn itself '
+                              'proposes or revises a multi-turn comparison plan', rules)
+                self.assertIn('For a direct recommendation or capability question, answer that '
+                              'question first', rules)
+                self.assertIn("without copying a prior turn's reasoning paragraph verbatim", rules)
+                self.assertNotIn('when asked for next steps, rather than merely naming a future comparison', rules)
+        self.assertIn('Start with Claude as the candidate', answer['content'])
+        self.assertNotIn('Prepare a comparison:', answer['content'])
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_held_evidence_checks_require_passive_existing_records(self):
+        import copy
+        self.send('For the Web Bob project, remember: keep texting working. Planning only.')
+        self.send('Help plan a read-only readiness report. Hold execution until I choose its scope.')
+        held = copy.deepcopy(self.chat.get(self.identifier)['intent_state'])
+        self.fake.reply_text = (
+            'Texting gap: request existing delivery logs and receipts matched to the source revision; '
+            'look for evidence of normal delivery. Continuity gap: request existing saved-session '
+            'and retrieval records. Missing records leave both functions unverified. '
+            'A live texting probe or new session-state test requires hold release and authorization '
+            'for those effects first; neither belongs in the current read-only plan.')
+        answer = self.send('Draft the next evidence checks. Keep texting working; no system changes. '
+                           'The hold still applies.')
+        provider = Providers(self.root, self.chat.redact)
+        for fast in (True, False):
+            with self.subTest(fast=fast):
+                provider.prompt(Texting.provider_view(self.chat.get(self.identifier)), fast=fast)
+                rules = flat(provider.current_call.instructions)
+                self.assertIn('While execution is on hold, proposed next evidence checks must be '
+                              'passive: read existing logs, state or telemetry', rules)
+                self.assertIn('Sending or receiving live test messages, writing new session/context '
+                              'state or otherwise exercising the held function is an active check', rules)
+                self.assertIn('requires hold release and authorization for those effects first, '
+                              'outside the current read-only plan', rules)
+        self.assertIn(self.fake.reply_text, answer['content'])
+        self.assertEqual(self.chat.get(self.identifier)['intent_state'], held)
+        self.assertFalse(task_queue.tasks(self.root))
+
     def test_provider_preparation_remains_complete_after_rejected_billing_promise(self):
         import resource_decision
         self.send('Suppose Grok is unavailable and Gemini says the prepaid balance is depleted. '

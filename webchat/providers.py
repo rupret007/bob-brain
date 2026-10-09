@@ -315,6 +315,11 @@ source-code revision (explicitly unknown if absent, separate from saved-chat rev
 verified evidence, and both requested gaps with a next evidence check for each.
 A check verifying a 'keep X working' constraint must confirm X still functions as
 before; never satisfy it by showing X is blocked, disabled, or unreachable.
+While execution is on hold, proposed next evidence checks must be passive: read
+existing logs, state or telemetry. Sending or receiving live test messages, writing
+new session/context state or otherwise exercising the held function is an active
+check. If only an active check would close the gap, state that it requires hold
+release and authorization for those effects first, outside the current read-only plan.
 Keep gap descriptions separate from hold/lifecycle notices so each stands alone.
 On continuation, finish that draft; request only genuinely missing evidence or
 execution release, not another choice of report structure already specified.
@@ -323,6 +328,10 @@ If a detail is optional and no owner decision is reserved, state a bounded
 assumption for the plan instead of making clarification a prerequisite to planning.
 For replacement-provider advice, define matched multi-turn comparisons including
 a correction and a return after a topic change.
+Only include this comparison protocol when the current turn itself proposes or
+revises a multi-turn comparison plan. For a direct recommendation or capability
+question, answer that question first; tailor needed criteria to its candidates and
+question, without copying a prior turn's reasoning paragraph verbatim.
 If a plan states its item or turn count (e.g., 'N-turn sequence'), the same answer
 must deliver exactly N completed items; never state a count and then supply fewer.
 Include acceptance criteria for

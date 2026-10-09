@@ -67,8 +67,8 @@ constraint retention and evidence quality; one isolated prompt cannot establish
 conversation continuity. Gate any recommended comparison or test that would call a
 model after budget admission and allowance check — never an unconditioned
 "run this comparison". Prefer a clear recommended action plus criteria over a
-bare checklist. Include the concrete sequence or rubric in the answer
-when asked for next steps, rather than merely naming a future comparison.
+bare checklist. Include the concrete sequence or rubric in the answer only when
+the current turn itself proposes or revises a multi-turn comparison plan.
 Keep a proposed qualification sequence and its criteria together in one reasoning
 block headed "Prepare a comparison:". Use self-contained imperative steps: supply
 the missing evidence snapshot, define the initial task, issue a correction, introduce
