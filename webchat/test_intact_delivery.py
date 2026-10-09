@@ -58,6 +58,43 @@ PLAN = ('Once funding settings are verified, run a matched 4-turn qualification 
 
 
 class IntactDeliveryTests(SessionFixture):
+    def test_coordinated_verification_survives_rejected_premise(self):
+        from answer_fragments import select
+
+        check = ('Inspect the account to verify whether allowance is usable '
+                 'and whether billing settings would incur additional charges.')
+        opener = 'Prepare a qualification comparison:\n1. '
+        for content in (check, opener + check, check.replace('whether', 'if'),
+                        opener + check.replace('whether', 'if'),
+                        opener + check.replace('whether', 'that')):
+            with self.subTest(content=content):
+                delivered, _, pending = select(content, lambda unit: True, pending=True)
+                self.assertEqual(delivered, content)
+                self.assertTrue(pending)
+        for suffix in ('and the route should handle all requests.',
+                       'and that means execution can begin.',
+                       'and that will clear the hold.',
+                       'and whether billing is enabled, and the route should handle all requests.',
+                       '; whether billing settings would incur charges.',
+                       '. Whether billing settings would incur charges.'):
+            content = 'Inspect the account to verify whether allowance is usable ' + suffix
+            for prefix in ('', 'Prepare a qualification comparison:\n1. '):
+                delivered, _, _ = select(prefix + content, lambda unit: True, pending=True)
+                self.assertNotIn(suffix, delivered)
+
+    def test_before_checking_heading_scopes_numbered_checks(self):
+        from answer_fragments import select
+
+        heading = 'Before a candidate could be considered as an alternative, several items still need checking:'
+        checks = ('1. Inspect the account to verify whether allowance is usable and whether billing is enabled.\n'
+                  '2. Record the budget admission requirements.\n'
+                  '3. Compare the quality criteria.')
+        content = heading + '\n' + checks
+        delivered, receipts, pending = select(content, lambda unit: True, pending=True)
+        self.assertEqual(delivered, content)
+        self.assertTrue(pending)
+        self.assertTrue(all(receipt['prospective_governor_start'] == 0 for receipt in receipts))
+
     def test_complete_qualification_sequences_survive_rejected_assurances(self):
         from answer_fragments import independent_after_rejection
 

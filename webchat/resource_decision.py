@@ -67,8 +67,15 @@ constraint retention and evidence quality; one isolated prompt cannot establish
 conversation continuity. Gate any recommended comparison or test that would call a
 model after budget admission and allowance check — never an unconditioned
 "run this comparison". Prefer a clear recommended action plus criteria over a
-bare checklist. Include the concrete sequence or rubric in the answer
-when asked for next steps, rather than merely naming a future comparison.
+bare checklist. Include the concrete sequence or rubric in the answer only when
+the current turn itself proposes or revises a multi-turn comparison plan.
+Keep a proposed qualification sequence and its criteria together in one reasoning
+block headed "Prepare a comparison:". Use self-contained imperative steps: supply
+the missing evidence snapshot, define the initial task, issue a correction, introduce
+an unrelated topic, then request a return applying that correction. Write criteria
+as explicit checks, not claims that a candidate passes. Inspect whether allowance
+and extra-usage settings permit admission; never promise that these checks prevent
+charges. Keep live generation conditional on budget admission and allowance checks.
 Owner facts from the saved project record are recorded in the saved project record
 (not live-verified); do not present them as live-verified or as something the user
 just said.
@@ -447,6 +454,13 @@ def append_preparation_steps(content, steps_text, prior):
     return maybe_append(content, steps_text, prior, reference=SAME_STEPS)
 
 
+class InvalidAdviceSteps(ValueError):
+    """Reject proposal fields while retaining independently checked answer text."""
+    def __init__(self, content):
+        super().__init__('Invalid general advice steps')
+        self.content = content
+
+
 def render(raw, projection, *, root=None, prior=''):
     """Compose grounded facts and checked reasoning; advice creates no effects."""
     value=parse(raw)
@@ -514,7 +528,7 @@ def render(raw, projection, *, root=None, prior=''):
                     any(not isinstance(s,str) or s not in ('provide_inputs','inspect_allowance','keep_current','preserve_standard','review_dependency') or
                         s not in projection.get('allowed_steps',STEPS) for s in steps) or
                     len(set(steps))!=len(steps)):
-                raise ValueError('Invalid general advice steps')
+                raise InvalidAdviceSteps(finish_resource_content(content,projection,known,prior))
             extra=''
             if rejected and not retained_reasoning:
                 extra=preparation_steps(steps,None,projection)

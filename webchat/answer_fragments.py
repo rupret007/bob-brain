@@ -63,14 +63,30 @@ def depends_on_rejected_unit(unit, *, pending):
     return consequence_of_rejected_reference(unit) or continues_rejected_clause(unit)
 
 
+def check_clauses(body, verb):
+    """Keep coordinated complements under their immediately preceding check."""
+    from claim_scope import clauses, finite_predicate
+    previous = None
+    for clause in clauses(body):
+        complement = re.match(r'^\s*(?:whether|if|that)\s+(.+)', clause.text, re.I|re.S)
+        predicate = finite_predicate(complement[1]) if complement else None
+        coordinated = (previous is not None and verb.match(previous.text) and
+            predicate is not None and complement[1][:predicate.start()].strip() and
+            re.search(r'\b(?:whether|if|that)\b', previous.text, re.I) and
+            re.match(r'^\s*and\s+(?:whether|if|that)\b',
+                     body[previous.end:clause.end], re.I))
+        if not coordinated:
+            yield clause
+        previous = clause
+
+
 def independent_after_rejection(unit):
     label,body=presentation(unit)
     # A pronoun bound inside this check does not refer to rejected prose.
     local_body = REFERENCE.sub('', body) if local_check_references(body) else body
     if DEPENDENT.search(local_body) or DEPENDENT.search(label):
         return False
-    from claim_scope import clauses
-    statements=list(clauses(body))
+    statements=list(check_clauses(body, PREPARATION))
     return bool(statements) and all(PREPARATION.match(part.text) or
         QUESTION.match(part.text) and part.text.rstrip().endswith('?') for part in statements)
 
@@ -125,15 +141,15 @@ def prospective_plan(unit):
         body=condition[2]
     return bool(PLAN_ACTION.match(body) and PLAN_OBJECT.search(body) or
                 re.match(r'^\s*before\b',body,re.I) and
-                re.search(r'\b(?:prerequisites|requirements|checks)\b.*\bneed\s+inspection\s*:',body,re.I))
+                re.search(r'\b(?:prerequisites|requirements|checks|items|steps|things)\b.*'
+                          r'\bneeds?\s+(?:inspection|checking|verification|review)\s*:',body,re.I))
 
 
 def attached_step(body):
     """Every proposition must describe a check, not just its opening verb."""
-    from claim_scope import clauses
     if not local_check_references(body):
         return False
-    for clause in clauses(body):
+    for clause in check_clauses(body, PLAN_STEP):
         value=clause.text.strip()
         if not PLAN_STEP.match(value):
             return False

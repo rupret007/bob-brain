@@ -8,6 +8,7 @@ from test_reply_authority_records import guard
 from test_webbob_replyq_1856 import SessionFixture
 from providers import Providers
 from texting import Texting
+import task_queue
 
 HOLDOUT_SAMPLE = Path(__file__).resolve().parent / 'fixtures' / 'lane_b_raw_answers.json'
 
@@ -124,6 +125,176 @@ class TestEvidencePromptAssembly(SessionFixture):
         provider = Providers(self.root, self.chat.redact)
         prompt = provider.prompt(Texting.provider_view(self.chat.get(self.identifier)), fast=True)
         return prompt, flat(provider.current_call.instructions)
+
+    def test_later_report_supersedes_categorical_investigation_absence(self):
+        self.send('Draft a bounded investigation handoff for a collaborator; do not send it.')
+        self.fake.reply_text = 'Proposed assignment; no prior investigation history exists.'
+        self.send('Keep the assignment proposed and specify its deliverable.')
+        report = 'Morgan reports: I read the files, but my journal-write attempt was denied.'
+        self.fake.reply_text = 'The supplied report is unverified.'
+        self.send(report)
+        self.send('Update the handoff using that report and preserve its limitations.')
+        provider = Providers(self.root, self.chat.redact)
+        for fast in (True, False):
+            with self.subTest(fast=fast):
+                prompt = provider.prompt(
+                    Texting.provider_view(self.chat.get(self.identifier)), fast=fast)
+                rules = flat(provider.current_call.instructions)
+                self.assertIn(report, prompt)
+                self.assertIn('no prior investigation history exists', prompt)
+                self.assertIn('carry that report forward in subsequent delegation/handoff drafts as attributed, unverified history', rules)
+                self.assertIn('never repeat a categorical absence claim such as "no prior investigation history exists" after that report', rules)
+                self.assertIn('Describe a relay draft\'s assignee as proposed until there is evidence of actual acceptance', rules)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_one_reload_investigation_keeps_coexisting_defects_open(self):
+        self.send('A browser check on revision abc123 loses a delivery after reload. '
+                  'The four passing checks belong to def456, not abc123.')
+        self.fake.reply_text = (
+            'Proposed check: correlate one abc123 request across acknowledgment, durable '
+            'storage, retrieval and rendering, using matched identity and timestamps. '
+            'A reload before the visibility deadline leaves persistence untested; '
+            'a later empty read does not establish that the write never happened. '
+            'Concurrent retrieval and rendering defects remain possible. '
+            'Request the matching storage and response evidence before excluding them.')
+        answer = self.send("Propose one investigation and what it would prove. Don't run it.")
+        _, rules = self.prompt()
+        self.assertIn('Premature reload leaves durability untested, not disproved', rules)
+        self.assertIn('one matched trace timeline', rules)
+        self.assertEqual(answer['content'], self.fake.reply_text)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_held_report_draft_delivers_source_identity_and_both_gaps(self):
+        import copy
+        self.send('Help plan a read-only Web Bob readiness report. '
+                  'Hold execution until I choose its scope.')
+        held = copy.deepcopy(self.chat.get(self.identifier)['intent_state'])
+        self.fake.reply_text = (
+            'Source-code revision: unknown; a saved-chat revision does not identify code.\n'
+            'Verified runtime evidence: not supplied.\n'
+            '1. Continuity gap: cross-session retention is unverified. '
+            'Request a source-matched persistence and retrieval trace.\n'
+            '2. Texting gap: delivery health is unverified. '
+            'Request existing source-matched delivery receipts; send no test texts.\n')
+        answer = self.send("Include source identity, what's verified, and the two largest gaps. "
+                           'No texting or changes. Keep going with this plan; the hold still applies.')
+        _, rules = self.prompt()
+        self.assertIn('separate from saved-chat revision', rules)
+        self.assertIn('Keep gap descriptions separate from hold/lifecycle notices', rules)
+        self.assertIn('not another choice of report structure already specified', rules)
+        for line in self.fake.reply_text.splitlines():
+            self.assertIn(line, answer['content'])
+        self.assertEqual(self.chat.get(self.identifier)['intent_state'], held)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_held_report_checks_preserve_required_function_without_authorizing_use(self):
+        import copy
+        self.send('For the Web Bob project, remember the priority: reliable daily assistance. '
+                  'Keep texting working.')
+        self.send('Help plan a read-only Web Bob readiness report. '
+                  'Hold execution until I choose its scope.')
+        self.send("Include source identity, what's verified, and the two largest gaps. "
+                  'No texting or changes.')
+        held = copy.deepcopy(self.chat.get(self.identifier)['intent_state'])
+        self.send('Keep the texting constraint. Turn the two gaps into concrete checks and '
+                  'acceptance criteria; the hold still applies.')
+        prompt, rules = self.prompt()
+        self.assertIn('Keep texting working', prompt)
+        self.assertIn('No texting or changes', prompt)
+        self.assertIn("A check verifying a 'keep X working' constraint must confirm X still functions as before", rules)
+        self.assertIn('never satisfy it by showing X is blocked, disabled, or unreachable', rules)
+        self.assertIn("A hold stays in force until the owner's recorded release", rules)
+        self.assertEqual(self.chat.get(self.identifier)['intent_state'], held)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_direct_provider_recommendation_scopes_comparison_protocol(self):
+        # Offline contract regression: inspect the actual model instructions and
+        # deliver a compliant fixture; this does not test live model compliance.
+        self.fake.reply_text = json.dumps(dict(answer=[dict(fact='claude.observation'),
+            dict(reasoning='Start with Claude as the candidate: inspect its allowance '
+                 'and extra-usage settings before budget admission or qualification; '
+                 'keep Cursor and ChatGPT Pro as alternatives requiring their own checks.')],
+            resource='claude', steps=['inspect_allowance']))
+        answer = self.send('Suppose Grok is unavailable and Gemini prepaid credit is depleted. '
+                           'We have ChatGPT Pro, Cursor and Claude subscriptions. '
+                           'What should Web Bob do? Treat this as a scenario.')
+        provider = Providers(self.root, self.chat.redact)
+        for fast in (True, False):
+            with self.subTest(fast=fast):
+                provider.prompt(Texting.provider_view(self.chat.get(self.identifier)), fast=fast)
+                rules = flat(provider.current_call.instructions)
+                self.assertIn('Only include this comparison protocol when the current turn itself '
+                              'proposes or revises a multi-turn comparison plan', rules)
+                self.assertIn('For a direct recommendation or capability question, answer that '
+                              'question first', rules)
+                self.assertIn("without copying a prior turn's reasoning paragraph verbatim", rules)
+                self.assertNotIn('when asked for next steps, rather than merely naming a future comparison', rules)
+        self.assertIn('Start with Claude as the candidate', answer['content'])
+        self.assertNotIn('Prepare a comparison:', answer['content'])
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_held_evidence_checks_require_release_even_for_existing_records(self):
+        import copy
+        self.send('For the Web Bob project, remember: keep texting working. Planning only.')
+        self.send('Help plan a read-only readiness report. Hold execution until I choose its scope.')
+        held = copy.deepcopy(self.chat.get(self.identifier)['intent_state'])
+        self.fake.reply_text = (
+            'Texting gap: inspecting existing delivery logs and receipts requires hold release '
+            'and authorization first; match them to the source revision and normal delivery. '
+            'Continuity gap: inspecting existing saved-session and retrieval records requires '
+            'hold release and authorization first. Missing records leave both functions unverified. '
+            'A live texting probe or new session-state test also requires hold release and '
+            'authorization first. These are pending options; the scope remains undecided.')
+        answer = self.send('Draft the next evidence checks. Keep texting working; no system changes. '
+                           'The hold still applies.')
+        provider = Providers(self.root, self.chat.redact)
+        for fast in (True, False):
+            with self.subTest(fast=fast):
+                prompt = provider.prompt(Texting.provider_view(self.chat.get(self.identifier)), fast=fast)
+                rules = flat(provider.current_call.instructions)
+                self.assertIn('Hold execution until I choose its scope', prompt)
+                self.assertIn('While execution is on hold, every proposed next evidence check '
+                              'requires hold release and authorization before being performed', rules)
+                self.assertIn('including passive inspection of existing logs, state or telemetry', rules)
+                self.assertIn('Passive checks are lowest-risk pending options, not exempt from the hold', rules)
+                self.assertIn('Live test messages, new session/context state or other effects '
+                              'also require authorization for those effects', rules)
+                self.assertNotIn('If only an active check would close the gap', rules)
+        # Offline instruction and delivery contract; no live model compliance claim.
+        self.assertIn(self.fake.reply_text, answer['content'])
+        self.assertNotIn('requires no hold release', answer['content'])
+        self.assertEqual(self.chat.get(self.identifier)['intent_state'], held)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_provider_preparation_remains_complete_after_rejected_billing_promise(self):
+        import resource_decision
+        self.send('Suppose Grok is unavailable and Gemini says the prepaid balance is depleted. '
+                  'We still have ChatGPT Pro, Cursor and Claude subscriptions. '
+                  'What should Web Bob do? Treat this as a scenario.')
+        self.send("Use resources we already pay for, but don't assume they have unlimited usage.")
+        self.send('What if the alternative cannot read the needed project files?')
+        self.send("Give me the best next step that preserves answer quality and doesn't buy anything.")
+        _, rules = self.prompt()
+        self.assertIn('Keep a proposed qualification sequence and its criteria together', rules)
+        self.assertIn('never promise that these checks prevent charges', rules)
+        projection = resource_decision.project(self.root, self.chat.get(self.identifier))
+        plan = (
+            'Prepare a comparison:\n'
+            '1. Supply a bounded owner-provided evidence snapshot.\n'
+            '2. Inspect whether allowance and extra-usage settings permit budget admission.\n'
+            '3. Define an initial planning task grounded in the supplied snapshot.\n'
+            '4. Issue a correction to the initial planning task.\n'
+            '5. Introduce an unrelated topic in a separate turn.\n'
+            '6. Request a return to the planning task applying the correction.\n'
+            '7. Check whether the final answer retains the correction and constraints.\n'
+            '8. Check whether reasoning cites supplied evidence and delivers the requested plan.\n')
+        raw = json.dumps(dict(answer=[dict(fact='claude.observation'),
+            dict(reasoning='The allowance check guarantees no extra charges.'),
+            dict(reasoning=plan)], resource='claude', steps=['inspect_allowance']))
+        content, _ = resource_decision.render(raw, projection)
+        self.assertNotIn('guarantees no extra charges', content)
+        self.assertIn(plan.strip(), content)
+        self.assertFalse(task_queue.tasks(self.root))
 
     def test_relayed_status_classifies_receipt_subject_not_delivery_verb(self):
         import catchup_contract
@@ -308,17 +479,65 @@ class TestEvidencePromptAssembly(SessionFixture):
         self.assertIn('verify that contract and the expected read-visibility window first', rules)
         self.assertIn('proposed instrumentation has not produced that evidence', rules)
 
+    def test_persistence_failure_keeps_unchecked_query_and_render_defects_open(self):
+        self.send('Assess a supplied browser report: a delivery disappears after reload.')
+        self.send('The matched storage trace confirms a persistence failure after the '
+                  'durable-commit deadline for that request and storage key.')
+        self.send('No query, access-scope or rendering check was performed.')
+        self.fake.reply_text = (
+            'Observed trace: the supplied storage report confirms a persistence failure.\n'
+            'Rules out: None of the unchecked competing causes.\n'
+            'Still-possible alternatives: Query/scope mismatch and rendering defect.\n'
+            'Next distinguishing check: inspect the matched query response and render trace.')
+        answer = self.send('Give the next investigation and explain what this finding '
+                           "rules out. Don't run it.")
+        provider = Providers(self.root, self.chat.redact)
+        for fast in (True, False):
+            with self.subTest(fast=fast):
+                prompt = provider.prompt(
+                    Texting.provider_view(self.chat.get(self.identifier)), fast=fast)
+                rules = flat(provider.current_call.instructions)
+                self.assertIn('No query, access-scope or rendering check was performed', prompt)
+                self.assertIn("No single check's evidence may be treated as excluding a different named failure mode unless this turn specifically tested that mode", rules)
+                self.assertIn('default to naming the unaddressed cause in "Still-possible alternatives" instead', rules)
+        # This offline fixture checks delivery preservation, not live model generation.
+        excluded = next(line for line in answer['content'].splitlines()
+                        if line.startswith('Rules out:')).lower()
+        alternatives = next(line for line in answer['content'].splitlines()
+                            if line.startswith('Still-possible alternatives:')).lower()
+        for cause in ('query', 'render'):
+            self.assertNotIn(cause, excluded)
+            self.assertIn(cause, alternatives)
+        self.assertIn('confirms a persistence failure', answer['content'])
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_stored_record_and_failed_fetch_leave_reload_ordering_untested(self):
+        self.send('A supplied report shows a stored record and a failed fetch after reload. '
+                  'No check established whether durable commit preceded reload. '
+                  "Explain what this rules out and the next distinguishing check. Don't run it.")
+        provider = Providers(self.root, self.chat.redact)
+        for fast in (True, False):
+            with self.subTest(fast=fast):
+                prompt = provider.prompt(Texting.provider_view(self.chat.get(self.identifier)), fast=fast)
+                rules = flat(provider.current_call.instructions)
+                self.assertIn('No check established whether durable commit preceded reload', prompt)
+                self.assertIn("No single check's evidence may be treated as excluding a different named failure mode unless this turn specifically tested that mode", rules)
+                self.assertIn('Premature reload leaves durability untested, not disproved', rules)
+        self.assertFalse(task_queue.tasks(self.root))
+
     def test_resource_scenario_covers_named_resources_and_concrete_next_step(self):
         self.send('Suppose Grok is unavailable and Gemini says the prepaid balance is '
                   'depleted. We still have ChatGPT Pro, Cursor and Claude subscriptions. '
                   'What should Web Bob do? Treat this as a scenario.')
+        self.send("Use resources we already pay for, but don't assume they have unlimited usage.")
         prompt, rules = self.prompt()
         for name in ('Grok', 'Gemini', 'ChatGPT Pro', 'Cursor', 'Claude'):
             self.assertIn(name, prompt)
         self.assertIn('When first answering a resource scenario or updating changed availability', rules)
         self.assertIn('name every resource the user states as unavailable or available', rules)
         self.assertIn('preserving those as supplied conditions rather than live observations', rules)
-        self.assertIn('Give one concrete next step using a named still-available candidate', rules)
+        self.assertIn('Give one concrete next step using the one named candidate whose allowance you are checking this turn', rules)
+        self.assertIn('Never label other listed candidates available or still-available without their own stated check this turn', rules)
         self.assertIn('subscription ownership alone does not establish usable allowance or task quality', rules)
         self.assertIn('after budget admission and allowance check', rules)
 

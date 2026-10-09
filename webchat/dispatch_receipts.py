@@ -398,7 +398,7 @@ def claims_dispatch(text, *, reference='', bindings=None, context=''):
     # Do not use the passive proximity heuristic for a conceptual answer: a
     # definition can describe assignment without asserting a particular job.
     claim = REFERENCE_EFFECT if reference else CLAIM
-    from reported_records import attributed_parentheticals, attributed_descriptive_bindings
+    from reported_records import attributed_parentheticals, attributed_descriptive_bindings, unsupported_parenthetical_effect
     scoped = attributed_parentheticals(text, bindings) if reference else text
     if reference:
         scoped = attributed_descriptive_bindings(scoped, bindings)
@@ -428,7 +428,7 @@ def claims_dispatch(text, *, reference='', bindings=None, context=''):
     denied_progress=any(progress_continuation.search(match['tail']) for match in re.finditer(
         r'has no established action(?P<tail>[^.!?\n]*)',original,re.I))
     return bool(DIRECT_CLAIM.search(verbal_effects(original)) or JOB_ID.search(original) or inherited
-                or denied_progress
+                or denied_progress or unsupported_parenthetical_effect(scoped)
                 or claim.search(checked if reference else verbal_effects(checked)))
 
 

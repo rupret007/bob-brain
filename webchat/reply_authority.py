@@ -58,10 +58,11 @@ HOLD_CLAIM = re.compile(
     r"(?:need|require) (?:your |fresh |renewed |explicit )*(?:permission|approval|go[- ]ahead))\b", re.I)
 HOLD_QUESTION = re.compile(r"^(?:(?:are|is|am|do|does|why)\b[^.!]*\b(?:on hold|holds? (?:still )?active|paused|need.{0,20}permission)\b[^.!]*|what holds? are active)\??$", re.I)
 STATE_ADVERB = r'(?:already|now|just|still|yet|[a-z]+ly)'
+PERFECT_PASSIVE = r'(?:has|have|had)\s+(?:(?:'+STATE_ADVERB+r'|since)\s+){0,3}been'
 MODAL_PERFECT = r'must\s+(?:'+STATE_ADVERB+r'\s+){0,3}have\s+(?:'+STATE_ADVERB+r'\s+){0,3}been'
 PERMISSION_CHANGE = re.compile(
     r'\b(?:hold|permission|approval)\b[^,;!?]{0,30}'
-    r'\b(?:is|was|has been|'+MODAL_PERFECT+r'|now|already)\s+(?:'+STATE_ADVERB+r'\s+){0,3}(?:lifted|cleared|released|granted)\b|'
+    r'\b(?:is|was|'+PERFECT_PASSIVE+r'|'+MODAL_PERFECT+r'|now|already)\s+(?:'+STATE_ADVERB+r'\s+){0,3}(?:lifted|cleared|released|removed|ended|expired|granted)\b|'
     r'\b(?:I|we|you)(?:[’\']ve|\s+have)?\s+(?:(?:already|now)\s+)?'
     r'(?:lifted|cleared|released|granted)\s+(?:(?:the|your|our|my|real|actual|current|existing)\s+){0,3}'
     r'(?:hold|permission|approval)\b|'
@@ -901,7 +902,14 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                 bound_target=re.match(r'(?:on|for|in)\s+'+subject+r'(?=\s|$)',suffix,re.I) if explicit_object else None
                 prospective_tail=suffix[bound_target.end():] if bound_target else suffix
                 prospective=bool(record_topic and prospective_hold_check(prefix,prospective_tail))
-                noun_reference=(record_subject or explicit_object or (directive or prospective) and record_topic) and noun and (governing or prerequisite or prospective) and object_ok
+                # A complete negative passive denies the transition. It
+                # cannot carry a second predicate past the noun boundary.
+                denied_transition=bool(re.fullmatch(
+                    r'(?:(?:has|have|had)\s+not\s+(?:yet\s+)?been|(?:is|was)\s+not)\s+'
+                    r'(?:lifted|cleared|released|removed|ended|expired)[.!?]*',suffix,re.I))
+                noun_reference=((record_subject or explicit_object or (directive or prospective) and record_topic)
+                    and noun and (governing or prerequisite or prospective) and object_ok
+                    and (in_force_hold_restatement_ok(clean_clause) or denied_transition))
                 denied_lift=bool((record_subject or explicit_object) and noun and object_ok and re.search(
                     r"\b(?:do(?:es)? not|cannot|can['’]t|has no(?:\s+\w+){0,4}\s+authority to|will not|did not)\s+"
                     r'(?:override|clear|lift|release|revoke|cancel)\b|'

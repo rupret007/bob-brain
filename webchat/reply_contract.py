@@ -167,6 +167,10 @@ def _deliver(root, text, answer, conversation, *, observation, redact):
         import resource_decision
         try:
             content, decision=resource_decision.render(raw,contract['resource_projection'],root=root,prior=prior_answers)
+        except resource_decision.InvalidAdviceSteps as exc:
+            content=exc.content
+            decision=dict(resource=None,steps=[],execution_started=False,model_proposal_accepted=False,
+                          partial=True,rejected_proposal=str(exc))
         except (ValueError,TypeError,KeyError):
             projection=contract['resource_projection']
             facts=projection.get('facts') or resource_decision.facts(projection['inventory'],missing=projection['missing_inputs'])

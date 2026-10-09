@@ -478,7 +478,8 @@ def drop_empty_labels(text):
             while j < len(lines) and not lines[j].strip():
                 j += 1
             nxt = lines[j].strip() if j < len(lines) else ''
-            next_heading = bool(nxt and (is_empty_label(nxt) or re.match(r'^#{1,6}\s+', nxt)))
+            next_heading = bool(nxt and (is_empty_label(nxt) or re.match(r'^#{1,6}\s+', nxt)
+                                        or re.match(r'^(?:-{3,}|\*{3,}|_{3,})\s*$', nxt)))
             next_number = bool(nxt and re.match(r'^\d+[.)]\s+', nxt))
             cur_item = bool(re.match(r'^(?:\d+[.)]\s+|[-*+]\s+)', stripped))
             next_item = bool(nxt and re.match(r'^(?:\d+[.)]\s+|[-*+]\s+)', nxt))
@@ -746,6 +747,19 @@ def _repair_count_leadins(text):
     return COUNT_LEADIN.sub(repl, text)
 
 
+def _repair_completion_headings(text):
+    """A list of only prospective items cannot establish completed work."""
+    sections = re.split(r'(?m)(?=^#{1,6}[ \t]+|^(?:-{3,}|\*{3,}|_{3,})[ \t]*$)', text)
+    for index, section in enumerate(sections):
+        heading, separator, body = section.partition('\n')
+        if not re.match(r'^#{1,6}[ \t]+Completed\b', heading, re.I):
+            continue
+        items = re.findall(r'(?m)^[ \t]*(?:\d+[.)]|[-*+])[ \t]+(?:\*\*|__)?([^\n]+)', body)
+        if items and all(re.match(r'(?:Next|Proposed|Pending)\b', item, re.I) for item in items):
+            sections[index] = re.sub(r'\bCompleted\b', 'Proposed', heading, count=1, flags=re.I) + separator + body
+    return ''.join(sections)
+
+
 def finish_delivery(text, *, source='', trusted_facts=()):
     """Final user-facing cleanup: no leaked tags, empty labels, or unretrieved links."""
     text = (text or '').replace('[Unverified claim withheld]', '')
@@ -754,6 +768,7 @@ def finish_delivery(text, *, source='', trusted_facts=()):
         text = strip_journal_cursors(text)
     text = rewrite_unsourced_file_observations(text)
     text = drop_empty_labels(text)
+    text = _repair_completion_headings(text)
     text = drop_orphan_fragments(text)
     text = _repair_step_lists(text)
     text = _repair_count_leadins(text)

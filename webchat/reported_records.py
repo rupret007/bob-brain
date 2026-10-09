@@ -135,7 +135,12 @@ def source_bindings(record):
                        truncated=excerpt.get('truncated', False))
         for identifier in re.findall(r'\b[A-Za-z][\w]*-\d+\b', text):
             if identifier in tasks:
-                result.setdefault(identifier, []).append(binding)
+                from conversation_focus import CORRECTION
+                if CORRECTION.match(text.strip()):
+                    for old in result.get(identifier, []):
+                        old['descriptive_predicates'] = []
+                result.setdefault(identifier, []).append(dict(binding,
+                    descriptive_predicates=[] if binding['truncated'] else descriptive_evidence(text, identifier)))
     return result
 
 
@@ -176,6 +181,53 @@ FINITE_ASSIGN = re.compile(
     r'\b(?:was|were|is|are|been|being)\s+$|'
     r'\b(?:has|have|had)\s+(?:been\s+)?$', re.I)
 
+RECORD_PREDICATE = re.compile(
+    r'\b(?P<verb>bound|assigned|queued|scheduled|delegated)\s+'
+    r'(?:to|for|in|under|with|by)\s+[^,;()\n.!?]+?(?=\s+\b(?:and|or|but)\b|[,;()\n.!?]|$)', re.I)
+
+
+def descriptive_evidence(text, identifier):
+    """Explicit owner predicates for this task, never imported payload claims.
+
+    Identity alone provides no effect evidence. Keep this deliberately bounded:
+    only adjacent predicates of the named task can support reduced relatives.
+    """
+    from result_provenance import ATTRIBUTED
+    from claim_scope import clauses, disposition
+    if re.search(r'\b(?:cached|incoming|received|imported|payload|return(?:ed)?)\b', text, re.I) or ATTRIBUTED.search(text):
+        return []
+    plain = re.sub(r'[*_`]', '', text)
+    head = re.compile(r'\b(?:task\s+|assignment\s+)?'+re.escape(identifier)+
+                      r'\s+(?:(?:is|was|has been|had been)\s+)?|'
+                      r'\b'+re.escape(identifier)+r'\s*\(\s*', re.I)
+    supported = []
+    for part in clauses(plain):
+        if re.search(r'\b(?:if|unless|when|once|until|before)\b', part.text, re.I):
+            continue
+        # A task's supplied assignee field is the same predicate as its
+        # reduced relative "assigned to X". Associated artifact IDs alone
+        # do not make the owner record an imported result.
+        if (re.match(r'^\s*(?:task|assignment)\s+'+re.escape(identifier)+r'\s+(?:is|was|remains?)\b', part.text, re.I)
+                and {m[1] for m in TASK_ID.finditer(part.text)} == {identifier}):
+            for match in re.finditer(r'(?:,\s*(?:and\s+)?|\band\s+)assigned\s+(?:worker|assignee|reviewer|agent)\s+([\w-]+)\b', part.text, re.I):
+                if not disposition(part, match.start(), match.end(), match[0]):
+                    supported.append('assigned to '+match[1].lower())
+        for subject in head.finditer(part.text):
+            tail = part.text[subject.end():]
+            position = 0
+            while True:
+                match = RECORD_PREDICATE.match(tail, position)
+                if not match:
+                    break
+                if not disposition(part, subject.end()+match.start(),
+                                   subject.end()+match.end(), match[0]):
+                    supported.append(' '.join(match[0].lower().split()))
+                join = re.match(r'\s+and\s+', tail[match.end():], re.I)
+                if not join:
+                    break
+                position = match.end()+join.end()
+    return supported
+
 
 def attributed_descriptive_bindings(content, bindings):
     """Mask adjectival assignment when restating a supplied task binding.
@@ -199,18 +251,18 @@ def attributed_descriptive_bindings(content, bindings):
 
 
 def attributed_parentheticals(content, bindings):
-    """Mask passive descriptive predicates whose head is a supplied task ID.
+    """Mask reduced predicates supported by the same supplied task's evidence.
 
     Only reduced relative clauses inside a parenthesis inherit that head.
     Finite actors, concrete application IDs and text outside the parenthesis
-    remain visible to the independent effect checks. This supplies reference
-    scope, never evidence of an actual assignment.
+    remain visible to the independent effect checks. Task identity never
+    establishes assignment, queue placement, or scheduling by itself.
     """
     if not bindings:
         return content
     plain = re.sub(r'[*_`]', ' ', content)
     identity = '(?:'+'|'.join(re.escape(i) for i in sorted(bindings))+')'
-    parenthetical = re.compile(r'\b'+identity+r'\s*\((?P<body>[^()\n.!?]{1,240})\)', re.I)
+    parenthetical = re.compile(r'\b(?P<subject>'+identity+r')\s*\((?P<body>[^()\n.!?]{1,240})\)', re.I)
     predicate = re.compile(r'(?:^|\b(?:and|or)\s+)(?P<verb>bound|assigned|queued|scheduled|delegated)'
                            r'(?=\s+(?:to|for|in|under|with|by)\b)', re.I)
     masked = list(content)
@@ -220,8 +272,25 @@ def attributed_parentheticals(content, bindings):
         # "R-41 (I assigned...)" or a later finite clause borrow task scope.
         if not predicate.match(body) or re.search(r'\b(?:I|we|you|he|she|it|they|is|are|was|were|has|have|will|did|your|our|my|actual|real|live)\b',body,re.I):
             continue
+        evidence = {p for identifier, rows in bindings.items()
+                    if identifier.lower() == item['subject'].lower()
+                    for row in rows for p in row.get('descriptive_predicates', [])}
         for match in predicate.finditer(body):
+            assertion = RECORD_PREDICATE.match(body, match.start('verb'))
+            if match['verb'].lower() != 'bound' and (
+                    not assertion or ' '.join(assertion[0].lower().split()) not in evidence):
+                continue
             start = item.start('body')+match.start('verb')
             end = item.start('body')+match.end('verb')
             masked[start:end] = ' '*(end-start)
     return ''.join(masked)
+
+
+def unsupported_parenthetical_effect(content):
+    """Reduced relatives still assert effects without a finite auxiliary."""
+    plain = re.sub(r'[*_`]', ' ', content)
+    for item in re.finditer(r'\b'+IDENTIFIER+r'\s*\((?P<body>[^()\n.!?]{1,240})\)', plain, re.I):
+        if re.search(r'(?:^\s*|\band\s+)(?:assigned|queued|scheduled|delegated)'
+                     r'\s+(?:to|for|in|under|with|by)\b', item['body'], re.I):
+            return True
+    return False

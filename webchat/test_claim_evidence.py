@@ -10,6 +10,29 @@ import resource_decision
 
 
 class ClaimScopeTests(unittest.TestCase):
+    def test_empty_list_label_before_horizontal_rule_is_dropped(self):
+        for rule in ('---', '****', '___'):
+            with self.subTest(rule=rule):
+                suffix = '\n\n' + rule + '\n### Next\n'
+                raw = '2. **Evaluation Procedure for Gap 2:**' + suffix
+                self.assertEqual(claim_evidence.drop_empty_labels(raw), suffix[1:])
+
+    def test_completed_heading_is_qualified_when_only_proposed_items_remain(self):
+        heading = '### Completed Evidence Checks for Identified Gaps'
+        for label in ('Next', 'Proposed', 'Pending'):
+            for boundary in ('---', '***', '___', '### Other Checks'):
+                with self.subTest(label=label, boundary=boundary):
+                    body = '\n\n1. **' + label + ' Evidence Check:** Inspect saved records.'
+                    orphan = '\n2. **Evaluation Procedure:**'
+                    tail = '\n\n' + boundary + '\n\n1. **Recorded Result:** The report is attached.'
+                    raw = heading + body + orphan + tail
+                    expected = heading.replace('Completed', 'Proposed') + body + tail
+                    self.assertEqual(claim_evidence.finish_delivery(raw), expected)
+        for body in ('\n\n1. **Recorded Result:** The report is attached.',
+                     '\n\n1. **Next Check:** Inspect saved records.\n2. **Recorded Result:** The report is attached.',
+                     '\n\nThe report is attached.'):
+            self.assertEqual(claim_evidence.finish_delivery(heading + body), heading + body)
+
     def test_rejected_table_rows_leave_one_contiguous_table(self):
         header = '| Stage | Action |\n|---|---|\n'
         safe = ['| Baseline | Prepare inputs. |', '| Followup | Compare criteria. |']

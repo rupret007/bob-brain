@@ -29,7 +29,13 @@ SCENARIO = re.compile(r'\b(?:fictional|hypothetical|scenario|suppose|stipulate[d
 RECEIVED = re.compile(r'\b(?:cached|incoming|received|imported|payload|return(?:ed)?|artifact|'
                       r'report\s+(?:says|claims)|claims?\s+that)\b', re.I)
 ATTRIBUTED = re.compile(r'\b(?:claims|claimed|says|said|states|stated|alleges|alleged|asserts|asserted|reports|reported)\s+(?:that\s+)?|\baccording to\b', re.I)
-COMPLETED = re.compile(r'\b(?:completed|finished|succeeded|executed)\b|'
+COMPLETED = re.compile(r'\bexecution\s+(?:(?:has|had)\s+(?:(?:now|already|just|successfully)\s+){0,2})?'
+                       r'(?:succeeded|completed|finished)\b|'
+                       r'\b(?:completion|execution)\b(?=\s+of\s+(?:(?:the\s+)?(?:task|assignment|report)\s+)?'
+                       r'(?:[A-Za-z][\w]*-\d+|webchat-[a-f0-9]{32}|\[report[ :][^\]\n]+\])\s+'
+                       r'(?:is|was|(?:has|had)\s+(?:(?:now|already|just)\s+)?been)\s+'
+                       r'(?:(?:now|already|independently)\s+)?(?:verified|confirmed|proven)\b)|'
+                       r'\b(?:completed|finished|succeeded|executed)\b|'
                        r'\b(?:is|was|has been|remains)\s+(?:now\s+)?(?:complete|done|successful)\b|'
                        r'\bmarked\b.{0,40}\bcomplete\b|'
                        r'\b(?:execution|completion)\s+(?:was|is|has been)\s+(?:verified|confirmed|proven)\b|'
@@ -54,7 +60,7 @@ def effect_subjects(text,match,identities,*,nominal=False):
             if not re.fullmatch(r'\s*(?:,?\s*(?:and|or)\s+|,\s*)(?:(?:task|assignment)\s+)?',between,re.I):break
             selected.add(other[0]);last=other
         tail=text[last.end():match.start()]
-        if re.fullmatch(r'\s*(?:(?:was|were|is|are|has|have|had|been|now|already|just|still|yet|\w+ly)\s+)*',tail,re.I):
+        if re.fullmatch(r"(?:['’]s\s+)?\s*(?:(?:was|were|is|are|has|have|had|been|now|already|just|still|yet|\w+ly)\s+)*",tail,re.I):
             return selected
     # Nominal descriptions such as "work completed for task B" place the
     # result's task after its predicate. Keep the task-role binding local.
@@ -66,7 +72,9 @@ def effect_subjects(text,match,identities,*,nominal=False):
                                           r'(?:(?:the\s+)?(?:task|assignment)\s+(?:ID\s+)?)?',relation,re.I)
         suffix=text[after[0].end():]
         dependent=re.match(r"\s*(?:['’]s\b|(?:review|report|artifact|result|output|worker|reviewer|source|requirements?)\b)",suffix,re.I)
-        if (direct or described) and not dependent:return {after[0][0]}
+        confirmation = (match[0].lower() in ('completion', 'execution') and
+                        re.fullmatch(r'\s+of\s+(?:(?:the\s+)?(?:task|assignment)\s+)?', relation, re.I))
+        if (direct or described or confirmation) and not dependent:return {after[0][0]}
     return set()
 
 
@@ -74,11 +82,16 @@ def report_subject(part,match,alias):
     """A citation verifies its report, not surrounding recommendations."""
     position=part.text.find(alias)
     if position<0:return False
+    if match[0].lower() in ('completion', 'execution') and position > match.end():
+        prefix = part.text[:match.start()]
+        relation = part.text[match.end():position]
+        return bool(re.fullmatch(r'\s*(?:the\s+)?', prefix, re.I) and
+                    re.fullmatch(r'\s+of\s+(?:(?:the\s+)?(?:task|assignment|report)\s+)?(?:\[report\s+)?', relation, re.I))
     prefix=(part.label+' '+part.text[:min(position,match.start())]).strip()
     head=re.fullmatch(r'(?:(?:the|a|this|that|our|my|saved|verified|historical|bounded|readiness|project|next-actions|completed)\s+)*'
                      r'(?:report|brief|assignment|artifact|result|output|task)\s*(?:\[report\s*)?',prefix,re.I)
     tail=part.text[position+len(alias):match.start()]
-    return bool((head or not prefix) and re.fullmatch(r'[\]\s]*(?:(?:was|were|is|are|has|have|been|now|already|successfully)\s+)*',tail,re.I))
+    return bool((head or not prefix) and re.fullmatch(r"[\]\s]*(?:['’]s\s+)?(?:(?:was|were|is|are|has|have|been|now|already|successfully)\s+)*",tail,re.I))
 
 
 def digest(value):
