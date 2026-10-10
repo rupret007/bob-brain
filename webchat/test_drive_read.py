@@ -261,6 +261,7 @@ class AdapterTests(unittest.TestCase):
             {'id': DOC_ID, 'name': 'Doc', 'mimeType': DOC_MIME,
              'modifiedTime': '2026-10-10T18:00:00Z',
              'webViewLink': 'https://docs.google.com/document/d/' + DOC_ID + '/edit'},
+            {'access_token': 'access'},
             'Exported document text',
         ])
         self.client = GoogleDrive(self.path, self.transport)
@@ -272,10 +273,11 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(meta['id'], DOC_ID)
         text = self.client.export_text(DOC_ID)
         self.assertEqual(text, 'Exported document text')
-        oauth, metadata, export = self.transport.call_args_list
+        oauth, metadata, oauth2, export = self.transport.call_args_list
         self.assertEqual(oauth.args[0], 'https://oauth2.googleapis.com/token')
         self.assertEqual(oauth.kwargs['data']['grant_type'], 'refresh_token')
         self.assertTrue(oauth.kwargs['form'])
+        self.assertEqual(oauth2.args[0], oauth.args[0])
         self.assertIn('/drive/v3/files/' + DOC_ID, metadata.args[0])
         self.assertIn('fields=', metadata.args[0])
         self.assertNotIn('permissions', metadata.args[0])
@@ -461,14 +463,16 @@ class RoutingTests(DriveFixture):
         secret = json.dumps(dict(type='authorized_user', client_id='fixture-client',
                                  client_secret='fixture-oauth-secret', refresh_token='fixture-refresh-secret'))
         files = LocalFiles(home)
-        actions = LocalTasks(self.root / 'local', files=files, search=Mock(side_effect=AssertionError('search')))
+        actions = LocalTasks(self.root / 'state', files=files,
+                             search=Mock(side_effect=AssertionError('search')), root=self.root)
+        files.protected = actions.protected_paths
         state = {'holds': {}, 'last_permission': None}
         for configured in (str(target), '~/Documents/google-drive.json'):
             with self.subTest(configured=configured), patch.dict(
-                    os.environ, BOB_GOOGLE_DRIVE_CREDENTIALS=configured), \
-                    patch.dict(os.environ, HOME=str(home)):
-                reply = actions.handle(f'read file {target}', 'chat', str(uuid.uuid4()), state)
-                self.assertIn('outside the local file allowlist', reply)
+                    os.environ, {'BOB_GOOGLE_DRIVE_CREDENTIALS': configured, 'HOME': str(home)}):
+                self.assertIn('outside the local file allowlist',
+                              actions.handle(f'create file {target}: unsafe', 'chat', str(uuid.uuid4()), state))
+                self.assertFalse(target.exists())
                 target.write_text(secret)
                 target.chmod(0o600)
                 self.assertIn('outside the local file allowlist',
