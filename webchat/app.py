@@ -148,7 +148,7 @@ def password_at(folder):
 
 
 class Chat(TaskDispatch):
-    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, local_tasks=None):
+    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, local_tasks=None, github_read=None):
         self.folder, self.root = folder, root
         folder.mkdir(parents=True, exist_ok=True)
         self.password = password_at(folder)
@@ -183,6 +183,8 @@ class Chat(TaskDispatch):
         self.reminder_notifier = reminder_notifier if reminder_notifier is not None else lambda body: False
         from calendar_actions import CalendarActions
         self.calendar = calendar if calendar is not None else CalendarActions(folder)
+        from github_read import GitHubRead
+        self.github_read = github_read if github_read is not None else GitHubRead(redact=self.redact)
         # Keep direct lookups and routines on the established search adapter,
         # including its offline release/test injection boundary.
         self.local_tasks = local_tasks if local_tasks is not None else LocalTasks(
@@ -723,6 +725,11 @@ class Chat(TaskDispatch):
                 for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
                     conversation.pop(key, None)
                 return self.intent_reply(conversation, self.redact(calendar), provider='calendar')
+            github = self.github_read.handle(text, intent_state)
+            if github is not None:
+                for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
+                    conversation.pop(key, None)
+                return self.intent_reply(conversation, self.redact(github), provider='github')
             from reminders import ReminderError
             import actions_intent
             if actions_intent.reminder_request(text) or actions_intent.routine_intent(text) or actions_intent.routine_request(text):
