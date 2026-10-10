@@ -44,19 +44,38 @@ def m4a_fixture():
 
 
 def pdf_fixture(text='Offline PDF text'):
-    stream = ('BT /F1 14 Tf 30 100 Td (' + text + ') Tj ET').encode()
-    objects = [b'<< /Type /Catalog /Pages 2 0 R >>', b'<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-               b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1000 200] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
-               b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-               b'<< /Length ' + str(len(stream)).encode() + b' >>\nstream\n' + stream + b'\nendstream']
+    return multipage_pdf_fixture([(text,)])
+
+
+def multipage_pdf_fixture(pages):
+    """Minimal PDF with one text stream per page (offline tests)."""
+    page_objs = []
+    content_objs = []
+    font_obj = b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+    for index, (text,) in enumerate(pages, 1):
+        stream = ('BT /F1 14 Tf 30 100 Td (' + text + ') Tj ET').encode()
+        content_objs.append(b'<< /Length ' + str(len(stream)).encode() + b' >>\nstream\n' + stream + b'\nendstream')
+        page_objs.append(index + 2)
+    kids = ' '.join(f'{num} 0 R' for num in page_objs)
+    objects = [b'<< /Type /Catalog /Pages 2 0 R >>',
+               ('<< /Type /Pages /Kids [' + kids + '] /Count ' + str(len(page_objs)) + ' >>').encode()]
+    font_ref = 3 + len(page_objs)
+    for page_num, text in enumerate(pages, 1):
+        content_index = 3 + len(page_objs) + page_num
+        objects.append(
+            (f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1000 200] '
+             f'/Resources << /Font << /F1 {font_ref} 0 R >> >> /Contents {content_index} 0 R >>').encode())
+    objects.append(font_obj)
+    objects.extend(content_objs)
     data, offsets = b'%PDF-1.4\n', [0]
     for index, body in enumerate(objects, 1):
         offsets.append(len(data))
         data += str(index).encode() + b' 0 obj\n' + body + b'\nendobj\n'
     xref = len(data)
-    data += b'xref\n0 6\n0000000000 65535 f \n'
+    size = len(objects) + 1
+    data += f'xref\n0 {size}\n0000000000 65535 f \n'.encode()
     data += b''.join(f'{offset:010d} 00000 n \n'.encode() for offset in offsets[1:])
-    return data + f'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
+    return data + f'trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
 
 
 class ChatMediaTests(unittest.TestCase):
@@ -286,6 +305,90 @@ class ChatMediaTests(unittest.TestCase):
             bundle = self.enrich([pdf])
         self.assertIn('PDF text extraction is unavailable', bundle['warnings'][0])
         self.assertNotIn('%PDF', bundle['text'])
+        self.assertIn('unavailable', bundle['text'])
+
+    def _pdftotext_only(self, name):
+        return '/usr/bin/pdftotext' if name == 'pdftotext' else None
+
+    def test_pdf_page_labels_and_truncation_disclosure(self):
+        pages = [(f'page-{index}',) for index in range(1, 26)]
+        stored = self.store(multipage_pdf_fixture(pages), 'long.pdf')
+        raw = 'page-1\fpage-2\f' + '\f'.join(f'page-{n}' for n in range(3, 21))
+        with patch.object(media.shutil, 'which', side_effect=self._pdftotext_only), \
+                patch.object(media, '_pdf_page_count', return_value=25), \
+                patch.object(media.MediaBudget, 'run', return_value=raw):
+            bundle = self.enrich([stored])
+        self.assertIn('[Page 1]', bundle['text'])
+        self.assertIn('[Page 20]', bundle['text'])
+        self.assertNotIn('[Page 21]', bundle['text'])
+        self.assertIn('pages 21-25 not read', bundle['text'])
+        self.assertIn('20-page cap', bundle['text'])
+        self.assertTrue(any('21-25 not read' in w for w in bundle['warnings']))
+
+    def test_pdf_empty_page_marked(self):
+        stored = self.store(multipage_pdf_fixture([('intro',), ('',), ('outro',)]), 'mixed.pdf')
+        raw = 'intro\f\foutro'
+        with patch.object(media.shutil, 'which', side_effect=self._pdftotext_only), \
+                patch.object(media, '_pdf_page_count', return_value=3), \
+                patch.object(media.MediaBudget, 'run', return_value=raw):
+            result = media.extract_pdf_text(self.root / stored['path'])
+            bundle = self.enrich([stored])
+        self.assertIn('[Page 2: empty]', result['text'])
+        self.assertIn('[Page 2: empty]', bundle['text'])
+
+    def test_pdf_utf8_page_boundary(self):
+        left, right = '日本語', 'テスト 🌐'
+        stored = self.store(multipage_pdf_fixture([(left,), (right,)]), 'unicode.pdf')
+        raw = f'{left}\f{right}'
+        with patch.object(media.shutil, 'which', side_effect=self._pdftotext_only), \
+                patch.object(media, '_pdf_page_count', return_value=2), \
+                patch.object(media.MediaBudget, 'run', return_value=raw):
+            result = media.extract_pdf_text(self.root / stored['path'])
+        self.assertIn(left, result['text'])
+        self.assertIn(right, result['text'])
+        self.assertIn('[Page 1]', result['text'])
+        self.assertIn('[Page 2]', result['text'])
+
+    def test_pdf_tool_failure_is_unavailable_not_fabricated(self):
+        stored = self.store(pdf_fixture('hidden'), 'broken.pdf')
+        with patch.object(media.shutil, 'which', side_effect=self._pdftotext_only), \
+                patch.object(media.MediaBudget, 'run', side_effect=ValueError('Could not decode or read this attachment.')):
+            result = media.extract_pdf_text(self.root / stored['path'])
+            self.assertEqual(result['status'], 'unavailable')
+            self.assertEqual(result['reason'], 'tool_failure')
+            bundle = self.enrich([stored])
+        self.assertIn('unavailable', bundle['text'])
+        self.assertNotIn('hidden', bundle['text'])
+
+    def test_pdf_password_required_distinct(self):
+        stored = self.store(pdf_fixture('secret'), 'locked.pdf')
+        with patch.object(media.shutil, 'which', side_effect=self._pdftotext_only), \
+                patch.object(media.MediaBudget, 'run', side_effect=ValueError('Password required')):
+            result = media.extract_pdf_text(self.root / stored['path'])
+            self.assertEqual(result['status'], 'unavailable')
+            self.assertEqual(result['reason'], 'password_required')
+            bundle = self.enrich([stored])
+        self.assertIn('Password-protected', bundle['text'])
+        self.assertNotIn('secret', bundle['text'])
+
+    def test_pdf_character_cap_disclosure(self):
+        stored = self.store(pdf_fixture('x' * 50), 'big.pdf')
+        raw = 'x' * 20_000
+        with patch.object(media.shutil, 'which', side_effect=self._pdftotext_only), \
+                patch.object(media, '_pdf_page_count', return_value=1), \
+                patch.object(media.MediaBudget, 'run', return_value=raw):
+            result = media.extract_pdf_text(self.root / stored['path'])
+        self.assertEqual(result['status'], 'truncated')
+        self.assertIn('12000', result['coverage_label'])
+        self.assertIn('Excerpt truncated at 12000 characters', result['text'])
+
+    def test_plain_text_file_excerpt_coverage(self):
+        body = 'a' * 15_000
+        stored = self.store(body.encode(), 'notes.txt')
+        bundle = self.enrich([stored])
+        self.assertIn('truncated at excerpt cap', bundle['text'])
+        self.assertEqual(len([line for line in bundle['text'].splitlines() if line.startswith('a')]), 1)
+        self.assertLessEqual(len(bundle['text']), 15_000)
 
     def test_store_requires_redact_callable(self):
         with self.assertRaisesRegex(ValueError, 'redact'):
@@ -326,6 +429,7 @@ class ChatMediaTests(unittest.TestCase):
         bundle = self.enrich([stored])
         self.assertEqual(bundle['warnings'], [])
         self.assertIn('Offline PDF text', bundle['text'])
+        self.assertIn('[Page 1]', bundle['text'])
         self.assertNotIn(secret, bundle['text'])
         self.assertIn('[secret removed]', bundle['text'])
 

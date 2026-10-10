@@ -31,6 +31,9 @@ TRANSCRIPTION_UNAVAILABLE = "Transcription unavailable: cached model missing"
 UNSUPPORTED_AUDIO_MESSAGE = "Unsupported audio format. Accepted: m4a, mp3, wav."
 MAX_VIDEO_FRAMES = 4
 MAX_VIDEO_DURATION_S = 120
+MAX_PDF_PAGES = 20
+MAX_PDF_SOURCE_CHARS = 1_000_000
+MAX_FILE_PROMPT_CHARS = 12_000
 MEDIA_PREP_SECONDS = 20
 PROCESS_SLOTS = threading.BoundedSemaphore(2)
 ALLOWED_IMAGE = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif"}
@@ -376,19 +379,195 @@ def extract_audio_transcript(path: Path, budget=None) -> str:
     return result["text"] if result.get("status") == "ok" else ""
 
 
-def read_text_file(path: Path, limit=MAX_FILE_BYTES, budget=None) -> str:
-    if path.suffix == ".pdf":
-        binary = shutil.which("pdftotext")
-        budget = budget or MediaBudget()
+def _pdf_page_count(path: Path, budget: MediaBudget) -> int | None:
+    pdfinfo = shutil.which("pdfinfo")
+    if not pdfinfo:
+        return None
+    try:
+        out = budget.run([pdfinfo, str(path)], timeout=3)
+    except ValueError:
+        return None
+    for line in out.splitlines():
+        if line.startswith("Pages:"):
+            try:
+                return int(line.split(":", 1)[1].strip())
+            except ValueError:
+                return None
+    return None
+
+
+def _split_pdftotext_pages(raw: str) -> list[str]:
+    if not raw:
+        return []
+    normalized = raw.replace("\r\n", "\n").replace("\r", "\n")
+    return normalized.split("\f")
+
+
+def _pdf_pages_from_strings(chunks: list[str], *, start_page: int = 1) -> list[dict]:
+    pages = []
+    total_chars = 0
+    for offset, chunk in enumerate(chunks):
+        if total_chars >= MAX_PDF_SOURCE_CHARS:
+            break
+        text = chunk
+        if total_chars + len(text) > MAX_PDF_SOURCE_CHARS:
+            text = text[: MAX_PDF_SOURCE_CHARS - total_chars]
+        total_chars += len(text)
+        pages.append({"page": start_page + offset, "text": text, "empty": not text.strip()})
+    return pages
+
+
+def _parse_pdfkit_payload(raw: str) -> dict | None:
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("pages"), list):
+        return None
+    return payload
+
+
+def _pdf_unavailable(reason: str, *, detail: str = "") -> dict:
+    messages = {
+        "tool_failure": "PDF text extraction failed; the file could not be read.",
+        "password_required": "Password-protected PDF; text could not be extracted without a password.",
+        "not_found": "Attachment file was not found on disk.",
+    }
+    return {"status": "unavailable", "reason": reason, "text": detail or messages.get(reason, messages["tool_failure"]),
+            "coverage_label": "PDF text unavailable", "pages": [], "pages_read": 0, "total_pages": None}
+
+
+def pdf_coverage_label(*, total_pages: int | None, pages_read: int, first_page: int, last_page: int,
+                       chars_included: int, char_cap: int, page_cap_hit: bool, char_cap_hit: bool) -> str:
+    parts = []
+    if total_pages is not None and total_pages > last_page:
+        parts.append(
+            f"PDF excerpt: pages {first_page}-{last_page} of {total_pages} "
+            f"(pages {last_page + 1}-{total_pages} not read; {MAX_PDF_PAGES}-page cap)."
+        )
+    elif page_cap_hit and total_pages is None:
+        parts.append(f"PDF excerpt: pages {first_page}-{last_page} read (up to {MAX_PDF_PAGES}-page cap).")
+    elif pages_read:
+        shown = f"pages {first_page}-{last_page}" if pages_read > 1 else f"page {first_page}"
+        if total_pages is not None:
+            parts.append(f"PDF excerpt: {shown} of {total_pages} (full document within page cap).")
+        else:
+            parts.append(f"PDF excerpt: {shown} read.")
+    if char_cap_hit:
+        parts.append(f"Characters included: {chars_included} of {char_cap} excerpt cap (truncated).")
+    else:
+        parts.append(f"Characters included: {chars_included} (excerpt cap {char_cap}).")
+    return " ".join(parts)
+
+
+def _format_pdf_excerpt(pages: list[dict], *, total_pages: int | None, char_cap: int = MAX_FILE_PROMPT_CHARS) -> dict:
+    if not pages:
+        return {"status": "empty", "text": "", "coverage_label": "PDF has no readable text on the extracted pages.",
+                "pages_read": 0, "total_pages": total_pages, "pages": [], "char_cap_hit": False}
+    lines, chars, char_cap_hit = [], 0, False
+    for entry in pages:
+        page_no = entry["page"]
+        label = f"[Page {page_no}: empty]" if entry.get("empty") else f"[Page {page_no}]"
+        lines.append(label)
+        if not entry.get("empty"):
+            body = entry.get("text") or ""
+            remaining = char_cap - chars
+            if remaining <= 0:
+                char_cap_hit = True
+                break
+            if len(body) > remaining:
+                body = body[:remaining]
+                char_cap_hit = True
+            lines.append(body)
+            chars += len(body)
+        lines.append("")
+        if char_cap_hit:
+            break
+    first_page, last_page = pages[0]["page"], pages[-1]["page"]
+    page_cap_hit = total_pages is not None and total_pages > last_page
+    if char_cap_hit:
+        lines.append(f"[Excerpt truncated at {char_cap} characters]")
+    text = "\n".join(lines).strip()
+    has_text = any(not p.get("empty") and (p.get("text") or "").strip() for p in pages)
+    if not has_text:
+        return {"status": "empty", "text": text, "coverage_label": "PDF has no readable text on the extracted pages.",
+                "pages_read": len(pages), "total_pages": total_pages, "pages": pages, "char_cap_hit": False}
+    status = "truncated" if page_cap_hit or char_cap_hit else "ok"
+    coverage = pdf_coverage_label(total_pages=total_pages, pages_read=len(pages), first_page=first_page,
+                                  last_page=last_page, chars_included=chars, char_cap=char_cap,
+                                  page_cap_hit=page_cap_hit, char_cap_hit=char_cap_hit)
+    return {"status": status, "text": text, "coverage_label": coverage, "pages_read": len(pages),
+            "total_pages": total_pages, "pages": pages, "char_cap_hit": char_cap_hit}
+
+
+def extract_pdf_text(path: Path, budget=None) -> dict:
+    """Bounded local PDF text with per-page labels. No whole-document text pass."""
+    budget = budget or MediaBudget()
+    if not path.is_file():
+        return _pdf_unavailable("not_found")
+    binary = shutil.which("pdftotext")
+    total_pages = _pdf_page_count(path, budget) if binary else None
+    try:
         if binary:
-            text = budget.run([binary, "-f", "1", "-l", "20", str(path), "-"])
+            raw = budget.run([binary, "-f", "1", "-l", str(MAX_PDF_PAGES), str(path), "-"])
+            pages = _pdf_pages_from_strings(_split_pdftotext_pages(raw))
+            source = "pdftotext"
         elif sys.platform == "darwin" and shutil.which("osascript"):
-            text = budget.run(["osascript", "-l", "JavaScript", str(Path(__file__).with_name("pdf_text.js")), str(path)])
+            raw = budget.run(["osascript", "-l", "JavaScript", str(Path(__file__).with_name("pdf_text.js")), str(path)])
+            payload = _parse_pdfkit_payload(raw)
+            if payload is None:
+                pages = _pdf_pages_from_strings(_split_pdftotext_pages(raw))
+                source = "pdfkit-legacy"
+                total_pages = total_pages or (len(pages) if pages else None)
+            else:
+                source = payload.get("source") or "pdfkit"
+                total_pages = payload.get("total_pages", total_pages)
+                pages = []
+                total_chars = 0
+                for entry in payload.get("pages") or []:
+                    if not isinstance(entry, dict):
+                        continue
+                    text = entry.get("text") or ""
+                    if total_chars + len(text) > MAX_PDF_SOURCE_CHARS:
+                        text = text[: MAX_PDF_SOURCE_CHARS - total_chars]
+                    total_chars += len(text)
+                    pages.append({"page": int(entry.get("page") or len(pages) + 1),
+                                  "text": text, "empty": bool(entry.get("empty"))})
+                    if total_chars >= MAX_PDF_SOURCE_CHARS:
+                        break
         else:
             raise ValueError("PDF text extraction is unavailable; download the PDF or attach a text export.")
-        if not text.strip():
+    except ValueError as exc:
+        message = str(exc)
+        if "password" in message.lower():
+            return _pdf_unavailable("password_required")
+        if "unavailable" in message.lower():
+            return _pdf_unavailable("tool_failure", detail=message)
+        return _pdf_unavailable("tool_failure", detail="Could not decode or read this attachment.")
+    result = _format_pdf_excerpt(pages, total_pages=total_pages)
+    result["source"] = source
+    return result
+
+
+def plain_text_attachment(path: Path, limit=MAX_FILE_BYTES) -> dict:
+    with path.open("r", encoding="utf-8") as src:
+        raw = src.read(limit)
+    included = raw[:MAX_FILE_PROMPT_CHARS]
+    truncated = len(raw) > MAX_FILE_PROMPT_CHARS
+    label = (f"Text file excerpt: {len(included)} of {len(raw)} characters read"
+             f"{' (truncated at excerpt cap)' if truncated else ''} "
+             f"(excerpt cap {MAX_FILE_PROMPT_CHARS}).")
+    return {"status": "truncated" if truncated else "ok", "text": included, "coverage_label": label}
+
+
+def read_text_file(path: Path, limit=MAX_FILE_BYTES, budget=None) -> str:
+    if path.suffix == ".pdf":
+        result = extract_pdf_text(path, budget=budget)
+        if result["status"] == "unavailable":
+            raise ValueError(result["text"])
+        if result["status"] == "empty":
             raise ValueError("This PDF has no readable text; attach images of the scanned pages or a text export.")
-        return text[:limit]
+        return result["text"][:limit]
     with path.open("r", encoding="utf-8") as src:
         return src.read(limit)
 
@@ -471,8 +650,35 @@ def enrich_for_model(root: Path, metas: list[dict], *, redact, cancel=None) -> d
                     elif memo.get("status") == "failed":
                         warnings.append(f"{redact(meta['filename'])}: voice memo could not be transcribed.")
                 else:
-                    excerpt = redact(read_text_file(path, budget=budget))[:12000]
-                    text_blocks.append(f"File attachment {label} (excerpt):\n{excerpt}")
+                    if path.suffix.lower() == ".pdf":
+                        pdf = extract_pdf_text(path, budget)
+                        if pdf["status"] == "unavailable":
+                            detail = redact(pdf.get("text") or "PDF text unavailable.")
+                            warning = f"{redact(meta['filename'])}: {detail}"
+                            warnings.append(warning)
+                            text_blocks.append(
+                                f"File attachment {label} (unavailable: {pdf.get('reason', 'tool_failure')}).\n{detail}")
+                        elif pdf["status"] == "empty":
+                            warning = (f"{redact(meta['filename'])}: PDF has no readable text on the extracted pages.")
+                            warnings.append(warning)
+                            text_blocks.append(f"File attachment {label} (empty).\n{warning}")
+                        else:
+                            excerpt = redact(pdf.get("text") or "")
+                            text_blocks.append(
+                                f"File attachment {label} (PDF excerpt).\n"
+                                f"{pdf.get('coverage_label')}\n"
+                                f"Only the labeled pages and characters above were read; do not claim a complete "
+                                f"document read past these caps.\n{excerpt}")
+                            if pdf["status"] == "truncated":
+                                warnings.append(f"{redact(meta['filename'])}: {pdf.get('coverage_label')}")
+                    else:
+                        plain = plain_text_attachment(path)
+                        excerpt = redact(plain.get("text") or "")
+                        text_blocks.append(
+                            f"File attachment {label} (text excerpt).\n"
+                            f"{plain.get('coverage_label')}\n{excerpt}")
+                        if plain["status"] == "truncated":
+                            warnings.append(f"{redact(meta['filename'])}: {plain.get('coverage_label')}")
             except (ValueError, OSError) as exc:
                 # Never expose decoder stderr or local paths to the chat/model.
                 reason = str(exc) if isinstance(exc, ValueError) else "Attachment could not be read."
