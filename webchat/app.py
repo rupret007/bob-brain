@@ -725,7 +725,8 @@ class Chat(TaskDispatch):
                 return self.intent_reply(conversation, self.redact(calendar), provider='calendar')
             from reminders import ReminderError
             import actions_intent
-            if actions_intent.reminder_request(text) or actions_intent.routine_intent(text) or actions_intent.routine_request(text):
+            if (actions_intent.reminder_request(text) or actions_intent.routine_intent(text)
+                    or actions_intent.routine_request(text) or re.match(r'^remind me\b', text, re.I)):
                 scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
                 if scopes:
                     return self.intent_reply(conversation, chat_intent.hold_reply(scopes))

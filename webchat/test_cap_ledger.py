@@ -77,6 +77,49 @@ class CapabilityLedgerTests(unittest.TestCase):
         client.listing.assert_not_called()
         client.create.assert_not_called()
 
+    def test_ledger_A1L6_legacy_remind_me_bypasses_hold(self):
+        import copy
+        import uuid
+        from app import Chat
+        from reminders import ZONE
+        from task_dispatch import task_queue
+
+        commands = (
+            'remind me in 10 minutes to check the oven',
+            'remind me to call Sam on 2026-10-01 at 14:00',
+            'remind me every 2 hours to stretch',
+        )
+        for index, (hold, scope) in enumerate((('Hold all work', 'new work'),
+                                               ('Hold Web Bob', 'Web Bob'))):
+            for number, command in enumerate(commands):
+                with self.subTest(hold=hold, command=command):
+                    root = self.root / f'A1L6-{index}-{number}'
+                    providers, texting, calendar = Mock(), Mock(), Mock()
+                    providers.timeouts = {}
+                    providers.reply.side_effect = AssertionError('Unexpected provider call')
+                    texting.handle.return_value = False
+                    texting.public.side_effect = dict
+                    calendar.handle.return_value = None
+                    with patch('app.load_live_ops', return_value={}):
+                        chat = Chat(root / 'webchat', root, providers, texting=texting,
+                                    calendar=calendar, local_tasks=self.actions)
+                        self.addCleanup(chat.close)
+                        chat.reminders.clock = lambda: datetime(2026, 9, 29, 9, tzinfo=ZONE).timestamp()
+                        cid = chat.conversation_list()['conversations'][0]['id']
+                        chat.submit(cid, hold, str(uuid.uuid4()))
+                        before = copy.deepcopy(chat.get(cid)['intent_state'])
+                        self.assertEqual(chat_intent.blocked_scopes(before, chat_intent.projects(command)),
+                                         [scope])
+                        with patch.object(chat.reminders, 'create', wraps=chat.reminders.create) as create:
+                            result = chat.submit(cid, command, str(uuid.uuid4()))
+                            self.assertEqual(result['messages'][-1]['content'],
+                                             chat_intent.hold_reply([scope]))
+                            create.assert_not_called()
+                        self.assertEqual(chat.reminders.listing(), [])
+                        self.assertEqual(chat.get(cid)['intent_state'], before)
+                        self.assertEqual(task_queue.tasks(root), {})
+                        providers.reply.assert_not_called()
+
     def test_ledger_F10_reminder_ignores_wait_for_approval_phrasing(self):
         from reminders import Reminders, ReminderError, ZONE, parse
         now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
