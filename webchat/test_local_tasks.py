@@ -54,6 +54,100 @@ class LocalFixture(unittest.TestCase):
         return next(r for r in self.rows().values() if r['state'] == 'draft')
 
 
+class RuntimeProtectionTests(LocalFixture):
+    def setUp(self):
+        super().setUp()
+        self.runtime = self.home / 'Documents/bob-runtime'
+        self.chat_folder = self.runtime / 'conductor/webchat'
+        self.accounting = self.home / 'Documents/shared-accounting'
+        self.env_accounting = self.home / 'Documents/environment-accounting'
+        self.policy = self.runtime / 'conductor/state/generation-policy.json'
+        self.policy.parent.mkdir(parents=True)
+        self.write_policy(self.accounting)
+        for guard in (patch('pathlib.Path.home', return_value=self.home),
+                      patch.dict(os.environ, BOB_ROOT=str(self.runtime),
+                                 BOB_GENERATION_BUDGET_ROOT=str(self.env_accounting))):
+            guard.start()
+            self.addCleanup(guard.stop)
+        # Exercise the production boundary, without injecting a LocalFiles adapter.
+        self.actions = LocalTasks(self.chat_folder, search=self.search, clock=self.clock)
+
+    def write_policy(self, accounting):
+        self.policy.write_text(json.dumps(dict(budget_id='owner', purpose='product',
+                                              accounting_root=str(accounting))))
+
+    def test_runtime_and_both_accounting_roots_reject_all_file_operations(self):
+        targets = [self.policy, self.chat_folder / 'sessions/saved.json']
+        for root in (self.runtime, self.accounting, self.env_accounting):
+            targets.extend((root / 'conductor/state/generation-budgets/owner.json',
+                            root / 'conductor/keys.env', root / 'operator-config.json'))
+        for target in targets:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target != self.policy:
+                target.write_text('operator controlled')
+            before = target.read_bytes()
+            for command in (f'read file {target}', f'write file {target}: increased limits',
+                            f'delete file {target}', f'create file {target}.new: bypass',
+                            f'list files {target.parent}', f'terminal: cat {target}',
+                            f'terminal: ls {target.parent}'):
+                with self.subTest(command=command):
+                    self.assertIn('outside the local file allowlist', self.say(command))
+            self.assertEqual(target.read_bytes(), before)
+            self.assertFalse(target.with_name(target.name + '.new').exists())
+        self.assertEqual(self.rows(), {})
+        self.assertIn('File created:', self.say('create file ~/Documents/personal.txt: allowed'))
+        self.assertIn('File read:', self.say('read file ~/Documents/personal.txt'))
+
+    def test_case_variants_and_routines_cannot_access_protected_storage(self):
+        for root in (self.runtime, self.accounting, self.env_accounting):
+            relative = root.relative_to(self.home)
+            for path in (str(root), '~/' + str(relative).upper()):
+                with self.subTest(path=path):
+                    self.assertIn('outside the local file allowlist', self.say(f'list files {path}'))
+                    with self.assertRaises(LocalTaskError):
+                        self.actions.validate_routine(f'list files {path}')
+                    self.assertIn('outside the local file allowlist', self.actions.handle(
+                        f'read file {path}/operator-config.json', 'chat', str(uuid.uuid4()),
+                        self.state, routine=True))
+
+    def test_saved_legacy_overwrite_is_refused_after_restart(self):
+        target = self.runtime / 'conductor/state/generation-budgets/owner.json'
+        target.parent.mkdir(parents=True)
+        target.write_text('original limits')
+        legacy = LocalTasks(self.chat_folder, files=LocalFiles(self.home), clock=self.clock)
+        self.assertIn('Local draft', self.say(f'write file {target}: increased limits', actions=legacy))
+        row, = self.rows().values()
+        restored = LocalTasks(self.chat_folder, clock=self.clock)
+        self.assertIn('outside the local file allowlist', self.say('yes ' + row['token'], actions=restored))
+        self.assertEqual(target.read_text(), 'original limits')
+
+    def test_policy_changes_are_rechecked_before_confirmation(self):
+        row = self.draft('write file ~/Documents/note.txt: replacement')
+        self.write_policy(self.file.parent)
+        self.assertIn('outside the local file allowlist', self.say('yes ' + row['token']))
+        self.assertEqual(self.file.read_text(), 'original')
+
+    def test_invalid_policy_fails_closed(self):
+        self.policy.write_text('invalid policy')
+        self.assertIn('protection could not be verified', self.say('read file ~/Documents/note.txt'))
+        self.assertIn('protection could not be verified', self.say('create file ~/Documents/new.txt: unsafe'))
+        self.assertFalse((self.home / 'Documents/new.txt').exists())
+        self.assertEqual(self.rows(), {})
+
+    def test_chat_passes_explicit_runtime_root_with_separate_chat_folder(self):
+        runtime = self.home / 'Documents/explicit-runtime'
+        target = runtime / 'conductor/state/operator.json'
+        target.parent.mkdir(parents=True)
+        target.write_text('original')
+        chat = Chat(self.home / 'Documents/separate-chat', runtime, OfflineProviders(),
+                    texting=Texting(Mock(), Mock(), clock=self.clock),
+                    reminder_notifier=Mock(), calendar=Mock())
+        self.addCleanup(chat.close)
+        self.assertIn('outside the local file allowlist',
+                      self.say(f'write file {target}: bypass', actions=chat.local_tasks))
+        self.assertEqual(target.read_text(), 'original')
+
+
 class LocalTaskTests(LocalFixture):
     def test_file_read_list_create_and_terminal_allowlist(self):
         self.assertIn('original', self.say('read file ~/Documents/note.txt'))

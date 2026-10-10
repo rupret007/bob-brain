@@ -122,10 +122,11 @@ def parse(text):
 
 class LocalFiles:
     """OS boundary. Test with a temporary home, never the real owner's files."""
-    def __init__(self, home=None, clock=time.time, excluded=()):
+    def __init__(self, home=None, clock=time.time, excluded=(), protected=None):
         self.home = (Path.home() if home is None else Path(home)).resolve()
         self.clock = clock
         self.excluded = tuple(Path(p).resolve() for p in excluded)
+        self.protected = protected
 
     def parts(self, value):
         value = value.strip()
@@ -144,8 +145,9 @@ class LocalFiles:
         # macOS commonly uses a case-insensitive filesystem. A spelling change
         # must not allow editing the server's saved holds or consent receipts.
         folded = tuple(p.casefold() for p in path.parts)
+        excluded_paths = self.excluded + (tuple(self.protected()) if self.protected else ())
         if any(folded[:len(excluded.parts)] == tuple(p.casefold() for p in excluded.parts)
-               for excluded in self.excluded):
+               for excluded in excluded_paths):
             raise LocalTaskError('Web Bob storage is outside the local file allowlist.')
         return parts
 
@@ -260,11 +262,33 @@ class LocalFiles:
 
 
 class LocalTasks:
-    def __init__(self, folder, files=None, search=None, clock=time.time):
+    def __init__(self, folder, files=None, search=None, clock=time.time, *, root=None):
         self.folder = Path(folder) / 'local-tasks'
-        self.files = files if files is not None else LocalFiles(clock=clock, excluded=(folder,))
+        self.root = Path(root if root is not None else os.environ.get('BOB_ROOT', Path(folder).parent.parent)).resolve()
+        self.files = files if files is not None else LocalFiles(
+            clock=clock, excluded=(folder, Path(__file__).resolve().parent.parent),
+            protected=self.protected_paths)
         self.search = search if search is not None else search_web
         self.clock = clock
+
+    def protected_paths(self):
+        # Use the same policy reader as provider admission. Refresh at every
+        # prepare/execute boundary, including confirmations saved before restart.
+        # Protect entire operator-owned roots: policies, budgets, keys, queues,
+        # executable configuration and future stores must not be chat-editable.
+        from generation_budget import AdmissionDenied, read_policy
+        roots = {self.root}
+        for name in ('BOB_ROOT', 'BOB_GENERATION_BUDGET_ROOT'):
+            if os.environ.get(name):
+                roots.add(Path(os.environ[name]).resolve())
+        try:
+            for root in tuple(roots):
+                policy = read_policy(root)
+                if policy:
+                    roots.add(Path(policy['accounting_root']).resolve())
+        except (AdmissionDenied, OSError, ValueError, TypeError):
+            raise LocalTaskError('Runtime storage protection could not be verified. No local file action ran.') from None
+        return roots
 
     @contextmanager
     def locked(self):

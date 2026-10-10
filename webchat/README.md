@@ -711,9 +711,12 @@ Terminal commands are implemented through the bounded local file/time operations
 there is no shell, executable launch, pipes, redirection, or general command runner.
 Paths must be absolute under the owner's home or start with `~/`; quote paths
 containing spaces if using terminal syntax. Dot/private configuration paths,
-Library, Applications, Web Bob's own data folder, symlinks, hard links, and special
-files are excluded. No directory creation, recursive operations, or file execution
-is supported. The server needs ordinary OS permission to access the selected files.
+Library, Applications, Web Bob's code/data folders, runtime roots, configured
+accounting roots, symlinks, hard links, and special files are excluded. Runtime
+policy protection is rechecked before execution, including saved confirmations
+and routines; invalid policy blocks local file operations. No directory creation,
+recursive operations, or file execution is supported. The server needs ordinary
+OS permission to access the selected files.
 
 Overwrite/delete drafts require a separate exact `yes wblocal-…` in the same chat
 within one hour. `cancel wblocal-…` cancels a draft. A newer destructive draft

@@ -181,7 +181,7 @@ class Chat(TaskDispatch):
         from calendar_actions import CalendarActions
         self.calendar = calendar if calendar is not None else CalendarActions(folder)
         from local_tasks import LocalTasks
-        self.local_tasks = local_tasks if local_tasks is not None else LocalTasks(folder)
+        self.local_tasks = local_tasks if local_tasks is not None else LocalTasks(folder, root=root)
         for path in self.state.glob("*.json"):
             if not UUID.fullmatch(path.stem):
                 continue
