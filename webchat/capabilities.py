@@ -2,6 +2,74 @@
 import re
 import json
 
+# Descriptions of existing handlers only. Never probe auth or execute a tool to
+# answer a capability question; observations and action receipts own those facts.
+STACK = {
+    'calendar': dict(name='direct Google Calendar', source='webchat/calendar_actions.py',
+        path='Direct Google Calendar reads and single private event creation are implemented. '
+             'An authorized Calendar account is required; without auth, no Calendar action can run. '
+             'Creation needs the exact yes wbcal-… confirmation of its draft. '
+             'No invitations, recurring events, or event alerts are supported.'),
+    'timers': dict(name='reminders and timers', source='webchat/reminders.py',
+        path='Reminders and timers are implemented: try “set a timer for 10 minutes”. '
+             'They appear in this chat and Jobs while Web Bob is running; overdue reminders arrive on return. '
+             'Local macOS notifications need owner opt-in and OS permission; these are not phone push notifications. '
+             'Saving a timer does not prove it fired or an alert was displayed.'),
+    'routines': dict(name='morning routines', source='webchat/reminders.py; webchat/local_tasks.py',
+        path='Morning reminders and read-only routines are implemented, defaulting to 9am America/Chicago. '
+             'Try “every morning do read file ~/Documents/notes.txt”. '
+             'Routines can read allowed files, list directories, use fixed read-only terminal commands, or search the web. '
+             'They run while Web Bob is running, with one overdue run on return, subject to saved holds. '
+             'Writes, deletes and sends cannot run unattended.'),
+    'local_files': dict(name='bounded local files', source='webchat/local_tasks.py; webchat/local_task_worker.py',
+        path='Bounded local file reads, listings, creation, replacement and deletion are implemented. '
+             'Only allowed visible paths under the owner’s home are supported; secrets, credentials, '
+             'private/configuration trees, protected runtime files, links and special files are excluded. '
+             'Overwrites and deletes require the exact yes wblocal-… confirmation of a draft. '
+             'This is not unrestricted filesystem access.'),
+    'terminal': dict(name='bounded terminal', source='webchat/local_tasks.py; webchat/local_task_worker.py',
+        path='Bounded terminal commands are implemented: “run terminal: pwd”, date, ls PATH, or cat PATH. '
+             'The same file restrictions apply. No shell, arbitrary commands, pipes or scripts are supported by this direct route.'),
+    'search': dict(name='web search', source='webchat/local_tasks.py; webchat/bob_gaps.py',
+        path='Web search is implemented: try “search the web for Chicago weather”. '
+             'Results depend on a successful retrieval and must cite only retrieved evidence. '
+             'Search is not an interactive browser or an arbitrary URL-fetch tool.'),
+}
+
+MISSING = {
+    'gmail': 'Gmail integration is not implemented here; I can help compose email text, but cannot read your Gmail or send it through Gmail.',
+    'drive': 'Google Drive integration is not implemented here; local files and attachments do not grant access to Drive.',
+    'browser': 'Interactive browser control and arbitrary URL fetching are not implemented here. Web search is a separate supported path; it does not prove a page was opened or read.',
+    'image_generation': 'Image generation is not implemented here. I can help write an image prompt; analyzing an attached image does not generate a new image.',
+}
+
+STATUS_RULES = (
+    'Implemented means a handler exists in this code version. Configured means its required setup has been observed; '
+    'it does not establish live availability. Live-verified requires a relevant successful action receipt, '
+    'with its time and scope; historical success does not guarantee current availability. '
+    'Source files, build identity, candidate tests, provider names and login observations alone cannot establish '
+    'deployment, live tool availability or action completion. Never promote candidate support to deployed support. '
+    'Unknown setup must remain unverified; absent or expired auth blocks dependent actions. '
+    'Capability explanations perform no action and create no action receipt. '
+    'Saved holds apply at admission and execution. Paid calls require existing admission routes; no card spend. '
+    'Sends to others stay drafts until explicit yes to the exact recipient and content. '
+    'Never read protected authentication material to answer a capability question or include it in prompts, logs or artifacts.'
+)
+
+
+def voice_limits():
+    from chat_media import MAX_VIDEO_BYTES, MAX_VIDEO_DURATION_S, MAX_VIDEO_FRAMES
+    from voice import CALL_SECONDS
+    return ('Standalone voice-memo uploads (such as M4A, MP3, WAV or OGG) are not supported. '
+            f'The separate live call button supports sessions up to {CALL_SECONDS // 60} minutes, '
+            'subject to microphone permission, configured Gemini access and budget admission; '
+            'a working call is not verified by this explanation. '
+            f'Supported video attachments are limited to {MAX_VIDEO_BYTES // (1024 * 1024)} MB; '
+            f'analysis uses up to {MAX_VIDEO_FRAMES} sampled frames from the first {MAX_VIDEO_DURATION_S} seconds. '
+            'Video audio transcription covers at most the first 30 seconds, only when local Whisper and its '
+            'cached model are available. Transcription is not guaranteed; attach a text transcript when needed.')
+
+
 INTEGRATION_NEED = re.compile(
     r'^(?:i|we)\s+(?:want|need|would like)\s+'
     r'(?:(?:(?:it|you|web bob|grok(?: bot)?|this)\s+)?(?:to\s+)?(?:be able to\s+)?'
@@ -16,13 +84,18 @@ def needs_grounding(text):
     if resource_question(text):
         return True
     value = instructions(text).strip()
+    if topic(value):
+        return True
     question = re.match(r'^(?:(?:ok|okay|hey bob)[,!. ]+)*(?:(?:can|could|do|are|will) you\b|'
-                         r'what (?:can you|are your)\b|how (?:can|do|does) (?:you|web bob)\b)', value, re.I)
+                         r'what (?:can you|are your)\b|how (?:can|do|does) (?:you|web bob)\b|'
+                         r'(?:is|are) (?:your |the )?(?:calendar|timers?|routines?|voice|gmail|drive|browser)\b)', value, re.I)
     integration_need = (INTEGRATION_NEED.match(value)
         and re.search(r'\b(?:Grok|Web Bob)\b', value, re.I))
     return bool((question or integration_need)
                 and re.search(r'\b(?:capabilit\w*|featur\w*|interface|integrat\w*|connect|coordinat\w*|'
-                              r'catch up|better|as good|replace|alternative|instead|rather than)\b', value, re.I)
+                              r'catch up|better|as good|replace|alternative|instead|rather than|'
+                              r'calendar|timers?|reminders?|routines?|local files?|terminal|gmail|google drive|'
+                              r'browser|browsing|voice|images?|web search)\b', value, re.I)
                 and not requires_execution(value))
 
 
@@ -49,7 +122,7 @@ prerequisite for using the implemented local handoff. Explain the next use of
 that path and the evidence still needed from the receiver. Do not leave the user
 at a speculative API/webhook design. Keep raw implementation labels out of normal
 product explanations unless the user needs a command or file location.
-'''
+''' + STATUS_RULES
 
 
 def prepare_coordination(chat, conversation, text, request_id):
@@ -148,10 +221,19 @@ def grounding(root, reply_providers, conversation_id=None):
         observations['consumer_acknowledged_at'] = receipt.get('acknowledged_at')
     except (OSError, ValueError, TypeError, AttributeError):
         observations['record_read_error'] = True
+    from build_info import BUILD
     return dict(
         source='Implemented Web Bob handlers in this code version; not proof of current provider health.',
+        build={key: BUILD.get(key) for key in ('sha', 'short_sha', 'built_at')},
+        status_rules=STATUS_RULES,
+        current_setup='unverified by this capability explanation; consult scoped resource observations separately',
+        live_availability='unverified by this capability explanation',
+        workers_paused=workers_paused(root),
         reply_providers=list(reply_providers),
-        capabilities=[
+        capabilities=[dict(item, implemented=True, configured='unverified', live_verified='unverified')
+                      for item in STACK.values()] + [
+            dict(name='voice and media limits', source='webchat/voice.py; webchat/chat_media.py',
+                 path=voice_limits()),
             dict(name='persistent project context', source='webchat/project_context.py',
                  path='Versioned owner priorities and corrections, selective retrieval, inspect/remove through chat; facts do not grant execution permission.'),
             dict(name='bounded subscription reports', source='webchat/project_reports.py; services/subscription_report.py',
@@ -173,7 +255,8 @@ def grounding(root, reply_providers, conversation_id=None):
                  limitation='No verified direct native Grok chat transport or automatic wake-up is configured. '
                             'Only current Web Bob publishers contribute after the retained legacy import; '
                             'older external publishers and already-trimmed history are not covered.'),
-        ], coordination=observations, resources=__import__('resource_inventory').observe(root),
+        ], missing_capabilities=dict(MISSING),
+        coordination=observations, resources=__import__('resource_inventory').observe(root),
         comparison='Grok feature parity and answer superiority require matched evidence; not established here.')
 
 
@@ -187,7 +270,21 @@ QUESTIONS = {
     'memory': ('can you remember things', 'can you remember things about me',
                'how does your memory work', 'is my memory private',
                'where do you save memories'),
-    'reminders': ('can you set reminders', 'can you remind me', 'can you set routines'),
+    'reminders': ('can you set reminders', 'can you remind me'),
+    'timers': ('can you set timers', 'can you set a timer', 'do you support timers'),
+    'routines': ('can you set routines', 'can you run morning routines', 'can you set morning routines'),
+    'calendar': ('can you use google calendar', 'can you use my calendar', 'can you read my calendar',
+                 'can you create calendar events', 'do you support google calendar', 'is calendar configured'),
+    'local_files': ('can you read local files', 'can you write local files', 'can you delete local files',
+                    'can you access my files'),
+    'terminal': ('can you use the terminal', 'can you run terminal commands', 'can you run shell commands'),
+    'search': ('can you search the web', 'can you do web searches'),
+    'gmail': ('can you use gmail', 'can you read my gmail', 'can you send email through gmail'),
+    'drive': ('can you use google drive', 'can you access google drive', 'can you save files to google drive'),
+    'browser': ('can you browse the web', 'can you use a browser', 'can you open urls'),
+    'image_generation': ('can you generate images', 'can you create images', 'can you make images'),
+    'voice_memos': ('can you transcribe voice memos', 'can i send voice memos',
+                    "what's the longest voice memo i can send", 'what are your voice memo limits'),
     'media': ('can you read images', 'can you see photos', 'can you read files',
               'can you watch videos', 'can i attach files'),
     'voice': ('can we talk', 'can you do voice calls', 'can i talk to you'),
@@ -210,18 +307,26 @@ def topic(text):
     return next((key for key, phrases in QUESTIONS.items() if normalized in phrases), None)
 
 
+def workers_paused(root):
+    return ((root / 'conductor/MAINTENANCE').exists() or
+            (root / 'conductor/SOLO-WORKER').exists())
+
+
 def reply(text, root):
     kind = topic(text)
     if kind is None:
         return None
-    paused = ((root / 'conductor/MAINTENANCE').exists() or
-              (root / 'conductor/SOLO-WORKER').exists())
+    paused = workers_paused(root)
     worker = ('Additional workers and council are paused for solo work; Jobs shows the observed activity.'
               if paused else 'Coding jobs can be queued for draft work; Jobs shows whether they actually start.')
     answers = {
-        'overview': ('I can help with writing and songs, research with sources, saved memories, reminders, '
-                     'and attached photos or files. You can talk with me using the call button, read texts, '
-                     'or review an exact draft before sending through Andrea. Instinct stays read-only. ' + worker),
+        'overview': ('This code version implements writing and songs, research with sources, saved memories, '
+                     'direct Google Calendar reads and confirmed private event creation, reminders and timers, '
+                     'read-only morning routines, bounded local files and fixed terminal commands, and attached photos or files. '
+                     'Live voice uses the call button; standalone voice-memo uploads are unsupported. '
+                     'Gmail, Google Drive, interactive browser control, arbitrary URL fetching and image generation are not implemented. '
+                     'Web search is supported separately. Text sends through Andrea require explicit yes to the exact recipient '
+                     'and content in a reviewed draft. Instinct stays read-only. ' + worker),
         'texting': ('Yes—Web Bob supports reading texts and sending a reviewed draft to a direct recipient through '
                     'Andrea’s BlueBubbles bridge. Review the exact recipient and message, then confirm that draft '
                     'separately. A missing delivery receipt means delivery is unconfirmed; use Check delivery on '
@@ -233,13 +338,10 @@ def reply(text, root):
                    'Use Settings → Manage saved notes to review one note for removal; chat and other copies remain. '
                    'Saved memories can be included in future model context, so they are not device-only. '
                    'Private texting turns are excluded from model chat context; don’t save secrets as memories.'),
-        'reminders': ('Yes—ask “remind me to stretch in 10 minutes” or set a recurring reminder. '
-                      'Reminders appear in this chat while Web Bob is running; they are not phone push notifications.'),
+        'reminders': STACK['timers']['path'],
         'media': ('Yes—attach a photo, file, or video with your question. I can use extracted text and supported '
                   'image analysis; video uses sampled frames and available transcript, not every moment. '
                   'If something cannot be read, I’ll say so.'),
-        'voice': ('Yes—tap the call button and allow microphone access for a two-way voice conversation. '
-                   'You can interrupt me or hang up; the transcript stays in this conversation.'),
         'workers': worker,
         'git_force': ('A force push can replace the remote branch’s history, which can discard other people’s '
                       'commits. Web Bob can explain it and help review alternatives; it cannot run a force push.'),
@@ -248,4 +350,13 @@ def reply(text, root):
         'git_merge': ('Merging a pull request integrates its changes into the target branch. Reviewing a PR '
                       'or opening a draft does not merge it. Web Bob can prepare and review draft changes.'),
     }
-    return answers.get(kind)
+    if kind in ('voice', 'voice_memos'):
+        answers[kind] = voice_limits()
+    answers.update({key: item['path'] for key, item in STACK.items()})
+    answers.update(MISSING)
+    answer = answers[kind]
+    if not kind.startswith('git_'):
+        answer += (' Implemented support describes this code version; required setup is not checked here '
+                   '(configured is separate from implemented), and live availability is not verified. '
+                   'This explanation performs no action; saved holds and required approvals still apply.')
+    return answer
