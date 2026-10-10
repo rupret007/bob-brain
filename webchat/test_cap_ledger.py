@@ -1,5 +1,6 @@
 """Capability ledger regressions using a temporary home and offline adapters."""
 import json
+from contextlib import nullcontext
 from datetime import datetime
 import fcntl
 import os
@@ -93,6 +94,24 @@ class CapabilityLedgerTests(unittest.TestCase):
                     parse(command, now)
                 self.assertEqual(str(raised.exception), refusal)
                 self.assertEqual(Reminders(folder, clock=lambda: now).listing(), [])
+
+    def test_ledger_F10r6_reminder_ignores_get_my_approval_first_and_pending_confirmation(self):
+        from reminders import Reminders, ReminderError, ZONE, parse
+        now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
+        refusal = 'Nothing was saved. Send a new reminder request when you want it scheduled.'
+        for index, constraint in enumerate(('get my approval first', 'pending my confirmation.')):
+            with self.subTest(constraint=constraint):
+                command = 'Create a reminder for 2am to go to bed, but ' + constraint
+                reminders = Reminders(self.root / ('F10r6-' + str(index)), clock=lambda: now)
+                rows = []
+                with patch.object(reminders, 'locked', side_effect=lambda: nullcontext(rows)), \
+                        patch.object(reminders, 'save') as save:
+                    self.assertEqual(reminders.handle(command, 'chat', 'request'), refusal)
+                    save.assert_not_called()
+                    self.assertEqual(reminders.listing(), [])
+                with self.assertRaises(ReminderError) as raised:
+                    parse(command, now)
+                self.assertEqual(str(raised.exception), refusal)
 
     def test_ledger_F11_file_create_ignores_confirm_constraint(self):
         from local_tasks import parse

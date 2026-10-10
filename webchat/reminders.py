@@ -113,6 +113,7 @@ def parse(text, now):
     if re.search(r"\b(?:do\s+not|don't|don’t|never)\s+(?:(?:actually|ever|just|yet|really)\s+)*(?:save|create|schedule|set|add)\b|"
                  r'\b(?:ask|confirm|check)(?:\s+with)?\s+me\s+(?:first|before)|'
                  r'\b(?:ask(?:\s+me)?|wait)\s+for\s+(?:my\s+)?(?:approval|confirmation|permission)\b|'
+                 r'\b(?:get|pending)\s+my\s+(?:approval|confirmation)\b|'
                  r'\b(?:if|unless|until|after|once|when)\s+I\s+(?:confirm|approve|say)\b|'
                  r'\b(?:wait|hold off)\s+(?:until|before)|\b(?:before|without)\s+my\s+(?:approval|confirmation)',
                  stripped, re.I):
