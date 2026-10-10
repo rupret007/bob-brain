@@ -338,6 +338,13 @@ def claim(root, worker, now=None, *, identifier=None, allow_fallback=False, limi
                     row['error']=blocked
                     _append(path,row,'generation_held',now)
                 continue
+            import execution_lease
+            capacity_block = execution_lease.admission_block(root)
+            if capacity_block:
+                if row.get('error') != capacity_block:
+                    row['error'] = capacity_block
+                    _append(path, row, 'execution_deferred', now)
+                continue
             if row["requested_worker"] not in ("auto", worker) and not allow_fallback:
                 continue
             if worker not in worker_order(row["kind"]):

@@ -229,13 +229,15 @@ def ask(lane, prompt, *, cwd=None, coding=False, timeout=300, purpose="analysis"
         raise RuntimeError(lane + " rate-limit cooldown active")
     if not locked:
         with slot(lane):
-            if sum(r["worker"] == lane and r["status"] in task_queue.ACTIVE
-                   for r in task_queue.tasks(CONDUCTOR.parent).values()) >= task_queue.capacity(lane):
-                raise BlockingIOError("lane reserved for a Web Bob worker")
-            if any(r.get("engine") == lane and r["state"] in ("launched", "running")
-                   and r.get("managed") for r in jobs().values()):
-                raise BlockingIOError("lane reserved for a scheduled worker")
-            return ask(lane, prompt, cwd=cwd, coding=coding, timeout=timeout, purpose=purpose, locked=True)
+            import execution_lease
+            with execution_lease.hold(CONDUCTOR.parent):
+                if sum(r["worker"] == lane and r["status"] in task_queue.ACTIVE
+                       for r in task_queue.tasks(CONDUCTOR.parent).values()) >= task_queue.capacity(lane):
+                    raise BlockingIOError("lane reserved for a Web Bob worker")
+                if any(r.get("engine") == lane and r["state"] in ("launched", "running")
+                       and r.get("managed") for r in jobs().values()):
+                    raise BlockingIOError("lane reserved for a scheduled worker")
+                return ask(lane, prompt, cwd=cwd, coding=coding, timeout=timeout, purpose=purpose, locked=True)
     ok, reason = False, None
     try:
         if lane in ("gemini", "minimax"):
