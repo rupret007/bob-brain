@@ -152,6 +152,50 @@ class CapabilityLedgerTests(unittest.TestCase):
                 self.assertNotIn(secret, persisted)
             self.search.assert_not_called()
 
+    def test_ledger_F7_write_delete_missing_credential_content_guard(self):
+        target = self.home / 'Documents/auth.json'
+        secret = 'synthetic-review-password'
+        content = json.dumps(dict(password=secret))
+        target.write_text(content)
+        for kind in ('write', 'delete'):
+            with self.subTest(kind=kind):
+                spec = dict(kind=kind, path=str(target))
+                suffix = ': erased' if kind == 'write' else ''
+                if kind == 'write':
+                    spec['content'] = 'erased'
+                command = kind + ' file ~/Documents/auth.json' + suffix
+                with self.assertRaises(LocalTaskError) as raised:
+                    self.files.prepare(spec)
+                self.assertEqual(str(raised.exception), SECRET_REFUSAL)
+                self.assertEqual(self.actions.handle(command, 'chat', 'F7-direct-' + kind,
+                                                     self.state), SECRET_REFUSAL)
+
+                # Seed a pre-fix draft with the exact current file fingerprint;
+                # consent must still recheck content, not just reject a stale file.
+                with patch('local_tasks.safe_read', return_value=''):
+                    self.assertIn('Local draft', self.actions.handle(
+                        command, 'chat', 'F7-legacy-' + kind, self.state))
+                with self.actions.locked() as rows:
+                    row, = (r for r in rows.values() if r['state'] == 'draft')
+                with patch('local_tasks.os.dup') as duplicate, \
+                        patch('local_tasks.os.ftruncate') as truncate, \
+                        patch('local_tasks.os.unlink') as unlink:
+                    with self.assertRaises(LocalTaskError) as raised:
+                        self.files.execute(row['spec'])
+                    self.assertEqual(str(raised.exception), SECRET_REFUSAL)
+                    restored = LocalTasks(self.root / 'state', files=self.files,
+                                          search=self.search, clock=self.clock)
+                    for attempt in range(2):
+                        self.assertEqual(restored.handle('yes ' + row['token'], 'chat',
+                                                         f'F7-confirm-{kind}-{attempt}', self.state),
+                                         SECRET_REFUSAL)
+                    duplicate.assert_not_called()
+                    truncate.assert_not_called()
+                    unlink.assert_not_called()
+                self.assertEqual(target.read_text(), content)
+                self.assertNotIn(secret, (self.actions.folder / 'receipts.json').read_text())
+        self.search.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()
