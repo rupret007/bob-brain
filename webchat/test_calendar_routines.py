@@ -1,5 +1,6 @@
 """Morning Calendar reads reuse the existing reminder scheduler and GoogleCalendar path."""
 import copy
+import json
 from datetime import datetime
 from pathlib import Path
 import tempfile
@@ -188,6 +189,9 @@ class CalendarRoutineTests(unittest.TestCase):
                 reply = self.submit('every morning do ' + body)['content']
                 self.assertNotIn('Read-only routine saved:', reply)
                 self.assertNotIn('Reminder saved:', reply)
+        notify = self.submit('every morning remind me to show my calendar today')['content']
+        self.assertNotIn('Read-only routine saved:', notify)
+        self.assertNotIn('action', json.dumps(self.chat.reminders.listing()))
         self.assertFalse(self.chat.reminders.listing())
         self.assertEqual(self.file.read_text(), 'original')
         self.assertFalse(self.client.creates)

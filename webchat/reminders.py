@@ -125,6 +125,10 @@ def parse(text, now):
     morning = routine_request(text)
     if morning:
         clock = morning_clock(morning['clock'])
+        from calendar_actions import today_routine
+        if (today_routine(morning['body']) and morning['mode'].lower() == 'do'
+                and not morning['remind'] and (morning['kind'] or 'routine').lower() == 'routine'):
+            return morning['body'].strip(), next_morning(now, clock), 86400
         return reminder_body(morning['body']), next_morning(now, clock), 86400
     request = reminder_request(stripped)
     if request:
