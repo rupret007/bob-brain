@@ -4,6 +4,7 @@ from datetime import datetime
 import os
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
 
@@ -246,6 +247,50 @@ class CapabilityLedgerTests(unittest.TestCase):
                 reminders.create('chat', 'request', 'Timer', self.clock() + 600)
             self.assertEqual(str(raised.exception), refusal)
         self.assertEqual(Reminders(folder, clock=self.clock).listing(), [])
+
+    def test_ledger_F20_default_notifier_fires_live_notification(self):
+        from app import Chat
+        from reminders import notify_macos
+        from task_dispatch import task_queue
+        from texting_fixture import OfflineProviders
+        providers = OfflineProviders()
+        providers.start_probes = Mock()
+        providers.circuit = Mock()
+        texting, calendar = Mock(), Mock()
+        texting.public.side_effect = dict
+        with patch('reminders.sys.platform', 'darwin'), patch('subprocess.run') as run:
+            chat = Chat(self.root / 'F20', self.root, providers, texting=texting,
+                        calendar=calendar, local_tasks=self.actions)
+            self.addCleanup(chat.close)
+            try:
+                cid = chat.conversation_list()['conversations'][0]['id']
+                self.assertIn('Reminder saved:', chat.reminders.handle(
+                    'set a timer for 1 second', cid, 'request'))
+                row, = chat.reminders.listing()
+                self.assertEqual(row['state'], 'pending')
+                chat.start_background()
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    if chat.reminders.listing()[0]['state'] == 'fired':
+                        break
+                    time.sleep(.05)
+            finally:
+                chat.close()
+            self.assertFalse(chat.queue_thread.is_alive())
+            fired, = chat.reminders.listing()
+            self.assertEqual(fired['state'], 'fired')
+            self.assertEqual(fired['occurrences'], 1)
+            notices = [m for m in chat.history(cid)['messages'] if m.get('reminder_notice')]
+            self.assertEqual(len(notices), 1)
+            self.assertEqual(notices[0]['reminder_id'], row['id'])
+            self.assertIn('Reminder: Timer', notices[0]['content'])
+            run.assert_not_called()
+            notify_macos.assert_not_called()
+            self.assertIs(chat.reminder_notifier('Timer'), False)
+            self.assertEqual(providers.calls, [])
+            self.assertEqual(task_queue.tasks(self.root), {})
+            self.assertEqual(calendar.mock_calls, [])
+            self.search.assert_not_called()
 
     def test_ledger_F8_generation_budget_file_writable_via_chat(self):
         runtime = self.home / 'Documents/bob-runtime'
