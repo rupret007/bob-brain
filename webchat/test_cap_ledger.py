@@ -91,6 +91,25 @@ class CapabilityLedgerTests(unittest.TestCase):
                 self.assertEqual(str(raised.exception), refusal)
                 self.assertEqual(Reminders(folder, clock=lambda: now).listing(), [])
 
+    def test_ledger_F11_file_create_ignores_confirm_constraint(self):
+        from local_tasks import parse
+        command = 'create file ~/Documents/new.txt: hello\nDo not create this file until I confirm.'
+        target = self.home / 'Documents/new.txt'
+        refusal = 'No file changed. Send a new file request when you want it performed.'
+        with patch.object(self.files, 'prepare', wraps=self.files.prepare) as prepare, \
+                patch.object(self.files, 'execute', wraps=self.files.execute) as execute:
+            reply = self.actions.handle(command, 'chat', 'F11', self.state)
+            self.assertFalse(target.exists())
+            self.assertEqual(reply, refusal)
+            prepare.assert_not_called()
+            execute.assert_not_called()
+        with self.assertRaises(LocalTaskError) as raised:
+            parse(command)
+        self.assertEqual(str(raised.exception), refusal)
+        with self.actions.locked() as rows:
+            self.assertEqual(rows, {})
+        self.search.assert_not_called()
+
     def test_ledger_F8_generation_budget_file_writable_via_chat(self):
         runtime = self.home / 'Documents/bob-runtime'
         folder = runtime / 'conductor/webchat'

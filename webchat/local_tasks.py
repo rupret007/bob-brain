@@ -170,6 +170,8 @@ def parse(text):
     if match:
         kind, value = match[1].lower(), match[2].strip()
         if kind in ('create', 'write'):
+            if re.search(r"\b(?:do\s+not|don't|don’t|never)\s+(?:create|write|save)\b", text, re.I):
+                raise LocalTaskError('No file changed. Send a new file request when you want it performed.')
             path, separator, content = value.partition(': ')
             if not separator or not content or len(content.encode('utf-8')) > LIMIT:
                 raise LocalTaskError('Use create/write file PATH: CONTENT (up to 64 KiB).')
