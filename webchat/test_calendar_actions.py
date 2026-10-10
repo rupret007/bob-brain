@@ -15,19 +15,36 @@ import urllib.error
 import uuid
 
 from app import Chat
-from calendar_actions import CalendarActions, CalendarError, GoogleCalendar, NEEDS_AUTH, UNCERTAIN, event_spec, request_json
+from calendar_actions import (
+    CalendarActions, CalendarError, GoogleCalendar, NEEDS_AUTH, UNCERTAIN, UNCERTAIN_CANCEL,
+    event_spec, request_json,
+)
 from reminders import ZONE
 from task_dispatch import task_queue
 from texting import BlueBubbles, Texting, TextingError
 from texting_fixture import OfflineProviders
 
 
+def sample_event(**overrides):
+    item = dict(id='evt12345', status='confirmed', summary='Dentist', etag='"v1"',
+                updated='2026-10-10T12:00:00Z',
+                start={'dateTime': '2026-10-11T14:00:00-05:00'},
+                end={'dateTime': '2026-10-11T14:30:00-05:00'})
+    item.update(overrides)
+    return item
+
+
 class FakeCalendar:
     def __init__(self):
         self.creates = []
         self.reads = []
+        self.gets = []
+        self.deletes = []
         self.response = {'items': []}
+        self.event = None
         self.error = None
+        self.get_error = None
+        self.delete_error = None
 
     def configured(self):
         if self.error:
@@ -40,6 +57,23 @@ class FakeCalendar:
     def listing(self, start, end):
         self.reads.append((start, end))
         return self.response
+
+    def get(self, event_id, *, allow_missing=False):
+        self.gets.append(event_id)
+        if self.get_error:
+            raise self.get_error if not callable(self.get_error) else self.get_error(event_id, allow_missing)
+        if self.event is None:
+            if allow_missing:
+                return None
+            raise CalendarError('No matching calendar event was found. Nothing was cancelled.')
+        return copy.deepcopy(self.event)
+
+    def delete(self, event_id):
+        self.deletes.append(event_id)
+        if self.delete_error:
+            raise self.delete_error
+        self.event = None
+        return {}
 
 
 class CalendarFixture(unittest.TestCase):
@@ -286,6 +320,130 @@ class CalendarTests(CalendarFixture):
         self.assertFalse(self.client.creates)
 
 
+class CancelCalendarTests(CalendarFixture):
+    def setUp(self):
+        super().setUp()
+        self.client.event = sample_event()
+
+    def preview(self, event_id='evt12345', **kwargs):
+        result = self.say('cancel calendar event ' + event_id, **kwargs)
+        self.assertIn('Calendar cancel draft (not cancelled)', result)
+        with self.actions.locked() as rows:
+            row = next(r for r in rows.values() if r['state'] == 'draft' and r.get('kind') == 'cancel')
+        return row
+
+    def test_exact_confirmation_deletes_once_and_uses_observed_evidence(self):
+        row = self.preview()
+        self.assertEqual(self.client.gets, ['evt12345'])
+        self.assertFalse(self.client.deletes)
+        self.assertIn('Event ID: evt12345', self.actions.receipt(row))
+        self.assertIn('Observed version: "v1"', self.actions.receipt(row))
+        reply = self.say('yes ' + row['token'])
+        self.assertIn('Google Calendar confirmed event cancelled: Dentist.', reply)
+        self.assertIn('Event ID: evt12345', reply)
+        self.assertEqual(self.client.deletes, ['evt12345'])
+        self.assertEqual(self.client.gets, ['evt12345', 'evt12345', 'evt12345'])
+        self.assertEqual(self.say('yes ' + row['token']), reply)
+        self.assertEqual(self.client.deletes, ['evt12345'])
+
+    def test_hold_blocks_preview_and_confirmation_without_delete(self):
+        import chat_intent
+        self.state = chat_intent.new_state()
+        chat_intent.apply_turn(self.state, 'Hold all work', 'hold')
+        self.assertIn('On hold:', self.say('cancel calendar event evt12345'))
+        self.assertFalse(self.client.gets)
+        self.state = chat_intent.new_state()
+        row = self.preview()
+        chat_intent.apply_turn(self.state, 'Hold all work', 'hold-2')
+        self.assertIn('On hold:', self.say('yes ' + row['token']))
+        self.assertFalse(self.client.deletes)
+
+    def test_stale_version_rejects_without_delete(self):
+        row = self.preview()
+        self.client.event = sample_event(etag='"v2"', updated='2026-10-10T13:00:00Z')
+        reply = self.say('yes ' + row['token'])
+        self.assertIn('changed since the draft', reply)
+        self.assertIn(UNCERTAIN_CANCEL, reply)
+        self.assertFalse(self.client.deletes)
+        self.assertEqual(self.say('yes ' + row['token']), reply)
+        self.assertFalse(self.client.deletes)
+
+    def test_attendees_and_recurrence_are_refused_before_a_draft(self):
+        self.client.event = sample_event(attendees=[{'email': 'other@example.test'}])
+        self.assertIn('attendees', self.say('cancel calendar event evt12345'))
+        self.client.event = sample_event(recurrence=['RRULE:FREQ=DAILY'])
+        self.assertIn('non-recurring', self.say('cancel calendar event evt12345'))
+        self.client.event = sample_event(recurringEventId='series-1')
+        self.assertIn('non-recurring', self.say('cancel calendar event evt12345'))
+        with self.actions.locked() as rows:
+            self.assertEqual(rows, {})
+        self.assertFalse(self.client.deletes)
+
+    def test_wrong_conversation_and_same_request_do_not_delete(self):
+        row = self.preview(request_id='original')
+        self.assertIn('No matching calendar cancel draft', self.say('yes ' + row['token'], cid='other'))
+        self.assertIn('separate message', self.say('yes ' + row['token'], request_id='original'))
+        self.assertFalse(self.client.deletes)
+        self.assertIn('confirmed event cancelled', self.say('yes ' + row['token']))
+
+    def test_repeated_request_id_returns_the_same_draft_without_another_get(self):
+        row = self.preview(request_id='same')
+        again = self.say('cancel calendar event evt12345', request_id='same')
+        self.assertEqual(again, self.actions.receipt(row))
+        self.assertEqual(self.client.gets, ['evt12345'])
+
+    def test_concurrent_confirmations_delete_only_once(self):
+        row = self.preview()
+        other = CalendarActions(self.root, self.client, lambda: self.now)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda actions: actions.handle('yes ' + row['token'], 'chat',
+                               str(uuid.uuid4()), self.state), (self.actions, other)))
+        self.assertEqual(results[0], results[1])
+        self.assertIn('confirmed event cancelled', results[0])
+        self.assertEqual(self.client.deletes, ['evt12345'])
+
+    def test_failed_save_never_deletes_and_claimed_save_is_first(self):
+        row = self.preview()
+        with patch.object(self.actions, 'save', side_effect=OSError('disk full')):
+            self.assertNotIn('confirmed event cancelled', self.say('yes ' + row['token']))
+        self.assertFalse(self.client.deletes)
+        row = self.preview()
+        def delete_after_claim(event_id):
+            rows = json.loads((self.root / 'calendar/receipts.json').read_text())
+            self.assertEqual(rows[row['token']]['state'], 'claimed')
+            self.client.event = None
+            return {}
+        self.client.delete = Mock(side_effect=delete_after_claim)
+        self.assertIn('confirmed event cancelled', self.say('yes ' + row['token']))
+        self.client.delete.assert_called_once_with('evt12345')
+
+    def test_timeout_after_possible_deletion_never_resends_delete(self):
+        row = self.preview()
+        self.client.delete_error = TimeoutError('secret remote URL')
+        reply = self.say('yes ' + row['token'])
+        self.assertEqual(reply, UNCERTAIN_CANCEL)
+        self.assertNotIn('secret', reply)
+        self.assertNotIn('confirmed event cancelled', reply)
+        self.assertEqual(self.client.deletes, ['evt12345'])
+        self.assertEqual(self.say('yes ' + row['token']), UNCERTAIN_CANCEL)
+        self.assertEqual(self.client.deletes, ['evt12345'])
+
+    def test_failed_receipt_save_after_delete_stays_uncertain_without_retry(self):
+        row = self.preview()
+        save = self.actions.save
+        count = [0]
+        def fail_second(rows):
+            count[0] += 1
+            if count[0] == 2:
+                raise OSError('disk full')
+            save(rows)
+        with patch.object(self.actions, 'save', side_effect=fail_second):
+            self.assertIn('unconfirmed', self.say('yes ' + row['token']))
+        self.assertEqual(self.client.deletes, ['evt12345'])
+        self.assertEqual(self.say('yes ' + row['token']), UNCERTAIN_CANCEL)
+        self.assertEqual(self.client.deletes, ['evt12345'])
+
+
 class AdapterTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -369,6 +527,21 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(request.args[0], 'https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=none')
         self.assertEqual(request.kwargs['data'], event)
 
+    def test_get_and_delete_use_primary_event_id_and_no_updates(self):
+        self.transport.side_effect = [
+            {'access_token': 'access'}, sample_event(),
+            {'access_token': 'access'}, {},
+        ]
+        self.assertEqual(self.client.get('evt/1')['id'], 'evt12345')
+        self.assertEqual(self.client.delete('evt/1'), {})
+        get_call, delete_call = self.transport.call_args_list[1], self.transport.call_args_list[3]
+        self.assertEqual(get_call.args[0],
+                         'https://www.googleapis.com/calendar/v3/calendars/primary/events/evt%2F1')
+        self.assertTrue(get_call.kwargs.get('allow_missing'))
+        self.assertEqual(delete_call.args[0],
+                         'https://www.googleapis.com/calendar/v3/calendars/primary/events/evt%2F1?sendUpdates=none')
+        self.assertEqual(delete_call.kwargs['method'], 'DELETE')
+
     def test_missing_insecure_symlink_invalid_and_service_credentials_need_auth(self):
         for value in ({}, {'type': 'service_account'}, [], {'client_id': 'secret'}):
             self.path.write_text(json.dumps(value))
@@ -429,6 +602,18 @@ class RoutingTests(CalendarFixture):
     def submit(self, text):
         with patch('app.parse_work', side_effect=AssertionError('Entered generic queue')):
             return self.chat.submit(self.cid, text, str(uuid.uuid4()), actor='owner')['messages'][-1]
+
+    def test_calendar_cancel_preview_and_confirm_are_direct(self):
+        self.client.event = sample_event()
+        response = self.submit('cancel calendar event evt12345')
+        self.assertEqual(response['provider'], 'calendar')
+        self.assertIn('Calendar cancel draft (not cancelled)', response['content'])
+        with self.actions.locked() as rows:
+            row, = (r for r in rows.values() if r.get('kind') == 'cancel')
+        self.assertIn('confirmed event cancelled', self.submit('yes ' + row['token'])['content'])
+        self.assertEqual(self.client.deletes, ['evt12345'])
+        self.assertFalse(self.providers.calls)
+        self.assertFalse(task_queue.tasks(self.root))
 
     def test_calendar_create_read_confirm_are_direct(self):
         response = self.submit('Create a calendar event Dentist tomorrow at 2pm')

@@ -25,14 +25,21 @@ NEEDS_AUTH = ('Google Calendar needs auth. Configure a private authorized-user O
               'with Calendar access using BOB_GOOGLE_CALENDAR_CREDENTIALS '
               '(or ~/.config/webbob/google-calendar.json). No calendar action was performed.')
 HELP = ('Try “create a calendar event Dentist tomorrow at 2pm for 30 minutes”, '
-        '“create a calendar event for 2am to go to bed”, or “show my calendar today”. '
+        '“create a calendar event for 2am to go to bed”, “show my calendar today”, '
+        'or “cancel calendar event EVENT_ID”. '
         'Default: primary calendar, America/Chicago, one hour, no recurrence, invitations, or event alerts. '
-        'Creation requires the draft’s exact yes wbcal-… message.')
+        'Creation and cancellation require that draft’s exact yes wbcal-… message. '
+        'Only one non-recurring, attendee-free event can be cancelled.')
 UNCERTAIN = ('Calendar creation is unconfirmed. Check Google Calendar before making another draft. '
              'This confirmation will not submit another create request.')
+UNCERTAIN_CANCEL = ('Calendar cancellation is unconfirmed. Check Google Calendar before making another request. '
+                    'This confirmation will not submit another cancel request.')
 PREFIX = r'^(?:(?:please\s+)|(?:(?:can|could|would) you\s+))*'
 CREATE = re.compile(PREFIX + r'(?:create|add|set(?:\s+up)?|schedule)\s+(?:an?\s+)?(?:google\s+)?calendar\s+event\b\s*(.*)$', re.I | re.S)
 READ = re.compile(PREFIX + r'(?:(?:read|show|list)\s+|what(?:\x27s| is) on\s+)?(?:my\s+)?(?:google\s+)?calendar(?:\s+events)?(?:\s+(today|tomorrow|this week|next 7 days|on \d{4}-\d{2}-\d{2}))?[.?!]?$', re.I)
+CANCEL_EVENT = re.compile(
+    PREFIX + r'(?:cancel|delete|remove)\s+(?:the\s+)?(?:google\s+)?calendar\s+event\b\s+'
+    r'([A-Za-z0-9_=.-]{5,1024})\s*$', re.I)
 CONTROL = re.compile(r'^(yes|cancel)\s+(wbcal-[a-f0-9]{32})$', re.I)
 
 
@@ -45,13 +52,13 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise CalendarError('Google Calendar redirected the request; its result is unconfirmed.')
 
 
-def request_json(url, *, data=None, headers=None, form=False):
+def request_json(url, *, data=None, headers=None, form=False, method=None, allow_missing=False):
     """Fixed Google hosts, no proxies, redirects or automatic retries."""
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != 'https' or parsed.netloc not in ('oauth2.googleapis.com', 'www.googleapis.com'):
         raise CalendarError('Invalid Calendar endpoint.')
     body = (urllib.parse.urlencode(data).encode() if form else json.dumps(data).encode()) if data is not None else None
-    request = urllib.request.Request(url, data=body, headers={
+    request = urllib.request.Request(url, data=body, method=method, headers={
         'Content-Type': 'application/x-www-form-urlencoded' if form else 'application/json', **(headers or {})})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     try:
@@ -59,11 +66,15 @@ def request_json(url, *, data=None, headers=None, form=False):
             raw = response.read(2 * 1024 * 1024 + 1)
         if len(raw) > 2 * 1024 * 1024:
             raise ValueError('large response')
+        if not raw:
+            return {}
         result = json.loads(raw)
         if not isinstance(result, dict):
             raise ValueError('invalid response')
         return result
     except urllib.error.HTTPError as exc:
+        if allow_missing and exc.code in (404, 410):
+            return None
         if exc.code in (401, 403) or form and exc.code == 400:
             raise CalendarError('Google Calendar needs auth: authorization expired or Calendar access was denied.') from None
         raise CalendarError('Google Calendar rejected the request; no success was verified.') from None
@@ -120,6 +131,23 @@ class GoogleCalendar:
         return self.transport('https://www.googleapis.com/calendar/v3/calendars/primary/events?' + query,
                               headers=self._headers())
 
+    def event_url(self, event_id, *, query=''):
+        ident = urllib.parse.quote(event_id, safe='')
+        url = 'https://www.googleapis.com/calendar/v3/calendars/primary/events/' + ident
+        return url + query
+
+    def get(self, event_id, *, allow_missing=False):
+        result = self.transport(self.event_url(event_id), headers=self._headers(), allow_missing=True)
+        if result is None:
+            if allow_missing:
+                return None
+            raise CalendarError('No matching calendar event was found. Nothing was cancelled.')
+        return result
+
+    def delete(self, event_id):
+        return self.transport(self.event_url(event_id, query='?sendUpdates=none'),
+                              method='DELETE', headers=self._headers())
+
 
 def iso(seconds):
     return datetime.fromtimestamp(seconds, ZONE).isoformat()
@@ -168,6 +196,41 @@ def event_spec(text, now):
                 reminders={'useDefault': False}, visibility='private')
 
 
+def observed_version(item):
+    if not isinstance(item, dict):
+        return None
+    etag = item.get('etag') if isinstance(item.get('etag'), str) else ''
+    updated = item.get('updated') if isinstance(item.get('updated'), str) else ''
+    if not etag.strip() and not updated.strip():
+        return None
+    return dict(etag=etag.strip(), updated=updated.strip())
+
+
+def versions_match(stored, current):
+    if not isinstance(stored, dict) or not isinstance(current, dict):
+        return False
+    if stored.get('etag') and current.get('etag'):
+        return stored['etag'] == current['etag']
+    if stored.get('updated') and current.get('updated'):
+        return stored['updated'] == current['updated']
+    return False
+
+
+def simple_cancel_refusal(item):
+    if not isinstance(item, dict) or not isinstance(item.get('id'), str) or not item['id'].strip():
+        return 'Google Calendar returned invalid event data; nothing was cancelled.'
+    if item.get('status') == 'cancelled':
+        return 'That calendar event is already cancelled. Nothing was changed.'
+    attendees = item.get('attendees')
+    if isinstance(attendees, list) and attendees:
+        return 'This Calendar action cancels one private event only. Events with attendees were not changed.'
+    if item.get('recurrence') or item.get('recurringEventId'):
+        return 'This Calendar action cancels one non-recurring event only. Recurring series were not changed.'
+    if observed_version(item) is None:
+        return 'That calendar event has no observed version. Nothing was cancelled.'
+    return None
+
+
 def verified(result, event):
     if not isinstance(result, dict) or result.get('id') != event['id'] or result.get('status') != 'confirmed':
         return False
@@ -212,7 +275,7 @@ class CalendarActions:
 
     def matches(self, text):
         text = text.strip()
-        return bool(CREATE.fullmatch(text) or READ.fullmatch(text) or
+        return bool(CREATE.fullmatch(text) or READ.fullmatch(text) or CANCEL_EVENT.fullmatch(text) or
                     re.match(r'^(?:yes|cancel)\s+wbcal-', text, re.I) or text.lower() == 'calendar help')
 
     def handle(self, text, cid, request_id, intent_state):
@@ -232,6 +295,9 @@ class CalendarActions:
                 return chat_intent.hold_reply(scopes)
             if CREATE.fullmatch(text):
                 return self.draft(text, cid, request_id)
+            cancel = CANCEL_EVENT.fullmatch(text)
+            if cancel:
+                return self.draft_cancel(text, cancel[1], cid, request_id)
             return self.read(READ.fullmatch(text)[1])
         except CalendarError as exc:
             return str(exc)
@@ -261,14 +327,53 @@ class CalendarActions:
             self.save(rows)
             return self.receipt(row)
 
+    def draft_cancel(self, text, event_id, cid, request_id):
+        with self.locked() as rows:
+            old = next((r for r in rows.values() if r['cid'] == cid and r['request_id'] == request_id), None)
+            if old:
+                if old.get('text') != text or old.get('kind') != 'cancel':
+                    return 'That calendar request ID belongs to a different draft. Nothing was cancelled.'
+                return self.receipt(old)
+            self.client.configured()
+            item = self.client.get(event_id)
+            if item.get('id') != event_id:
+                raise CalendarError('Google Calendar returned a different event; nothing was cancelled.')
+            refusal = simple_cancel_refusal(item)
+            if refusal:
+                raise CalendarError(refusal)
+            if len(rows) >= 1000:
+                raise CalendarError('Calendar receipt storage is full. Nothing was cancelled.')
+            token = 'wbcal-' + uuid.uuid4().hex
+            for row in rows.values():
+                if row['cid'] == cid and row['state'] == 'draft':
+                    row['state'] = 'replaced'
+            row = dict(cid=cid, request_id=request_id, text=text, kind='cancel', token=token,
+                       event_id=event_id, version=observed_version(item), preview=item,
+                       state='draft', expires=self.clock() + 3600)
+            rows[token] = row
+            self.save(rows)
+            return self.receipt(row)
+
     @staticmethod
     def receipt(row):
-        if row['state'] == 'created':
+        if row['state'] in ('created', 'deleted'):
             return row['receipt']
+        uncertain = UNCERTAIN_CANCEL if row.get('kind') == 'cancel' else UNCERTAIN
         if row['state'] in ('claimed', 'unconfirmed'):
-            return (row.get('error', '') + ' ' + UNCERTAIN).strip()
+            return (row.get('error', '') + ' ' + uncertain).strip()
         if row['state'] != 'draft':
+            if row.get('kind') == 'cancel':
+                return 'That calendar cancel draft was cancelled, replaced, or expired. Nothing was cancelled by this request.'
             return 'That calendar draft was cancelled, replaced, or expired. Nothing created by this request.'
+        if row.get('kind') == 'cancel':
+            item = row.get('preview') or {}
+            title = item.get('summary') if isinstance(item.get('summary'), str) and item['summary'] else '(untitled event)'
+            version = row.get('version') or {}
+            mark = version.get('etag') or version.get('updated') or 'unknown'
+            return (f'Calendar cancel draft (not cancelled): {title[:500]}. '
+                    f'Event ID: {row["event_id"]}. Observed version: {mark}. '
+                    f'Primary calendar; one non-recurring private event; no attendees. '
+                    f'Within one hour reply exactly “yes {row["token"]}” to cancel, or “cancel {row["token"]}”.')
         event = row['event']
         return (f'Calendar draft (not created): {event["summary"]}. '
                 f'{stamp(datetime.fromisoformat(event["start"]["dateTime"]).timestamp())} to '
@@ -281,25 +386,38 @@ class CalendarActions:
         with self.locked() as rows:
             row = rows.get(token)
             if not row or row['cid'] != cid:
+                if row and row.get('kind') == 'cancel':
+                    return 'No matching calendar cancel draft in this conversation. Nothing was cancelled.'
                 return 'No matching calendar draft in this conversation. Nothing created.'
             if row['state'] != 'draft':
                 return self.receipt(row)
             if command == 'cancel':
                 row['state'] = 'cancelled'
                 self.save(rows)
+                if row.get('kind') == 'cancel':
+                    return 'Calendar cancel draft dismissed. Nothing was cancelled.'
                 return 'Calendar draft cancelled. Nothing created.'
             scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(row['text']))
             if scopes:
                 return chat_intent.hold_reply(scopes)
             if request_id == row['request_id']:
+                if row.get('kind') == 'cancel':
+                    return 'Review the calendar cancel draft and confirm in a separate message. Nothing was cancelled.'
                 return 'Review the calendar draft and confirm in a separate message. Nothing created.'
-            if self.clock() >= row['expires'] or datetime.fromisoformat(row['event']['start']['dateTime']).timestamp() <= self.clock():
+            expired = self.clock() >= row['expires']
+            if row.get('kind') != 'cancel':
+                expired = expired or datetime.fromisoformat(row['event']['start']['dateTime']).timestamp() <= self.clock()
+            if expired:
                 row['state'] = 'expired'
                 self.save(rows)
+                if row.get('kind') == 'cancel':
+                    return 'Calendar cancel draft expired. Make a fresh cancel request. Nothing was cancelled.'
                 return 'Calendar draft expired. Make a fresh draft. Nothing created.'
             self.client.configured()
             row.update(state='claimed', approved_request_id=request_id)
-            self.save(rows)  # Persist consumed consent BEFORE any OAuth or create call.
+            self.save(rows)  # Persist consumed consent BEFORE any OAuth or write.
+            if row.get('kind') == 'cancel':
+                return self.finish_cancel(rows, row)
             try:
                 result = self.client.create(row['event'])
                 if verified(result, row['event']):
@@ -314,6 +432,33 @@ class CalendarActions:
                 row['state'] = 'unconfirmed'
             self.save(rows)
             return self.receipt(row)
+
+    def finish_cancel(self, rows, row):
+        try:
+            current = self.client.get(row['event_id'])
+            refusal = simple_cancel_refusal(current)
+            if refusal:
+                row.update(state='unconfirmed', error=refusal)
+            elif current.get('id') != row['event_id'] or not versions_match(row.get('version'), observed_version(current)):
+                row.update(state='unconfirmed',
+                           error='That calendar event changed since the draft. Nothing was cancelled.')
+            else:
+                self.client.delete(row['event_id'])
+                observed = self.client.get(row['event_id'], allow_missing=True)
+                if observed is None or observed.get('status') == 'cancelled':
+                    title = row.get('preview', {}).get('summary') if isinstance(row.get('preview'), dict) else ''
+                    title = title if isinstance(title, str) and title.strip() else '(untitled event)'
+                    row.update(state='deleted',
+                               receipt=f'Google Calendar confirmed event cancelled: {title[:500]}. '
+                                       f'Event ID: {row["event_id"]}.')
+                else:
+                    row['state'] = 'unconfirmed'
+        except CalendarError as exc:
+            row.update(state='unconfirmed', error=str(exc))
+        except Exception:
+            row['state'] = 'unconfirmed'
+        self.save(rows)
+        return self.receipt(row)
 
     def read(self, period):
         self.client.configured()
