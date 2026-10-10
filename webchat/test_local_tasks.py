@@ -127,6 +127,43 @@ class RuntimeProtectionTests(LocalFixture):
         self.assertIn('outside the local file allowlist', self.say('yes ' + row['token']))
         self.assertEqual(self.file.read_text(), 'original')
 
+    def test_configured_calendar_credentials_reject_all_file_operations(self):
+        target = self.home / 'Documents/google-calendar.json'
+        secret = json.dumps(dict(type='authorized_user', client_id='fixture-client',
+                                 client_secret='fixture-oauth-secret', refresh_token='fixture-refresh-secret'))
+        for configured in (str(target), '~/Documents/google-calendar.json'):
+            with self.subTest(configured=configured), patch.dict(
+                    os.environ, BOB_GOOGLE_CALENDAR_CREDENTIALS=configured), \
+                    patch.dict(os.environ, HOME=str(self.home)):
+                # Protection applies even before the configured store exists.
+                self.assertIn('outside the local file allowlist', self.say(f'create file {target}: unsafe'))
+                self.assertFalse(target.exists())
+                target.write_text(secret)
+                target.chmod(0o600)
+                for command in (f'read file {target}', f'write file {target}: unsafe',
+                                f'delete file {target}', f'terminal: cat {target}',
+                                f'terminal: ls {target}', f'list files {target}',
+                                'read file ~/DOCUMENTS/GOOGLE-CALENDAR.JSON'):
+                    self.assertIn('outside the local file allowlist', self.say(command))
+                with self.assertRaises(LocalTaskError):
+                    self.actions.validate_routine(f'terminal: cat {target}')
+                self.assertIn('outside the local file allowlist', self.actions.handle(
+                    f'read file {target}', 'chat', str(uuid.uuid4()), self.state, routine=True))
+                self.assertEqual(target.read_text(), secret)
+                self.assertEqual(self.rows(), {})
+                target.unlink()
+
+    def test_credentials_configuration_rechecked_for_existing_drafts_and_routines(self):
+        row = self.draft('write file ~/Documents/note.txt: replacement')
+        routine = self.actions.validate_routine('terminal: cat ~/Documents/note.txt')
+        with patch.dict(os.environ, BOB_GOOGLE_CALENDAR_CREDENTIALS=str(self.file)):
+            restored = LocalTasks(self.chat_folder, search=self.search, clock=self.clock)
+            self.assertIn('outside the local file allowlist', self.say('yes ' + row['token'], actions=restored))
+            self.assertIn('outside the local file allowlist', restored.handle(
+                routine, 'chat', str(uuid.uuid4()), self.state, routine=True))
+        self.assertEqual(self.file.read_text(), 'original')
+        self.assertNotIn('original', json.dumps(self.rows()))
+
     def test_invalid_policy_fails_closed(self):
         self.policy.write_text('invalid policy')
         self.assertIn('protection could not be verified', self.say('read file ~/Documents/note.txt'))

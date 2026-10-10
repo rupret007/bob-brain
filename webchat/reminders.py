@@ -128,12 +128,24 @@ def parse(text, now):
         return recurring[3].strip(), now + interval, interval
     match = re.fullmatch(r'to ([\s\S]+?)\s+(' + WHEN + r')', clause, re.I)
     if match:
-        return match[1].strip(), instant(_when(match[2]), now), None
+        return reminder_body(match[1]), instant(_when(match[2]), now), None
     clause = re.sub(r'^for\s+', '', clause, flags=re.I)
     match = re.fullmatch(r'(' + WHEN + r')(?:\s+(?:to|for)\s+([\s\S]+))?', clause, re.I)
     if match:
-        return (match[2] or default_body).strip(), instant(_when(match[1]), now), None
+        return reminder_body(match[2] or default_body), instant(_when(match[1]), now), None
     return None
+
+
+def reminder_body(value):
+    # A second time/date in the body may qualify or conflict with the matched
+    # schedule. Ask before saving instead of silently treating it as prose.
+    if re.search(r'\b(?:today|tomorrow|tonight|yesterday|noon|midnight|'
+                 r'monday|tuesday|wednesday|thursday|friday|saturday|sunday|'
+                 r'next\s+(?:week|month|year)|every\s+\w+|\d{4}-\d{2}-\d{2}|'
+                 r'at\s+\d{1,2}\b|in\s+' + DURATION + r'|' + CLOCK + r')\b', value, re.I):
+        raise ReminderError('The reminder has an extra date or time clause. Nothing was saved. '
+                            'Please use one schedule, such as “create a reminder for tomorrow at 2am to go to bed”.')
+    return value.strip()
 
 
 def _when(value):
@@ -205,6 +217,22 @@ class Reminders:
         atomic_text(self.path, json.dumps(rows, ensure_ascii=False))
         self.path.chmod(0o600)
 
+    def save_change(self, rows, before):
+        """Read back under the lock: an atomic write can fail after replacement."""
+        try:
+            self.save(rows)
+        except OSError:
+            try:
+                current = json.loads(self.path.read_text())
+            except FileNotFoundError:
+                current = []
+            except (OSError, ValueError):
+                current = None
+            if current == before:
+                raise ReminderError('Reminder storage failed. The requested change was not saved.') from None
+            raise ReminderError('Reminder storage update is unconfirmed; the change may already be saved. '
+                                'Check “my reminders” before trying again.') from None
+
     def create(self, cid, request_id, body, due, interval=None, *, daily_time=None, action=None):
         if not 1 <= len(body) <= 1000:
             raise ReminderError('Keep a reminder between 1 and 1,000 characters.')
@@ -215,6 +243,7 @@ class Reminders:
                 return existing
             if sum(r['state'] == 'pending' for r in rows) >= 200:
                 raise ReminderError('The reminder limit is reached. Cancel active reminders before adding more.')
+            before = list(rows)
             if len(rows) >= 400:
                 pending = [r for r in rows if r['state'] == 'pending']
                 completed = sorted((r for r in rows if r['state'] != 'pending'), key=lambda r: r['created_at'])[-199:]
@@ -226,7 +255,7 @@ class Reminders:
             if action:
                 row['action'] = action
             rows.append(row)
-            self.save(rows)
+            self.save_change(rows, before)
             return row
 
     def listing(self):
@@ -241,8 +270,9 @@ class Reminders:
                 raise ReminderError('No reminder with that ID was found.')
             if row['state'] == 'fired':
                 return 'That reminder already appeared in chat.'
+            before = [dict(r) for r in rows]
             row['state'] = 'cancelled'
-            self.save(rows)
+            self.save_change(rows, before)
         return 'Reminder cancelled.'
 
     def deliver_due(self, deliver, notify=None):
@@ -286,6 +316,15 @@ class Reminders:
                     pass  # OS failure must not undo or block durable chat delivery.
 
     def handle(self, text, cid, request_id, *, local_tasks=None):
+        try:
+            return self._handle(text, cid, request_id, local_tasks=local_tasks)
+        except ReminderError as exc:
+            return str(exc)
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return ('Reminder storage is unavailable; no successful change was verified. '
+                    'Check “my reminders” once storage is available before trying again.')
+
+    def _handle(self, text, cid, request_id, *, local_tasks=None):
         command = text.strip().casefold().rstrip('.?!')
         if command in ('reminders', 'my reminders', 'list reminders', 'show reminders', 'routines', 'my routines',
                        'timers', 'my timers', 'alarms', 'my alarms'):
@@ -317,6 +356,8 @@ class Reminders:
                             'Results will appear in this chat while Web Bob is running, with one catch-up run after restart. '
                             'Saved holds are checked before each run. No job or message to another person will be sent.')
                 return f"Reminder saved: {row['body']} — {stamp(row['due_at'])}.{repeat} ID {row['id']}. It will appear in this chat while Web Bob is running (or when it restarts); macOS notification is best effort; no text, email or job will be sent."
+            except (UnicodeError, json.JSONDecodeError):
+                raise  # Storage corruption is not a date/time parsing error.
             except ValueError as exc:
                 from local_tasks import LocalTaskError
                 return str(exc) if isinstance(exc, (ReminderError, LocalTaskError)) else 'That date or time is invalid. ' + HELP

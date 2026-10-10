@@ -77,9 +77,60 @@ class ReminderTests(unittest.TestCase):
 
     def test_failed_create_never_returns_success_receipt(self):
         with patch.object(self.store, 'save', side_effect=OSError('disk full')):
-            with self.assertRaises(OSError):
-                self.store.handle('Create a reminder for 2am to go to bed', 'chat', 'request')
+            reply = self.store.handle('Create a reminder for 2am to go to bed', 'chat', 'request')
+        self.assertIn('requested change was not saved', reply)
         self.assertFalse(self.store.listing())
+
+    def test_extra_schedule_clauses_require_clarification_without_saving(self):
+        self.now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
+        for clause in ('for 2am to go to bed tomorrow', 'to go to bed at 2am tomorrow at 3am',
+                       'for 2am to go to bed today', 'for 2am to go to bed on 2026-10-11',
+                       'for 2am to go to bed at 3am', 'in 10 minutes to stretch in 20 minutes',
+                       'for 2am to go to bed next week'):
+            with self.subTest(clause=clause):
+                reply = self.store.handle('create a reminder ' + clause, 'chat', str(uuid.uuid4()))
+                self.assertIn('extra date or time clause', reply)
+                self.assertFalse(self.store.listing())
+        for clause, day in (('for 2am to go to bed', 10), ('for tomorrow at 2am to go to bed', 11),
+                            ('to go to bed tomorrow at 2am', 11)):
+            body, due, interval = parse('create a reminder ' + clause, self.now)
+            self.assertEqual((body, due, interval),
+                             ('go to bed', datetime(2026, 10, day, 2, tzinfo=ZONE).timestamp(), None))
+
+    def test_write_then_error_is_uncertain_and_retry_does_not_duplicate(self):
+        save = self.store.save
+        def write_then_fail(rows):
+            save(rows)
+            raise OSError('failure after replacement')
+        with patch.object(self.store, 'save', side_effect=write_then_fail):
+            reply = self.store.handle('set a timer for 10 minutes', 'chat', 'request')
+        self.assertIn('unconfirmed', reply)
+        self.assertNotIn('Reminder saved:', reply)
+        restored = Reminders(self.root, clock=lambda: self.now)
+        self.assertEqual(len(restored.listing()), 1)
+        self.assertIn('Reminder saved:', restored.handle('set a timer for 10 minutes', 'chat', 'request'))
+        self.assertEqual(len(restored.listing()), 1)
+
+    def test_failed_save_with_unreadable_outcome_is_uncertain(self):
+        with patch.object(self.store, 'save', side_effect=OSError('disk full')), \
+                patch.object(Path, 'read_text', side_effect=OSError('readback unavailable')):
+            reply = self.store.handle('set a timer for 10 minutes', 'chat', 'request')
+        self.assertIn('unconfirmed', reply)
+        self.assertNotIn('was not saved', reply)
+
+    def test_failed_cancel_keeps_pending_and_returns_not_done_receipt(self):
+        row = self.store.create('chat', 'request', 'Check oven', self.now + 60)
+        with patch.object(self.store, 'save', side_effect=OSError('disk full')):
+            reply = self.store.handle('cancel reminder ' + row['id'], 'chat', 'cancel')
+        self.assertIn('requested change was not saved', reply)
+        self.assertEqual(self.store.listing()[0]['state'], 'pending')
+
+    def test_storage_unavailable_returns_receipt_for_create_list_and_cancel(self):
+        for command in ('set a timer for 10 minutes', 'my reminders', 'cancel reminder ' + 'a' * 16):
+            with self.subTest(command=command), patch.object(self.store, 'locked', side_effect=OSError('unavailable')):
+                reply = self.store.handle(command, 'chat', 'request')
+                self.assertIn('Reminder storage is unavailable', reply)
+                self.assertIn('no successful change was verified', reply)
 
     def test_receipt_uses_persisted_recurrence_on_duplicate_request(self):
         self.store.handle('Set a reminder every 2 hours to stretch', 'chat', 'request')
@@ -171,6 +222,28 @@ class ReminderChatTests(unittest.TestCase):
 
     def say(self, text, request_id=None):
         return self.chat.submit(self.cid, text, request_id or str(uuid.uuid4()))['messages'][-1]
+
+    def test_ambiguous_schedule_stays_in_reminder_lane_without_saving(self):
+        self.now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
+        for command in ('create a reminder for 2am to go to bed tomorrow',
+                        'create a reminder to go to bed at 2am tomorrow at 3am'):
+            reply = self.say(command)
+            self.assertEqual(reply['provider'], 'reminders')
+            self.assertIn('Nothing was saved', reply['content'])
+        self.assertFalse(self.chat.reminders.listing())
+        self.assertFalse(self.providers.calls)
+        self.assertFalse(task_queue.tasks(self.root))
+        self.notify.assert_not_called()
+
+    def test_storage_failure_returns_direct_not_done_receipt_without_side_effects(self):
+        with patch.object(self.chat.reminders, 'save', side_effect=OSError('disk full')):
+            reply = self.say('set a timer for 10 minutes')
+        self.assertEqual(reply['provider'], 'reminders')
+        self.assertIn('requested change was not saved', reply['content'])
+        self.assertFalse(self.chat.reminders.listing())
+        self.assertFalse(self.providers.calls)
+        self.assertFalse(task_queue.tasks(self.root))
+        self.notify.assert_not_called()
 
     def test_real_chat_create_list_fire_and_cancel_without_models_or_jobs(self):
         reply = self.say('remind me to review Instinct in 1 minute')
