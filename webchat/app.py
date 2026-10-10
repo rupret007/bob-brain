@@ -148,7 +148,7 @@ def password_at(folder):
 
 
 class Chat(TaskDispatch):
-    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, local_tasks=None):
+    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, drive=None, local_tasks=None):
         self.folder, self.root = folder, root
         folder.mkdir(parents=True, exist_ok=True)
         self.password = password_at(folder)
@@ -182,7 +182,9 @@ class Chat(TaskDispatch):
         # gain permission to display OS alerts. The server entry point opts in.
         self.reminder_notifier = reminder_notifier if reminder_notifier is not None else lambda body: False
         from calendar_actions import CalendarActions
+        from drive_read import DriveRead
         self.calendar = calendar if calendar is not None else CalendarActions(folder)
+        self.drive = drive if drive is not None else DriveRead()
         # Keep direct lookups and routines on the established search adapter,
         # including its offline release/test injection boundary.
         self.local_tasks = local_tasks if local_tasks is not None else LocalTasks(
@@ -735,6 +737,11 @@ class Chat(TaskDispatch):
                 for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
                     conversation.pop(key, None)
                 return self.intent_reply(conversation, self.redact(calendar), provider='calendar')
+            drive = self.drive.handle(text, identifier, request_id, intent_state)
+            if drive is not None:
+                for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
+                    conversation.pop(key, None)
+                return self.intent_reply(conversation, self.redact(drive), provider='drive')
             from reminders import ReminderError
             import actions_intent
             if actions_intent.reminder_request(text) or actions_intent.routine_intent(text) or actions_intent.routine_request(text):
