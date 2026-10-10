@@ -85,6 +85,13 @@ class CapabilityLedgerTests(unittest.TestCase):
         content = 'machine example.invalid login alice password ' + secret
         self.assert_secret_read_refused('Documents/export.txt', content, (secret, content), 'F4')
 
+    def test_ledger_F5_pgp_private_key_block_armor_disclosed(self):
+        secret = 'synthetic-armored-key-data'
+        content = ('-----BEGIN PGP PRIVATE KEY BLOCK-----\n' + secret +
+                   '\n-----END PGP PRIVATE KEY BLOCK-----')
+        self.assert_secret_read_refused('Documents/backup.asc', content,
+                                        (secret, '-----BEGIN PGP PRIVATE KEY BLOCK-----', content), 'F5')
+
 
 if __name__ == '__main__':
     unittest.main()
