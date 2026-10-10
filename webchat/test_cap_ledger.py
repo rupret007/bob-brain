@@ -230,6 +230,23 @@ class CapabilityLedgerTests(unittest.TestCase):
         self.assertEqual(str(raised.exception), refusal)
         self.assertEqual(Reminders(folder, clock=lambda: now).listing(), [])
 
+    def test_ledger_F19_reminder_save_oserror_no_receipt(self):
+        from reminders import Reminders, ReminderError
+        folder = self.root / 'F19'
+        reminders = Reminders(folder, clock=self.clock)
+        refusal = 'Reminder storage failed. The requested change was not saved.'
+        with patch.object(reminders, 'save', side_effect=OSError('disk full')) as save:
+            self.assertEqual(reminders.handle('set a timer for 10 minutes', 'chat', 'request'),
+                             refusal)
+            save.assert_called_once()
+            attempted, = save.call_args.args[0]
+            self.assertEqual(attempted['body'], 'Timer')
+            self.assertEqual(attempted['due_at'], self.clock() + 600)
+            with self.assertRaises(ReminderError) as raised:
+                reminders.create('chat', 'request', 'Timer', self.clock() + 600)
+            self.assertEqual(str(raised.exception), refusal)
+        self.assertEqual(Reminders(folder, clock=self.clock).listing(), [])
+
     def test_ledger_F8_generation_budget_file_writable_via_chat(self):
         runtime = self.home / 'Documents/bob-runtime'
         folder = runtime / 'conductor/webchat'
