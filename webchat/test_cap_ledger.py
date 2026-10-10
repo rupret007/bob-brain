@@ -113,6 +113,33 @@ class CapabilityLedgerTests(unittest.TestCase):
             self.assertEqual(rows, {})
         self.search.assert_not_called()
 
+    def test_ledger_F11r6_file_create_ignores_only_if_confirm_and_ask_me_phrasings(self):
+        from local_tasks import parse
+        refusal = 'No file changed. Send a new file request when you want it performed.'
+        for index, constraint in enumerate(('only if I confirm.', 'ask me before saving it.',
+                                             'do not actually create it.')):
+            with self.subTest(constraint=constraint):
+                command = 'create file ~/Documents/review-note.txt: hello, but ' + constraint
+                target = self.home / 'Documents/review-note.txt'
+                files = Mock(spec=LocalFiles)
+                files.prepare.side_effect = lambda spec: spec
+                files.execute.return_value = 'File created: ' + str(target)
+                actions = LocalTasks(self.root / ('F11r6-' + str(index)), files=files,
+                                     search=self.search, clock=self.clock)
+                with patch.object(actions, 'save') as save:
+                    reply = actions.handle(command, 'chat', 'request', self.state)
+                    self.assertEqual(reply, refusal)
+                    files.prepare.assert_not_called()
+                    files.execute.assert_not_called()
+                    save.assert_not_called()
+                self.assertFalse(target.exists())
+                with self.assertRaises(LocalTaskError) as raised:
+                    parse(command)
+                self.assertEqual(str(raised.exception), refusal)
+                with actions.locked() as rows:
+                    self.assertEqual(rows, {})
+        self.search.assert_not_called()
+
     def test_ledger_F12_reminder_ignores_do_not_save_yet(self):
         from reminders import Reminders, ReminderError, ZONE, parse
         now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
