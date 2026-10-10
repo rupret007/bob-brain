@@ -80,6 +80,11 @@ class CapabilityLedgerTests(unittest.TestCase):
                 self.assert_secret_read_refused('Downloads/export.' + extension, content,
                                                 (secret,), 'F3-' + extension)
 
+    def test_ledger_F4_netrc_credential_record_disclosed(self):
+        secret = 'SYNTHETIC-ONLY'
+        content = 'machine example.invalid login alice password ' + secret
+        self.assert_secret_read_refused('Documents/export.txt', content, (secret, content), 'F4')
+
 
 if __name__ == '__main__':
     unittest.main()
