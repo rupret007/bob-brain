@@ -153,18 +153,19 @@ def projection(conversation):
     result = dict(version=1,origin=origin,topic=topic_record(record,bindings),records=retained,
                   prior_assistant_evidence=False,scope='Reported facts are not independently verified events.')
     for excerpt in excerpts:
-        text = excerpt['content']; current = None; imported=set()
+        text = excerpt['content']; current = None; imported=False
         corrected={i for i in bindings if re.search(r'\b'+re.escape(i)+r'\b',text)} if CORRECTION.match(text.strip()) else set()
         for old in result['records']:
             if old['subject'] in corrected and chronological.get(old['message_id'],-1)<chronological.get(excerpt['message_id'],-1):
                 old['superseded_by']=excerpt['message_id']
         for part in clauses(text):
+            # Payload provenance follows later clauses, including new subjects.
+            imported = imported or bool(RECEIVED.search(part.text) or ATTRIBUTED.search(part.text))
             subjects = [i for i in bindings if re.search(r'\b'+re.escape(i)+r'\b',part.text)]
             if subjects:current=subjects[0] if len(subjects)==1 else None
             elif current:subjects=[current]
             if not subjects:continue
-            if RECEIVED.search(part.text) or ATTRIBUTED.search(part.text):imported.update(subjects)
-            kind = ('received_claim' if set(subjects)&imported else
+            kind = ('received_claim' if imported else
                     'owner_scenario' if scenario else 'owner_report')
             effects={subject:set() for subject in subjects}
             for match in COMPLETED.finditer(part.text):

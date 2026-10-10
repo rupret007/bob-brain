@@ -9,6 +9,17 @@ from test_webbob_replyq_1856 import SessionFixture
 
 
 class ArtifactTests(SessionFixture):
+    def test_markdown_cannot_fabricate_permission_changes_under_hold(self):
+        self.send('Hold all work.')
+        for claim in ('The **hold** is **lifted**.', 'The **permission** is **granted**.'):
+            with self.subTest(claim=claim):
+                self.fake.reply_text = claim
+                answer = self.send('Explain the next step for the supplied task Q-73. '
+                                   'Keep the hold in force; do not execute or send anything.')
+                self.assertNotEqual(answer['content'], claim)
+                from chat_intent import permission_facts
+                self.assertTrue(permission_facts(self.chat.get(self.identifier))['holds'])
+
     def packet(self, artifact, commentary=''):
         self.fake.reply_text=json.dumps(dict(artifact=artifact,commentary=commentary))
 
