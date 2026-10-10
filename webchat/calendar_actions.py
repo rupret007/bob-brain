@@ -26,11 +26,16 @@ NEEDS_AUTH = ('Google Calendar needs auth. Configure a private authorized-user O
               '(or ~/.config/webbob/google-calendar.json). No calendar action was performed.')
 HELP = ('Try “create a calendar event Dentist tomorrow at 2pm for 30 minutes”, '
         '“create a calendar event for 2am to go to bed”, or “show my calendar today”. '
+        'Use “cancel calendar event ID <event-id>” to preview cancellation of one private event. '
         'Default: primary calendar, America/Chicago, one hour, no recurrence, invitations, or event alerts. '
         'Creation requires the draft’s exact yes wbcal-… message.')
 UNCERTAIN = ('Calendar creation is unconfirmed. Check Google Calendar before making another draft. '
              'This confirmation will not submit another create request.')
+CANCEL_UNCERTAIN = ('Calendar cancellation is unconfirmed. Check Google Calendar. '
+                    'This confirmation will not submit another DELETE request.')
 PREFIX = r'^(?:(?:please\s+)|(?:(?:can|could|would) you\s+))*'
+REMOVE = re.compile(PREFIX + r'(?:cancel|delete)\s+(?:one\s+|the\s+)?(?:google\s+)?calendar\s+event\b(.*)$', re.I | re.S)
+EVENT_ID = re.compile(r'[a-zA-Z0-9_-]{1,1024}')
 CREATE = re.compile(PREFIX + r'(?:create|add|set(?:\s+up)?|schedule)\s+(?:an?\s+)?(?:google\s+)?calendar\s+event\b\s*(.*)$', re.I | re.S)
 READ = re.compile(PREFIX + r'(?:(?:read|show|list)\s+|what(?:\x27s| is) on\s+)?(?:my\s+)?(?:google\s+)?calendar(?:\s+events)?(?:\s+(today|tomorrow|this week|next 7 days|on \d{4}-\d{2}-\d{2}))?[.?!]?$', re.I)
 CONTROL = re.compile(r'^(yes|cancel)\s+(wbcal-[a-f0-9]{32})$', re.I)
@@ -40,22 +45,34 @@ class CalendarError(ValueError):
     pass
 
 
+class CalendarHTTPError(CalendarError):
+    def __init__(self, status):
+        self.status = status
+        super().__init__('Google Calendar rejected the request; no success was verified.')
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *_args, **_kwargs):
         raise CalendarError('Google Calendar redirected the request; its result is unconfirmed.')
 
 
-def request_json(url, *, data=None, headers=None, form=False):
+def request_json(url, *, data=None, headers=None, form=False, method=None):
     """Fixed Google hosts, no proxies, redirects or automatic retries."""
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme != 'https' or parsed.netloc not in ('oauth2.googleapis.com', 'www.googleapis.com'):
         raise CalendarError('Invalid Calendar endpoint.')
     body = (urllib.parse.urlencode(data).encode() if form else json.dumps(data).encode()) if data is not None else None
     request = urllib.request.Request(url, data=body, headers={
-        'Content-Type': 'application/x-www-form-urlencoded' if form else 'application/json', **(headers or {})})
+        'Content-Type': 'application/x-www-form-urlencoded' if form else 'application/json', **(headers or {})},
+        method=method)
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     try:
         with opener.open(request, timeout=10) as response:
+            if method == 'DELETE':
+                # Google returns an empty 204. Never infer success from JSON/body text.
+                if response.status == 204:
+                    return {'http_status': 204}
+                raise CalendarError('Google Calendar did not confirm deletion.')
             raw = response.read(2 * 1024 * 1024 + 1)
         if len(raw) > 2 * 1024 * 1024:
             raise ValueError('large response')
@@ -66,7 +83,7 @@ def request_json(url, *, data=None, headers=None, form=False):
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403) or form and exc.code == 400:
             raise CalendarError('Google Calendar needs auth: authorization expired or Calendar access was denied.') from None
-        raise CalendarError('Google Calendar rejected the request; no success was verified.') from None
+        raise CalendarHTTPError(exc.code) from None
     except (OSError, ValueError, UnicodeError):
         raise CalendarError('Google Calendar is unavailable or returned invalid data; no success was verified.') from None
 
@@ -119,6 +136,53 @@ class GoogleCalendar:
                                            orderBy='startTime', maxResults=100, timeZone='America/Chicago'))
         return self.transport('https://www.googleapis.com/calendar/v3/calendars/primary/events?' + query,
                               headers=self._headers())
+
+    @staticmethod
+    def event_url(event_id):
+        if not isinstance(event_id, str) or not EVENT_ID.fullmatch(event_id):
+            raise CalendarError('Use one explicit Calendar event ID, not a link or title.')
+        return 'https://www.googleapis.com/calendar/v3/calendars/primary/events/' + event_id
+
+    def get(self, event_id):
+        return self.transport(self.event_url(event_id), headers=self._headers())
+
+    def delete(self, event_id, etag):
+        url = self.event_url(event_id) + '?sendUpdates=none'
+        return self.transport(url, method='DELETE', headers={**self._headers(), 'If-Match': etag})
+
+
+def cancellation_event(result, event_id):
+    """Fail closed on unsupported events; persist only the fields in the preview."""
+    if not isinstance(result, dict) or result.get('id') != event_id or result.get('status') != 'confirmed':
+        raise CalendarError('No matching active event was verified. Nothing cancelled.')
+    if any(result.get(key) for key in ('recurrence', 'recurringEventId', 'originalStartTime')):
+        raise CalendarError('Recurring events and instances are out of scope. Nothing cancelled.')
+    if result.get('attendees') or result.get('attendeesOmitted'):
+        raise CalendarError('Events with attendees are out of scope. Nothing cancelled.')
+    if (result.get('visibility') != 'private' or
+            not isinstance(result.get('organizer'), dict) or result['organizer'].get('self') is not True or
+            result.get('eventType', 'default') != 'default'):
+        raise CalendarError('Cancellation requires a private ordinary event you organize. Nothing cancelled.')
+    etag = result.get('etag')
+    if not isinstance(etag, str) or not re.fullmatch(r'"[\x21\x23-\x7e]{1,1022}"', etag):
+        raise CalendarError('The event has no usable version. Nothing cancelled.')
+    title = result.get('summary', '(untitled event)')
+    if not isinstance(title, str) or not 1 <= len(title) <= 500:
+        raise CalendarError('The event title could not be verified. Nothing cancelled.')
+    event = dict(id=event_id, etag=etag, summary=title)
+    try:
+        for key in ('start', 'end'):
+            value = result[key]
+            if 'dateTime' in value:
+                parsed = datetime.fromisoformat(value['dateTime'].replace('Z', '+00:00'))
+                if parsed.tzinfo is None:
+                    raise ValueError('missing offset')
+                event[key] = {'dateTime': parsed.isoformat()}
+            else:
+                event[key] = {'date': datetime.strptime(value['date'], '%Y-%m-%d').date().isoformat()}
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise CalendarError('The event time could not be verified. Nothing cancelled.') from None
+    return event
 
 
 def iso(seconds):
@@ -212,7 +276,7 @@ class CalendarActions:
 
     def matches(self, text):
         text = text.strip()
-        return bool(CREATE.fullmatch(text) or READ.fullmatch(text) or
+        return bool(CREATE.fullmatch(text) or READ.fullmatch(text) or REMOVE.fullmatch(text) or
                     re.match(r'^(?:yes|cancel)\s+wbcal-', text, re.I) or text.lower() == 'calendar help')
 
     def handle(self, text, cid, request_id, intent_state):
@@ -224,7 +288,7 @@ class CalendarActions:
             if control:
                 return self.control(control[1].lower(), control[2].lower(), cid, request_id, intent_state)
             if re.match(r'^(?:yes|cancel)\s+wbcal-', text, re.I):
-                return 'Use the exact yes wbcal-… or cancel wbcal-… message from the draft. Nothing created.'
+                return 'Use the exact yes wbcal-… or cancel wbcal-… message from the draft. No action submitted.'
             if text.lower() == 'calendar help':
                 return HELP
             scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
@@ -232,11 +296,49 @@ class CalendarActions:
                 return chat_intent.hold_reply(scopes)
             if CREATE.fullmatch(text):
                 return self.draft(text, cid, request_id)
+            if REMOVE.fullmatch(text):
+                return self.draft_cancellation(text, cid, request_id, intent_state)
             return self.read(READ.fullmatch(text)[1])
         except CalendarError as exc:
             return str(exc)
         except (OSError, ValueError, TypeError, KeyError):
-            return 'Calendar request could not finish. If you approved a draft, ' + UNCERTAIN
+            return ('Calendar request could not finish. Any approved action is unconfirmed; check Google Calendar. '
+                    'A consumed confirmation will not submit another request.')
+
+    def draft_cancellation(self, text, cid, request_id, intent_state):
+        import chat_intent
+        match = re.fullmatch(r'\s+id\s+([a-zA-Z0-9_-]{1,1024})\s*', REMOVE.fullmatch(text.strip())[1], re.I)
+        if not match:
+            return 'Use “cancel calendar event ID <event-id>” with one explicit event ID. Nothing cancelled.'
+        event_id = match[1]
+        with self.locked() as rows:
+            old = next((r for r in rows.values() if r['cid'] == cid and r['request_id'] == request_id), None)
+            if old:
+                if old['text'] != text:
+                    return 'That calendar request ID belongs to a different draft. No action submitted.'
+                return self.receipt(old)
+            # Even a new request/conversation must not re-arm the same event after an
+            # attempted deletion. An uncertain outcome requires manual verification.
+            if any(r.get('action') == 'delete' and r['event']['id'] == event_id and
+                   r['state'] in ('claimed', 'unconfirmed', 'deleted') for r in rows.values()):
+                return ('This event already has a consumed cancellation. Check Google Calendar; '
+                        'no new DELETE will be submitted.')
+            if len(rows) >= 1000:
+                raise CalendarError('Calendar receipt storage is full. Nothing cancelled.')
+            self.client.configured()
+            event = cancellation_event(self.client.get(event_id), event_id)
+            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text + ' ' + event['summary']))
+            if scopes:
+                return chat_intent.hold_reply(scopes)
+            token = 'wbcal-' + uuid.uuid4().hex
+            for row in rows.values():
+                if row['cid'] == cid and row['state'] == 'draft':
+                    row['state'] = 'replaced'
+            row = dict(action='delete', cid=cid, request_id=request_id, text=text,
+                       event=event, token=token, state='draft', expires=self.clock() + 300)
+            rows[token] = row
+            self.save(rows)
+            return self.receipt(row)
 
     def draft(self, text, cid, request_id):
         # Retry identity precedes time parsing: a retry must not roll to tomorrow.
@@ -263,6 +365,21 @@ class CalendarActions:
 
     @staticmethod
     def receipt(row):
+        if row.get('action') == 'delete':
+            if row['state'] == 'deleted':
+                return row['receipt']
+            if row['state'] in ('claimed', 'unconfirmed'):
+                return CANCEL_UNCERTAIN + row.get('observation', '')
+            if row['state'] != 'draft':
+                return row.get('receipt', 'That cancellation draft was discarded, replaced, or expired. No DELETE submitted.')
+            event = row['event']
+            start, end = (next(iter(event[key].values())) for key in ('start', 'end'))
+            # JSON quoting keeps Calendar content visibly data, not approval instructions.
+            return (f'Calendar cancellation preview (not cancelled): {json.dumps(event["summary"], ensure_ascii=False)}. '
+                    f'{start} to {end}. Primary calendar; private; no attendees; non-recurring. '
+                    f'Event ID: {event["id"]}. Version: {event["etag"]}. '
+                    f'Within five minutes reply exactly “yes {row["token"]}” to cancel this event, '
+                    f'or “cancel {row["token"]}” to discard this draft.')
         if row['state'] == 'created':
             return row['receipt']
         if row['state'] in ('claimed', 'unconfirmed'):
@@ -281,9 +398,11 @@ class CalendarActions:
         with self.locked() as rows:
             row = rows.get(token)
             if not row or row['cid'] != cid:
-                return 'No matching calendar draft in this conversation. Nothing created.'
+                return 'No matching calendar draft in this conversation. No action submitted.'
             if row['state'] != 'draft':
                 return self.receipt(row)
+            if row.get('action') == 'delete':
+                return self.confirm_cancellation(rows, row, command, request_id, intent_state)
             if command == 'cancel':
                 row['state'] = 'cancelled'
                 self.save(rows)
@@ -314,6 +433,84 @@ class CalendarActions:
                 row['state'] = 'unconfirmed'
             self.save(rows)
             return self.receipt(row)
+
+    def confirm_cancellation(self, rows, row, command, request_id, intent_state):
+        """Called under the shared receipt lock, including the destructive boundary."""
+        import chat_intent
+        if command == 'cancel':
+            row['state'] = 'cancelled'
+            self.save(rows)
+            return self.receipt(row)
+        event = row['event']
+
+        def gate():
+            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(row['text'] + ' ' + event['summary']))
+            if scopes:
+                return chat_intent.hold_reply(scopes)
+            if self.clock() >= row['expires']:
+                row['state'] = 'expired'
+                self.save(rows)
+                return self.receipt(row)
+
+        blocked = gate()
+        if blocked:
+            return blocked
+        if request_id == row['request_id']:
+            return 'Review the cancellation preview and confirm in a separate message. No DELETE submitted.'
+        if any(r is not row and r.get('action') == 'delete' and r['event']['id'] == event['id'] and
+               r['state'] in ('claimed', 'unconfirmed', 'deleted') for r in rows.values()):
+            row.update(state='replaced', receipt='This event already has a consumed cancellation. No DELETE submitted.')
+            self.save(rows)
+            return self.receipt(row)
+        self.client.configured()
+        # Read errors cannot authorize deletion. Do not store or echo remote errors.
+        try:
+            current = cancellation_event(self.client.get(event['id']), event['id'])
+        except Exception:
+            row.update(state='rejected', receipt='The event could not be revalidated. Make a fresh preview. No DELETE submitted.')
+            self.save(rows)
+            return self.receipt(row)
+        if current != event:
+            row.update(state='stale', receipt='The event changed since preview. Make a fresh preview and confirm again. No DELETE submitted.')
+            self.save(rows)
+            return self.receipt(row)
+        blocked = gate()  # Fetching may take us past expiry or a newly applied hold.
+        if blocked:
+            return blocked
+        row.update(state='claimed', approved_request_id=request_id, consumed_at=self.clock())
+        self.save(rows)  # Durable claim BEFORE DELETE; failed persistence aborts here.
+        blocked = gate()
+        if blocked:
+            return blocked
+        try:
+            result = self.client.delete(event['id'], event['etag'])
+            if isinstance(result, dict) and result.get('http_status') == 204:
+                row.update(state='deleted', evidence={'delete_status': 204},
+                           receipt=f'Google Calendar confirmed event cancelled (DELETE HTTP 204). '
+                           f'Event ID: {event["id"]}. Version: {event["etag"]}. No invitation updates requested.')
+            else:
+                row['state'] = 'unconfirmed'
+        except CalendarHTTPError as exc:
+            if exc.status == 412:
+                row.update(state='stale', receipt='Google Calendar rejected the changed event (HTTP 412). '
+                           'Make a fresh preview and confirm again. This confirmation will not retry DELETE.')
+            else:
+                row['state'] = 'unconfirmed'
+        except Exception:
+            row['state'] = 'unconfirmed'
+        if row['state'] == 'unconfirmed':
+            # A read can add evidence but can never turn a lost DELETE response into success.
+            try:
+                observed = self.client.get(event['id'])
+                if isinstance(observed, dict) and observed.get('id') == event['id']:
+                    row['observation'] = ' A follow-up GET returned the event; deletion was not confirmed.'
+            except CalendarHTTPError as exc:
+                if exc.status in (404, 410):
+                    row['observation'] = f' A follow-up GET returned HTTP {exc.status}; this does not confirm our DELETE succeeded.'
+            except Exception:
+                pass
+        self.save(rows)
+        return self.receipt(row)
 
     def read(self, period):
         self.client.configured()
