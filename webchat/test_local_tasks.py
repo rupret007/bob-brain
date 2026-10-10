@@ -185,6 +185,67 @@ class RuntimeProtectionTests(LocalFixture):
         self.assertEqual(target.read_text(), 'original')
 
 
+class SecretReadTests(LocalFixture):
+    def test_visible_credential_and_key_paths_refused_before_open(self):
+        for name in ('credentials.json', 'Credentials.JSON.bak', 'id_rsa', 'id_ed25519',
+                     'private-key.pem', 'backup.key', 'client-secret.json', 'keys.env',
+                     'secrets/notes.txt'):
+            for prefix in ('read file ', 'terminal: cat '):
+                with self.subTest(name=name, prefix=prefix), patch.object(
+                        self.files, 'directory', side_effect=AssertionError('Secret path opened')):
+                    reply = self.say(prefix + '~/Documents/' + name)
+                    self.assertIn('Secret files or credential content', reply)
+                    with self.assertRaises(LocalTaskError):
+                        self.actions.validate_routine(prefix + '~/Documents/' + name)
+                    self.assertIn('No file content returned', self.actions.handle(
+                        prefix + '~/Documents/' + name, 'chat', str(uuid.uuid4()), self.state, routine=True))
+        self.assertEqual(self.rows(), {})
+
+    def test_renamed_secret_content_never_reaches_reply_or_persisted_receipt(self):
+        secret = 'synthetic-owner-secret-123'
+        contents = (
+            json.dumps({'password': secret, 'refresh_token': secret}),
+            json.dumps({'nested': [{'clientSecret': secret}]}),
+            '{"pass\\u0077ord": "' + secret + '"}',
+            'export DATABASE_PASSWORD=' + secret,
+            'refreshToken: ' + secret,
+            'api-key = ' + secret,
+            '-----BEGIN OPENSSH PRIVATE KEY-----\n' + secret + '\n-----END OPENSSH PRIVATE KEY-----',
+            'Authorization: Bearer ' + secret,
+            'postgres://owner:' + secret + '@localhost/db',
+            'sk-' + 'a' * 30,
+            'safe prefix\n' + 'x' * 60000 + '\npassword: ' + secret,
+        )
+        for content in contents:
+            self.file.write_text(content)
+            for prefix in ('read file ', 'terminal: cat '):
+                with self.subTest(content=content[:60], prefix=prefix):
+                    rid = str(uuid.uuid4())
+                    command = prefix + '~/Documents/note.txt'
+                    reply = self.say(command, rid)
+                    self.assertIn('No file content returned', reply)
+                    self.assertNotIn(secret, reply)
+                    self.assertNotIn('File read:', reply)
+                    restored = LocalTasks(self.root / 'state', self.files, self.search, self.clock)
+                    self.assertEqual(self.say(command, rid, actions=restored), reply)
+        persisted = (self.actions.folder / 'receipts.json').read_text()
+        self.assertNotIn(secret, persisted)
+        self.assertNotIn('sk-' + 'a' * 30, persisted)
+        self.search.assert_not_called()
+
+    def test_read_rechecks_content_after_prepare(self):
+        prepared = self.files.prepare(parse('read file ~/Documents/note.txt'))
+        self.file.write_text('password = synthetic-new-secret')
+        with self.assertRaisesRegex(LocalTaskError, 'No file content returned'):
+            self.files.execute(prepared)
+
+    def test_ordinary_text_and_json_remain_readable(self):
+        for content in ('Remember to change your password tomorrow.',
+                        '{"title": "Morning notes", "tasks": ["water plants"]}'):
+            self.file.write_text(content)
+            self.assertIn(content, self.say('read file ~/Documents/note.txt'))
+
+
 class LocalTaskTests(LocalFixture):
     def test_file_read_list_create_and_terminal_allowlist(self):
         self.assertIn('original', self.say('read file ~/Documents/note.txt'))
@@ -495,6 +556,23 @@ class RoutineChatTests(LocalFixture):
         due = datetime.fromtimestamp(row['due_at'], ZONE)
         self.assertEqual((due.hour, due.minute), (8, 0))
         self.assertGreater(row['due_at'], self.now)
+
+    def test_saved_routine_rechecks_secret_content_after_restart(self):
+        self.submit('every morning do terminal: cat ~/Documents/note.txt')
+        row, = self.chat.reminders.listing()
+        self.chat.close()
+        secret = 'synthetic-routine-refresh-secret'
+        self.file.write_text(json.dumps({'refresh_token': secret}))
+        self.now = row['due_at']
+        restored = self.new_chat()
+        restored.deliver_reminders()
+        history = restored.history(self.cid)
+        self.assertIn('No file content returned', history['messages'][-1]['content'])
+        self.assertNotIn(secret, json.dumps(history))
+        self.assertNotIn(secret, (self.actions.folder / 'receipts.json').read_text())
+        self.assertNotIn(secret, json.dumps(restored.reminders.listing()))
+        self.assertFalse(self.providers.calls)
+        self.notifier.assert_not_called()
 
     def test_scheduler_limits_routine_io_per_tick_so_owner_controls_can_run(self):
         self.submit('every morning do look up Python')

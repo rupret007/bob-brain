@@ -717,6 +717,11 @@ policy protection is rechecked before execution, including saved confirmations
 and routines; invalid policy blocks local file operations. No directory creation,
 recursive operations, or file execution is supported. The server needs ordinary
 OS permission to access the selected files.
+Credential/key filenames are excluded even in visible directories. Reads (including
+terminal `cat` and scheduled reads) refuse the entire result before returning or
+persisting content when it contains credential fields, private-key blocks, or
+recognized token/authentication patterns. This conservative check can reject
+credential examples; it cannot identify arbitrary unlabelled secrets in prose.
 
 Overwrite/delete drafts require a separate exact `yes wblocal-…` in the same chat
 within one hour. `cancel wblocal-…` cancels a draft. A newer destructive draft

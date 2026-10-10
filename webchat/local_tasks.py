@@ -29,7 +29,7 @@ HELP = ('Local tasks: read file ~/Documents/notes.txt; list files ~/Documents; '
         'delete file ~/Documents/note.txt. Overwrites and deletes need an exact yes wblocal-… reply. '
         'Terminal: run terminal: pwd, date, ls PATH, or cat PATH (no shell). '
         'Web: search the web for QUERY, or look up QUERY. '
-        'Only visible paths under your home are allowed; private/configuration trees, symlinks, '
+        'Only visible paths under your home are allowed; credential files, private/configuration trees, symlinks, '
         'hard links and special files are excluded.')
 UNCERTAIN = ('Local action outcome is unconfirmed. It will not be replayed automatically; '
              'inspect the file before making a new request.')
@@ -39,6 +39,43 @@ LIST = re.compile(r'^' + PREFIX + r'list\s+files(?:\s+in)?(?:\s+([\s\S]*))?$', r
 TERMINAL = re.compile(r'^' + PREFIX + r'(?:run\s+(?:in\s+)?(?:the\s+)?terminal|terminal)\s*:\s*([\s\S]*)$', re.I)
 SEARCH = re.compile(r'^' + PREFIX + r'(?:search\s+(?:the\s+)?web(?:\s+for)?|look\s+up)\b\s*([\s\S]*)$', re.I)
 CONTROL = re.compile(r'^(yes|cancel)\s+(wblocal-[0-9a-f]{32})$', re.I)
+SECRET_PATH = re.compile(
+    r'(?:^|[._ -])(?:credentials?|secrets?|passwords?|tokens?|private[ _-]?keys?|'
+    r'id_(?:rsa|dsa|ecdsa|ed25519)|env)(?:$|[._ -])|\.(?:pem|key|p12|pfx|keystore)$', re.I)
+SECRET_FIELD = (r'(?:[a-z0-9]+[_-])*(?:(?:client[_ -]?)?secret|password|passwd|pwd|'
+                r'(?:(?:refresh|access|auth)[_ -]?)?token|'
+                r'api[_ -]?key|private[_ -]?key|access[_ -]?key)(?:[_-][a-z0-9]+)*')
+SECRET_ASSIGNMENT = re.compile(
+    r'(?<![\w])' + SECRET_FIELD + r'[\"\']?\s*[:=]', re.I)
+SECRET_KEY = re.compile(SECRET_FIELD, re.I)
+SECRET_REFUSAL = 'Secret files or credential content are outside the local file allowlist. No file content returned.'
+
+
+def safe_read(data):
+    """Refuse the whole read before file content can reach a reply or receipt.
+
+    Conservative credential markers supplement path protection; arbitrary
+    unlabelled secrets cannot be inferred from otherwise ordinary prose.
+    """
+    from providers import KEY
+    text = data.decode('utf-8')
+
+    def credential_fields(value):
+        if isinstance(value, dict):
+            return any(SECRET_KEY.fullmatch(key) or credential_fields(item)
+                       for key, item in value.items())
+        return isinstance(value, list) and any(credential_fields(item) for item in value)
+
+    try:
+        structured = json.loads(text)
+    except ValueError:
+        structured = None
+    if (credential_fields(structured) or SECRET_ASSIGNMENT.search(text) or KEY.search(text)
+            or re.search(r'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----', text)
+            or re.search(r'\b(?:Authorization\s*:\s*)?(?:Bearer|Basic)\s+[A-Za-z0-9+/_.=-]+', text, re.I)
+            or re.search(r'\b[a-z][a-z0-9+.-]*://[^\s/:]+:[^\s/@]+@', text, re.I)):
+        raise LocalTaskError(SECRET_REFUSAL)
+    return text
 
 
 class LocalTaskError(ValueError):
@@ -149,6 +186,8 @@ class LocalFiles:
         if any(folded[:len(excluded.parts)] == tuple(p.casefold() for p in excluded.parts)
                for excluded in excluded_paths):
             raise LocalTaskError('Web Bob storage is outside the local file allowlist.')
+        if any(SECRET_PATH.search(part) for part in parts):
+            raise LocalTaskError(SECRET_REFUSAL)
         return parts
 
     @contextmanager
@@ -238,7 +277,7 @@ class LocalFiles:
             with self.file(parent, parts[-1], os.O_RDWR if kind == 'write' else os.O_RDONLY) as fd:
                 snapshot, data = self.snapshot(fd)
                 if kind == 'read':
-                    return 'File read: ' + spec['path'] + '\n' + data.decode('utf-8')
+                    return 'File read: ' + spec['path'] + '\n' + safe_read(data)
                 if snapshot != spec.get('snapshot'):
                     raise LocalTaskError('File changed since the draft. Make a fresh request; nothing changed by this attempt.')
                 if kind == 'write':
