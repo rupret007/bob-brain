@@ -22,7 +22,7 @@ from gmail_read import (
     QUOTED, RAW_LIMIT, UNKNOWN_ID, GoogleGmail, GmailError, GmailRead,
     bound_transport,
 )
-from local_tasks import LocalFiles, LocalTasks, LocalTaskError
+from local_tasks import LocalTasks, LocalTaskError
 from reminders import ZONE
 from task_dispatch import task_queue
 from texting_fixture import OfflineProviders
@@ -425,13 +425,17 @@ class RoutingTests(GmailFixture):
 
     def test_gmail_credential_path_is_protected_from_local_file_actions(self):
         home = self.root / 'home'
+        runtime = home / 'Documents/bob-runtime'
         target = home / 'Documents/google-gmail.json'
         target.parent.mkdir(parents=True)
-        secret = json.dumps(self.client.bodies['aaa111'])
+        runtime.mkdir(parents=True)
+        secret = json.dumps(dict(type='authorized_user', client_id='fixture-client',
+                                 client_secret='fixture-oauth-secret', refresh_token='fixture-refresh-secret'))
         target.write_text(secret)
-        files = LocalFiles(home)
-        actions = LocalTasks(self.root / 'tasks', files=files)
-        with patch.dict(os.environ, {CREDENTIALS_ENV: str(target), 'HOME': str(home)}):
+        target.chmod(0o600)
+        with patch('pathlib.Path.home', return_value=home), patch.dict(os.environ, {
+                CREDENTIALS_ENV: str(target), 'HOME': str(home), 'BOB_ROOT': str(runtime)}):
+            actions = LocalTasks(runtime / 'conductor/webchat')
             self.assertIn(target.resolve(), actions.protected_paths())
             reply = actions.handle(f'read file {target}', 'chat', str(uuid.uuid4()), self.state)
             self.assertIn('outside the local file allowlist', reply)
