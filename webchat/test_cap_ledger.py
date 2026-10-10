@@ -1,15 +1,17 @@
 """Capability ledger regressions using a temporary home and offline adapters."""
 import json
 from datetime import datetime
+import fcntl
 import os
 from pathlib import Path
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
 
 import chat_intent
-from local_tasks import LocalFiles, LocalTasks, LocalTaskError, SECRET_REFUSAL, safe_read
+from local_tasks import LocalFiles, LocalTasks, LocalTaskError, LOCK_TIMEOUT, SECRET_REFUSAL, safe_read
 
 
 class CapabilityLedgerTests(unittest.TestCase):
@@ -291,6 +293,46 @@ class CapabilityLedgerTests(unittest.TestCase):
             self.assertEqual(task_queue.tasks(self.root), {})
             self.assertEqual(calendar.mock_calls, [])
             self.search.assert_not_called()
+
+    def test_ledger_F21_local_lock_has_no_timeout(self):
+        refusal = 'Local receipt storage is busy; no action ran. Try again later.'
+        self.assertEqual(LOCK_TIMEOUT, 1)
+        self.actions.folder.mkdir(parents=True)
+        with patch.object(self.files, 'prepare') as prepare, \
+                patch.object(self.files, 'execute') as execute, \
+                patch.object(self.actions, 'save') as save:
+            for entry in ('locked', 'handle'):
+                with self.subTest(entry=entry), (self.actions.folder / 'receipts.lock').open('a') as lock:
+                    # An independent descriptor holds the real lock. Release it
+                    # after the deadline so a blocking-flock regression fails
+                    # instead of hanging the suite indefinitely.
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    watchdog = threading.Timer(3, fcntl.flock, args=(lock, fcntl.LOCK_UN))
+                    watchdog.start()
+                    try:
+                        started = time.monotonic()
+                        if entry == 'locked':
+                            with self.assertRaises(LocalTaskError) as raised:
+                                with self.actions.locked():
+                                    self.fail('Contended receipt lock was acquired')
+                            self.assertEqual(str(raised.exception), refusal)
+                        else:
+                            self.assertEqual(self.actions.handle(
+                                'terminal: pwd', 'chat', 'request', self.state), refusal)
+                        elapsed = time.monotonic() - started
+                        self.assertGreaterEqual(elapsed, LOCK_TIMEOUT)
+                        # Allow polling and scheduler overhead around the 1s limit.
+                        self.assertLess(elapsed, LOCK_TIMEOUT + .5)
+                    finally:
+                        watchdog.cancel()
+                        watchdog.join()
+                    prepare.assert_not_called()
+                    execute.assert_not_called()
+                    save.assert_not_called()
+                    self.assertFalse((self.actions.folder / 'receipts.json').exists())
+        with self.actions.locked() as rows:
+            self.assertEqual(rows, {})
+        self.search.assert_not_called()
 
     def test_ledger_F8_generation_budget_file_writable_via_chat(self):
         runtime = self.home / 'Documents/bob-runtime'
