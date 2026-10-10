@@ -25,6 +25,8 @@ MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_PROMPT_IMAGE_BYTES = 420_000
 MAX_VIDEO_FRAMES = 4
 MAX_VIDEO_DURATION_S = 120
+MAX_PDF_SCAN_PAGES = 3
+MAX_PDF_SCAN_BYTES = 8 * 1024 * 1024
 MEDIA_PREP_SECONDS = 20
 PROCESS_SLOTS = threading.BoundedSemaphore(2)
 ALLOWED_IMAGE = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif"}
@@ -195,13 +197,18 @@ class MediaBudget:
         self.cancel = cancel or threading.Event()
         self.deadline = time.monotonic() + seconds
 
-    def run(self, args, timeout=5):
-        from providers import Cancelled, ProviderError, run
+    def check(self):
+        from providers import Cancelled
         if self.cancel.is_set():
             raise Cancelled("Reply stopped.")
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise ValueError("Media preparation timed out; try a smaller attachment.")
+        return remaining
+
+    def run(self, args, timeout=5):
+        from providers import Cancelled, ProviderError, run
+        remaining = self.check()
         try:
             code, out, _ = run(args, cwd=Path(tempfile.gettempdir()),
                                env=dict(os.environ, OMP_THREAD_LIMIT="1", OMP_NUM_THREADS="1"),
@@ -295,7 +302,65 @@ def extract_audio_transcript(path: Path, budget=None) -> str:
             return ""
 
 
-def read_text_file(path: Path, limit=MAX_FILE_BYTES, budget=None) -> str:
+def read_scanned_pdf(path: Path, budget: MediaBudget, redact) -> tuple[str, str]:
+    """Sample at most three pages locally; publish nothing until all are screened."""
+    budget.check()
+    runner = shutil.which("osascript") if sys.platform == "darwin" else None
+    if not runner:
+        raise ValueError("Scanned PDF analysis unavailable: local macOS PDFKit is required.")
+    if not shutil.which("tesseract"):
+        raise ValueError("Scanned PDF analysis unavailable: the local text safety check is not installed.")
+    if redact is None:
+        raise ValueError("Scanned PDF analysis unavailable: secret screening is required.")
+    errors = {
+        "unavailable": "Scanned PDF analysis unavailable: local PDFKit could not be loaded.",
+        "locked": "This PDF is locked; attach an unlocked copy or a text export.",
+        "malformed": "This PDF is malformed or has no readable pages.",
+        "oversized": "Scanned PDF page is too large for bounded local OCR.",
+        "render_failed": "Scanned PDF page could not be rendered locally.",
+    }
+    pages, total = [], None
+    with tempfile.TemporaryDirectory() as tmp:
+        output = Path(tmp) / "page.png"
+        for number in range(1, MAX_PDF_SCAN_PAGES + 1):
+            budget.check()
+            # Private, fixed output path; the helper never chooses paths from PDF data.
+            output.touch(mode=0o600)
+            raw = budget.run([runner, "-l", "JavaScript",
+                              str(Path(__file__).with_name("pdf_scan.js")),
+                              str(path), str(number), str(output)])
+            try:
+                result = json.loads(raw)
+            except (TypeError, ValueError):
+                raise ValueError(errors["render_failed"]) from None
+            # Never forward helper output, native exceptions or document metadata.
+            if not isinstance(result, dict) or not isinstance(result.get("status"), str):
+                raise ValueError(errors["render_failed"])
+            if result["status"] != "ok":
+                raise ValueError(errors.get(result["status"], errors["render_failed"]))
+            count = result.get("pages")
+            if (type(count) is not int or count < number or type(result.get("page")) is not int
+                    or result["page"] != number or (total is not None and count != total)):
+                raise ValueError(errors["render_failed"])
+            total = count
+            budget.check()
+            if output.is_symlink() or not 0 < output.stat().st_size <= MAX_PDF_SCAN_BYTES:
+                raise ValueError(errors["render_failed"])
+            text = scan_image(output.read_bytes(), budget, redact)
+            output.unlink()
+            budget.check()
+            pages.append(f"[Page {number}]\n{text or '(no text detected by local OCR)'}")
+            if number == total:
+                break
+    warning = (f"Partial coverage: local OCR processed {len(pages)} of {total} pages "
+               f"(first {MAX_PDF_SCAN_PAGES} pages maximum). OCR may miss or misread text; "
+               "page text and the combined excerpt may be truncated. "
+               + ("Remaining pages were not read." if total > len(pages) else
+                  "All pages were sampled, but complete text coverage is not guaranteed."))
+    return warning + "\n\n" + "\n\n".join(pages), warning
+
+
+def read_text_file(path: Path, limit=MAX_FILE_BYTES, budget=None, *, redact=None, warnings=None) -> str:
     if path.suffix == ".pdf":
         binary = shutil.which("pdftotext")
         budget = budget or MediaBudget()
@@ -306,7 +371,9 @@ def read_text_file(path: Path, limit=MAX_FILE_BYTES, budget=None) -> str:
         else:
             raise ValueError("PDF text extraction is unavailable; download the PDF or attach a text export.")
         if not text.strip():
-            raise ValueError("This PDF has no readable text; attach images of the scanned pages or a text export.")
+            text, warning = read_scanned_pdf(path, budget, redact)
+            if warnings is not None:
+                warnings.append(warning)
         return text[:limit]
     with path.open("r", encoding="utf-8") as src:
         return src.read(limit)
@@ -365,7 +432,10 @@ def enrich_for_model(root: Path, metas: list[dict], *, redact, cancel=None) -> d
                     if not transcript:
                         warnings.append(f"{redact(meta['filename'])}: audio transcript unavailable; analysis uses sampled frames only.")
                 else:
-                    excerpt = redact(read_text_file(path, budget=budget))[:12000]
+                    file_warnings = []
+                    excerpt = redact(read_text_file(path, budget=budget, redact=redact,
+                                                    warnings=file_warnings))[:12000]
+                    warnings.extend(f"{redact(meta['filename'])}: {warning}" for warning in file_warnings)
                     text_blocks.append(f"File attachment {label} (excerpt):\n{excerpt}")
             except (ValueError, OSError) as exc:
                 # Never expose decoder stderr or local paths to the chat/model.
