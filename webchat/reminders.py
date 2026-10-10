@@ -156,10 +156,12 @@ def parse(text, now):
 def reminder_body(value):
     # A second time/date in the body may qualify or conflict with the matched
     # schedule. Ask before saving instead of silently treating it as prose.
+    month = (r'(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|'
+             r'aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)')
     if re.search(r'\b(?:today|tomorrow|tonight|yesterday|noon|midnight|'
                  r'monday|tuesday|wednesday|thursday|friday|saturday|sunday|'
                  r'next\s+(?:week|month|year)|every\s+\w+|\d{4}-\d{2}-\d{2}|'
-                 r'(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}|'
+                 + month + r'\.?\s+\d{1,2}|\d{1,2}\s+' + month + r'|'
                  r'\d{1,2}/\d{1,2}(?:/\d{2,4})?|'
                  r'at\s+\d{1,2}\b|in\s+' + DURATION + r'|' + CLOCK + r')\b', value, re.I):
         raise ReminderError('The reminder has an extra date or time clause. Nothing was saved. '
