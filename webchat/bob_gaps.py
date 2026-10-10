@@ -11,6 +11,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.error import URLError
 
 REMEMBER = re.compile(r"^remember\s+that\s+(.+?)\s*\.?\s*$", re.I | re.S)
 MEMORY_CONFIRM = re.compile(r"^yes[,.]?\s*save\s+memory\s*$", re.I)
@@ -215,29 +216,144 @@ def web_search(query: str, opener=None) -> dict:
     payload = json.loads(raw.decode("utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("Search response was not an object")
-    answer = (payload.get("AbstractText") or "").strip()
-    source = (payload.get("AbstractURL") or "").strip()
-    heading = (payload.get("Heading") or "").strip()
-    if not answer and payload.get("RelatedTopics"):
-        for topic in payload["RelatedTopics"]:
-            if isinstance(topic, dict) and topic.get("Text"):
-                answer = topic["Text"].strip()
-                source = (topic.get("FirstURL") or source).strip()
-                break
-    if not answer:
-        answer = "I searched the web but did not get a clear instant answer. Try a more specific query."
-    if urllib.parse.urlsplit(source).scheme not in ("http", "https"):
-        source = ""
-    return {"answer": answer[:16000], "source": source[:2000], "heading": heading[:500]}
+    abstract = payload.get("AbstractText")
+    abstract_url = payload.get("AbstractURL")
+    heading = payload.get("Heading")
+    if abstract is not None and not isinstance(abstract, str):
+        raise ValueError("Search response was not an object")
+    if abstract_url is not None and not isinstance(abstract_url, str):
+        raise ValueError("Search response was not an object")
+    if heading is not None and not isinstance(heading, str):
+        raise ValueError("Search response was not an object")
+    abstract = (abstract or "").strip()
+    abstract_url = (abstract_url or "").strip()
+    heading = (heading or "").strip()
+    related = []
+    related_text = ""
+    related_url = ""
+    topics = payload.get("RelatedTopics")
+    if topics is not None and not isinstance(topics, list):
+        raise ValueError("Search response was not an object")
+    for topic in topics or []:
+        if not isinstance(topic, dict):
+            continue
+        text = topic.get("Text")
+        first_url = topic.get("FirstURL")
+        if text is not None and not isinstance(text, str):
+            raise ValueError("Search response was not an object")
+        if first_url is not None and not isinstance(first_url, str):
+            raise ValueError("Search response was not an object")
+        if text and text.strip():
+            related_text = text.strip()
+            related_url = (first_url or "").strip()
+            related.append({"text": related_text, "url": related_url})
+            break
+    if abstract:
+        answer, source, status = abstract, abstract_url, "ok"
+    elif related_text:
+        # Related-topic URLs stay attached to that topic only. An unused
+        # AbstractURL is not evidence for a different snippet.
+        answer, source, status = related_text, related_url, "ok"
+    else:
+        answer, source, status = "", "", "empty"
+    source = _web_lookup_source_url(source)
+    return {
+        "answer": answer[:16000],
+        "source": source[:2000],
+        "heading": heading[:500],
+        "status": status,
+        "abstract": abstract[:16000],
+        "related": related,
+        "query": query,
+    }
+
+
+def _web_lookup_source_url(url: str) -> str:
+    parsed = urllib.parse.urlsplit((url or "").strip())
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return ""
+    return (url or "").strip()[:2000]
+
+
+def _web_lookup_query(query: str) -> str:
+    cleaned = re.sub(
+        r"^(?:please\s+)?(?:search\s+(?:the\s+)?web|look\s+up|google)\s+(?:for\s+)?",
+        "",
+        (query or "").strip(),
+        flags=re.I,
+    )
+    return cleaned[:200] or "the query"
+
+
+def _web_lookup_status(result) -> str:
+    if not isinstance(result, dict):
+        return "invalid"
+    status = result.get("status")
+    if isinstance(status, str) and status.strip():
+        return status.strip().lower()
+    answer = result.get("answer") or result.get("abstract")
+    if isinstance(answer, str) and answer.strip():
+        return "ok"
+    if result.get("error"):
+        return "invalid"
+    return "empty"
+
+
+def web_lookup_receipt(query: str, result) -> str:
+    """Honest Instant Answer receipt. Links are returned, never page evidence."""
+    status = _web_lookup_status(result)
+    label = _web_lookup_query(query if query else (result.get("query") if isinstance(result, dict) else "") or "")
+    if status in ("http_error", "timeout"):
+        return (
+            f"DuckDuckGo Instant Answer lookup failed ({status}). "
+            "Source pages were not opened."
+        )
+    if status == "invalid" or not isinstance(result, dict):
+        return (
+            "DuckDuckGo Instant Answer response was malformed or unreadable. "
+            "Source pages were not opened."
+        )
+    answer = result.get("answer") or result.get("abstract") or ""
+    if not isinstance(answer, str):
+        return (
+            "DuckDuckGo Instant Answer response was malformed or unreadable. "
+            "Source pages were not opened."
+        )
+    answer = answer.strip()
+    heading = result.get("heading") if isinstance(result.get("heading"), str) else ""
+    heading = heading.strip()
+    source = _web_lookup_source_url(result.get("source") if isinstance(result.get("source"), str) else "")
+    if status == "empty" or not answer:
+        return (
+            f"DuckDuckGo Instant Answer returned no instant answer for {label}. "
+            "Source pages were not opened."
+        )
+    lines = ["DuckDuckGo Instant Answer (source pages were not opened)."]
+    if heading:
+        lines.append(f"**{heading}** — {answer[:16000]}")
+    else:
+        lines.append(answer[:16000])
+    if source:
+        lines.append(f"Source link: {source}")
+        lines.append("Those links are not verified page evidence.")
+    return "\n".join(lines)
 
 
 def format_web_search_reply(result: dict) -> str:
-    lines = [result.get("answer", "")]
-    if result.get("heading"):
-        lines[0] = f"**{result['heading']}** — {lines[0]}"
-    if result.get("source"):
-        lines.append(f"Source: [{result['source']}]({result['source']})")
-    return "\n\n".join(lines)
+    query = result.get("query") if isinstance(result, dict) else ""
+    return web_lookup_receipt(query or "", result)
+
+
+def lookup_web(query: str, opener=None) -> str:
+    """Chat/local-task adapter: Instant Answer receipt, no raw transport text."""
+    try:
+        return web_lookup_receipt(query, web_search(query, opener=opener))
+    except TimeoutError:
+        return web_lookup_receipt(query, {"status": "timeout"})
+    except URLError:
+        return web_lookup_receipt(query, {"status": "http_error"})
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return web_lookup_receipt(query, {"status": "invalid"})
 
 
 def resolve_capture_path(root: Path, capture_id: str) -> Path | None:
