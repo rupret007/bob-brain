@@ -198,6 +198,22 @@ class CapabilityLedgerTests(unittest.TestCase):
         self.assertEqual(str(raised.exception), refusal)
         self.assertEqual(Reminders(folder, clock=lambda: now).listing(), [])
 
+    def test_ledger_F17_recurring_reminder_skips_extra_date_check(self):
+        from reminders import Reminders, ReminderError, ZONE, parse
+        now = datetime(2026, 10, 10, 10, 0, tzinfo=ZONE).timestamp()
+        command = 'create a reminder every 2 hours to stretch starting tomorrow'
+        refusal = ('The reminder has an extra date or time clause. Nothing was saved. '
+                   'Please use one schedule, such as “create a reminder for tomorrow at 2am to go to bed”.')
+        folder = self.root / 'F17'
+        reminders = Reminders(folder, clock=lambda: now)
+        with patch.object(reminders, 'save', wraps=reminders.save) as save:
+            self.assertEqual(reminders.handle(command, 'chat', 'request'), refusal)
+            save.assert_not_called()
+        with self.assertRaises(ReminderError) as raised:
+            parse(command, now)
+        self.assertEqual(str(raised.exception), refusal)
+        self.assertEqual(Reminders(folder, clock=lambda: now).listing(), [])
+
     def test_ledger_F8_generation_budget_file_writable_via_chat(self):
         runtime = self.home / 'Documents/bob-runtime'
         folder = runtime / 'conductor/webchat'
