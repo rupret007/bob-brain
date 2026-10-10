@@ -1,6 +1,5 @@
 """File-watch notices: fake clock/file adapter, no OS watcher or model calls."""
 import copy
-import os
 from pathlib import Path
 import tempfile
 import unittest
