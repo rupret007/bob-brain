@@ -142,6 +142,8 @@ class ParseAndAllowlistTests(GitHubFixture):
             'what does gh pr ready do',
             'show my calendar today',
             'list files ~/Documents',
+            'list the issues with my plan',
+            'Can you list the issues we discussed?',
         ):
             with self.subTest(text=text):
                 self.assertIsNone(self.say(text))

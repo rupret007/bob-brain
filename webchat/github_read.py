@@ -34,9 +34,14 @@ INBOX = re.compile(
     re.I)
 GH_CMD = re.compile(r'^gh\s+(?P<kind>issue|pr)\s+list\s+--repo\s+' + REPO_BODY + r'[.?!]?$', re.I)
 INBOX_HINT = re.compile(
-    r'\b(?:list|show|read|get)\b.{0,80}\b(?:github\s+)?(?:issues?|prs?|pull requests?)(?:\s+inbox)?\b|'
+    r'\b(?:list|show|read|get)\b.{0,80}\b(?:github\s+(?:issues?|prs?|pull requests?)|'
+    r'(?:issues?|prs?|pull requests?)\s+inbox)\b|'
+    r'\b(?:list|show|read|get)\b.{0,80}\b(?:issues?|prs?|pull requests?).{0,40}'
+    r'\b[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\b|'
     r'\bgithub\s+inbox\b|\bgh\s+(?:issue|pr)\s+list\b',
     re.I)
+ISSUE_LIST_SHAPE = re.compile(
+    r'\b(?:list|show|read|get)\b.{0,80}\b(?:issues?|prs?|pull requests?)\b', re.I)
 MUTATION = re.compile(
     PREFIX +
     r'(?:gh\s+(?:issue|pr)\s+(?:comment|create|close|reopen|edit|delete|assign)|'
@@ -117,7 +122,7 @@ def parse(text):
         if not valid_repo_name(repo):
             return dict(error=BAD_REPO)
         return dict(kind=normalize_kind(match.groupdict().get('kind')), repo=repo)
-    if INBOX_HINT.search(text):
+    if INBOX_HINT.search(text) or (ISSUE_LIST_SHAPE.search(text) and INJECTION.search(text)):
         if INJECTION.search(text) or MUTATION_ANY.search(text):
             return dict(error=READ_ONLY)
         return dict(error=NEED_REPO if not re.search(r'\b[A-Za-z0-9._-]+/[A-Za-z0-9._-]+\b', text) else READ_ONLY)
