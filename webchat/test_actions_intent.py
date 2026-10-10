@@ -117,15 +117,20 @@ class ActionIntentTests(unittest.TestCase):
         providers, notify = OfflineProviders(), Mock()
         chat = Chat(self.root / 'chat', self.root, providers, reminder_notifier=notify)
         self.addCleanup(chat.close)
-        self.now = datetime(2026, 10, 10, 10, tzinfo=ZONE).timestamp()
         chat.reminders.clock = lambda: self.now
         cid = chat.new_conversation()['id']
         with patch('app.parse_work', side_effect=AssertionError('Entered job queue')):
-            for command in ('set a timer for 10 minutes to stretch',
+            for command in ('Create a reminder for 2am to go to bed',
+                            'set a timer for 10 minutes to stretch',
                             'create a reminder every 2 hours to stretch',
                             'every morning remind me to stretch'):
                 for suffix in ('but only if I confirm', 'only if I approve',
-                               'after I confirm', 'once I say yes', 'when I approve'):
+                               'after I confirm', 'once I say yes', 'when I approve',
+                               'but first ask for my confirmation',
+                               'but ask me for my permission first',
+                               'but only if I say go', 'unless I approve',
+                               'do not actually schedule anything',
+                               "don't ever save it", 'never actually create it'):
                     with self.subTest(command=command, suffix=suffix):
                         reply = chat.submit(cid, command + ', ' + suffix,
                                             str(uuid.uuid4()))['messages'][-1]

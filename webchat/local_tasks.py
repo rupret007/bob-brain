@@ -93,7 +93,7 @@ def safe_read(data):
     netrc_secret = re.search(r'(?<!\S)(?:machine\s+\S+|default)\s+'
                              r'(?:login|password|account)\s+\S+', text, re.I)
     if (delimited_secret or xml_secret or netrc_secret or credential_fields(structured) or SECRET_ASSIGNMENT.search(text) or KEY.search(text)
-            or re.search(r'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----', text)
+            or re.search(r'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----', text)
             or re.search(r'\b(?:Authorization\s*:\s*)?(?:Bearer|Basic)\s+[A-Za-z0-9+/_.=-]+', text, re.I)
             or re.search(r'\b[a-z][a-z0-9+.-]*://[^\s/:]+:[^\s/@]+@', text, re.I)):
         raise LocalTaskError(SECRET_REFUSAL)

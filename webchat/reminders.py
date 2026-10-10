@@ -110,9 +110,10 @@ def parse(text, now):
     stripped = text.strip().rstrip('.?!')
     # Constraints anywhere in a recognized request apply before any schedule
     # variant (including recurring reminders) is allowed to create a row.
-    if re.search(r"\b(?:do\s+not|don't|don’t|never)\s+(?:save|create|schedule|set|add)|"
+    if re.search(r"\b(?:do\s+not|don't|don’t|never)\s+(?:(?:actually|ever|just|yet|really)\s+)*(?:save|create|schedule|set|add)\b|"
                  r'\b(?:ask|confirm|check)(?:\s+with)?\s+me\s+(?:first|before)|'
-                 r'\b(?:if|after|once|when)\s+I\s+(?:confirm|approve|say\s+yes)\b|'
+                 r'\bask(?:\s+me)?\s+for\s+my\s+(?:approval|confirmation|permission)\b|'
+                 r'\b(?:if|unless|until|after|once|when)\s+I\s+(?:confirm|approve|say)\b|'
                  r'\b(?:wait|hold off)\s+(?:until|before)|\b(?:before|without)\s+my\s+(?:approval|confirmation)',
                  stripped, re.I):
         raise ReminderError('Nothing was saved. Send a new reminder request when you want it scheduled.')
@@ -123,7 +124,7 @@ def parse(text, now):
     morning = routine_request(text)
     if morning:
         clock = morning_clock(morning['clock'])
-        return morning['body'].strip(), next_morning(now, clock), 86400
+        return reminder_body(morning['body']), next_morning(now, clock), 86400
     request = reminder_request(stripped)
     if request:
         clause = request['clause'].strip()

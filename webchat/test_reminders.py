@@ -114,6 +114,22 @@ class ReminderTests(unittest.TestCase):
         self.assertEqual(row['due_at'], self.now + 7200)
         self.assertEqual(row['interval_seconds'], 7200)
 
+    def test_morning_extra_schedule_clauses_are_not_saved(self):
+        self.now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
+        for prefix in ('every morning remind me to', 'remind me every morning to',
+                       'create a reminder every morning to', 'set a routine every morning to'):
+            for suffix in ('tomorrow', 'today', 'on 2026-10-11', 'at 3pm', 'next week'):
+                with self.subTest(prefix=prefix, suffix=suffix):
+                    reply = self.store.handle(f'{prefix} stretch {suffix}', 'chat', str(uuid.uuid4()))
+                    self.assertIn('extra date or time clause', reply)
+                    self.assertIn('Nothing was saved', reply)
+                    self.assertFalse(self.store.listing())
+        reply = self.store.handle('every morning remind me to stretch', 'chat', 'valid')
+        self.assertIn('Reminder saved: stretch', reply)
+        row, = self.store.listing()
+        self.assertEqual(row['due_at'], datetime(2026, 10, 10, 9, tzinfo=ZONE).timestamp())
+        self.assertEqual(row['daily_time'], '09:00')
+
     def test_write_then_error_is_uncertain_and_retry_does_not_duplicate(self):
         save = self.store.save
         def write_then_fail(rows):

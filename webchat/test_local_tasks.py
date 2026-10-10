@@ -246,6 +246,26 @@ class SecretReadTests(LocalFixture):
         self.assertNotIn('sk-' + 'a' * 30, persisted)
         self.search.assert_not_called()
 
+    def test_pgp_private_key_armor_never_reaches_reply_or_receipt(self):
+        secret = 'synthetic-pgp-key-data'
+        target = self.home / 'Documents/backup.asc'
+        target.write_text('-----BEGIN PGP PRIVATE KEY BLOCK-----\n' + secret +
+                          '\n-----END PGP PRIVATE KEY BLOCK-----')
+        with self.assertRaisesRegex(LocalTaskError, 'No file content returned'):
+            self.files.execute(dict(kind='read', path=str(target)))
+        for prefix in ('read file ', 'terminal: cat '):
+            with self.subTest(prefix=prefix):
+                command, rid = prefix + '~/Documents/backup.asc', str(uuid.uuid4())
+                reply = self.say(command, rid)
+                self.assertIn('No file content returned', reply)
+                self.assertNotIn(secret, reply)
+                restored = LocalTasks(self.root / 'state', self.files, self.search, self.clock)
+                self.assertEqual(self.say(command, rid, actions=restored), reply)
+        persisted = (self.actions.folder / 'receipts.json').read_text()
+        self.assertNotIn(secret, persisted)
+        self.assertNotIn('BEGIN PGP PRIVATE KEY BLOCK', persisted)
+        self.search.assert_not_called()
+
     def test_credential_content_cannot_be_created_overwritten_or_deleted(self):
         secret = '{"password":"synthetic-review-password"}'
         self.file.write_text(secret)
