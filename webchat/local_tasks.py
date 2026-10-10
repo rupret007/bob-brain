@@ -88,7 +88,8 @@ def safe_read(data):
                                     for row in csv.reader(io.StringIO(text), delimiter=delimiter))
         except csv.Error:
             raise LocalTaskError(SECRET_REFUSAL) from None
-    xml_secret = re.search(r'<\s*(?:[\w.-]+:)?' + SECRET_FIELD + r'(?=[\s/>])', text, re.I)
+    xml_secret = re.search(r'<\s*(?:[\w.-]+:)?' + SECRET_FIELD + r'(?=[\s/>])|'
+                           r'<\s*key\s*>\s*' + SECRET_FIELD + r'\s*</\s*key\s*>', text, re.I)
     # netrc records use whitespace, including newlines, instead of assignment
     # punctuation. Reject machine/default credential records as a whole.
     netrc_secret = re.search(r'(?<!\S)(?:machine\s+\S+|default)\s+'
