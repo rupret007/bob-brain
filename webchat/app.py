@@ -147,7 +147,7 @@ def password_at(folder):
 
 
 class Chat(TaskDispatch):
-    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None):
+    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None):
         self.folder, self.root = folder, root
         folder.mkdir(parents=True, exist_ok=True)
         self.password = password_at(folder)
@@ -175,8 +175,9 @@ class Chat(TaskDispatch):
         self.texting = texting or Texting()
         self.texting.instinct.bind_state(folder)
         self.voice = VoiceCalls(self)
-        from reminders import Reminders
+        from reminders import Reminders, notify_macos
         self.reminders = Reminders(folder)
+        self.reminder_notifier = notify_macos if reminder_notifier is None else reminder_notifier
         for path in self.state.glob("*.json"):
             if not UUID.fullmatch(path.stem):
                 continue
@@ -709,8 +710,15 @@ class Chat(TaskDispatch):
             if self.texting.handle(conversation, text, actor, request_id, persist_texting, self.redact):
                 return self.public(conversation)
             from reminders import ReminderError
+            import actions_intent
+            if actions_intent.reminder_request(text):
+                scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
+                if scopes:
+                    return self.intent_reply(conversation, chat_intent.hold_reply(scopes))
             try:
-                reminder = self.reminders.handle(text, identifier, request_id)
+                reminder = actions_intent.handle(self.reminders, text, identifier, request_id)
+                if reminder is None:
+                    reminder = self.reminders.handle(text, identifier, request_id)
             except ReminderError as exc:
                 reminder = str(exc)
             if reminder is not None:
@@ -1283,7 +1291,7 @@ class Chat(TaskDispatch):
                 self.save(value)
                 self.conversations[value['id']] = value
                 return True
-            self.reminders.deliver_due(deliver)
+            self.reminders.deliver_due(deliver, lambda body: self.reminder_notifier(self.redact(body)))
 
     def start_background(self):
         self.providers.start_probes()

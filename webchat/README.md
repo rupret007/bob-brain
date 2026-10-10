@@ -597,21 +597,34 @@ Instinct identities learned from the verified mapping are retained in that priva
 ### Personal reminders and read-only teammates
 
 Use `remind me to check the oven in 10 minutes`, `remind me to call Sam on
-2026-10-01 at 14:00`, `my reminders`, or `cancel reminder ID`. Local dates use
-America/Chicago; ambiguous daylight-saving times need an explicit ISO UTC offset.
+2026-10-01 at 14:00`, `create a reminder for 2am to go to bed`, or `set a timer
+for 10 minutes`. Create, set, set up, and schedule accept reminder, timer, and
+alarm requests directly, before coding-job routing. They default to one occurrence;
+an unlabeled timer uses “Timer” as its body. Use `my reminders` / `my timers` and
+`cancel reminder ID` / `cancel timer ID` to inspect or cancel them. Local dates use
+America/Chicago; an undated clock time means its next occurrence, shown with the
+resolved date in the saved receipt. Unclear dates and ambiguous daylight-saving
+times are not guessed; daylight-saving transitions need an explicit ISO UTC offset.
 `remind me every 2 hours to stretch` (or `set a routine every 2 hours to stretch`)
 creates an interval notification, never an executable job. An interval day is
 24 hours, not a calendar-day clock rule. The store permits 200 pending reminders
 and retains bounded completed history; the saved chat keeps delivered notices.
 
 Reminders use Web Bob's existing one-second background loop; they do not start
-job-runner or another scheduler. Delivery is only a message in the originating
-chat and a Jobs entry. Closed browsers see it when reopened; server downtime
+job-runner or another scheduler. Delivery saves a message in the originating
+chat and a Jobs entry, then attempts a local macOS notification using `osascript`.
+The Mac must be awake with Web Bob running in a user session; macOS notification
+permission and Focus settings control whether the alert is displayed. A successful
+script exit is not proof that the user saw an alert. Closed browsers see the saved
+chat message when reopened; server downtime
 catches up on return. Active voice/model turns defer delivery until idle.
 A durable notification identity prevents duplicate messages after a crash between
 chat persistence and store acknowledgement. Missed recurring intervals produce
-one catch-up notice, not a burst. No OS push, email, SMS or calendar integration
-is claimed. A reminder's body is plain text, never a command to execute.
+one catch-up notice, not a burst. OS alerts are best effort: failure does not undo
+chat delivery, and a crash after the firing-state write may lose that OS alert.
+There is no phone push, iMessage-to-self, email, SMS or calendar integration.
+A reminder's body is plain text, never a command to execute. Tests inject the
+notification hook or mock `subprocess.run`; they never display real alerts.
 
 `Karen QA status` reports the saved `wt-webjam-polish/PRE_KAREN_QA.md` with its
 source and save time; it never implies a new independent review or contacts her.
