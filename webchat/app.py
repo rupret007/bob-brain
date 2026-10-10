@@ -147,7 +147,7 @@ def password_at(folder):
 
 
 class Chat(TaskDispatch):
-    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None):
+    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, local_tasks=None):
         self.folder, self.root = folder, root
         folder.mkdir(parents=True, exist_ok=True)
         self.password = password_at(folder)
@@ -180,6 +180,8 @@ class Chat(TaskDispatch):
         self.reminder_notifier = notify_macos if reminder_notifier is None else reminder_notifier
         from calendar_actions import CalendarActions
         self.calendar = calendar if calendar is not None else CalendarActions(folder)
+        from local_tasks import LocalTasks
+        self.local_tasks = local_tasks if local_tasks is not None else LocalTasks(folder)
         for path in self.state.glob("*.json"):
             if not UUID.fullmatch(path.stem):
                 continue
@@ -718,20 +720,25 @@ class Chat(TaskDispatch):
                 return self.intent_reply(conversation, self.redact(calendar), provider='calendar')
             from reminders import ReminderError
             import actions_intent
-            if actions_intent.reminder_request(text):
+            if actions_intent.reminder_request(text) or actions_intent.routine_intent(text) or actions_intent.routine_request(text):
                 scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
                 if scopes:
                     return self.intent_reply(conversation, chat_intent.hold_reply(scopes))
             try:
-                reminder = actions_intent.handle(self.reminders, text, identifier, request_id)
+                reminder = actions_intent.handle(self.reminders, text, identifier, request_id, local_tasks=self.local_tasks)
                 if reminder is None:
-                    reminder = self.reminders.handle(text, identifier, request_id)
+                    reminder = self.reminders.handle(text, identifier, request_id, local_tasks=self.local_tasks)
             except ReminderError as exc:
                 reminder = str(exc)
             if reminder is not None:
                 for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
                     conversation.pop(key, None)
                 return self.intent_reply(conversation, self.redact(reminder), provider='reminders')
+            local = self.local_tasks.handle(text, identifier, request_id, intent_state)
+            if local is not None:
+                for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
+                    conversation.pop(key, None)
+                return self.intent_reply(conversation, self.redact(local), provider='local-tasks')
             from teammates import handle as teammate_turn
             teammate = teammate_turn(self, conversation, text, request_id)
             if teammate is not None:
@@ -1280,7 +1287,9 @@ class Chat(TaskDispatch):
         with self.lock:
             if self.closing.is_set():
                 return
+            routine_ran = False
             def deliver(row, notice):
+                nonlocal routine_ran
                 conversation = self.conversations.get(row['conversation_id'])
                 if not conversation:
                     return False
@@ -1292,8 +1301,20 @@ class Chat(TaskDispatch):
                     return False
                 value = copy.deepcopy(conversation)
                 from reminders import stamp
+                content = 'Reminder: ' + row['body'] + ' (due ' + stamp(row['due_at']) + ').'
+                if row.get('action'):
+                    if routine_ran:
+                        return False  # One bounded lookup per tick; let owner hold/cancel turns in.
+                    state = chat_intent.state_for(value)
+                    scopes = chat_intent.blocked_scopes(state, chat_intent.projects(row['action']))
+                    if scopes:
+                        return False  # A scheduler tick never lifts a saved hold.
+                    routine_ran = True
+                    result = self.local_tasks.handle(row['action'], row['conversation_id'],
+                                                     'routine:' + notice, state, routine=True)
+                    content = 'Routine result (due ' + stamp(row['due_at']) + '):\n' + (result or 'Unsupported action; no action ran.')
                 value['messages'].append(dict(id=str(uuid.uuid4()), role='assistant', status='done', provider='reminders',
-                    content=self.redact('Reminder: ' + row['body'] + ' (due ' + stamp(row['due_at']) + ').'),
+                    content=self.redact(content),
                     created_at=time.time(), reminder_notice=notice, reminder_id=row['id']))
                 self.save(value)
                 self.conversations[value['id']] = value

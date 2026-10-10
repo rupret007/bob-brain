@@ -1,0 +1,504 @@
+"""PR3 boundaries: temporary home, fake network/notifications/calendar only."""
+import concurrent.futures
+import copy
+from datetime import datetime
+import io
+import json
+import os
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import Mock, patch
+import uuid
+
+from app import Chat
+import chat_intent
+from local_tasks import LocalFiles, LocalTasks, LocalTaskError, LIMIT, UNCERTAIN, parse, search_web
+from reminders import Reminders, ZONE, next_morning
+from task_dispatch import task_queue
+from texting import Texting
+from texting_fixture import OfflineProviders
+
+
+class LocalFixture(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.home = self.root / 'home'
+        self.home.mkdir()
+        (self.home / 'Documents').mkdir()
+        self.file = self.home / 'Documents/note.txt'
+        self.file.write_text('original')
+        self.now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
+        self.clock = lambda: self.now
+        self.files = LocalFiles(self.home, self.clock, excluded=(self.home / 'private-chat',))
+        self.search = Mock(return_value='Fixture search answer. Source: https://example.test/result')
+        self.actions = LocalTasks(self.root / 'state', self.files, self.search, self.clock)
+        self.state = chat_intent.new_state()
+        # No accidental real transport, shell or OS notifications in these tests.
+        for target in ('urllib.request.OpenerDirector.open', 'subprocess.run', 'reminders.notify_macos'):
+            guard = patch(target, side_effect=AssertionError('Forbidden real side-effect: ' + target))
+            guard.start()
+            self.addCleanup(guard.stop)
+
+    def say(self, text, rid=None, cid='chat', actions=None):
+        return (actions or self.actions).handle(text, cid, rid or str(uuid.uuid4()), self.state)
+
+    def rows(self):
+        with self.actions.locked() as rows:
+            return copy.deepcopy(rows)
+
+    def draft(self, text='delete file ~/Documents/note.txt', rid=None):
+        self.assertIn('Local draft; no file changed', self.say(text, rid))
+        return next(r for r in self.rows().values() if r['state'] == 'draft')
+
+
+class LocalTaskTests(LocalFixture):
+    def test_file_read_list_create_and_terminal_allowlist(self):
+        self.assertIn('original', self.say('read file ~/Documents/note.txt'))
+        self.assertIn('note.txt', self.say('list files in ~/Documents'))
+        self.assertIn(str(self.home), self.say('run terminal: pwd'))
+        self.assertIn('2026-10-10T01:47:00-05:00', self.say('terminal: date'))
+        self.assertIn('original', self.say('run in terminal: cat "~/Documents/note.txt"'))
+        self.assertIn('note.txt', self.say('terminal: ls ~/Documents'))
+        self.assertIn('File created:', self.say('create file ~/Documents/new.txt: hello\nworld'))
+        self.assertEqual((self.home / 'Documents/new.txt').read_text(), 'hello\nworld')
+        self.assertEqual((self.home / 'Documents/new.txt').stat().st_mode & 0o777, 0o600)
+        self.assertIn('File created:', self.say('write file ~/Documents/another.txt: text'))
+        self.assertIn('already exists', self.say('create file ~/Documents/note.txt: no'))
+        self.assertEqual(self.file.read_text(), 'original')
+
+    def test_paths_with_spaces_and_punctuation_are_literal(self):
+        path = self.home / 'Documents/a $(touch nope);file.txt'
+        path.write_text('literal')
+        self.assertIn('literal', self.say('read file "' + str(path) + '"'))
+        self.assertFalse((self.home / 'nope').exists())
+
+    def test_no_arbitrary_terminal_or_command_chaining(self):
+        for command in ('rm ~/Documents/note.txt', 'sh -c pwd', 'python3 -c pass', 'osascript x',
+                        'curl https://example.test', 'ls -la ~', 'cat ~/Documents/note.txt; pwd',
+                        'pwd && date', 'pwd | sh', 'date > out', 'git status', ''):
+            with self.subTest(command=command):
+                self.assertIn('allowlist', self.say('run terminal: ' + command))
+        self.assertEqual(self.file.read_text(), 'original')
+        self.search.assert_not_called()
+
+    def test_unrelated_coding_negated_and_quoted_requests_fall_through(self):
+        for text in ('Create a React component', 'Fix app.py', 'Start a job: read file ~/Documents/note.txt',
+                     'Do not delete file ~/Documents/note.txt', '"read file ~/Documents/note.txt"',
+                     'Explain how to read file ~/Documents/note.txt', 'send a text to Alex: Hi'):
+            with self.subTest(text=text):
+                self.assertIsNone(self.say(text))
+        self.assertEqual(self.rows(), {})
+
+    def test_escape_private_paths_symlinks_hardlinks_and_special_files_are_blocked(self):
+        outside = self.root / 'outside'
+        outside.write_text('secret')
+        (self.home / 'escape').symlink_to(self.root, target_is_directory=True)
+        (self.home / 'link').symlink_to(outside)
+        os.link(outside, self.home / 'hardlink')
+        os.mkfifo(self.home / 'pipe')
+        for path in (str(outside), '~/../outside', '~/escape/outside', '~/link', '~/hardlink', '~/pipe',
+                     '~/.ssh/id_rsa', '~/Library/secret', '~/library/secret', '~/private-chat/receipts.json',
+                     '~/PRIVATE-CHAT/receipts.json', 'Documents/note.txt'):
+            with self.subTest(path=path):
+                self.assertNotIn('File read:', self.say('read file ' + path))
+                self.assertNotIn('File created:', self.say('create file ' + path + ': danger'))
+        self.assertEqual(outside.read_text(), 'secret')
+        self.assertNotIn('File deleted:', self.say('delete file ~'))
+
+    def test_large_binary_and_missing_files_fail_without_success_claim(self):
+        self.file.write_bytes(b'x' * (LIMIT + 1))
+        self.assertNotIn('File read:', self.say('read file ~/Documents/note.txt'))
+        self.file.write_bytes(b'\xff\xfe')
+        self.assertEqual(self.say('read file ~/Documents/note.txt'), UNCERTAIN)
+        self.assertNotIn('File read:', self.say('read file ~/Documents/missing.txt'))
+
+    def test_overwrite_requires_exact_separate_conversation_bound_yes(self):
+        row = self.draft('write file ~/Documents/note.txt: replacement', 'draft-id')
+        self.assertEqual(self.file.read_text(), 'original')
+        self.assertIsNone(self.say('yes'))
+        self.assertIn('exact', self.say('yes ' + row['token'] + ' and delete another file'))
+        self.assertIn('No matching', self.say('yes ' + row['token'], cid='other'))
+        self.assertIn('separate', self.say('yes ' + row['token'], rid='draft-id'))
+        self.assertEqual(self.file.read_text(), 'original')
+        reply = self.say('yes ' + row['token'])
+        self.assertIn('File overwritten:', reply)
+        self.assertEqual(self.file.read_text(), 'replacement')
+        self.assertEqual(self.say('yes ' + row['token']), reply)
+
+    def test_delete_confirmation_is_persisted_before_effect_and_restart_is_idempotent(self):
+        row = self.draft()
+        restored = LocalTasks(self.root / 'state', self.files, self.search, self.clock)
+        real = self.files.execute
+        def check(spec):
+            persisted = json.loads((self.actions.folder / 'receipts.json').read_text())
+            self.assertEqual(persisted[row['token']]['state'], 'claimed')
+            return real(spec)
+        with patch.object(self.files, 'execute', side_effect=check) as execute:
+            receipt = self.say('yes ' + row['token'], actions=restored)
+            self.assertIn('File deleted:', receipt)
+            self.assertFalse(self.file.exists())
+            self.assertEqual(self.say('yes ' + row['token']), receipt)
+            execute.assert_called_once()
+        self.assertEqual((self.actions.folder / 'receipts.json').stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.actions.folder.stat().st_mode & 0o777, 0o700)
+
+    def test_file_changed_or_replaced_by_symlink_after_draft_does_not_execute(self):
+        row = self.draft()
+        self.file.write_text('changed')
+        self.assertIn('changed since the draft', self.say('yes ' + row['token']))
+        self.assertEqual(self.file.read_text(), 'changed')
+        row = self.draft()
+        target = self.root / 'outside'
+        target.write_text('untouched')
+        self.file.unlink()
+        self.file.symlink_to(target)
+        self.assertEqual(self.say('yes ' + row['token']), UNCERTAIN)
+        self.assertEqual(target.read_text(), 'untouched')
+
+    def test_cancel_replace_expiry_and_same_request_different_text(self):
+        row = self.draft(rid='one')
+        self.assertIn('different local action', self.say('write file ~/Documents/note.txt: x', 'one'))
+        replacement = self.draft()
+        self.assertIn('replaced', self.say('yes ' + row['token']))
+        self.assertIn('cancelled', self.say('cancel ' + replacement['token']))
+        self.assertIn('cancelled', self.say('yes ' + replacement['token']))
+        row = self.draft()
+        self.now += 3600
+        self.assertIn('expired', self.say('yes ' + row['token']))
+        self.assertTrue(self.file.exists())
+
+    def test_global_and_project_holds_block_reads_drafts_and_confirmations(self):
+        row = self.draft()
+        chat_intent.apply_turn(self.state, 'Hold all work', 'hold')
+        for text in ('read file ~/Documents/note.txt', 'search the web for Python',
+                     'create file ~/Documents/new.txt: x', 'yes ' + row['token']):
+            self.assertIn('On hold:', self.say(text))
+        self.search.assert_not_called()
+        self.assertTrue(self.file.exists())
+        chat_intent.apply_turn(self.state, 'resume', 'resume')
+        chat_intent.apply_turn(self.state, 'Hold WebBob', 'project-hold')
+        self.assertIn('On hold:', self.say('search the web for WebBob documentation'))
+        self.assertIn('Fixture search', self.say('search the web for WebJam documentation'))
+
+    def test_concurrent_confirmations_only_execute_once(self):
+        row = self.draft()
+        other = LocalTasks(self.root / 'state', self.files, self.search, self.clock)
+        with patch.object(self.files, 'execute', wraps=self.files.execute) as execute:
+            with concurrent.futures.ThreadPoolExecutor(2) as pool:
+                replies = list(pool.map(lambda actions: self.say('yes ' + row['token'], actions=actions),
+                                        (self.actions, other)))
+            self.assertEqual(replies[0], replies[1])
+            execute.assert_called_once()
+
+    def test_crash_and_storage_failure_never_replay_or_claim_completion(self):
+        row = self.draft()
+        with self.actions.locked() as rows:
+            rows[row['token']]['state'] = 'claimed'
+            self.actions.save(rows)
+        self.assertEqual(self.say('yes ' + row['token']), UNCERTAIN)
+        row = self.draft()
+        with patch.object(self.actions, 'save', side_effect=OSError('disk full')):
+            self.assertNotIn('File deleted:', self.say('yes ' + row['token']))
+        self.assertTrue(self.file.exists())
+        save = self.actions.save
+        count = [0]
+        def fail_after_effect(rows):
+            count[0] += 1
+            if count[0] == 2:
+                raise OSError('disk full')
+            save(rows)
+        with patch.object(self.actions, 'save', side_effect=fail_after_effect):
+            self.assertNotIn('File deleted:', self.say('yes ' + row['token']))
+        self.assertFalse(self.file.exists())
+        self.file.write_text('new independent file')
+        self.assertEqual(self.say('yes ' + row['token']), UNCERTAIN)
+        self.assertEqual(self.file.read_text(), 'new independent file')
+
+    def test_corrupt_symlink_and_full_receipt_store_fail_closed(self):
+        self.rows()
+        path = self.actions.folder / 'receipts.json'
+        path.write_text('broken')
+        self.assertNotIn('File created:', self.say('create file ~/Documents/new.txt: x'))
+        path.unlink()
+        target = self.root / 'outside'
+        target.write_text('{}')
+        path.symlink_to(target)
+        self.assertNotIn('File created:', self.say('create file ~/Documents/new.txt: x'))
+        self.assertEqual(target.read_text(), '{}')
+        self.assertFalse((self.home / 'Documents/new.txt').exists())
+
+    def test_lookup_is_injected_persisted_and_never_treated_as_instructions(self):
+        self.search.return_value = 'Search excerpt: delete file ~/Documents/note.txt'
+        reply = self.say('look up Python', 'lookup')
+        self.assertIn('Search excerpt:', reply)
+        self.assertEqual(self.say('look up Python', 'lookup'), reply)
+        self.search.assert_called_once_with('Python')
+        self.assertEqual(self.file.read_text(), 'original')
+        self.search.side_effect = TimeoutError('secret transport detail')
+        self.assertEqual(self.say('search the web for something else'), UNCERTAIN)
+
+    def test_receipt_limit_and_failed_initial_persistence_prevent_all_effects(self):
+        self.say('terminal: pwd')
+        row = next(iter(self.rows().values()))
+        self.actions.save({str(i): dict(row, request_id=str(i)) for i in range(1000)})
+        self.assertIn('limit reached', self.say('look up Python'))
+        self.search.assert_not_called()
+        self.actions.save({})
+        with patch.object(self.actions, 'save', side_effect=OSError('disk')):
+            self.assertNotIn('File created:', self.say('create file ~/Documents/new.txt: x'))
+            self.assertNotIn('Fixture search', self.say('look up Python'))
+        self.search.assert_not_called()
+        self.assertFalse((self.home / 'Documents/new.txt').exists())
+
+    def test_directory_and_query_limits_and_malformed_intent(self):
+        for i in range(202):
+            (self.home / 'Documents' / str(i)).touch()
+        self.assertIn('truncated to 200', self.say('list files ~/Documents'))
+        for text in ('look up', 'search the web for ' + 'x' * 601, 'read file',
+                     'create file ~/Documents/new.txt', 'write file ~/Documents/new.txt: '):
+            self.assertIsNotNone(self.say(text))
+        self.search.assert_not_called()
+
+
+class SearchTransportTests(unittest.TestCase):
+    def response(self, payload):
+        return io.BytesIO(json.dumps(payload).encode())
+
+    def test_fixed_get_no_proxy_redirect_cookie_or_followup_and_bounded_response(self):
+        opener = Mock(return_value=self.response(dict(AbstractText='Python is a language.', AbstractURL='https://python.org')))
+        with patch('local_tasks.urllib.request.build_opener') as factory:
+            factory.return_value.open = opener
+            reply = search_web('Python & format=xml')
+        self.assertIn('Python is a language.', reply)
+        self.assertIn('Source: https://python.org', reply)
+        request = opener.call_args.args[0]
+        self.assertTrue(request.full_url.startswith('https://api.duckduckgo.com/?q=Python+%26+format%3Dxml&'))
+        self.assertEqual(request.get_method(), 'GET')
+        self.assertIsNone(request.data)
+        self.assertEqual(opener.call_args.kwargs['timeout'], 10)
+        self.assertEqual(factory.call_args.args[0].proxies, {})
+        with self.assertRaises(LocalTaskError):
+            factory.call_args.args[1].redirect_request(None)
+        opener.assert_called_once()
+
+    def test_empty_related_topics_invalid_sources_and_malformed_responses(self):
+        self.assertIn('no instant answer', search_web('x', Mock(return_value=self.response({})) ))
+        reply = search_web('x', Mock(return_value=self.response({'RelatedTopics': [{'Text': 'Result', 'FirstURL': 'javascript:bad'}]})))
+        self.assertIn('Result', reply)
+        self.assertNotIn('javascript:', reply)
+        for raw in (b'not json', b'[]', b'x' * (1024 * 1024 + 1), b'{"AbstractText": 1}'):
+            with self.subTest(raw=raw[:40]), self.assertRaises((ValueError, LocalTaskError)):
+                search_web('x', Mock(return_value=io.BytesIO(raw)))
+
+
+class RoutineChatTests(LocalFixture):
+    def setUp(self):
+        super().setUp()
+        self.providers = OfflineProviders()
+        self.notifier = Mock()
+        self.calendar = Mock()
+        self.calendar.handle.return_value = None
+        self.texting = Texting(Mock(), Mock(), clock=self.clock)
+        self.chat = self.new_chat()
+        self.cid = self.chat.new_conversation()['id']
+
+    def new_chat(self):
+        chat = Chat(self.root / 'chat', self.root, self.providers, texting=self.texting,
+                    reminder_notifier=self.notifier, calendar=self.calendar, local_tasks=self.actions)
+        chat.reminders.clock = self.clock
+        self.addCleanup(chat.close)
+        return chat
+
+    def submit(self, text, chat=None):
+        with patch('app.parse_work', side_effect=AssertionError('Personal action entered coding queue')):
+            return (chat or self.chat).submit(self.cid, text, str(uuid.uuid4()), actor='owner')['messages'][-1]
+
+    def test_direct_routes_and_pr1_incident_regression(self):
+        for text in ('read file ~/Documents/note.txt', 'terminal: date', 'look up Python',
+                     'create file ~/Documents/new.txt: hello'):
+            self.assertEqual(self.submit(text)['provider'], 'local-tasks')
+        receipt = self.submit('Create a reminder for 2am to go to bed')
+        self.assertEqual(receipt['provider'], 'reminders')
+        self.assertIn('Reminder saved: go to bed', receipt['content'])
+        self.assertIn('Oct 10, 2026 at 02:00 AM CDT', receipt['content'])
+        self.assertFalse(self.providers.calls)
+        self.assertFalse(task_queue.tasks(self.root))
+        self.notifier.assert_not_called()
+
+    def test_morning_actions_execute_on_same_scheduler_without_queue_or_notifications(self):
+        receipt = self.submit('every morning do read file ~/Documents/note.txt')['content']
+        self.assertIn('Read-only routine saved:', receipt)
+        self.assertIn('09:00 America/Chicago', receipt)
+        row, = self.chat.reminders.listing()
+        self.assertEqual(row['daily_time'], '09:00')
+        self.chat.deliver_reminders()
+        self.assertFalse(self.rows())
+        self.file.write_text('morning contents')
+        self.now = row['due_at']
+        self.chat.deliver_reminders()
+        notice = self.chat.history(self.cid)['messages'][-1]
+        self.assertIn('File read:', notice['content'])
+        self.assertIn('morning contents', notice['content'])
+        self.chat.deliver_reminders()
+        self.assertEqual(self.chat.history(self.cid)['messages'][-1], notice)
+        self.assertEqual(self.chat.reminders.listing()[0]['occurrences'], 1)
+        self.assertFalse(task_queue.tasks(self.root))
+        self.assertFalse(self.providers.calls)
+        self.notifier.assert_not_called()
+
+    def test_restart_catches_up_once_and_returns_to_local_morning(self):
+        self.submit('set a routine every morning at 8am do look up Python')
+        row, = self.chat.reminders.listing()
+        self.chat.close()
+        self.now = row['due_at'] + 3 * 86400 + 1800
+        restored = self.new_chat()
+        restored.deliver_reminders()
+        restored.deliver_reminders()
+        self.search.assert_called_once_with('Python')
+        self.assertIn('Fixture search answer', restored.history(self.cid)['messages'][-1]['content'])
+        row, = restored.reminders.listing()
+        self.assertEqual(row['occurrences'], 1)
+        due = datetime.fromtimestamp(row['due_at'], ZONE)
+        self.assertEqual((due.hour, due.minute), (8, 0))
+        self.assertGreater(row['due_at'], self.now)
+
+    def test_scheduler_limits_routine_io_per_tick_so_owner_controls_can_run(self):
+        self.submit('every morning do look up Python')
+        self.submit('every morning do look up SQLite')
+        self.now += 86400
+        self.chat.deliver_reminders()
+        self.assertEqual(self.search.call_count, 1)
+        self.chat.submit(self.cid, 'Hold all work', str(uuid.uuid4()))
+        self.chat.deliver_reminders()
+        self.assertEqual(self.search.call_count, 1)
+        self.chat.submit(self.cid, 'resume', str(uuid.uuid4()))
+        self.chat.deliver_reminders()
+        self.assertEqual(self.search.call_count, 2)
+
+    def test_morning_clock_tracks_dst_in_both_directions(self):
+        for before, after, hours in ((datetime(2026, 10, 31, 9, tzinfo=ZONE), datetime(2026, 11, 1, 9, tzinfo=ZONE), 25),
+                                     (datetime(2027, 3, 13, 9, tzinfo=ZONE), datetime(2027, 3, 14, 9, tzinfo=ZONE), 23)):
+            self.assertEqual(next_morning(before.timestamp(), '09:00'), after.timestamp())
+            self.assertEqual(after.timestamp() - before.timestamp(), hours * 3600)
+        for clock in ('2am', '1:30am', '12pm', '14:00', '9:99am', '13am'):
+            self.assertNotIn('saved:', self.submit('every morning at ' + clock + ' do terminal: date')['content'])
+        self.assertFalse(self.chat.reminders.listing())
+
+    def test_personal_morning_reminder_remains_notification_only(self):
+        self.submit('every morning remind me to stretch')
+        row, = self.chat.reminders.listing()
+        self.assertNotIn('action', row)
+        self.now = row['due_at']
+        self.chat.deliver_reminders()
+        self.assertIn('Reminder: stretch', self.chat.history(self.cid)['messages'][-1]['content'])
+        self.notifier.assert_called_once_with('stretch')
+        self.assertFalse(self.rows())
+
+    def test_morning_reminder_synonyms_never_execute_their_body(self):
+        for text in ('remind me every morning to read file ~/Documents/note.txt',
+                     'create a reminder every morning do read file ~/Documents/note.txt',
+                     'set an alarm every morning to read file ~/Documents/note.txt',
+                     'set a routine every morning to stretch'):
+            self.assertIn('Reminder saved:', self.submit(text)['content'])
+        self.assertTrue(all('action' not in row for row in self.chat.reminders.listing()))
+        self.now += 86400
+        self.chat.deliver_reminders()
+        self.assertFalse(self.rows())
+
+    def test_missing_routine_path_returns_an_honest_local_error_without_saving(self):
+        reply = self.submit('every morning do read file ~/Documents/missing.txt')['content']
+        self.assertIn('path is unavailable', reply)
+        self.assertFalse(self.chat.reminders.listing())
+
+    def test_unsafe_unsupported_incomplete_and_send_routines_stay_out_of_queue(self):
+        for body in ('delete file ~/Documents/note.txt', 'write file ~/Documents/note.txt: bad',
+                     'create file ~/Documents/new.txt: bad', 'terminal: rm ~/Documents/note.txt',
+                     'send a text to Alex: Hi', 'yes wblocal-' + 'a' * 32, 'fix the application'):
+            with self.subTest(body=body):
+                self.assertNotIn('saved:', self.submit('every morning do ' + body)['content'])
+        self.assertNotIn('saved:', self.submit('every morning')['content'])
+        self.assertEqual(self.file.read_text(), 'original')
+        self.assertFalse(self.chat.reminders.listing())
+        self.assertFalse(task_queue.tasks(self.root))
+        self.texting.andrea.deliver.assert_not_called()
+
+    def test_persisted_holds_block_registration_and_execution_until_explicit_resume(self):
+        self.submit('every morning do look up WebBob docs')
+        self.chat.submit(self.cid, 'Hold WebBob', str(uuid.uuid4()))
+        before = copy.deepcopy(self.chat.get(self.cid)['intent_state'])
+        self.assertIn('On hold:', self.submit('every morning do look up WebBob docs')['content'])
+        self.now += 86400
+        restored = self.new_chat()
+        restored.deliver_reminders()
+        self.search.assert_not_called()
+        self.assertEqual(restored.get(self.cid)['intent_state'], before)
+        self.assertEqual(restored.reminders.listing()[0]['occurrences'], 0)
+        restored.submit(self.cid, 'resume WebBob', str(uuid.uuid4()))
+        restored.deliver_reminders()
+        self.search.assert_called_once_with('WebBob docs')
+
+    def test_cancelled_busy_and_shutdown_routines_never_execute(self):
+        self.submit('every morning do look up Python')
+        row, = self.chat.reminders.listing()
+        self.now = row['due_at']
+        with patch.object(self.chat.voice, 'busy', return_value=True):
+            self.chat.deliver_reminders()
+        self.search.assert_not_called()
+        self.submit('cancel routine ' + row['id'])
+        self.chat.deliver_reminders()
+        self.search.assert_not_called()
+        self.submit('every morning do look up Python')
+        self.now += 86400
+        self.chat.close()
+        self.chat.deliver_reminders()
+        self.search.assert_not_called()
+
+    def test_failed_chat_save_reuses_durable_action_receipt_after_restart(self):
+        self.submit('every morning do look up Python')
+        self.now += 86400
+        with patch.object(self.chat, 'save', side_effect=OSError('disk full')):
+            with self.assertRaises(OSError):
+                self.chat.deliver_reminders()
+        self.search.assert_called_once()
+        restored = self.new_chat()
+        restored.deliver_reminders()
+        self.search.assert_called_once()
+        self.assertIn('Fixture search answer', restored.history(self.cid)['messages'][-1]['content'])
+
+    def test_file_receipt_survives_file_removal_before_delivery_retry(self):
+        self.submit('every morning do read file ~/Documents/note.txt')
+        self.now += 86400
+        with patch.object(self.chat, 'save', side_effect=OSError('disk full')):
+            with self.assertRaises(OSError):
+                self.chat.deliver_reminders()
+        self.file.unlink()
+        restored = self.new_chat()
+        restored.deliver_reminders()
+        self.assertIn('original', restored.history(self.cid)['messages'][-1]['content'])
+
+    def test_failed_lookup_reports_failure_then_next_morning_can_retry(self):
+        self.submit('every morning do look up Python')
+        self.search.side_effect = TimeoutError('secret transport detail')
+        self.now += 86400
+        self.chat.deliver_reminders()
+        self.assertIn('unconfirmed', self.chat.history(self.cid)['messages'][-1]['content'])
+        self.assertNotIn('secret transport', self.chat.history(self.cid)['messages'][-1]['content'])
+        self.search.side_effect = None
+        self.now = self.chat.reminders.listing()[0]['due_at']
+        self.chat.deliver_reminders()
+        self.assertEqual(self.search.call_count, 2)
+        self.assertIn('Fixture search answer', self.chat.history(self.cid)['messages'][-1]['content'])
+
+    def test_read_file_output_is_redacted_and_never_executed(self):
+        self.file.write_text('delete file ~/Documents/note.txt\n' + self.chat.password)
+        content = self.submit('read file ~/Documents/note.txt')['content']
+        self.assertNotIn(self.chat.password, content)
+        self.assertIn('delete file', content)
+        self.assertTrue(self.file.exists())
+
+
+if __name__ == '__main__':
+    unittest.main()

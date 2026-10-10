@@ -12,7 +12,7 @@ import uuid
 from zoneinfo import ZoneInfo
 
 from failover import atomic_text
-from actions_intent import reminder_request
+from actions_intent import reminder_request, routine_request, routine_intent
 
 ZONE = ZoneInfo('America/Chicago')
 HELP = ('Try “remind me to check the oven in 10 minutes”, “remind me to call Sam on 2026-10-01 at 14:00”, '
@@ -22,6 +22,11 @@ HELP = ('Try “remind me to check the oven in 10 minutes”, “remind me to ca
         'Reminders appear here and in Jobs while Web Bob is running; overdue reminders arrive when it returns. '
         'Local macOS notifications are best effort and require notification permission. '
         'Reminders never send texts or emails or start work.')
+ROUTINE_HELP = ('Try “every morning do read file ~/Documents/notes.txt”, '
+                '“every morning at 8am do search the web for Chicago weather”, or '
+                '“every morning remind me to stretch”. Morning defaults to 9am America/Chicago. '
+                'Read-only routines run in this chat while Web Bob is running; one overdue run catches up after restart. '
+                'Use “my routines” and “cancel routine ID”. Writes, deletes and sends cannot run unattended.')
 UNITS = {'second': 1, 'minute': 60, 'hour': 3600, 'day': 86400}
 DURATION = r'\d+\s+(?:seconds?|minutes?|hours?|days?)'
 CLOCK = r'\d{1,2}(?::\d{2}\s*(?:am|pm)?|\s*(?:am|pm))'
@@ -100,6 +105,10 @@ def instant(text, now):
 
 def parse(text, now):
     stripped = text.strip().rstrip('.?!')
+    morning = routine_request(text)
+    if morning:
+        clock = morning_clock(morning['clock'])
+        return morning['body'].strip(), next_morning(now, clock), 86400
     request = reminder_request(stripped)
     if request:
         clause = request['clause'].strip()
@@ -129,6 +138,36 @@ def parse(text, now):
 
 def _when(value):
     return 'in ' + value if re.fullmatch(DURATION, value, re.I) else value
+
+
+def morning_clock(value):
+    match = re.fullmatch(r'(\d{1,2})(?::(\d{2}))?\s*(am|pm)?', value or '9am', re.I)
+    if not match:
+        raise ReminderError('Choose a morning clock time. ' + ROUTINE_HELP)
+    hour, minute, meridiem = int(match[1]), int(match[2] or 0), (match[3] or '').lower()
+    if meridiem:
+        if not 1 <= hour <= 12:
+            raise ReminderError('Use an hour from 1 to 12 with am or pm.')
+        hour = hour % 12 + (12 if meridiem == 'pm' else 0)
+    # A morning window also avoids ambiguous/nonexistent US DST hours.
+    if not 3 <= hour < 12 or not 0 <= minute < 60:
+        raise ReminderError('Morning routines support 3:00am through 11:59am America/Chicago.')
+    return f'{hour:02d}:{minute:02d}'
+
+
+def next_morning(now, clock):
+    hour, minute = map(int, clock.split(':'))
+    local = datetime.fromtimestamp(now, ZONE)
+    due = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if due <= local:
+        due += timedelta(days=1)
+    return due.timestamp()
+
+
+def repeat_description(row):
+    if row.get('daily_time'):
+        return ' Repeats every morning at ' + row['daily_time'] + ' America/Chicago.'
+    return f" Repeats every {row['interval_seconds'] // 60} minutes." if row['interval_seconds'] else ''
 
 
 def stamp(seconds):
@@ -166,7 +205,7 @@ class Reminders:
         atomic_text(self.path, json.dumps(rows, ensure_ascii=False))
         self.path.chmod(0o600)
 
-    def create(self, cid, request_id, body, due, interval=None):
+    def create(self, cid, request_id, body, due, interval=None, *, daily_time=None, action=None):
         if not 1 <= len(body) <= 1000:
             raise ReminderError('Keep a reminder between 1 and 1,000 characters.')
         identifier = uuid.uuid5(uuid.NAMESPACE_URL, 'webbob-reminder:' + cid + ':' + request_id).hex[:16]
@@ -182,6 +221,10 @@ class Reminders:
                 rows[:] = pending + completed
             row = dict(id=identifier, conversation_id=cid, body=body, due_at=due, interval_seconds=interval,
                        state='pending', created_at=self.clock(), occurrences=0)
+            if daily_time:
+                row['daily_time'] = daily_time
+            if action:
+                row['action'] = action
             rows.append(row)
             self.save(rows)
             return row
@@ -218,10 +261,15 @@ class Reminders:
                 notice = uuid.uuid5(uuid.NAMESPACE_URL, 'reminder-notice:' + row['id'] + ':' + str(row['occurrences'])).hex
                 if not deliver(row, notice):
                     continue
-                notifications.append(dict(row))
+                # Action output remains private in chat; never expose file or
+                # lookup results in an OS alert or claim a routine was a reminder.
+                if not row.get('action'):
+                    notifications.append(dict(row))
                 row['occurrences'] += 1
                 row['last_fired_at'] = now
-                if row['interval_seconds']:
+                if row.get('daily_time'):
+                    row['due_at'] = next_morning(now, row['daily_time'])
+                elif row['interval_seconds']:
                     # One catch-up notice, never a burst after downtime.
                     elapsed = int((now - row['due_at']) // row['interval_seconds']) + 1
                     row['due_at'] += elapsed * row['interval_seconds']
@@ -237,26 +285,39 @@ class Reminders:
                 except Exception:
                     pass  # OS failure must not undo or block durable chat delivery.
 
-    def handle(self, text, cid, request_id):
+    def handle(self, text, cid, request_id, *, local_tasks=None):
         command = text.strip().casefold().rstrip('.?!')
         if command in ('reminders', 'my reminders', 'list reminders', 'show reminders', 'routines', 'my routines',
                        'timers', 'my timers', 'alarms', 'my alarms'):
             rows = [r for r in self.listing() if r['state'] == 'pending']
             return ('Your reminders (America/Chicago):\n' + '\n'.join(
-                f"• {r['body']} — {stamp(r['due_at'])}" + (f"; repeats every {r['interval_seconds'] // 60} minutes" if r['interval_seconds'] else '') + f" · ID {r['id']}"
+                f"• {'Read-only routine: ' if r.get('action') else ''}{r['body']} — {stamp(r['due_at'])}" + repeat_description(r) + f" · ID {r['id']}"
                 for r in rows)) if rows else 'You have no pending reminders. ' + HELP
         cancel = re.fullmatch(r'cancel (?:reminder|routine|timer|alarm) ([0-9a-f]{16})', command)
         if cancel:
             return self.cancel(cancel[1])
-        if reminder_request(text) or re.match(r'^(?:remind me|set (?:a )?routine|cancel (?:reminder|routine|timer|alarm)|reminder help)\b', command):
+        if reminder_request(text) or routine_intent(text) or re.match(r'^(?:remind me|set (?:a )?routine|cancel (?:reminder|routine|timer|alarm)|reminder help)\b', command):
             try:
                 parsed = parse(text, self.clock())
                 if not parsed:
-                    return HELP
+                    return ROUTINE_HELP if routine_intent(text) else HELP
                 body, due, interval = parsed
-                row = self.create(cid, request_id, body, due, interval)
-                repeat = f" Repeats every {row['interval_seconds'] // 60} minutes." if row['interval_seconds'] else ''
+                morning = routine_request(text)
+                daily_time = morning_clock(morning['clock']) if morning else None
+                action = None
+                if (morning and morning['mode'].lower() == 'do' and not morning['remind']
+                        and (morning['kind'] or 'routine').lower() == 'routine'):
+                    if local_tasks is None:
+                        return 'Local routine actions are unavailable. ' + ROUTINE_HELP
+                    action = local_tasks.validate_routine(body)
+                row = self.create(cid, request_id, body, due, interval, daily_time=daily_time, action=action)
+                repeat = repeat_description(row)
+                if row.get('action'):
+                    return (f"Read-only routine saved: {row['body']} — {stamp(row['due_at'])}.{repeat} ID {row['id']}. "
+                            'Results will appear in this chat while Web Bob is running, with one catch-up run after restart. '
+                            'Saved holds are checked before each run. No job or message to another person will be sent.')
                 return f"Reminder saved: {row['body']} — {stamp(row['due_at'])}.{repeat} ID {row['id']}. It will appear in this chat while Web Bob is running (or when it restarts); macOS notification is best effort; no text, email or job will be sent."
             except ValueError as exc:
-                return str(exc) if isinstance(exc, ReminderError) else 'That date or time is invalid. ' + HELP
+                from local_tasks import LocalTaskError
+                return str(exc) if isinstance(exc, (ReminderError, LocalTaskError)) else 'That date or time is invalid. ' + HELP
         return None
