@@ -57,6 +57,46 @@ class CapabilityLedgerTests(unittest.TestCase):
         self.assertEqual(target.read_text(), content)
         self.search.assert_not_called()
 
+    def test_ledger_F8_generation_budget_file_writable_via_chat(self):
+        runtime = self.home / 'Documents/bob-runtime'
+        folder = runtime / 'conductor/webchat'
+        accounting = self.root / 'accounting'
+        policy = runtime / 'conductor/state/generation-policy.json'
+        budget = runtime / 'conductor/state/generation-budgets/owner.json'
+        budget.parent.mkdir(parents=True)
+        originals = {
+            policy: json.dumps(dict(budget_id='owner', purpose='product', accounting_root=str(accounting))),
+            budget: json.dumps(dict(limit=1)),
+        }
+        for target, content in originals.items():
+            target.write_text(content)
+        refusal = 'Web Bob storage is outside the local file allowlist.'
+        with patch('pathlib.Path.home', return_value=self.home), patch.dict(
+                os.environ, HOME=str(self.home), BOB_ROOT=str(runtime),
+                BOB_GENERATION_BUDGET_ROOT=str(accounting), BOB_GOOGLE_CALENDAR_CREDENTIALS=''):
+            actions = self.production_actions(folder)
+            self.assertIn(runtime, actions.protected_paths())
+            for index, (target, original) in enumerate(originals.items()):
+                with self.subTest(path=target):
+                    command = f'write file {target}: {{"limit":999999}}'
+                    self.assertEqual(actions.handle(command, 'chat', f'F8-direct-{index}', self.state),
+                                     refusal)
+                    with self.assertRaises(LocalTaskError) as raised:
+                        actions.files.parts(str(target))
+                    self.assertEqual(str(raised.exception), refusal)
+
+                    # A pre-protection draft must also be refused after restart.
+                    legacy = LocalTasks(folder, files=self.files, search=self.search, clock=self.clock)
+                    self.assertIn('Local draft', legacy.handle(
+                        command, 'chat', f'F8-legacy-{index}', self.state))
+                    with legacy.locked() as rows:
+                        row, = (r for r in rows.values() if r['state'] == 'draft')
+                    restored = self.production_actions(folder)
+                    self.assertEqual(restored.handle('yes ' + row['token'], 'chat',
+                                                     f'F8-confirm-{index}', self.state), refusal)
+                    self.assertEqual(target.read_text(), original)
+            self.search.assert_not_called()
+
     def test_ledger_F1_pgpassword_assignment_bypasses_secret_filter(self):
         secret = 'SYNTHETIC_SECRET_1006'
         for index, content in enumerate(('export PGPASSWORD=' + secret + '\n',
