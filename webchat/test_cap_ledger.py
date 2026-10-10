@@ -64,6 +64,13 @@ class CapabilityLedgerTests(unittest.TestCase):
             with self.subTest(content=content):
                 self.assert_secret_read_refused('Documents/note.txt', content, (secret,), f'F1-{index}')
 
+    def test_ledger_F2_generic_json_secret_fields_bypass_path_filter(self):
+        password = 'synthetic-owner-password-123'
+        refresh_token = 'synthetic-refresh-token-123'
+        content = json.dumps(dict(password=password, refresh_token=refresh_token))
+        self.assert_secret_read_refused('Documents/export.json', content,
+                                        (password, refresh_token), 'F2')
+
 
 if __name__ == '__main__':
     unittest.main()
