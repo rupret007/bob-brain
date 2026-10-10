@@ -148,7 +148,7 @@ def password_at(folder):
 
 
 class Chat(TaskDispatch):
-    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, local_tasks=None):
+    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, local_tasks=None, gmail=None):
         self.folder, self.root = folder, root
         folder.mkdir(parents=True, exist_ok=True)
         self.password = password_at(folder)
@@ -182,7 +182,9 @@ class Chat(TaskDispatch):
         # gain permission to display OS alerts. The server entry point opts in.
         self.reminder_notifier = reminder_notifier if reminder_notifier is not None else lambda body: False
         from calendar_actions import CalendarActions
+        from gmail_read import GmailRead
         self.calendar = calendar if calendar is not None else CalendarActions(folder)
+        self.gmail = gmail if gmail is not None else GmailRead()
         # Keep direct lookups and routines on the established search adapter,
         # including its offline release/test injection boundary.
         self.local_tasks = local_tasks if local_tasks is not None else LocalTasks(
@@ -224,7 +226,7 @@ class Chat(TaskDispatch):
             conversation['_coordination_excluded'] = True
         pending = conversation.setdefault('_coordination_outbox', {})
         private_requests = {m.get('request_id') for m in conversation.get('messages', [])
-                            if m.get('private_memory') or m.get('texting')}
+                            if m.get('private_memory') or m.get('texting') or m.get('private_mail')}
         for event_id, record in list(pending.items()):
             if record.get('kind') == 'answer-delivered' and record.get('request_id') in private_requests:
                 pending.pop(event_id)
@@ -278,7 +280,8 @@ class Chat(TaskDispatch):
         user = next((m for m in reversed(messages) if m.get('role') == 'user'
                      and m.get('request_id') == last.get('request_id')), {})
         if (not user or last.get('texting') or user.get('texting') or
-                last.get('private_memory') or user.get('private_memory')):
+                last.get('private_memory') or user.get('private_memory') or
+                last.get('private_mail') or user.get('private_mail')):
             return []
         records = []
         permission = conversation.get('intent_state', {}).get('last_permission') or {}
@@ -358,7 +361,7 @@ class Chat(TaskDispatch):
     def public(self, value):
         excluded = {"_coordination_outbox", "_coordination_excluded", "_coordination_prepared_batches", "codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job",
                     "pending_memory", "pending_memory_id", "pending_memory_removal", "_project_edit", "_project_removal", "_project_intent", "_report_inputs",
-                    "_project_handoffs", "_project_returns"}
+                    "_project_handoffs", "_project_returns", "_gmail"}
         # Extensions never see core-private state or mutable conversation objects.
         filtered = {k: copy.deepcopy(v) for k, v in value.items() if k not in excluded}
         public = {k: v for k, v in self.texting.public(filtered).items() if k not in excluded}
@@ -723,6 +726,16 @@ class Chat(TaskDispatch):
                 for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
                     conversation.pop(key, None)
                 return self.intent_reply(conversation, self.redact(calendar), provider='calendar')
+            if self.gmail.matches(text):
+                gmail = self.gmail.handle(text, identifier, request_id, intent_state,
+                                          conversation.setdefault('_gmail', {}))
+                if gmail is not None:
+                    for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
+                        conversation.pop(key, None)
+                    for message in conversation['messages']:
+                        if message.get('request_id') == request_id:
+                            message['private_mail'] = True
+                    return self.intent_reply(conversation, self.redact(gmail), provider='gmail')
             from reminders import ReminderError
             import actions_intent
             if actions_intent.reminder_request(text) or actions_intent.routine_intent(text) or actions_intent.routine_request(text):

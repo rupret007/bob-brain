@@ -694,6 +694,34 @@ global and project holds. The separate reminder and BlueBubbles text-read paths
 are unchanged; outbound texts still require their existing exact draft approval.
 Tests inject Calendar and messaging clients and never call real services.
 
+### Gmail (direct, read-only)
+
+Use `show my gmail`, `list inbox`, `read my email`, or `gmail`. Listing shows up
+to 10 recent messages with ID, date, and sender from the authorized inbox.
+Use `read email <id>` or `read message <id>` to open one listed ID as bounded
+plain text. `cancel gmail` forgets this conversation’s current listing.
+`gmail help` prints the supported commands.
+
+Gmail is read-only. There is no search, send, draft, attachment download, or
+background polling. Message bodies are quoted as inert text; instructions inside
+an email are never executed. Fetched mail stays in the requesting conversation
+and is excluded from model context, handoff records, and other chats. A listed
+ID from one conversation cannot be opened in another.
+
+This path uses a **dedicated** authorized-user OAuth JSON file with
+`gmail.readonly` only. Set `BOB_GOOGLE_GMAIL_CREDENTIALS` in the server's
+environment to that private file (mode 0600). Calendar credentials and
+application-default credentials are not used. One-time owner setup: create a
+free Google Cloud OAuth client, enable the Gmail API, authorize the owner
+account with the `https://www.googleapis.com/auth/gmail.readonly` scope, and
+point the env var at the resulting `client_id` / `client_secret` /
+`refresh_token` JSON. Missing, invalid, or denied credentials return
+`needs Google auth`. Credentials are never printed, changed, or stored in chat.
+OAuth refresh and Gmail HTTPS calls occur only for an explicit list or read of
+a listed ID, GET-only on `www.googleapis.com/gmail/v1`, with no automatic
+retries. Saved global and project holds are checked before any credential read
+or network call.
+
 ### Local tasks, web lookups, and morning routines
 
 These commands run directly in the chat process, before coding-job routing:
