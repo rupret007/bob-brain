@@ -709,6 +709,7 @@ These commands run directly in the chat process, before coding-job routing:
 | `terminal: cat ~/Documents/notes.txt` / `terminal: ls ~/Documents` | Use the same bounded file read/list operations. |
 | `search the web for Python` / `look up Python` | Fetch a DuckDuckGo instant answer and its source URL. |
 | `every morning do read file ~/Documents/notes.txt` | Read that file each morning and save the result in this chat. |
+| `every morning do show my calendar today` | Run the existing Google Calendar read for today and save the result in this chat. |
 | `every morning at 8am do look up Python` | Run the same fixed web lookup each morning. |
 | `every morning remind me to stretch` | Save a notification-only morning reminder. |
 
@@ -762,6 +763,10 @@ explicit owner resume releases them. Each occurrence has a durable receipt, so
 a crash before its chat message is saved does not repeat the action. Results go
 to the originating chat without OS alerts; notification-only reminders retain
 their best-effort macOS notification only with the owner opt-in above. The Mac must be awake with Web Bob
-running. Writes, deletes, calendar writes and sends cannot run unattended; sends
-retain the existing separate draft and explicit approval flow. Tests inject a
+running. Writes, deletes, calendar writes, invitations and sends cannot run unattended; sends
+retain the existing separate draft and explicit approval flow. The only Calendar
+routine is the existing `show my calendar today` read, using the current
+Google Calendar adapter, reminder store, one-action-per-tick scheduler, and
+durable occurrence receipts. Auth failures are disclosed as failed reads.
+Tests inject a
 temporary home, network adapter, Calendar/messaging clients and notification hook.

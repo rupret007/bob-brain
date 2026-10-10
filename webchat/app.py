@@ -1316,8 +1316,13 @@ class Chat(TaskDispatch):
                     if scopes:
                         return False  # A scheduler tick never lifts a saved hold.
                     routine_ran = True
-                    result = self.local_tasks.handle(row['action'], row['conversation_id'],
-                                                     'routine:' + notice, state, routine=True)
+                    from calendar_actions import today_routine
+                    if today_routine(row['action']):
+                        result = self.calendar.handle(row['action'], row['conversation_id'],
+                                                      'routine:' + notice, state)
+                    else:
+                        result = self.local_tasks.handle(row['action'], row['conversation_id'],
+                                                         'routine:' + notice, state, routine=True)
                     content = 'Routine result (due ' + stamp(row['due_at']) + '):\n' + (result or 'Unsupported action; no action ran.')
                 value['messages'].append(dict(id=str(uuid.uuid4()), role='assistant', status='done', provider='reminders',
                     content=self.redact(content),

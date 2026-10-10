@@ -33,7 +33,13 @@ UNCERTAIN = ('Calendar creation is unconfirmed. Check Google Calendar before mak
 PREFIX = r'^(?:(?:please\s+)|(?:(?:can|could|would) you\s+))*'
 CREATE = re.compile(PREFIX + r'(?:create|add|set(?:\s+up)?|schedule)\s+(?:an?\s+)?(?:google\s+)?calendar\s+event\b\s*(.*)$', re.I | re.S)
 READ = re.compile(PREFIX + r'(?:(?:read|show|list)\s+|what(?:\x27s| is) on\s+)?(?:my\s+)?(?:google\s+)?calendar(?:\s+events)?(?:\s+(today|tomorrow|this week|next 7 days|on \d{4}-\d{2}-\d{2}))?[.?!]?$', re.I)
+TODAY_ROUTINE = re.compile(PREFIX + r'show my calendar today[.?!]?$', re.I)
 CONTROL = re.compile(r'^(yes|cancel)\s+(wbcal-[a-f0-9]{32})$', re.I)
+
+
+def today_routine(text):
+    """Morning routines may schedule this exact Calendar read, nothing else."""
+    return bool(TODAY_ROUTINE.fullmatch((text or '').strip()))
 
 
 class CalendarError(ValueError):

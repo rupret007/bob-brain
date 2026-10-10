@@ -431,13 +431,18 @@ class LocalTasks:
         atomic_text(self.folder / 'receipts.json', payload)
 
     def validate_routine(self, text, *, check_path=True):
+        from calendar_actions import today_routine
+        if today_routine(text):
+            return text.strip()
+        if re.search(r'\b(?:create|invite|delete|send)\b', text, re.I):
+            raise LocalTaskError('Routines cannot create, invite, delete, or send. No routine was saved.')
         if self.isolated_files and check_path and not SEARCH.fullmatch(text.strip()):
             return self.file_worker('validate_routine', [text], {})
         spec = parse(text)
         if not spec or spec['kind'] not in ('read', 'list', 'pwd', 'date', 'search'):
             raise LocalTaskError('Routines can only read files, list directories, run the fixed read-only terminal commands, '
-                                 'or look up the web. For a personal reminder use “every morning remind me to X”. '
-                                 'Writes, deletes and sends require a fresh direct request and any required confirmation.')
+                                 'look up the web, or show my calendar today. For a personal reminder use “every morning remind me to X”. '
+                                 'Writes, deletes, invites and sends require a fresh direct request and any required confirmation.')
         if check_path:
             try:
                 self.files.prepare(spec)

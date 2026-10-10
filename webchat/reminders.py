@@ -23,10 +23,11 @@ HELP = ('Try “remind me to check the oven in 10 minutes”, “remind me to ca
         'Local macOS notifications require owner opt-in and notification permission. '
         'Reminders never send texts or emails or start work.')
 ROUTINE_HELP = ('Try “every morning do read file ~/Documents/notes.txt”, '
+                '“every morning do show my calendar today”, '
                 '“every morning at 8am do search the web for Chicago weather”, or '
                 '“every morning remind me to stretch”. Morning defaults to 9am America/Chicago. '
                 'Read-only routines run in this chat while Web Bob is running; one overdue run catches up after restart. '
-                'Use “my routines” and “cancel routine ID”. Writes, deletes and sends cannot run unattended.')
+                'Use “my routines” and “cancel routine ID”. Writes, deletes, invites and sends cannot run unattended.')
 UNITS = {'second': 1, 'minute': 60, 'hour': 3600, 'day': 86400}
 DURATION = r'\d+\s+(?:seconds?|minutes?|hours?|days?)'
 CLOCK = r'\d{1,2}(?::\d{2}\s*(?:am|pm)?|\s*(?:am|pm))'
