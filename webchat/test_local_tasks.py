@@ -1,12 +1,16 @@
 """PR3 boundaries: temporary home, fake network/notifications/calendar only."""
 import concurrent.futures
 import copy
+import fcntl
 from datetime import datetime
 import io
 import json
 import os
 from pathlib import Path
 import tempfile
+import subprocess
+import sys
+import time
 import unittest
 from unittest.mock import Mock, patch
 import uuid
@@ -204,6 +208,11 @@ class SecretReadTests(LocalFixture):
     def test_renamed_secret_content_never_reaches_reply_or_persisted_receipt(self):
         secret = 'synthetic-owner-secret-123'
         contents = (
+            'name,url,username,password\nExample,https://example.test,jeff,' + secret,
+            'name;url;username;password\nExample;https://example.test;jeff;' + secret,
+            'name\tpassword\nExample\t' + secret,
+            '<credentials><password>' + secret + '</password></credentials>',
+            '<credentials><auth:password xmlns:auth="urn:test">' + secret + '</auth:password></credentials>',
             json.dumps({'password': secret, 'refresh_token': secret}),
             json.dumps({'nested': [{'clientSecret': secret}]}),
             '{"pass\\u0077ord": "' + secret + '"}',
@@ -233,6 +242,29 @@ class SecretReadTests(LocalFixture):
         self.assertNotIn('sk-' + 'a' * 30, persisted)
         self.search.assert_not_called()
 
+    def test_credential_content_cannot_be_created_overwritten_or_deleted(self):
+        secret = '{"password":"synthetic-review-password"}'
+        self.file.write_text(secret)
+        for command in ('write file ~/Documents/note.txt: erased', 'delete file ~/Documents/note.txt',
+                        'create file ~/Documents/new.txt: ' + secret):
+            self.assertIn('Secret files or credential content', self.say(command))
+        self.assertEqual(self.file.read_text(), secret)
+        self.assertFalse((self.file.parent / 'new.txt').exists())
+        self.assertEqual(self.rows(), {})
+
+    def test_legacy_confirmed_drafts_recheck_credential_content(self):
+        secret = '{"password":"synthetic-review-password"}'
+        for kind in ('write', 'delete'):
+            self.file.write_text(secret)
+            # Model a pre-upgrade draft with the exact current fingerprint.
+            with patch('local_tasks.safe_read', return_value=''):
+                row = self.draft(f'{kind} file ~/Documents/note.txt' + (': erased' if kind == 'write' else ''))
+            reply = self.say('yes ' + row['token'])
+            self.assertIn('Secret files or credential content', reply)
+            self.assertEqual(self.file.read_text(), secret)
+            self.assertEqual(self.say('yes ' + row['token']), reply)
+        self.assertNotIn('synthetic-review-password', json.dumps(self.rows()))
+
     def test_read_rechecks_content_after_prepare(self):
         prepared = self.files.prepare(parse('read file ~/Documents/note.txt'))
         self.file.write_text('password = synthetic-new-secret')
@@ -244,6 +276,67 @@ class SecretReadTests(LocalFixture):
                         '{"title": "Morning notes", "tasks": ["water plants"]}'):
             self.file.write_text(content)
             self.assertIn(content, self.say('read file ~/Documents/note.txt'))
+
+
+class DeadlineTests(LocalFixture):
+    def production_actions(self):
+        actions = LocalTasks(self.root / 'bounded-state', root=self.root / 'runtime', search=self.search, clock=self.clock)
+        actions.files.home = self.home
+        return actions
+
+    def test_contended_receipt_lock_returns_without_blocking_followup_chat_work(self):
+        actions = self.production_actions()
+        actions.folder.mkdir(parents=True)
+        chat = Chat(self.root / 'chat', self.root, OfflineProviders(), local_tasks=actions,
+                    texting=Texting(Mock(), Mock()), calendar=Mock(handle=Mock(return_value=None)),
+                    reminder_notifier=Mock())
+        self.addCleanup(chat.close)
+        cid = chat.new_conversation()['id']
+        with (actions.folder / 'receipts.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            started = time.monotonic()
+            reply = chat.submit(cid, 'terminal: pwd', str(uuid.uuid4()))['messages'][-1]
+            self.assertIn('busy; no action ran', reply['content'])
+            self.assertLess(time.monotonic() - started, 4)
+        reply = chat.submit(cid, 'terminal: pwd', str(uuid.uuid4()))['messages'][-1]
+        self.assertIn('Terminal pwd', reply['content'])
+
+    def test_stalled_file_io_worker_is_killed_and_claim_is_not_replayed(self):
+        actions = self.production_actions()
+        marker = self.root / 'late-write'
+        # Run the real receipt/execution path in a fresh process with only its
+        # read syscall replaced by a stalled synthetic filesystem boundary.
+        script = '''
+import json, sys, time
+from pathlib import Path
+from unittest.mock import patch
+sys.path.insert(0, sys.argv[1])
+import local_task_worker
+def stalled_read(*args):
+    time.sleep(30)
+    Path(sys.argv[2]).write_text('worker continued after timeout')
+    return b'original'
+with patch('local_tasks.os.read', side_effect=stalled_read):
+    print(json.dumps({'result': local_task_worker.run(json.load(sys.stdin))}))
+'''
+        real_popen = subprocess.Popen
+        def start(_command, **kwargs):
+            return real_popen([sys.executable, '-c', script, str(Path(__file__).parent), str(marker)], **kwargs)
+        # Stall after the destructive draft's consent has been consumed.
+        self.assertIn('Local draft', self.say('delete file ~/Documents/note.txt', rid='draft', actions=actions))
+        with actions.locked() as rows:
+            row, = rows.values()
+        with patch('local_tasks.subprocess.Popen', side_effect=start) as spawn, \
+                patch('local_tasks.OPERATION_TIMEOUT', 0.5):
+            started = time.monotonic()
+            reply = self.say('yes ' + row['token'], rid='approve', actions=actions)
+        self.assertIn('timed out', reply)
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual(spawn.call_count, 1)
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.file.read_text(), 'original')
+        self.assertEqual(self.say('yes ' + row['token'], actions=actions), UNCERTAIN)
+        self.assertTrue(self.file.exists())
 
 
 class LocalTaskTests(LocalFixture):

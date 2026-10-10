@@ -5,15 +5,19 @@ directory descriptors with O_NOFOLLOW; private/configuration trees are excluded.
 Destructive consent and execution claims are durable before effects begin.
 """
 from contextlib import contextmanager
+import csv
 from datetime import datetime
 import fcntl
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import re
 import shlex
 import stat
+import subprocess
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -24,6 +28,10 @@ import chat_intent
 from failover import atomic_text
 
 LIMIT = 64 * 1024
+OPERATION_TIMEOUT = 5
+LOCK_TIMEOUT = 1
+TIMED_OUT = 'Local action timed out; no successful result was verified. ' + (
+    'Any consumed confirmation will not be replayed. Inspect the file before making a new request.')
 HELP = ('Local tasks: read file ~/Documents/notes.txt; list files ~/Documents; '
         'create file ~/Documents/note.txt: hello; write file ~/Documents/note.txt: replacement; '
         'delete file ~/Documents/note.txt. Overwrites and deletes need an exact yes wblocal-… reply. '
@@ -70,7 +78,17 @@ def safe_read(data):
         structured = json.loads(text)
     except ValueError:
         structured = None
-    if (credential_fields(structured) or SECRET_ASSIGNMENT.search(text) or KEY.search(text)
+    # CSV/TSV exports and XML tags label credentials without JSON's colon.
+    # Inspect every record so leading comments/metadata cannot hide a header.
+    delimited_secret = False
+    for delimiter in (',', ';', '\t', '|'):
+        try:
+            delimited_secret |= any(len(row) > 1 and any(SECRET_KEY.fullmatch(cell.strip()) for cell in row)
+                                    for row in csv.reader(io.StringIO(text), delimiter=delimiter))
+        except csv.Error:
+            raise LocalTaskError(SECRET_REFUSAL) from None
+    xml_secret = re.search(r'<\s*(?:[\w.-]+:)?' + SECRET_FIELD + r'(?=[\s/>])', text, re.I)
+    if (delimited_secret or xml_secret or credential_fields(structured) or SECRET_ASSIGNMENT.search(text) or KEY.search(text)
             or re.search(r'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----', text)
             or re.search(r'\b(?:Authorization\s*:\s*)?(?:Bearer|Basic)\s+[A-Za-z0-9+/_.=-]+', text, re.I)
             or re.search(r'\b[a-z][a-z0-9+.-]*://[^\s/:]+:[^\s/@]+@', text, re.I)):
@@ -224,6 +242,8 @@ class LocalFiles:
                     size=info.st_size, digest=hashlib.sha256(data).hexdigest()), data
 
     def prepare(self, spec):
+        if spec['kind'] in ('create', 'write'):
+            safe_read(spec['content'].encode('utf-8'))
         if 'path' not in spec:
             return dict(spec)
         parts = self.parts(spec['path'])
@@ -236,7 +256,9 @@ class LocalFiles:
         with self.directory(parts[:-1]) as parent:
             try:
                 with self.file(parent, parts[-1]) as fd:
-                    snapshot, _ = self.snapshot(fd)
+                    snapshot, data = self.snapshot(fd)
+                    if spec['kind'] in ('write', 'delete'):
+                        safe_read(data)
             except FileNotFoundError:
                 if spec['kind'] not in ('create', 'write'):
                     raise
@@ -247,6 +269,8 @@ class LocalFiles:
 
     def execute(self, spec):
         kind = spec['kind']
+        if kind in ('create', 'write'):
+            safe_read(spec['content'].encode('utf-8'))
         if kind == 'pwd':
             return 'Terminal pwd (local task directory): ' + str(self.home)
         if kind == 'date':
@@ -278,6 +302,9 @@ class LocalFiles:
                 snapshot, data = self.snapshot(fd)
                 if kind == 'read':
                     return 'File read: ' + spec['path'] + '\n' + safe_read(data)
+                # Absolute exclusion: consent and legacy drafts cannot authorize
+                # changes to a credential file, even with a matching snapshot.
+                safe_read(data)
                 if snapshot != spec.get('snapshot'):
                     raise LocalTaskError('File changed since the draft. Make a fresh request; nothing changed by this attempt.')
                 if kind == 'write':
@@ -301,7 +328,7 @@ class LocalFiles:
 
 
 class LocalTasks:
-    def __init__(self, folder, files=None, search=None, clock=time.time, *, root=None):
+    def __init__(self, folder, files=None, search=None, clock=time.time, *, root=None, _worker=False):
         self.folder = Path(folder) / 'local-tasks'
         self.root = Path(root if root is not None else os.environ.get('BOB_ROOT', Path(folder).parent.parent)).resolve()
         self.files = files if files is not None else LocalFiles(
@@ -309,6 +336,29 @@ class LocalTasks:
             protected=self.protected_paths)
         self.search = search if search is not None else search_web
         self.clock = clock
+        # Explicitly injected file adapters are the in-process test boundary.
+        # Production file work, including receipts and routine validation, runs
+        # in a fresh killable interpreter; never fork the threaded chat server.
+        self.isolated_files = files is None and not _worker
+
+    def file_worker(self, method, args, kwargs):
+        payload = dict(folder=str(self.folder.parent), root=str(self.root), home=str(self.files.home),
+                       now=self.clock(), method=method, args=args, kwargs=kwargs)
+        process = subprocess.Popen([sys.executable, str(Path(__file__).with_name('local_task_worker.py'))],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                   text=True)
+        try:
+            output, _ = process.communicate(json.dumps(payload), timeout=OPERATION_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            raise LocalTaskError(TIMED_OUT) from None
+        if process.returncode:
+            raise LocalTaskError(UNCERTAIN)
+        result = json.loads(output)
+        if 'error' in result:
+            raise LocalTaskError(result['error'])
+        return result['result']
 
     def protected_paths(self):
         # Use the same policy reader as provider admission. Refresh at every
@@ -343,9 +393,20 @@ class LocalTasks:
         path, lock_path = self.folder / 'receipts.json', self.folder / 'receipts.lock'
         if path.is_symlink() or lock_path.is_symlink():
             raise LocalTaskError('Local receipt storage needs repair.')
-        with lock_path.open('a') as lock:
-            lock_path.chmod(0o600)
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        with os.fdopen(fd, 'a') as lock:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise LocalTaskError('Local receipt storage needs repair.')
+            os.fchmod(fd, 0o600)
+            deadline = time.monotonic() + LOCK_TIMEOUT
+            while True:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise LocalTaskError('Local receipt storage is busy; no action ran. Try again later.')
+                    time.sleep(0.01)
             try:
                 if path.exists() and (not path.is_file() or path.stat().st_size > 4 * 1024 * 1024):
                     raise LocalTaskError('Local receipt storage is full or needs repair.')
@@ -363,6 +424,8 @@ class LocalTasks:
         atomic_text(self.folder / 'receipts.json', payload)
 
     def validate_routine(self, text, *, check_path=True):
+        if self.isolated_files and check_path and not SEARCH.fullmatch(text.strip()):
+            return self.file_worker('validate_routine', [text], {})
         spec = parse(text)
         if not spec or spec['kind'] not in ('read', 'list', 'pwd', 'date', 'search'):
             raise LocalTaskError('Routines can only read files, list directories, run the fixed read-only terminal commands, '
@@ -393,6 +456,10 @@ class LocalTasks:
 
     def handle(self, text, cid, request_id, intent_state, *, routine=False):
         try:
+            if self.isolated_files and not SEARCH.fullmatch(text.strip()) and (
+                    CONTROL.fullmatch(text.strip()) or FILE.fullmatch(text.strip()) or
+                    LIST.fullmatch(text.strip()) or TERMINAL.fullmatch(text.strip())):
+                return self.file_worker('handle', [text, cid, request_id, intent_state], dict(routine=routine))
             control = CONTROL.fullmatch(text.strip())
             if control:
                 if routine:

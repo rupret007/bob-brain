@@ -612,7 +612,12 @@ and retains bounded completed history; the saved chat keeps delivered notices.
 
 Reminders use Web Bob's existing one-second background loop; they do not start
 job-runner or another scheduler. Delivery saves a message in the originating
-chat and a Jobs entry, then attempts a local macOS notification using `osascript`.
+chat and a Jobs entry. OS notifications are disabled by default, including for
+pending reminders restored after an upgrade. To authorize best-effort local alerts,
+the owner can set `BOB_REMINDER_MACOS_NOTIFICATIONS=1` for the production server
+entry point. Tests and staging must explicitly inject a fake notifier; constructing
+`Chat` never enables OS notifications, even with that environment variable set.
+When authorized, delivery attempts a local macOS notification using `osascript`.
 The Mac must be awake with Web Bob running in a user session; macOS notification
 permission and Focus settings control whether the alert is displayed. A successful
 script exit is not proof that the user saw an alert. Closed browsers see the saved
@@ -720,7 +725,10 @@ OS permission to access the selected files.
 Credential/key filenames are excluded even in visible directories. Reads (including
 terminal `cat` and scheduled reads) refuse the entire result before returning or
 persisting content when it contains credential fields, private-key blocks, or
-recognized token/authentication patterns. This conservative check can reject
+recognized token/authentication patterns, including CSV headers and XML tags.
+Creates and replacements also reject credential content; overwrites and deletes
+inspect existing content both when drafting and immediately before the effect.
+Confirmation cannot override credential protection. This conservative check can reject
 credential examples; it cannot identify arbitrary unlabelled secrets in prose.
 
 Overwrite/delete drafts require a separate exact `yes wblocal-…` in the same chat
@@ -732,6 +740,10 @@ change, and success is recorded only after the operation completes. An interrupt
 or failed operation remains unconfirmed and is never automatically replayed. Check
 the actual file before retrying with a new request. Receipt storage is bounded to
 1,000 requests / 4 MiB and fails visibly when full.
+Production file operations and routine path validation run in a separate process
+with a five-second deadline, including receipt I/O. Receipt locks wait at most one
+second. A timeout kills the worker and reports an unverified result; any consumed
+confirmation remains non-replayable. Test file adapters are explicitly injected.
 
 The web adapter uses one HTTPS GET endpoint, with a ten-second timeout, bounded
 response, no proxies or redirects, and no page-following, credentials or paid API.
@@ -749,7 +761,7 @@ global/project holds are checked both at registration and each run; only an
 explicit owner resume releases them. Each occurrence has a durable receipt, so
 a crash before its chat message is saved does not repeat the action. Results go
 to the originating chat without OS alerts; notification-only reminders retain
-their existing best-effort macOS notification. The Mac must be awake with Web Bob
+their best-effort macOS notification only with the owner opt-in above. The Mac must be awake with Web Bob
 running. Writes, deletes, calendar writes and sends cannot run unattended; sends
 retain the existing separate draft and explicit approval flow. Tests inject a
 temporary home, network adapter, Calendar/messaging clients and notification hook.

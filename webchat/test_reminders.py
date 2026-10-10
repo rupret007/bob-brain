@@ -214,7 +214,8 @@ class ReminderChatTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.providers = OfflineProviders()
-        self.chat = Chat(self.root / 'conductor/webchat', self.root, self.providers)
+        self.chat = Chat(self.root / 'conductor/webchat', self.root, self.providers,
+                         reminder_notifier=self.notify)
         self.addCleanup(self.chat.close)
         self.cid = self.chat.new_conversation()['id']
         self.now = time.time()
@@ -268,7 +269,7 @@ class ReminderChatTests(unittest.TestCase):
         self.assertEqual(self.say('remind me to check oven in 1 second', rid), first)
         self.now += 2
         self.chat.deliver_reminders()
-        restored = Chat(self.chat.folder, self.root, self.providers)
+        restored = Chat(self.chat.folder, self.root, self.providers, reminder_notifier=self.notify)
         try:
             restored.deliver_reminders()
             notices = [m for m in restored.history(self.cid)['messages'] if m.get('reminder_notice')]
@@ -293,7 +294,7 @@ class ReminderChatTests(unittest.TestCase):
         self.say('Set a timer for 1 second')
         folder = self.chat.folder
         self.chat.close()
-        restored = Chat(folder, self.root, self.providers)
+        restored = Chat(folder, self.root, self.providers, reminder_notifier=self.notify)
         self.addCleanup(restored.close)
         restored.reminders.clock = lambda: self.now + 60
         observed = []

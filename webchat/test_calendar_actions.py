@@ -71,6 +71,17 @@ class CalendarFixture(unittest.TestCase):
 
 
 class CalendarTests(CalendarFixture):
+    def test_calendar_reads_recheck_saved_global_hold_before_auth_or_network(self):
+        import chat_intent
+        self.state = chat_intent.new_state()
+        chat_intent.apply_turn(self.state, 'Hold all work', 'hold')
+        with patch.object(self.client, 'configured') as configured, \
+                patch.object(self.client, 'listing') as listing:
+            for text in ('show my calendar today', 'calendar tomorrow', 'list calendar this week'):
+                self.assertIn('On hold:', self.say(text))
+            configured.assert_not_called()
+            listing.assert_not_called()
+
     def test_defaults_and_supported_grammar(self):
         for text in ('Create a calendar event for 2am to go to bed',
                      'Please add a Google calendar event go to bed at 2am',

@@ -1,5 +1,6 @@
 """Direct PR1 actions use local storage, never a report worker or send API."""
 from datetime import datetime
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -88,6 +89,48 @@ class ActionIntentTests(unittest.TestCase):
         self.assertFalse(chat.reminders.listing())
         self.assertFalse(task_queue.tasks(self.root))
         self.assertFalse(providers.calls)
+
+    def test_trailing_constraints_and_timezone_qualifiers_never_schedule(self):
+        providers = OfflineProviders()
+        chat = Chat(self.root / 'chat', self.root, providers)
+        self.addCleanup(chat.close)
+        chat.reminders.clock = lambda: self.now
+        cid = chat.new_conversation()['id']
+        suffixes = ('but do not save it yet', 'but ask me before saving it',
+                    "but don't create it", 'without my approval', 'PST', 'UTC',
+                    'America/Los_Angeles', 'Pacific time')
+        with patch('app.parse_work', side_effect=AssertionError('Entered job queue')):
+            for suffix in suffixes:
+                with self.subTest(suffix=suffix):
+                    reply = chat.submit(cid, 'Create a reminder for 2am to go to bed, ' + suffix,
+                                        str(uuid.uuid4()))['messages'][-1]
+                    self.assertEqual(reply['provider'], 'reminders')
+                    self.assertIn('Nothing was saved', reply['content'])
+        for command in ('remind me every 2 hours to stretch, but ask me before saving it',
+                        'every morning remind me to stretch, but do not save it yet'):
+            self.assertIn('Nothing was saved', chat.reminders.handle(command, cid, command))
+        self.assertFalse(chat.reminders.listing())
+        self.assertFalse(providers.calls)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_default_chat_never_notifies_even_for_restored_reminders_or_inherited_opt_in(self):
+        providers = OfflineProviders()
+        # Only the production entry point may interpret the owner's opt-in.
+        # A staging Chat must stay silent even if it inherits that environment.
+        with patch.dict(os.environ, BOB_REMINDER_MACOS_NOTIFICATIONS='1'), \
+                patch('reminders.sys.platform', 'darwin'), patch('reminders.subprocess.run') as os_call:
+            chat = Chat(self.root / 'chat', self.root, providers)
+            cid = chat.new_conversation()['id']
+            chat.reminders.clock = lambda: self.now
+            chat.submit(cid, 'Set a timer in 1 second', str(uuid.uuid4()))
+            chat.close()
+            restored = Chat(self.root / 'chat', self.root, providers)
+            self.addCleanup(restored.close)
+            self.now += 2
+            restored.reminders.clock = lambda: self.now
+            restored.deliver_reminders()
+            self.assertIn('Reminder: Timer', restored.history(cid)['messages'][-1]['content'])
+            os_call.assert_not_called()
 
     def test_risky_body_is_only_reminder_text_never_a_send_or_job(self):
         providers = OfflineProviders()

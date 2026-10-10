@@ -176,9 +176,11 @@ class Chat(TaskDispatch):
         self.texting = texting or Texting()
         self.texting.instinct.bind_state(folder)
         self.voice = VoiceCalls(self)
-        from reminders import Reminders, notify_macos
+        from reminders import Reminders
         self.reminders = Reminders(folder)
-        self.reminder_notifier = notify_macos if reminder_notifier is None else reminder_notifier
+        # Tests, staging, and restored pending reminders must never implicitly
+        # gain permission to display OS alerts. The server entry point opts in.
+        self.reminder_notifier = reminder_notifier if reminder_notifier is not None else lambda body: False
         from calendar_actions import CalendarActions
         self.calendar = calendar if calendar is not None else CalendarActions(folder)
         # Keep direct lookups and routines on the established search adapter,
@@ -2171,7 +2173,9 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise SystemExit("Bob web chat is already running.")
-        chat = Chat()
+        from reminders import notify_macos
+        notifier = notify_macos if os.environ.get('BOB_REMINDER_MACOS_NOTIFICATIONS') == '1' else None
+        chat = Chat(reminder_notifier=notifier)
         origin_path = HERE / ".public-origin"
         origin = origin_path.read_text().strip() if origin_path.exists() else ""
         server = Server((HOST, PORT), chat, origin)

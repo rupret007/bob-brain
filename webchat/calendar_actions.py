@@ -227,10 +227,10 @@ class CalendarActions:
                 return 'Use the exact yes wbcal-… or cancel wbcal-… message from the draft. Nothing created.'
             if text.lower() == 'calendar help':
                 return HELP
+            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
+            if scopes:
+                return chat_intent.hold_reply(scopes)
             if CREATE.fullmatch(text):
-                scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
-                if scopes:
-                    return chat_intent.hold_reply(scopes)
                 return self.draft(text, cid, request_id)
             return self.read(READ.fullmatch(text)[1])
         except CalendarError as exc:

@@ -20,7 +20,7 @@ HELP = ('Try “remind me to check the oven in 10 minutes”, “remind me to ca
         'You can also say “create a reminder for 2am to go to bed” or “set a timer for 10 minutes”. '
         'Times use America/Chicago; a clock time without a date means its next occurrence. '
         'Reminders appear here and in Jobs while Web Bob is running; overdue reminders arrive when it returns. '
-        'Local macOS notifications are best effort and require notification permission. '
+        'Local macOS notifications require owner opt-in and notification permission. '
         'Reminders never send texts or emails or start work.')
 ROUTINE_HELP = ('Try “every morning do read file ~/Documents/notes.txt”, '
                 '“every morning at 8am do search the web for Chicago weather”, or '
@@ -33,6 +33,9 @@ CLOCK = r'\d{1,2}(?::\d{2}\s*(?:am|pm)?|\s*(?:am|pm))'
 WHEN = (r'(?:(?:in\s+)?' + DURATION + r'|(?:on\s+)?(?:\d{4}-\d{2}-\d{2}|today|tomorrow)'
         r'(?:\s+at)?\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?|'
         r'(?:at\s+)?\d{4}-\d{2}-\d{2}t\S+|(?:at\s+)?' + CLOCK + r')')
+TIMEZONE = re.compile(r'\b(?:UTC|GMT|[ECMP][SD]T|'
+                      r'(?:America|Europe|Asia|Africa|Australia|Pacific|Atlantic|Indian|Etc)/[\w/+-]+|'
+                      r'(?:eastern|central|mountain|pacific)\s+(?:(?:standard|daylight)\s+)?time)\b', re.I)
 
 
 def notify_macos(body):
@@ -105,6 +108,17 @@ def instant(text, now):
 
 def parse(text, now):
     stripped = text.strip().rstrip('.?!')
+    # Constraints anywhere in a recognized request apply before any schedule
+    # variant (including recurring reminders) is allowed to create a row.
+    if re.search(r"\b(?:do\s+not|don't|don’t|never)\s+(?:save|create|schedule|set|add)|"
+                 r'\b(?:ask|confirm|check)(?:\s+with)?\s+me\s+(?:first|before)|'
+                 r'\b(?:wait|hold off)\s+(?:until|before)|\b(?:before|without)\s+my\s+(?:approval|confirmation)',
+                 stripped, re.I):
+        raise ReminderError('Nothing was saved. Send a new reminder request when you want it scheduled.')
+    if TIMEZONE.search(stripped):
+        raise ReminderError('The reminder timezone needs clarification. Nothing was saved. '
+                            'Use America/Chicago local clock times without a timezone qualifier, '
+                            'or an ISO date/time with an explicit UTC offset.')
     morning = routine_request(text)
     if morning:
         clock = morning_clock(morning['clock'])
@@ -355,7 +369,7 @@ class Reminders:
                     return (f"Read-only routine saved: {row['body']} — {stamp(row['due_at'])}.{repeat} ID {row['id']}. "
                             'Results will appear in this chat while Web Bob is running, with one catch-up run after restart. '
                             'Saved holds are checked before each run. No job or message to another person will be sent.')
-                return f"Reminder saved: {row['body']} — {stamp(row['due_at'])}.{repeat} ID {row['id']}. It will appear in this chat while Web Bob is running (or when it restarts); macOS notification is best effort; no text, email or job will be sent."
+                return f"Reminder saved: {row['body']} — {stamp(row['due_at'])}.{repeat} ID {row['id']}. It will appear in this chat while Web Bob is running (or when it restarts); macOS alerts require owner opt-in; no text, email or job will be sent."
             except (UnicodeError, json.JSONDecodeError):
                 raise  # Storage corruption is not a date/time parsing error.
             except ValueError as exc:
