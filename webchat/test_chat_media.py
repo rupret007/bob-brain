@@ -361,6 +361,7 @@ class ChatMediaTests(unittest.TestCase):
             bundle = self.enrich([memo])
         self.assertIn('early words', bundle['text'])
         self.assertIn('0:30 of 0:45 (truncated)', bundle['text'])
+        self.assertTrue(any('0:30 of 0:45 (truncated)' in w and 'first 30s only' in w for w in bundle['warnings']))
         self.assertNotIn('4111', bundle['text'])
 
     def test_voice_memo_missing_model_timeout_silence_and_redaction(self):
@@ -412,14 +413,42 @@ class ChatMediaTests(unittest.TestCase):
                 self.enrich([memo], cancel=cancel)
 
     def test_transcribe_voice_memo_missing_cache_and_timeout_paths(self):
-        with patch.object(media, '_whisper_cached', return_value=False):
+        with patch.object(media, '_probe_duration', return_value=10.0), patch.object(media, '_whisper_cached', return_value=False):
             result = media.transcribe_voice_memo(Path('memo.mp3'))
         self.assertEqual(result['status'], 'unavailable')
         self.assertEqual(result['text'], media.TRANSCRIPTION_UNAVAILABLE)
-        with patch.object(media, '_whisper_cached', return_value=True), patch.object(media.shutil, 'which', return_value='whisper'), patch.object(media, '_run_ffmpeg'), patch.object(media.MediaBudget, 'run', side_effect=ValueError('Media preparation timed out; try a smaller attachment.')):
+        self.assertEqual(result['transcribed_duration_s'], 0)
+        self.assertEqual(result['coverage_label'], 'Transcription coverage not available')
+        with patch.object(media, '_probe_duration', return_value=10.0), patch.object(media, '_whisper_cached', return_value=True), patch.object(media.shutil, 'which', return_value='whisper'), patch.object(media, '_run_ffmpeg'), patch.object(media.MediaBudget, 'run', side_effect=ValueError('Media preparation timed out; try a smaller attachment.')):
             result = media.transcribe_voice_memo(Path('memo.mp3'))
         self.assertEqual(result['status'], 'timeout')
         self.assertIn('timed out', result['text'].lower())
+        self.assertEqual(result['transcribed_duration_s'], 0)
+        self.assertEqual(result['coverage_label'], 'Transcription coverage not available')
+
+    def test_transcribe_voice_memo_success_coverage_matches_duration(self):
+        def whisper_writes(cmd, timeout=None):
+            out_dir = Path(cmd[cmd.index('--output_dir') + 1])
+            (out_dir / 'audio.txt').write_text('heard words')
+            return ''
+
+        with patch.object(media, '_probe_duration', return_value=10.0), patch.object(media, '_whisper_cached', return_value=True), patch.object(media.shutil, 'which', return_value='whisper'), patch.object(media, '_run_ffmpeg'), patch.object(media.MediaBudget, 'run', side_effect=whisper_writes):
+            result = media.transcribe_voice_memo(Path('memo.mp3'))
+        self.assertEqual(result['status'], 'ok')
+        self.assertEqual(result['transcribed_duration_s'], 10)
+        self.assertFalse(result['truncated'])
+        self.assertEqual(result['coverage_label'], 'Transcribed 0:00–0:10')
+
+        def whisper_partial(cmd, timeout=None):
+            out_dir = Path(cmd[cmd.index('--output_dir') + 1])
+            (out_dir / 'audio.txt').write_text('partial')
+            return ''
+
+        with patch.object(media, '_probe_duration', return_value=45.0), patch.object(media, '_whisper_cached', return_value=True), patch.object(media.shutil, 'which', return_value='whisper'), patch.object(media, '_run_ffmpeg'), patch.object(media.MediaBudget, 'run', side_effect=whisper_partial):
+            result = media.transcribe_voice_memo(Path('memo.mp3'))
+        self.assertEqual(result['transcribed_duration_s'], 30)
+        self.assertTrue(result['truncated'])
+        self.assertIn('0:30 of 0:45 (truncated)', result['coverage_label'])
 
     @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe') and shutil.which('tesseract'), 'local media tools unavailable')
     def test_real_mov_frames_normalize_and_complete_under_budget(self):

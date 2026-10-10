@@ -325,17 +325,29 @@ def memo_coverage_label(full_duration_s: float | None, transcribed_s: float, tru
     return "Transcription coverage not available"
 
 
+def _memo_no_transcription_meta(full_duration: float | None) -> dict:
+    return {"full_duration_s": full_duration, "transcribed_duration_s": 0, "truncated": False,
+            "coverage_label": "Transcription coverage not available"}
+
+
+def _memo_success_transcription_meta(full_duration: float | None) -> dict:
+    if full_duration is not None and math.isfinite(full_duration) and full_duration > 0:
+        transcribed_s = min(MEMO_TRANSCRIBE_MAX_S, full_duration)
+    else:
+        transcribed_s = float(MEMO_TRANSCRIBE_MAX_S)
+    truncated = full_duration is not None and full_duration > MEMO_TRANSCRIBE_MAX_S
+    return {"full_duration_s": full_duration, "transcribed_duration_s": transcribed_s, "truncated": truncated,
+            "coverage_label": memo_coverage_label(full_duration, transcribed_s, truncated)}
+
+
 def transcribe_voice_memo(path: Path, budget=None) -> dict:
     """Local ffmpeg + cached Whisper only. Never downloads model weights."""
     budget = budget or MediaBudget()
     full_duration = _probe_duration(path, budget)
-    transcribed_cap = MEMO_TRANSCRIBE_MAX_S
-    truncated = full_duration is not None and full_duration > MEMO_TRANSCRIBE_MAX_S
-    base = {"source": "local-cache", "model": f"{WHISPER_MODEL}.pt",
-            "full_duration_s": full_duration, "transcribed_duration_s": transcribed_cap,
-            "truncated": truncated, "coverage_label": memo_coverage_label(full_duration, transcribed_cap, truncated)}
+    common = {"source": "local-cache", "model": f"{WHISPER_MODEL}.pt"}
     if not _whisper_cached():
-        return {**base, "status": "unavailable", "text": TRANSCRIPTION_UNAVAILABLE}
+        return {**common, **_memo_no_transcription_meta(full_duration),
+                "status": "unavailable", "text": TRANSCRIPTION_UNAVAILABLE}
     whisper = shutil.which("whisper")
     timeout = min(WHISPER_TRANSCRIBE_TIMEOUT_S, max(1, budget.deadline - time.monotonic()))
     with tempfile.TemporaryDirectory() as tmp:
@@ -349,14 +361,14 @@ def transcribe_voice_memo(path: Path, budget=None) -> dict:
         except ValueError as exc:
             reason = str(exc).lower()
             if "timed out" in reason:
-                return {**base, "status": "timeout",
+                return {**common, **_memo_no_transcription_meta(full_duration), "status": "timeout",
                         "text": f"Transcription timed out after {int(timeout)} s. Memo not transcribed."}
-            return {**base, "status": "failed", "text": ""}
+            return {**common, **_memo_no_transcription_meta(full_duration), "status": "failed", "text": ""}
         except OSError:
-            return {**base, "status": "failed", "text": ""}
+            return {**common, **_memo_no_transcription_meta(full_duration), "status": "failed", "text": ""}
     if not text:
-        return {**base, "status": "empty", "text": ""}
-    return {**base, "status": "ok", "text": text}
+        return {**common, **_memo_no_transcription_meta(full_duration), "status": "empty", "text": ""}
+    return {**common, **_memo_success_transcription_meta(full_duration), "status": "ok", "text": text}
 
 
 def extract_audio_transcript(path: Path, budget=None) -> str:
@@ -444,6 +456,12 @@ def enrich_for_model(root: Path, metas: list[dict], *, redact, cancel=None) -> d
                         f"Transcript: {transcript or '(empty)'}")
                     if memo.get("status") == "ok":
                         text_blocks[-1] += f"\nTranscription source={memo.get('source')} model={memo.get('model')} coverage_seconds={memo.get('transcribed_duration_s')}"
+                        if memo.get("truncated"):
+                            coverage = (memo.get("coverage_label")
+                                        or memo_coverage_label(memo.get("full_duration_s"),
+                                                               memo.get("transcribed_duration_s", 0),
+                                                               memo.get("truncated")))
+                            warnings.append(f"{redact(meta['filename'])}: {coverage} (first {int(MEMO_TRANSCRIBE_MAX_S)}s only)")
                     elif memo.get("status") == "unavailable":
                         warnings.append(f"{redact(meta['filename'])}: {TRANSCRIPTION_UNAVAILABLE}")
                     elif memo.get("status") == "timeout":

@@ -45,6 +45,7 @@ from reply_guard import repair_hollow_progress
 from drill_fixture import try_bob_state_running_line
 from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
 from chat_media import (
+    MAX_AUDIO_BYTES,
     MAX_VIDEO_BYTES,
     MAX_ATTACHMENTS_PER_MESSAGE,
     PROCESS_SLOTS,
@@ -93,8 +94,9 @@ COOKIE = "bob_session"
 SESSION_SECONDS = 12 * 60 * 60
 MAX_BODY = 32768
 MAX_AUDIO_BODY = 35 * 1024 * 1024
-# Base64 expands 3 bytes to 4 characters: ceil(video_limit * 4 / 3) + JSON overhead
-MAX_MEDIA_BODY = 4 * ((MAX_VIDEO_BYTES + 2) // 3) + MAX_BODY
+# Base64 expands 3 bytes to 4 characters: ceil(largest_attachment * 4 / 3) + JSON overhead
+_MAX_ATTACHMENT_BYTES = max(MAX_VIDEO_BYTES, MAX_AUDIO_BYTES)
+MAX_MEDIA_BODY = 4 * ((_MAX_ATTACHMENT_BYTES + 2) // 3) + MAX_BODY
 
 
 def hard_rule_refusal(text):
