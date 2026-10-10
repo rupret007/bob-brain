@@ -162,6 +162,10 @@ def grounding(root, reply_providers, conversation_id=None):
                  limitation='Prepared is not accepted; imported authorship remains unverified; no automatic native Dot/Grok dispatch.'),
             dict(name='writing and reasoning', source='webchat/providers.py',
                  path='Replies and revisions in this conversation using configured model providers.'),
+            dict(name='Safari tab read', source='webchat/safari_read.py',
+                 path='Direct read of the owner-selected Safari tab after an allowlist origin check.',
+                 limitation='Read-only visible text; no navigation, clicks, or form values. '
+                            'Requires an owner public-origin allowlist and Safari Automation permission.'),
             dict(name='research', source='webchat/bob_gaps.py; webchat/task_dispatch.py',
                  path='Server web search or a research task; cite only evidence actually retrieved.'),
             dict(name='local project work', source='webchat/task_dispatch.py; services/dispatch_worker.py',
@@ -199,6 +203,8 @@ QUESTIONS = {
                   'what does gh pr ready do', 'what does gh pr ready mean', 'explain gh pr ready'),
     'git_merge': ('what does merging a pr mean', 'what does merging a pull request mean',
                   'what does merge a pr mean', 'what is a pull request merge'),
+    'safari': ('can you read my safari tab', 'can you read the current safari tab',
+               'can you read safari tabs', 'can you see my safari tab'),
 }
 
 
@@ -247,5 +253,9 @@ def reply(text, root):
                       'does that; it does not merge the code. Web Bob keeps pull requests as drafts.'),
         'git_merge': ('Merging a pull request integrates its changes into the target branch. Reviewing a PR '
                       'or opening a draft does not merge it. Web Bob can prepare and review draft changes.'),
+        'safari': ('Yes—ask “read current Safari tab”. I read the selected tab’s URL first, check your '
+                   'public-origin allowlist, then return bounded visible text with the URL and title. '
+                   'Form fields and login pages are excluded. I do not click, navigate, or submit forms. '
+                   'Safari Automation permission and an owner allowlist are required; I never enable them.'),
     }
     return answers.get(kind)
