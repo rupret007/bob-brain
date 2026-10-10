@@ -1,5 +1,6 @@
 """Capability ledger regressions using a temporary home and offline adapters."""
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -91,6 +92,65 @@ class CapabilityLedgerTests(unittest.TestCase):
                    '\n-----END PGP PRIVATE KEY BLOCK-----')
         self.assert_secret_read_refused('Documents/backup.asc', content,
                                         (secret, '-----BEGIN PGP PRIVATE KEY BLOCK-----', content), 'F5')
+
+    def production_actions(self, folder):
+        from local_task_worker import run
+        actions = LocalTasks(folder, search=self.search, clock=self.clock)
+
+        # Mock process creation while running the actual production worker boundary.
+        def worker(method, args, kwargs):
+            return run(dict(folder=str(folder), root=str(actions.root), home=str(self.home),
+                            now=self.clock(), method=method, args=args, kwargs=kwargs))
+
+        guard = patch.object(actions, 'file_worker', side_effect=worker)
+        guard.start()
+        self.addCleanup(guard.stop)
+        return actions
+
+    def test_ledger_F6_calendar_credential_path_outside_protected_roots(self):
+        from reminders import Reminders
+        runtime = self.home / 'Documents/bob-runtime'
+        folder = runtime / 'conductor/webchat'
+        target = self.home / 'Documents/google-calendar.json'
+        command = 'read file ~/Documents/google-calendar.json'
+        refusal = 'Web Bob storage is outside the local file allowlist.'
+        content = json.dumps(dict(type='authorized_user', client_id='synthetic-client',
+                                 client_secret='synthetic-client-secret',
+                                 refresh_token='synthetic-refresh-token'))
+        with patch('pathlib.Path.home', return_value=self.home), patch.dict(
+                os.environ, HOME=str(self.home), BOB_ROOT=str(runtime),
+                BOB_GENERATION_BUDGET_ROOT=str(self.root / 'accounting'),
+                BOB_GOOGLE_CALENDAR_CREDENTIALS=''):
+            actions = self.production_actions(folder)
+            target.write_text('ordinary calendar notes')
+            target.chmod(0o600)
+            self.assertIn('Local draft', actions.handle(
+                'write file ~/Documents/google-calendar.json: x', 'chat', 'F6-draft', self.state))
+            with actions.locked() as rows:
+                token, = rows
+            reminders = Reminders(folder, clock=self.clock)
+            self.assertIn('Read-only routine saved:', reminders.handle(
+                'every morning do ' + command, 'chat', 'F6-save-routine', local_tasks=actions))
+            target.write_text(content)
+            with patch.dict(os.environ, BOB_GOOGLE_CALENDAR_CREDENTIALS='~/Documents/google-calendar.json'):
+                restored = self.production_actions(folder)
+                self.assertIn(target, restored.protected_paths())
+                for index, text in enumerate((command, 'write file ~/Documents/google-calendar.json: x',
+                                              'yes ' + token)):
+                    self.assertEqual(restored.handle(text, 'chat', f'F6-{index}', self.state), refusal)
+                with self.assertRaises(LocalTaskError) as raised:
+                    restored.validate_routine(command)
+                self.assertEqual(str(raised.exception), refusal)
+                routine, = Reminders(folder, clock=self.clock).listing()
+                self.assertEqual(routine['action'], command)
+                self.assertEqual(restored.handle(routine['action'], 'chat', 'F6-routine',
+                                                 self.state, routine=True), refusal)
+            self.assertEqual(target.read_text(), content)
+            self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+            persisted = (actions.folder / 'receipts.json').read_text()
+            for secret in ('synthetic-client-secret', 'synthetic-refresh-token', content):
+                self.assertNotIn(secret, persisted)
+            self.search.assert_not_called()
 
 
 if __name__ == '__main__':
