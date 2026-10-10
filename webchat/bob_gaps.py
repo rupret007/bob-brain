@@ -189,7 +189,17 @@ def needs_web_search(text: str) -> bool:
     return bool(WEB_SEARCH.search(stripped))
 
 
-def web_search(query: str, opener=urllib.request.urlopen) -> dict:
+class NoSearchRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        raise ValueError("Web lookup redirect refused; no result was verified.")
+
+
+def web_search(query: str, opener=None) -> dict:
+    # Shared with direct local lookups/routines: one bounded GET, without
+    # environment proxies, cookies, credentials or redirect followups.
+    if opener is None:
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), NoSearchRedirect()).open
     query = re.sub(r"^(?:please\s+)?(?:search\s+(?:the\s+)?web|look\s+up|google)\s+(?:for\s+)?", "", query.strip(), flags=re.I)
     url = "https://api.duckduckgo.com/?" + urllib.parse.urlencode(
         {"q": query, "format": "json", "no_redirect": 1, "no_html": 1, "skip_disambig": 1}
@@ -198,7 +208,7 @@ def web_search(query: str, opener=urllib.request.urlopen) -> dict:
         url,
         headers={"User-Agent": "WebBob/1.0 (bob-gaps web research)"},
     )
-    with opener(request, timeout=20) as response:
+    with opener(request, timeout=10) as response:
         raw = response.read(1024 * 1024 + 1)
     if len(raw) > 1024 * 1024:
         raise ValueError("Search response exceeded the size limit")

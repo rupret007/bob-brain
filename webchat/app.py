@@ -65,6 +65,7 @@ import chat_intent
 from jobs_view import build_jobs_view, result_text
 from build_info import BUILD, STATIC, VERSION_QUESTION, render_page
 from texting import Texting
+from local_tasks import LocalTasks, SEARCH as LOCAL_SEARCH
 from bob_gaps import (
     append_profile_memory,
     capture_reply,
@@ -180,8 +181,10 @@ class Chat(TaskDispatch):
         self.reminder_notifier = notify_macos if reminder_notifier is None else reminder_notifier
         from calendar_actions import CalendarActions
         self.calendar = calendar if calendar is not None else CalendarActions(folder)
-        from local_tasks import LocalTasks
-        self.local_tasks = local_tasks if local_tasks is not None else LocalTasks(folder, root=root)
+        # Keep direct lookups and routines on the established search adapter,
+        # including its offline release/test injection boundary.
+        self.local_tasks = local_tasks if local_tasks is not None else LocalTasks(
+            folder, root=root, search=lambda query: format_web_search_reply(web_search(query)))
         for path in self.state.glob("*.json"):
             if not UUID.fullmatch(path.stem):
                 continue
@@ -738,7 +741,8 @@ class Chat(TaskDispatch):
             if local is not None:
                 for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
                     conversation.pop(key, None)
-                return self.intent_reply(conversation, self.redact(local), provider='local-tasks')
+                return self.intent_reply(conversation, self.redact(local),
+                                         provider='state' if LOCAL_SEARCH.fullmatch(text.strip()) else 'local-tasks')
             from teammates import handle as teammate_turn
             teammate = teammate_turn(self, conversation, text, request_id)
             if teammate is not None:

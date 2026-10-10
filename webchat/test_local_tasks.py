@@ -413,7 +413,7 @@ class RoutineChatTests(LocalFixture):
     def test_direct_routes_and_pr1_incident_regression(self):
         for text in ('read file ~/Documents/note.txt', 'terminal: date', 'look up Python',
                      'create file ~/Documents/new.txt: hello'):
-            self.assertEqual(self.submit(text)['provider'], 'local-tasks')
+            self.assertEqual(self.submit(text)['provider'], 'state' if text.startswith('look up') else 'local-tasks')
         receipt = self.submit('Create a reminder for 2am to go to bed')
         self.assertEqual(receipt['provider'], 'reminders')
         self.assertIn('Reminder saved: go to bed', receipt['content'])
