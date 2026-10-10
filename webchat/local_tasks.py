@@ -248,6 +248,11 @@ class LocalFiles:
         return dict(device=info.st_dev, inode=info.st_ino, modified=info.st_mtime_ns,
                     size=info.st_size, digest=hashlib.sha256(data).hexdigest()), data
 
+    def observe(self, path):
+        """Return a fingerprint only. Never expose file bytes to the caller."""
+        prepared = self.prepare(dict(kind='read', path=path))
+        return prepared['snapshot']
+
     def prepare(self, spec):
         if spec['kind'] in ('create', 'write'):
             safe_read(spec['content'].encode('utf-8'))
