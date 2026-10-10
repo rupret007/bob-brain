@@ -147,7 +147,7 @@ def password_at(folder):
 
 
 class Chat(TaskDispatch):
-    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None):
+    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None):
         self.folder, self.root = folder, root
         folder.mkdir(parents=True, exist_ok=True)
         self.password = password_at(folder)
@@ -178,6 +178,8 @@ class Chat(TaskDispatch):
         from reminders import Reminders, notify_macos
         self.reminders = Reminders(folder)
         self.reminder_notifier = notify_macos if reminder_notifier is None else reminder_notifier
+        from calendar_actions import CalendarActions
+        self.calendar = calendar if calendar is not None else CalendarActions(folder)
         for path in self.state.glob("*.json"):
             if not UUID.fullmatch(path.stem):
                 continue
@@ -709,6 +711,11 @@ class Chat(TaskDispatch):
                 self.conversations[identifier] = copy.deepcopy(value)
             if self.texting.handle(conversation, text, actor, request_id, persist_texting, self.redact):
                 return self.public(conversation)
+            calendar = self.calendar.handle(text, identifier, request_id, intent_state)
+            if calendar is not None:
+                for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
+                    conversation.pop(key, None)
+                return self.intent_reply(conversation, self.redact(calendar), provider='calendar')
             from reminders import ReminderError
             import actions_intent
             if actions_intent.reminder_request(text):

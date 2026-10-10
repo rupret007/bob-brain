@@ -622,7 +622,7 @@ A durable notification identity prevents duplicate messages after a crash betwee
 chat persistence and store acknowledgement. Missed recurring intervals produce
 one catch-up notice, not a burst. OS alerts are best effort: failure does not undo
 chat delivery, and a crash after the firing-state write may lose that OS alert.
-There is no phone push, iMessage-to-self, email, SMS or calendar integration.
+Reminders do not send phone push, iMessage-to-self, email, SMS, or calendar events.
 A reminder's body is plain text, never a command to execute. Tests inject the
 notification hook or mock `subprocess.run`; they never display real alerts.
 
@@ -645,3 +645,46 @@ or oversized files are inspectable but not removable through this control.
 Management and review stay out of model chat history; removal requires typed Chat
 with Auto selected. Tests use private synthetic notes; live release replay only
 inspects and refuses unbound approvals without deleting owner notes.
+
+### Google Calendar (direct, owner-confirmed actions)
+
+Use `show my calendar today`, `what's on my calendar tomorrow?`, `calendar this
+week`, `calendar next 7 days`, or `calendar on 2026-10-12`. Without a window,
+Calendar reads the next seven days starting at local midnight. Reads show actual
+Google responses, at most 100 events, and explicitly report a truncated page.
+Failures never become invented events or an empty-calendar claim.
+
+Use `create a calendar event Dentist tomorrow at 2pm for 30 minutes` or
+`create a calendar event for 2am to go to bed`. Defaults are the authorized user's
+primary calendar, America/Chicago, one hour, one occurrence, private visibility,
+and no event alerts. Review the stored draft and reply with its exact
+`yes wbcal-…` token in the same conversation within one hour. `cancel wbcal-…`
+cancels an unsubmitted draft. A new draft replaces that conversation's prior
+unsubmitted draft. Titles and explicit times are required; ambiguous dates and
+DST clock changes need a clearer time (ISO timestamps with offsets work).
+Attendee/invitation and recurring-event requests are unsupported. Creates never
+include attendees and request `sendUpdates=none`.
+
+Calendar uses an existing authorized-user OAuth JSON file with `client_id`,
+`client_secret`, and `refresh_token`, readable only by its owner (mode 0600).
+Set `BOB_GOOGLE_CALENDAR_CREDENTIALS` in the server's environment to its path,
+or use `~/.config/webbob/google-calendar.json`. An existing
+`~/.config/gcloud/application_default_credentials.json` is also checked if the
+Web Bob file is absent. The user grant must permit Calendar reads and event
+writes (for example the Google Calendar `calendar.events` OAuth scope), and
+Calendar API access must be enabled for that OAuth client. No service-account
+credentials, connector-session credentials, or paid model calls are used.
+Missing/invalid credentials or denied access return `needs auth`; this feature
+does not start a login flow or queue a coding job. Credentials are never printed,
+changed, or stored in chat. OAuth refresh and Google HTTPS calls occur only for
+an explicit read or an approved create, with no automatic retries.
+
+Drafts and consumed confirmations are stored privately under `calendar/` in the
+webchat data folder. They survive restarts; the consumed receipt is persisted
+before the API call. Only a matching Google event confirmation produces a
+created receipt. A timeout, uncertain response, or interrupted receipt write
+stays unconfirmed and cannot replay the create. Check Google Calendar before
+making another draft after an uncertain result. Calendar creates respect saved
+global and project holds. The separate reminder and BlueBubbles text-read paths
+are unchanged; outbound texts still require their existing exact draft approval.
+Tests inject Calendar and messaging clients and never call real services.
