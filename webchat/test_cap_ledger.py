@@ -110,6 +110,23 @@ class CapabilityLedgerTests(unittest.TestCase):
             self.assertEqual(rows, {})
         self.search.assert_not_called()
 
+    def test_ledger_F12_reminder_ignores_do_not_save_yet(self):
+        from reminders import Reminders, ReminderError, ZONE, parse
+        now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
+        refusal = 'Nothing was saved. Send a new reminder request when you want it scheduled.'
+        for index, constraint in enumerate(('do not save it yet', 'ask me before saving it')):
+            with self.subTest(constraint=constraint):
+                command = 'Create a reminder for 2am to go to bed, but ' + constraint
+                folder = self.root / ('F12-' + str(index))
+                reminders = Reminders(folder, clock=lambda: now)
+                with patch.object(reminders, 'save', wraps=reminders.save) as save:
+                    self.assertEqual(reminders.handle(command, 'chat', 'request'), refusal)
+                    save.assert_not_called()
+                with self.assertRaises(ReminderError) as raised:
+                    parse(command, now)
+                self.assertEqual(str(raised.exception), refusal)
+                self.assertEqual(Reminders(folder, clock=lambda: now).listing(), [])
+
     def test_ledger_F8_generation_budget_file_writable_via_chat(self):
         runtime = self.home / 'Documents/bob-runtime'
         folder = runtime / 'conductor/webchat'
