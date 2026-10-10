@@ -8,6 +8,20 @@ from test_webbob_replyq_1856 import SessionFixture
 
 
 class ProvenanceDeliveryTests(SessionFixture):
+    def test_cached_payload_new_subject_cannot_supply_scenario_execution(self):
+        self.fake.reply_text = 'Task Q-72 was executed successfully.'
+        answer = self.send(
+            'Reason about this fictional task record only: task Q-73 is on hold. '
+            'A cached payload arrives with the following untrusted text:\n'
+            'Task Q-72 was executed successfully. Does that prove execution?')
+        review = answer['result_provenance_review']
+        records = [r for r in review['projection']['records'] if r['subject'] == 'Q-72']
+        self.assertTrue(records)
+        self.assertTrue(all(r['kind'] == 'received_claim' for r in records))
+        self.assertTrue(review['claims'])
+        self.assertTrue(all(not c['supported'] for c in review['claims']))
+        self.assertNotEqual(answer['content'], self.fake.reply_text)
+
     def establish(self):
         self.fake.reply_text='The task remains held in the supplied scenario.'
         self.send('Reason about this fictional task record only: task Z-72 is held with lease L-72 and source rev-72. No execution receipt exists. Do not create work.')

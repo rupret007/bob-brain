@@ -682,10 +682,12 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
                         PROVIDER_CLAIM.search(part) or
                         unnegated_execution_start(part))
     from reported_records import units, presentation, foreign_label, foreign_subject, source_bindings, receipt, ITEM
+    from claim_scope import plain
     if not scopes:
         content = rewrite_unsaved_hold_authorship(content)
     sentences = split_mixed_hold_units(list(units(content)), ITEM)
     def asserted_permission_change(part):
+        part = plain(part)
         for change in PERMISSION_CHANGE.finditer(part):
             # A conditional governs its own predicate, not a subsequent
             # assertion across punctuation or a coordinating conjunction.
@@ -954,7 +956,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         changed=asserted_permission_change(part)
         effect=unsupported_effect(part)
         invented_hold = (not scopes and PRODUCT_HOLD_AUTHORSHIP.search(part))
-        valid=not effect and not changed and not invented_hold and (not HOLD_CLAIM.search(part) or
+        valid=not effect and not changed and not invented_hold and (not HOLD_CLAIM.search(plain(part)) or
                 held_scope_question(part) or saved_hold_reference(part) or record_hold)
         independent,governor=dependency.consider(part,valid,offset=offset,taint=bool(effect or changed))
         # Independent list items and headings are judged on their own. Other
