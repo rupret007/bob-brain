@@ -57,6 +57,21 @@ class CapabilityLedgerTests(unittest.TestCase):
         self.assertEqual(target.read_text(), content)
         self.search.assert_not_called()
 
+    def test_ledger_F9_calendar_read_bypasses_hold(self):
+        from calendar_actions import CalendarActions, GoogleCalendar
+        client = Mock(spec=GoogleCalendar)
+        client.configured.return_value = None
+        client.listing.return_value = {'items': []}
+        actions = CalendarActions(self.root / 'state', client=client, clock=self.clock)
+        chat_intent.apply_turn(self.state, 'Hold all work', 'hold')
+        scopes = chat_intent.blocked_scopes(self.state, chat_intent.projects('show my calendar today'))
+        self.assertTrue(scopes)
+        self.assertEqual(actions.handle('show my calendar today', 'chat', 'F9', self.state),
+                         chat_intent.hold_reply(scopes))
+        client.configured.assert_not_called()
+        client.listing.assert_not_called()
+        client.create.assert_not_called()
+
     def test_ledger_F8_generation_budget_file_writable_via_chat(self):
         runtime = self.home / 'Documents/bob-runtime'
         folder = runtime / 'conductor/webchat'
