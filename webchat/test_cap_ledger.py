@@ -181,6 +181,23 @@ class CapabilityLedgerTests(unittest.TestCase):
                     self.assertEqual(str(raised.exception), refusal)
                 self.assertEqual(Reminders(folder, clock=lambda: now).listing(), [])
 
+    def test_ledger_F16_trailing_timezone_qualifier_swallowed(self):
+        from reminders import Reminders, ReminderError, ZONE, parse
+        now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
+        command = 'Create a reminder for 2am to go to bed PST'
+        refusal = ('The reminder timezone needs clarification. Nothing was saved. '
+                   'Use America/Chicago local clock times without a timezone qualifier, '
+                   'or an ISO date/time with an explicit UTC offset.')
+        folder = self.root / 'F16'
+        reminders = Reminders(folder, clock=lambda: now)
+        with patch.object(reminders, 'save', wraps=reminders.save) as save:
+            self.assertEqual(reminders.handle(command, 'chat', 'request'), refusal)
+            save.assert_not_called()
+        with self.assertRaises(ReminderError) as raised:
+            parse(command, now)
+        self.assertEqual(str(raised.exception), refusal)
+        self.assertEqual(Reminders(folder, clock=lambda: now).listing(), [])
+
     def test_ledger_F8_generation_budget_file_writable_via_chat(self):
         runtime = self.home / 'Documents/bob-runtime'
         folder = runtime / 'conductor/webchat'
