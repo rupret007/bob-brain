@@ -77,6 +77,63 @@ class CapabilityLedgerTests(unittest.TestCase):
         client.listing.assert_not_called()
         client.create.assert_not_called()
 
+    def test_ledger_F22_qualification_allpass_false_despite_scoped_pass(self):
+        import hashlib
+        from release import qualification_scope as scope
+
+        def evidence(name, value):
+            path = self.root / name
+            path.write_text(json.dumps(value))
+            return dict(path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+
+        admission = evidence('admission.json', dict(id='F22', adopted=True))
+        steer = evidence('steer.json', dict(authority_source='Owner defers live voice.',
+                                           limits_unchanged=True, clock_unchanged=True))
+        ref = evidence('scope.json', dict(schema=1, continuation_id='F22', scope_name='nonvoice',
+                                         deferred_checks=scope.DEFERRED,
+                                         admission=admission, owner_steer=steer))
+        self.assertEqual(scope.validate(ref), ref)
+        groups = ('webchat', 'services', 'reviews', 'release', 'bridge-contract', 'eval',
+                  'browser', 'media-browser', 'voice-js', 'instinct-browser',
+                  'remaining-browser', 'cold-browser', 'startup-recovery-browser',
+                  'voice-availability-browser', 'jobs-results-browser', 'memory-removal-browser',
+                  'project-handoffs-browser', 'reply-lifecycle-browser', 'test_job_results_js',
+                  'test_quiet_hours_js', 'test_startup_recovery')
+        for attempt in ('attempt-0001', 'attempt-0002'):
+            with self.subTest(attempt=attempt):
+                results = {name: dict(exit=0, skipped=0) for name in groups}
+                included_pass = all(r['exit'] == 0 and r['skipped'] == 0 for r in results.values())
+                record = dict(sha='899c2a5fc5f5', results=results, staging=dict(all_pass=True),
+                              **scope.outcome(included_pass, ref))
+                path = self.root / attempt / 'checks.json'
+                path.parent.mkdir()
+                path.write_text(json.dumps(record))
+                loaded = json.loads(path.read_text())
+                self.assertEqual(len(loaded['results']), 21)
+                self.assertTrue(loaded['staging']['all_pass'])
+                self.assertFalse(loaded['all_pass'])
+                self.assertTrue(loaded['scope_passed'])
+                self.assertEqual(loaded['live_voice'], scope.VOICE)
+                self.assertTrue(scope.historical_passed(loaded))
+                self.assertFalse(scope.passed(loaded))
+                self.assertFalse(scope.passed(loaded, dict(ref, sha256='0' * 64)))
+                self.assertEqual(loaded.get('qualification_status'), 'SCOPED_PASS')
+
+        for bad_receipt in (dict(exit=1, skipped=0), dict(exit=0, skipped=1)):
+            with self.subTest(receipt=bad_receipt):
+                results['webchat'] = bad_receipt
+                failed = scope.outcome(all(r['exit'] == 0 and r['skipped'] == 0
+                                          for r in results.values()), ref)
+                self.assertEqual(failed['qualification_status'], 'FAIL')
+                self.assertFalse(failed['all_pass'])
+                self.assertFalse(failed['scope_passed'])
+                self.assertFalse(scope.historical_passed(failed))
+        self.assertEqual(scope.outcome(True, None), dict(all_pass=True))
+        self.assertEqual(scope.outcome(False, None), dict(all_pass=False))
+        Path(steer['path']).write_text('{}')
+        with self.assertRaisesRegex(RuntimeError, 'evidence changed'):
+            scope.historical_passed(loaded)
+
     def test_ledger_A1L6_legacy_remind_me_bypasses_hold(self):
         import copy
         import uuid
