@@ -230,6 +230,27 @@ class CapabilityLedgerTests(unittest.TestCase):
                     self.assertEqual(str(raised.exception), refusal)
                 self.assertEqual(Reminders(folder, clock=lambda: now).listing(), [])
 
+    def test_ledger_F15r6_named_month_and_slash_date_swallowed(self):
+        from reminders import Reminders, ReminderError, ZONE, parse, reminder_body
+        now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
+        refusal = ('The reminder has an extra date or time clause. Nothing was saved. '
+                   'Please use one schedule, such as “create a reminder for tomorrow at 2am to go to bed”.')
+        for index, date in enumerate(('October 11', '10/11')):
+            with self.subTest(date=date):
+                body = 'go to bed on ' + date
+                command = 'Create a reminder for 2am to ' + body
+                reminders = Reminders(self.root / ('F15r6-' + str(index)), clock=lambda: now)
+                rows = []
+                with patch.object(reminders, 'locked', side_effect=lambda: nullcontext(rows)), \
+                        patch.object(reminders, 'save') as save:
+                    self.assertEqual(reminders.handle(command, 'chat', 'request'), refusal)
+                    save.assert_not_called()
+                    self.assertEqual(reminders.listing(), [])
+                for operation in (lambda: parse(command, now), lambda: reminder_body(body)):
+                    with self.assertRaises(ReminderError) as raised:
+                        operation()
+                    self.assertEqual(str(raised.exception), refusal)
+
     def test_ledger_F16_trailing_timezone_qualifier_swallowed(self):
         from reminders import Reminders, ReminderError, ZONE, parse
         now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()

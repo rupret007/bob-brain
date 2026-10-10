@@ -159,6 +159,8 @@ def reminder_body(value):
     if re.search(r'\b(?:today|tomorrow|tonight|yesterday|noon|midnight|'
                  r'monday|tuesday|wednesday|thursday|friday|saturday|sunday|'
                  r'next\s+(?:week|month|year)|every\s+\w+|\d{4}-\d{2}-\d{2}|'
+                 r'(?:january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}|'
+                 r'\d{1,2}/\d{1,2}(?:/\d{2,4})?|'
                  r'at\s+\d{1,2}\b|in\s+' + DURATION + r'|' + CLOCK + r')\b', value, re.I):
         raise ReminderError('The reminder has an extra date or time clause. Nothing was saved. '
                             'Please use one schedule, such as “create a reminder for tomorrow at 2am to go to bed”.')
