@@ -71,6 +71,15 @@ class CapabilityLedgerTests(unittest.TestCase):
         self.assert_secret_read_refused('Documents/export.json', content,
                                         (password, refresh_token), 'F2')
 
+    def test_ledger_F3_csv_xml_credential_content_disclosed(self):
+        secret = 'synthetic-review-password'
+        for extension, content in (
+                ('csv', 'name,url,username,password\nExample,https://example.test,jeff,' + secret),
+                ('xml', '<credentials><password>' + secret + '</password></credentials>')):
+            with self.subTest(extension=extension):
+                self.assert_secret_read_refused('Downloads/export.' + extension, content,
+                                                (secret,), 'F3-' + extension)
+
 
 if __name__ == '__main__':
     unittest.main()
