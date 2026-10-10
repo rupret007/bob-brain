@@ -50,11 +50,12 @@ CONTROL = re.compile(r'^(yes|cancel)\s+(wblocal-[0-9a-f]{32})$', re.I)
 SECRET_PATH = re.compile(
     r'(?:^|[._ -])(?:credentials?|secrets?|passwords?|tokens?|private[ _-]?keys?|'
     r'id_(?:rsa|dsa|ecdsa|ed25519)|env)(?:$|[._ -])|\.(?:pem|key|p12|pfx|keystore)$', re.I)
-SECRET_FIELD = (r'(?:[a-z0-9]+[_-])*(?:(?:client[_ -]?)?secret|password|passwd|pwd|'
+SECRET_FIELD = (r'(?:[a-z0-9]+[_-])*(?:(?:client[_ -]?)?secret|[a-z0-9]*password|passwd|pwd|'
                 r'(?:(?:refresh|access|auth)[_ -]?)?token|'
                 r'api[_ -]?key|private[_ -]?key|access[_ -]?key)(?:[_-][a-z0-9]+)*')
 SECRET_ASSIGNMENT = re.compile(
-    r'(?<![\w])' + SECRET_FIELD + r'[\"\']?\s*[:=]', re.I)
+    r'(?<![\w])' + SECRET_FIELD + r'[\"\']?\s*[:=]|'
+    r'^[ \t]*' + SECRET_FIELD + r'[ \t]+\S', re.I | re.M)
 SECRET_KEY = re.compile(SECRET_FIELD, re.I)
 SECRET_REFUSAL = 'Secret files or credential content are outside the local file allowlist. No file content returned.'
 
