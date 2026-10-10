@@ -112,6 +112,7 @@ def parse(text, now):
     # variant (including recurring reminders) is allowed to create a row.
     if re.search(r"\b(?:do\s+not|don't|don’t|never)\s+(?:save|create|schedule|set|add)|"
                  r'\b(?:ask|confirm|check)(?:\s+with)?\s+me\s+(?:first|before)|'
+                 r'\b(?:if|after|once|when)\s+I\s+(?:confirm|approve|say\s+yes)\b|'
                  r'\b(?:wait|hold off)\s+(?:until|before)|\b(?:before|without)\s+my\s+(?:approval|confirmation)',
                  stripped, re.I):
         raise ReminderError('Nothing was saved. Send a new reminder request when you want it scheduled.')
@@ -139,7 +140,7 @@ def parse(text, now):
         interval = int(recurring[1]) * UNITS[recurring[2].lower().rstrip('s')]
         if not 60 <= interval <= 366 * 86400:
             raise ReminderError('Repeat intervals must be between 1 minute and 366 days.')
-        return recurring[3].strip(), now + interval, interval
+        return reminder_body(recurring[3]), now + interval, interval
     match = re.fullmatch(r'to ([\s\S]+?)\s+(' + WHEN + r')', clause, re.I)
     if match:
         return reminder_body(match[1]), instant(_when(match[2]), now), None

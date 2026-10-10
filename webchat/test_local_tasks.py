@@ -208,6 +208,10 @@ class SecretReadTests(LocalFixture):
     def test_renamed_secret_content_never_reaches_reply_or_persisted_receipt(self):
         secret = 'synthetic-owner-secret-123'
         contents = (
+            'machine example.invalid login alice password ' + secret,
+            'machine example.invalid\n  login alice\n  password "' + secret + '"',
+            '# exported credentials\ndefault\n\tpassword ' + secret + '\n\tlogin alice',
+            'machine example.invalid account ' + secret + ' login alice',
             'name,url,username,password\nExample,https://example.test,jeff,' + secret,
             'name;url;username;password\nExample;https://example.test;jeff;' + secret,
             'name\tpassword\nExample\t' + secret,

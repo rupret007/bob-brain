@@ -113,6 +113,32 @@ class ActionIntentTests(unittest.TestCase):
         self.assertFalse(providers.calls)
         self.assertFalse(task_queue.tasks(self.root))
 
+    def test_conditional_confirmation_never_saves_or_dispatches(self):
+        providers, notify = OfflineProviders(), Mock()
+        chat = Chat(self.root / 'chat', self.root, providers, reminder_notifier=notify)
+        self.addCleanup(chat.close)
+        self.now = datetime(2026, 10, 10, 10, tzinfo=ZONE).timestamp()
+        chat.reminders.clock = lambda: self.now
+        cid = chat.new_conversation()['id']
+        with patch('app.parse_work', side_effect=AssertionError('Entered job queue')):
+            for command in ('set a timer for 10 minutes to stretch',
+                            'create a reminder every 2 hours to stretch',
+                            'every morning remind me to stretch'):
+                for suffix in ('but only if I confirm', 'only if I approve',
+                               'after I confirm', 'once I say yes', 'when I approve'):
+                    with self.subTest(command=command, suffix=suffix):
+                        reply = chat.submit(cid, command + ', ' + suffix,
+                                            str(uuid.uuid4()))['messages'][-1]
+                        self.assertEqual(reply['provider'], 'reminders')
+                        self.assertIn('Nothing was saved', reply['content'])
+                        self.assertNotIn('Reminder saved:', reply['content'])
+                        self.assertFalse(chat.reminders.listing())
+        self.now += 86400
+        chat.deliver_reminders()
+        notify.assert_not_called()
+        self.assertFalse(providers.calls)
+        self.assertFalse(task_queue.tasks(self.root))
+
     def test_default_chat_never_notifies_even_for_restored_reminders_or_inherited_opt_in(self):
         providers = OfflineProviders()
         # Only the production entry point may interpret the owner's opt-in.
