@@ -171,7 +171,8 @@ def parse(text):
     if match:
         kind, value = match[1].lower(), match[2].strip()
         if kind in ('create', 'write'):
-            if re.search(r"\b(?:do\s+not|don't|don’t|never)\s+(?:actually\s+)?(?:create|write|save)\b|"
+            if re.search(r"\b(?:do\s+not|don't|don’t|never)\s+(?:actually\s+)?(?:create|write|save|execute)\b|"
+                         r'\b(?:get|after)\s+my\s+approval\b|'
                          r'\bif\s+I\s+confirm\b|\bask\s+me\s+before\b', text, re.I):
                 raise LocalTaskError('No file changed. Send a new file request when you want it performed.')
             path, separator, content = value.partition(': ')
