@@ -245,3 +245,144 @@ def resolve_capture_path(root: Path, capture_id: str) -> Path | None:
         return None
     path = root / "conductor/webchat/captures" / f"{capture_id}.png"
     return path if path.is_file() else None
+
+
+DISPATCH_STATUS_QUESTION = re.compile(
+    r"^(?:please\s+)?(?:what(?:['’]s| is) the status of|where are we on)\b.+$",
+    re.I,
+)
+_DISPATCH_STATUS_GENERIC = re.compile(
+    r"\b(?:workers?|models?|llms?|queue|system|resources?|services?|disk|storage)\b",
+    re.I,
+)
+_ACCEPTED_STOPWORDS = frozenset(
+    {"with", "from", "that", "this", "step", "task", "into", "after", "accepted"}
+)
+_STALE_SECONDS = 180
+
+
+def dispatch_status_question(text: str) -> bool:
+    stripped = (text or "").strip()
+    if not stripped or len(stripped) > 400:
+        return False
+    if _DISPATCH_STATUS_GENERIC.search(stripped):
+        return False
+    return bool(DISPATCH_STATUS_QUESTION.match(stripped))
+
+
+def _status_words(text: str) -> set[str]:
+    return {
+        word for word in re.findall(r"[a-z0-9]+", (text or "").lower())
+        if len(word) > 3 and word not in _ACCEPTED_STOPWORDS
+    }
+
+
+def _step_text(step, index: int) -> str:
+    if isinstance(step, str):
+        return step.strip() or f"Step {index}"
+    if isinstance(step, dict):
+        return (
+            step.get("text") or step.get("title") or step.get("prompt") or f"Step {index}"
+        ).strip()
+    return f"Step {index}"
+
+
+def _accepted_matches_step(accepted, step) -> bool:
+    if not isinstance(accepted, dict) or not accepted.get("ok"):
+        return False
+    receipt = accepted.get("receipt")
+    if not isinstance(receipt, str) or "accepted" not in receipt.lower():
+        return False
+    step_text = step if isinstance(step, str) else _step_text(step, 0)
+    return bool(_status_words(receipt) & _status_words(step_text))
+
+
+def _job_observed_at(job) -> float | None:
+    if not isinstance(job, dict):
+        return None
+    for key in ("heartbeat_at", "updated_at", "started_at"):
+        value = job.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value
+    return None
+
+
+def format_dispatch_status(goal, steps, jobs, accepted=None, hold=None, now=None) -> str:
+    """Project recorded plan/job evidence. Not a planner or permission change."""
+    steps = list(steps or [])
+    jobs = [job for job in (jobs or []) if isinstance(job, dict)]
+    job = jobs[-1] if jobs else None
+    now = time.time() if now is None else now
+    stage = str(job.get("status") or "unknown") if job else "proposed"
+    completed = []
+    for index, step in enumerate(steps, 1):
+        if _accepted_matches_step(accepted, step):
+            completed.append((index, _step_text(step, index)))
+    stale = False
+    observed = _job_observed_at(job) if job else None
+    if job and stage in ("running", "queued") and observed is not None and (now - observed) > _STALE_SECONDS:
+        stale = True
+    completed_indexes = {index for index, _ in completed}
+    next_unresolved = None
+    for index, step in enumerate(steps, 1):
+        if index not in completed_indexes:
+            next_unresolved = (index, _step_text(step, index))
+            break
+    lines = [f"Goal: {(goal or '').strip() or 'this work'}."]
+    if stage == "proposed":
+        lines.append("This plan is proposed.")
+    if completed:
+        lines.append(
+            "Completed steps with evidence: "
+            + ", ".join(text.rstrip(".") for _, text in completed)
+            + "."
+        )
+    lines.append(f"Current recorded stage: {stage}.")
+    if stage == "running" and not stale and next_unresolved and steps:
+        lines.append(f"Currently on step {next_unresolved[0]} of {len(steps)}.")
+    if next_unresolved and not (stale and not completed) and stage != "completed":
+        index, text = next_unresolved
+        lines.append(f"Next unresolved step: {index}. {text}")
+    if stage == "completed":
+        if next_unresolved is None:
+            lines.append("No unresolved step remains.")
+        lines.append("The recorded work is complete.")
+    if stage == "partial-failure":
+        lines.append("A later step failed.")
+        lines.append("Later steps are unknown.")
+    if stale:
+        lines.append("Recent worker evidence is unknown.")
+    if isinstance(hold, dict) and hold.get("active"):
+        lines.append("Hold remains in effect.")
+    return " ".join(lines)
+
+
+def dispatch_status_receipt(record, hold=None, now=None) -> str:
+    record = record if isinstance(record, dict) else {}
+    goal = record.get("task") or record.get("text") or record.get("goal") or ""
+    steps = record.get("subtasks") or record.get("steps") or []
+    return format_dispatch_status(
+        goal,
+        steps,
+        record.get("jobs") or [],
+        accepted=record.get("accepted"),
+        hold=hold if hold is not None else record.get("hold"),
+        now=now,
+    )
+
+
+def dispatch_status_from_conversation(conversation, hold=None, now=None) -> str:
+    record = {"task": "", "subtasks": [], "jobs": []}
+    for message in reversed((conversation or {}).get("messages") or []):
+        intent = message.get("dispatch_intent") or {}
+        if not (intent.get("goal") or intent.get("subtasks") or intent.get("steps") or intent.get("jobs")):
+            continue
+        record = {
+            "task": intent.get("goal") or intent.get("prompt") or intent.get("task") or "",
+            "text": intent.get("prompt") or intent.get("text") or "",
+            "subtasks": intent.get("subtasks") or intent.get("steps") or [],
+            "jobs": intent.get("jobs") or message.get("jobs") or [],
+            "accepted": intent.get("accepted") or message.get("accepted"),
+        }
+        break
+    return dispatch_status_receipt(record, hold=hold, now=now)
