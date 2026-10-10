@@ -20,7 +20,7 @@ if ($("login-form")) {
   let uploading = false, quickRequest = null;
   const composerDrafts = new Map();
   let chatReady = false, connecting = false, authRedirecting = false, connectFailures = 0, connectAfter = 0;
-  const MEDIA_LIMITS = { image: 12 * 1024 * 1024, video: 35 * 1024 * 1024, file: 8 * 1024 * 1024 };
+  const MEDIA_LIMITS = { image: 12 * 1024 * 1024, video: 35 * 1024 * 1024, audio: 50 * 1024 * 1024, file: 8 * 1024 * 1024 };
   const MAX_PENDING_ATTACHMENTS = 6;
   let lastQuietHoursActive = null, lastQuietHoursFetchedAt = 0, lastBootstrapCommand = "";
   const providers = { voice: "Bob voice", codex: "Codex", cursor: "Cursor", gemini: "Gemini", minimax: "MiniMax", claude: "Claude", texting: "Texts · private" };
@@ -158,6 +158,7 @@ if ($("login-form")) {
     const extension = file.name.split(".").pop().toLowerCase();
     if (["jpg", "jpeg", "png", "gif", "webp", "heic", "heif"].includes(extension)) return "image";
     if (["mp4", "mov", "webm", "m4v", "mkv"].includes(extension)) return "video";
+    if (["m4a", "mp3", "wav"].includes(extension)) return "audio";
     if (["pdf", "txt", "md", "csv", "json", "log"].includes(extension)) return "file";
     return null;
   }
@@ -221,6 +222,11 @@ if ($("login-form")) {
         label.className = "attach-file-label";
         label.textContent = "Video";
         chip.append(label);
+      } else if (item.kind === "audio") {
+        const label = document.createElement("div");
+        label.className = "attach-file-label";
+        label.textContent = item.memo_label || "Voice memo";
+        chip.append(label);
       } else {
         const label = document.createElement("div");
         label.className = "attach-file-label";
@@ -271,6 +277,23 @@ if ($("login-form")) {
           video.replaceWith(fallback);
         });
         item.append(video);
+      } else if (att.kind === "audio") {
+        const audio = document.createElement("audio");
+        audio.src = url;
+        audio.controls = true;
+        audio.preload = "metadata";
+        audio.addEventListener("error", () => {
+          const fallback = document.createElement("p");
+          fallback.textContent = "Voice memo playback unavailable in this browser. Download the original below.";
+          audio.replaceWith(fallback);
+        });
+        item.append(audio);
+        if (att.memo_label) {
+          const caption = document.createElement("p");
+          caption.className = "attach-file-label";
+          caption.textContent = att.memo_label;
+          item.append(caption);
+        }
       }
       const link = document.createElement("a");
       link.href = url + "&download=1";
@@ -816,7 +839,9 @@ if ($("login-form")) {
         const kind = mediaKindFromFile(file);
         const limit = mediaLimitForKind(kind);
         if (!kind || !file.size || file.size > limit) {
-          errors.push(!kind ? `${file.name}: unsupported file type.` : `${file.name}: file must be between 1 byte and ${limit / 1024 / 1024}MB.`);
+          errors.push(!kind ? `${file.name}: unsupported file type.` : kind === "audio"
+            ? `${file.name}: voice memos must be m4a, mp3, or wav up to ${limit / 1024 / 1024}MB.`
+            : `${file.name}: file must be between 1 byte and ${limit / 1024 / 1024}MB.`);
           continue;
         }
         try {

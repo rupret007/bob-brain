@@ -50,6 +50,8 @@ def main():
                         '-c', 'copy', str(root / 'clip.mov')], check=True, timeout=15)
         subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-i', str(root / 'clip.mp4'),
                         '-c:v', 'libvpx', '-b:v', '50k', str(root / 'clip.webm')], check=True, timeout=15)
+        subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1',
+                        '-ac', '1', '-ar', '16000', str(root / 'memo.wav')], check=True, timeout=15)
         if shutil.which('sips'):
             subprocess.run(['sips', '-s', 'format', 'heic', str(root / 'photo.png'), '--out', str(root / 'photo.heic')],
                            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
