@@ -313,7 +313,7 @@ class ChatMediaTests(unittest.TestCase):
     def test_pdf_page_labels_and_truncation_disclosure(self):
         pages = [(f'page-{index}',) for index in range(1, 26)]
         stored = self.store(multipage_pdf_fixture(pages), 'long.pdf')
-        raw = 'page-1\fpage-2\f' + '\f'.join(f'page-{n}' for n in range(3, 21))
+        raw = 'page-1\fpage-2\f' + '\f'.join(f'page-{n}' for n in range(3, 21)) + '\f'
         with patch.object(media.shutil, 'which', side_effect=self._pdftotext_only), \
                 patch.object(media, '_pdf_page_count', return_value=25), \
                 patch.object(media.MediaBudget, 'run', return_value=raw):
@@ -327,7 +327,7 @@ class ChatMediaTests(unittest.TestCase):
 
     def test_pdf_empty_page_marked(self):
         stored = self.store(multipage_pdf_fixture([('intro',), ('',), ('outro',)]), 'mixed.pdf')
-        raw = 'intro\f\foutro'
+        raw = 'intro\f\foutro\f'
         with patch.object(media.shutil, 'which', side_effect=self._pdftotext_only), \
                 patch.object(media, '_pdf_page_count', return_value=3), \
                 patch.object(media.MediaBudget, 'run', return_value=raw):
@@ -339,7 +339,7 @@ class ChatMediaTests(unittest.TestCase):
     def test_pdf_utf8_page_boundary(self):
         left, right = '日本語', 'テスト 🌐'
         stored = self.store(multipage_pdf_fixture([(left,), (right,)]), 'unicode.pdf')
-        raw = f'{left}\f{right}'
+        raw = f'{left}\f{right}\f'
         with patch.object(media.shutil, 'which', side_effect=self._pdftotext_only), \
                 patch.object(media, '_pdf_page_count', return_value=2), \
                 patch.object(media.MediaBudget, 'run', return_value=raw):
@@ -381,6 +381,33 @@ class ChatMediaTests(unittest.TestCase):
         self.assertEqual(result['status'], 'truncated')
         self.assertIn('12000', result['coverage_label'])
         self.assertIn('Excerpt truncated at 12000 characters', result['text'])
+        self.assertNotIn('full document within page cap', result['coverage_label'])
+
+    def test_pdftotext_trailing_form_feed_does_not_add_page(self):
+        chunks = media._split_pdftotext_pages('page1\fpage2\f')
+        self.assertEqual(chunks, ['page1', 'page2'])
+        pages = media._pdf_pages_from_strings(chunks)
+        self.assertEqual([p['page'] for p in pages], [1, 2])
+        self.assertNotIn('[Page 3: empty]', media._format_pdf_excerpt(pages, total_pages=2)['text'])
+
+    def test_pdf_multipage_character_cap_coverage_matches_excerpt(self):
+        heavy = 'x' * 15_000
+        stored = self.store(
+            multipage_pdf_fixture([(heavy,), ('page-two',), ('page-three',)]),
+            'wide.pdf',
+        )
+        raw = f'{heavy}\fpage-two\fpage-three\f'
+        with patch.object(media.shutil, 'which', side_effect=self._pdftotext_only), \
+                patch.object(media, '_pdf_page_count', return_value=3), \
+                patch.object(media.MediaBudget, 'run', return_value=raw):
+            result = media.extract_pdf_text(self.root / stored['path'])
+        self.assertEqual(result['status'], 'truncated')
+        self.assertIn('page 1 of 3', result['coverage_label'])
+        self.assertNotIn('pages 1-3', result['coverage_label'])
+        self.assertNotIn('full document within page cap', result['coverage_label'])
+        self.assertIn('[Page 1]', result['text'])
+        self.assertNotIn('page-two', result['text'])
+        self.assertNotIn('page-three', result['text'])
 
     def test_plain_text_file_excerpt_coverage(self):
         body = 'a' * 15_000

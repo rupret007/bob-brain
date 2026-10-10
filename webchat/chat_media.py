@@ -400,7 +400,11 @@ def _split_pdftotext_pages(raw: str) -> list[str]:
     if not raw:
         return []
     normalized = raw.replace("\r\n", "\n").replace("\r", "\n")
-    return normalized.split("\f")
+    chunks = normalized.split("\f")
+    # poppler pdftotext terminates stdout with a form-feed after the last page too.
+    if chunks and not chunks[-1]:
+        chunks.pop()
+    return chunks
 
 
 def _pdf_pages_from_strings(chunks: list[str], *, start_page: int = 1) -> list[dict]:
@@ -438,19 +442,23 @@ def _pdf_unavailable(reason: str, *, detail: str = "") -> dict:
 
 
 def pdf_coverage_label(*, total_pages: int | None, pages_read: int, first_page: int, last_page: int,
-                       chars_included: int, char_cap: int, page_cap_hit: bool, char_cap_hit: bool) -> str:
+                       chars_included: int, char_cap: int, page_cap_hit: bool, char_cap_hit: bool,
+                       extracted_last: int | None = None) -> str:
     parts = []
-    if total_pages is not None and total_pages > last_page:
+    not_read_from = (extracted_last or last_page) + 1
+    if total_pages is not None and total_pages > (extracted_last or last_page):
         parts.append(
             f"PDF excerpt: pages {first_page}-{last_page} of {total_pages} "
-            f"(pages {last_page + 1}-{total_pages} not read; {MAX_PDF_PAGES}-page cap)."
+            f"(pages {not_read_from}-{total_pages} not read; {MAX_PDF_PAGES}-page cap)."
         )
     elif page_cap_hit and total_pages is None:
         parts.append(f"PDF excerpt: pages {first_page}-{last_page} read (up to {MAX_PDF_PAGES}-page cap).")
     elif pages_read:
         shown = f"pages {first_page}-{last_page}" if pages_read > 1 else f"page {first_page}"
         if total_pages is not None:
-            parts.append(f"PDF excerpt: {shown} of {total_pages} (full document within page cap).")
+            full_within_page_cap = not char_cap_hit and not page_cap_hit
+            suffix = " (full document within page cap)." if full_within_page_cap else "."
+            parts.append(f"PDF excerpt: {shown} of {total_pages}{suffix}")
         else:
             parts.append(f"PDF excerpt: {shown} read.")
     if char_cap_hit:
@@ -465,26 +473,39 @@ def _format_pdf_excerpt(pages: list[dict], *, total_pages: int | None, char_cap:
         return {"status": "empty", "text": "", "coverage_label": "PDF has no readable text on the extracted pages.",
                 "pages_read": 0, "total_pages": total_pages, "pages": [], "char_cap_hit": False}
     lines, chars, char_cap_hit = [], 0, False
+    excerpt_first = excerpt_last = None
+    pages_in_excerpt = 0
     for entry in pages:
         page_no = entry["page"]
-        label = f"[Page {page_no}: empty]" if entry.get("empty") else f"[Page {page_no}]"
-        lines.append(label)
-        if not entry.get("empty"):
-            body = entry.get("text") or ""
-            remaining = char_cap - chars
-            if remaining <= 0:
-                char_cap_hit = True
-                break
-            if len(body) > remaining:
-                body = body[:remaining]
-                char_cap_hit = True
-            lines.append(body)
-            chars += len(body)
+        if entry.get("empty"):
+            lines.append(f"[Page {page_no}: empty]")
+            lines.append("")
+            continue
+        body = entry.get("text") or ""
+        remaining = char_cap - chars
+        if remaining <= 0:
+            char_cap_hit = True
+            break
+        lines.append(f"[Page {page_no}]")
+        if len(body) > remaining:
+            body = body[:remaining]
+            char_cap_hit = True
+        lines.append(body)
+        chars += len(body)
+        if excerpt_first is None:
+            excerpt_first = page_no
+        excerpt_last = page_no
+        pages_in_excerpt += 1
         lines.append("")
         if char_cap_hit:
             break
-    first_page, last_page = pages[0]["page"], pages[-1]["page"]
-    page_cap_hit = total_pages is not None and total_pages > last_page
+    extracted_first, extracted_last = pages[0]["page"], pages[-1]["page"]
+    first_page = excerpt_first if excerpt_first is not None else extracted_first
+    last_page = excerpt_last if excerpt_last is not None else extracted_last
+    page_cap_hit = (
+        (total_pages is not None and total_pages > extracted_last)
+        or (total_pages is None and len(pages) >= MAX_PDF_PAGES)
+    )
     if char_cap_hit:
         lines.append(f"[Excerpt truncated at {char_cap} characters]")
     text = "\n".join(lines).strip()
@@ -493,9 +514,10 @@ def _format_pdf_excerpt(pages: list[dict], *, total_pages: int | None, char_cap:
         return {"status": "empty", "text": text, "coverage_label": "PDF has no readable text on the extracted pages.",
                 "pages_read": len(pages), "total_pages": total_pages, "pages": pages, "char_cap_hit": False}
     status = "truncated" if page_cap_hit or char_cap_hit else "ok"
-    coverage = pdf_coverage_label(total_pages=total_pages, pages_read=len(pages), first_page=first_page,
-                                  last_page=last_page, chars_included=chars, char_cap=char_cap,
-                                  page_cap_hit=page_cap_hit, char_cap_hit=char_cap_hit)
+    coverage = pdf_coverage_label(total_pages=total_pages, pages_read=pages_in_excerpt or len(pages),
+                                  first_page=first_page, last_page=last_page, chars_included=chars, char_cap=char_cap,
+                                  page_cap_hit=page_cap_hit, char_cap_hit=char_cap_hit,
+                                  extracted_last=extracted_last)
     return {"status": status, "text": text, "coverage_label": coverage, "pages_read": len(pages),
             "total_pages": total_pages, "pages": pages, "char_cap_hit": char_cap_hit}
 
