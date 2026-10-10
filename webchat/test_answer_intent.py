@@ -496,6 +496,9 @@ class AnswerIntentTests(SessionFixture):
                     self.fake.reply_text = prefix + boundary + claim
                     prompt = 'Write a practical guide explaining queued receipts using only these facts: a job is marked queued.'
                     with self.subTest(prefix=prefix, claim=claim, boundary=boundary):
+                        # These cases are independent, not a 480-turn dialogue.
+                        # Keep prior cases out of the reply context and its cost.
+                        self.identifier = self.chat.new_conversation()['id']
                         self.assertNotEqual(self.send(prompt)['content'], self.fake.reply_text)
         self.assertFalse(task_queue.tasks(self.root))
 
