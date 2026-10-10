@@ -650,6 +650,11 @@ or oversized files are inspectable but not removable through this control.
 Management and review stay out of model chat history; removal requires typed Chat
 with Auto selected. Tests use private synthetic notes; live release replay only
 inspects and refuses unbound approvals without deleting owner notes.
+Prompt assembly ranks those bounded private notes by keyword overlap with the
+current turn so an older matching fact can replace an irrelevant tail slice.
+Ranking keeps each fact’s source date and line identity, falls back to recency
+when nothing matches, and never uses embeddings or a model or network call.
+Removed notes stay absent. Overlay conversations read only their own store.
 
 ### Google Calendar (direct, owner-confirmed actions)
 

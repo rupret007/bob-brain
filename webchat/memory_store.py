@@ -10,6 +10,18 @@ import time
 MAX_BYTES = 512 * 1024
 LOCK_SECONDS = 3
 DATED_ROW = re.compile(r'^\[\d{4}-\d{2}-\d{2}\] [^\r\n]+\n$')
+WORD = re.compile(r"[A-Za-z][A-Za-z0-9']{2,}")
+STOPWORDS = frozenset({
+    'the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'has', 'had',
+    'are', 'was', 'were', 'been', 'being', 'you', 'your', 'our', 'their',
+    'what', 'when', 'where', 'which', 'who', 'why', 'how', 'can', 'could',
+    'would', 'should', 'will', 'just', 'about', 'into', 'over', 'than',
+    'then', 'them', 'they', 'not', 'but', 'any', 'all', 'also', 'out',
+    'did', 'does', 'done', 'dont', "don't", 'its', "it's", 'let', 'may',
+    'might', 'must', 'shall', 'here', 'there', 'some', 'such', 'only',
+    'other', 'into', 'after', 'before', 'because', 'while', 'where',
+    'please', 'tell', 'show', 'give', 'make', 'want', 'need', 'like',
+})
 
 
 def contains_single_line_fact(existing, line):
@@ -82,6 +94,70 @@ def read_memory(root, budget=MAX_BYTES):
         raise OSError('Memory read budget must be positive.')
     with directory(root) as folder:
         return read_at(folder, min(MAX_BYTES, budget))
+
+
+def dated_facts(text):
+    """Keep each row's source date and line identity; do not rewrite notes."""
+    facts = []
+    for index, row in enumerate((text or '').splitlines(keepends=True)):
+        dated = bool(DATED_ROW.fullmatch(row))
+        date = row[1:11] if dated else None
+        facts.append(dict(index=index, date=date, text=row,
+                          identity=('{}:{}'.format(date, index) if dated else 'undated:{}'.format(index))))
+    return facts
+
+
+def memory_keywords(query):
+    return {token.lower() for token in WORD.findall(query or '') if token.lower() not in STOPWORDS}
+
+
+def recency_clip(text, budget):
+    if len(text) <= budget:
+        return text
+    tail = text[-budget:]
+    cut = tail.find('\n')
+    return tail[cut + 1:] if cut != -1 else tail
+
+
+def select_relevant_memory(text, query, budget):
+    """Keyword-rank dated facts inside an already-bounded store; else recency.
+
+    Selection is deterministic and local. It never embeds, calls a model, or
+    opens a network. Each kept fact retains its source date and line identity.
+    """
+    if type(budget) is not int or budget < 1:
+        raise OSError('Memory selection budget must be positive.')
+    text = text or ''
+    facts = dated_facts(text)
+    terms = memory_keywords(query)
+    if not facts:
+        return dict(text='', identities=[], ranked=False)
+
+    def score(fact):
+        if not terms:
+            return 0
+        words = {token.lower() for token in WORD.findall(fact['text'])}
+        return len(terms & words)
+
+    hits = [(score(fact), fact['index'], fact) for fact in facts]
+    matched = [item for item in hits if item[0] > 0]
+    if not matched:
+        clipped = recency_clip(text, budget)
+        return dict(text=clipped, identities=[fact['identity'] for fact in dated_facts(clipped)], ranked=False)
+    matched.sort(key=lambda item: (-item[0], -item[1]))
+    chosen, used = [], 0
+    for _, _, fact in matched:
+        size = len(fact['text'])
+        if used + size > budget:
+            continue
+        chosen.append(fact)
+        used += size
+    if not chosen:
+        clipped = recency_clip(text, budget)
+        return dict(text=clipped, identities=[fact['identity'] for fact in dated_facts(clipped)], ranked=False)
+    chosen.sort(key=lambda fact: fact['index'])
+    return dict(text=''.join(fact['text'] for fact in chosen),
+                identities=[fact['identity'] for fact in chosen], ranked=True)
 
 
 @contextmanager
