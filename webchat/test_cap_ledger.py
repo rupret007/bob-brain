@@ -588,6 +588,21 @@ class CapabilityLedgerTests(unittest.TestCase):
         ordinary = '<plist><dict><key>title</key><string>Review note</string></dict></plist>'
         self.assertEqual(safe_read(ordinary.encode('utf-8')), ordinary)
 
+    def test_ledger_F3r6r7_xml_attribute_labelled_credential_disclosed(self):
+        secret = 'synthetic-review-secret'
+        contents = (
+            '<?xml version="1.0"?><properties><entry key="password">' + secret + '</entry></properties>',
+            '<config><add key="password" value="' + secret + '" /></config>',
+        )
+        for index, content in enumerate(contents):
+            with self.subTest(content=content):
+                # Exercise real prepare/execute/safe_read with mocked file reads.
+                with patch.object(self.files, 'snapshot', return_value=({}, content.encode('utf-8'))):
+                    self.assert_secret_read_refused('Documents/export.xml', content,
+                                                    (secret,), 'F3r6r7-' + str(index))
+        ordinary = '<config><add key="title" value="Review note" /></config>'
+        self.assertEqual(safe_read(ordinary.encode('utf-8')), ordinary)
+
     def test_ledger_F4_netrc_credential_record_disclosed(self):
         secret = 'SYNTHETIC-ONLY'
         content = 'machine example.invalid login alice password ' + secret
