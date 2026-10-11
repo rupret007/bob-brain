@@ -163,6 +163,7 @@ if ($("login-form")) {
     return null;
   }
   function switchConversation(id) {
+    replyPlayback?.onConversationChange?.();
     if (current) composerDrafts.set(current, { attachments: pendingAttachments, message: $("message").value, request: draftRequest });
     current = id;
     const draft = composerDrafts.get(id);
@@ -907,12 +908,22 @@ if ($("login-form")) {
       if (act === "copy") {
         try { await navigator.clipboard.writeText(text); $("notice").textContent = "Copied."; } catch (_) {}
       }
-      if (act === "speak" && "speechSynthesis" in window) {
-        await ensureSpeechVoices();
-        speechSynthesis.cancel();
-        const utter = new SpeechSynthesisUtterance(speechText(text).slice(0, 4000));
-        utter.rate = 1.02;
-        speechSynthesis.speak(utter);
+      if (act === "speak") {
+        if (micRecognition) {
+          micRecognition.stop();
+          micRecognition = null;
+          $("mic").classList.remove("mic-active");
+          $("mic").setAttribute("aria-pressed", "false");
+        }
+        const messageId = article.dataset.messageId || null;
+        const result = await replyPlayback.start({
+          rawText: text,
+          messageId,
+          source: "message",
+          enforceQuietHours: false,
+        });
+        if (result.reason === "quiet_hours" && result.message) $("notice").textContent = result.message;
+        else if (result.reason === "empty") $("notice").textContent = "Nothing to read in this message.";
       }
       close();
     });
@@ -1046,7 +1057,17 @@ if ($("login-form")) {
       setTimeout(finish, timeoutMs);
     });
   }
-  let speakingUtterance = null;
+  const replyPlayback = window.ReplyPlayback?.createController({
+    speechSynthesis: typeof speechSynthesis !== "undefined" ? speechSynthesis : null,
+    SpeechSynthesisUtterance: typeof SpeechSynthesisUtterance !== "undefined" ? SpeechSynthesisUtterance : null,
+    hasSpeech: () => "speechSynthesis" in window,
+    speechText,
+    ensureSpeechVoices,
+    isQuietHours: isQuietHoursCt,
+    quietHoursMessage: () => "Quiet hours (11 PM–7 AM CT) — read-aloud is off. Live call still works.",
+    setTimeout,
+    clearTimeout,
+  }) || { start: async () => ({ ok: false }), stop() {}, onConversationChange() {}, onLogout() {}, getSnapshot: () => ({}) };
   $("mic").addEventListener("click", () => {
     const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Speech) { $("notice").textContent = "Voice input needs Safari on iPhone or Chrome on desktop. Keyboard dictation always works."; return; }
@@ -1105,43 +1126,32 @@ if ($("login-form")) {
     }
   });
   $("speak").addEventListener("click", async () => {
-    if (!("speechSynthesis" in window)) { $("notice").textContent = "Read-aloud is not supported here."; return; }
+    if (!("speechSynthesis" in window)) {
+      $("notice").textContent = window.ReplyPlayback?.unsupportedFallback?.() || "Read-aloud is not supported here.";
+      return;
+    }
     if (micRecognition) {
       micRecognition.stop();
       micRecognition = null;
       $("mic").classList.remove("mic-active");
       $("mic").setAttribute("aria-pressed", "false");
     }
-    if (speakingUtterance) {
-      speechSynthesis.cancel();
-      speakingUtterance = null;
-      $("speak").classList.remove("mic-active");
-      $("speak").setAttribute("aria-pressed", "false");
+    const live = replyPlayback.getSnapshot();
+    if (live.lastSource === "latest" && (live.state === "preparing" || live.state === "speaking")) {
+      replyPlayback.stop();
       return;
     }
     try {
       const conversation = await api(`/api/conversations/${current}`);
       const last = conversation.messages.filter((m) => m.role === "assistant" && m.status === "done").at(-1);
       if (!last?.content) { $("notice").textContent = "No finished reply to read."; return; }
-      await ensureSpeechVoices();
-      if (isQuietHoursCt()) {
-        $("notice").textContent = "Quiet hours (11 PM–7 AM CT) — read-aloud is off. Live call still works.";
-        return;
-      }
-      speechSynthesis.cancel();
-      const utter = new SpeechSynthesisUtterance(speechText(last.content).slice(0, 4000));
-      utter.rate = 1.02;
-      const voices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith("en"));
-      if (voices.length) utter.voice = voices.find((v) => /samantha|daniel|english/i.test(v.name)) || voices[0];
-      utter.onend = utter.onerror = () => {
-        speakingUtterance = null;
-        $("speak").classList.remove("mic-active");
-        $("speak").setAttribute("aria-pressed", "false");
-      };
-      speakingUtterance = utter;
-      $("speak").classList.add("mic-active");
-      $("speak").setAttribute("aria-pressed", "true");
-      speechSynthesis.speak(utter);
+      const result = await replyPlayback.start({
+        rawText: last.content,
+        messageId: last.id || null,
+        source: "latest",
+        enforceQuietHours: true,
+      });
+      if (result.reason === "quiet_hours" && result.message) $("notice").textContent = result.message;
     } catch (error) { $("notice").textContent = error.message; }
   });
   $("stop").addEventListener("click", async () => {
@@ -1181,7 +1191,7 @@ if ($("login-form")) {
     if (voice.active) { voice.stop(); return; }
     if (!chatReady || busy || sending || !current) { $("notice").textContent = "Wait for chat to load and Bob’s reply to finish before starting a call."; return; }
     if (micRecognition) { micRecognition.abort(); micRecognition = null; $("mic").classList.remove("mic-active"); $("mic").setAttribute("aria-pressed", "false"); }
-    if ("speechSynthesis" in window) speechSynthesis.cancel();
+    replyPlayback.stop();
     $("call-transcript").replaceChildren();
     $("call-dialog").showModal();
     voice.start(current);
@@ -1204,6 +1214,7 @@ if ($("login-form")) {
   });
   $("logout").addEventListener("click", async () => {
     $("settings-notice").textContent = "";
+    replyPlayback.onLogout();
     try { await voice.stop(); await api("/api/logout", {}); location.assign("/login"); }
     catch (_) { $("settings-notice").textContent = "Could not log out. Please try again."; }
   });
@@ -1536,6 +1547,11 @@ if ($("login-form")) {
   function init() {
     try {
       initAttachmentPreviewUi();
+      window.ReplyPlayback?.mountUi?.({
+        getEl: $,
+        controller: replyPlayback,
+        onFallbackNotice: (text) => { $("notice").textContent = text; },
+      });
       primeSpeechVoices();
       const recognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
       $("mic").hidden = !recognition;

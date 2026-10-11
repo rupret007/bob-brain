@@ -110,7 +110,7 @@ async function until(page, predicate) {
       await page.locator('#notice').filter({hasText:'Keyboard dictation always works'}).waitFor();
       await page.evaluate(() => { delete window.speechSynthesis; });
       await page.locator('#speak').click();
-      await page.locator('#notice').filter({hasText:'Read-aloud is not supported here'}).waitFor();
+      await page.locator('#notice').filter({hasText:'Read-aloud is not supported'}).waitFor();
       assert.deepEqual(writes, [], 'Utility controls must not send messages or other writes');
       assert.deepEqual(errors, []);
       browsers.push({engine,all_pass:true,synthetic_clipboard_and_speech:true,writes:0,
