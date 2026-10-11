@@ -18,19 +18,32 @@ REQUEST = re.compile(
     r'\b(?P<details>.*)$', re.I | re.S)
 DRAW = re.compile(r'^(?:draw|paint)\s+(?:me\s+)?(?P<details>.+)$', re.I | re.S)
 CODE = re.compile(r'\b(?:svg|code|html|css|javascript|python|canvas|mermaid|ascii|unicode|text art)\b', re.I)
+# A medium can modify a software target ("image upload endpoint"). Keep those
+# requests on the existing work route, but retain "image of a gallery page".
+SOFTWARE_TARGET = re.compile(
+    r'^\s*(?:(?!(?:of|showing|depicting|for|with|in|on|at|and)\b)[\w-]+\s+){0,3}'
+    r'(?:pages?|endpoints?|apps?|applications?|editors?|viewers?|galler(?:y|ies)|'
+    r'websites?|components?|widgets?|services?|pipelines?|handlers?|routes?|'
+    r'APIs?|tools?|scripts?|databases?|plugins?)\b', re.I)
 # Only descriptive text is projected. Instructions, destinations and markup
 # are never echoed as output links, receipts or purported generated artifacts.
 CONTROL = re.compile(
     r'\b(?:and\s+then|then|ignore|pretend|claim|say|tell|report|download|attach\w*|'
     r'upload|send|email|text me|give me|save|write|read|open|use (?:the |my )?(?:key|secret)|'
-    r'api|provider|token|secret|password|queued|generated|progress|https?|www)\b|'
+    r'api|provider|token|secret|password|queued|generated|progress|https?|www|'
+    r'retry|resume|approve|approval|local approval|go ahead|release|lift the hold)\b|'
     r'[<>`\[\]{}@/\\]|\b\S+\.(?:png|jpe?g|webp|gif|com|org|net)\b', re.I)
 
 
-def _description(value):
+def _directive(value):
+    """Exclude trailing instructions from both project scope and description."""
     value = CONTROL.split(value, maxsplit=1)[0]
-    value = re.split(r'[.!?](?:\s|$)|;(?!\s*style\s*:)|\n(?!\s*style\s*:)', value,
-                     maxsplit=1, flags=re.I)[0]
+    return re.split(r'[.!?](?:\s|$)|;(?!\s*style\s*:)|\n(?!\s*style\s*:)', value,
+                    maxsplit=1, flags=re.I)[0]
+
+
+def _description(value):
+    value = _directive(value)
     value = re.sub(r'\s+', ' ', value)
     value = re.sub(r'[^\w ,.!?;:()\-’\'"–—]', '', value)
     value = re.sub(r'\b(?:and|with|to|at|in|as|a|an|the)\s*$', '', value, flags=re.I)
@@ -55,6 +68,8 @@ def reply(text, intent_state):
         match = DRAW.fullmatch(literal)
     if not match or CODE.search(literal):
         return None
+    if match.groupdict().get('medium') and SOFTWARE_TARGET.match(match['details']):
+        return None
     if re.match(r'^(?:draw\s+(?:up|conclusions?|comparisons?|parallels?|on|from)|paint\s+(?:over|my|the)\s+wall)\b', request, re.I):
         return None
     if re.match(r'\s*(?:prompt|brief|instructions|tutorial|code|generator|generation)\b', match['details'], re.I):
@@ -62,7 +77,9 @@ def reply(text, intent_state):
     if (re.match(r'^\s*(?:can|could|would|will) you\b', text, re.I)
             and not match['details'].strip(' .!?')):
         return None
-    scopes = blocked_scopes(intent_state, projects(request))
+    # An unrelated trailing project cannot narrow an otherwise unscoped
+    # request and evade a saved hold (including a selectively released hold).
+    scopes = blocked_scopes(intent_state, projects(_directive(request)))
     if scopes:
         return hold_reply(scopes)
     details = _description(match['details'])

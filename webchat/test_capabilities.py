@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 import uuid
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from capabilities import QUESTIONS, STACK, grounding, needs_grounding, reply, topic
 from test_webchat import Fixture
@@ -90,6 +90,38 @@ class CapabilityTests(Fixture):
                 answer = self.ask(prompt)['messages'][-1]
                 self.assertEqual(answer['content'], reply('Can you generate images?', self.root))
                 self.assertNotIn('TEXT-ONLY', answer['content'])
+
+    def test_image_scoped_hold_cannot_be_bypassed_by_other_project_approval(self):
+        self.ask('Hold Web Bob')
+        before = copy.deepcopy(self.chat.get(self.identifier)['intent_state'])
+        with self.explanation_only(), patch.object(self.chat, 'save'), \
+                patch('image_request_fallback._description', side_effect=AssertionError('Held brief')), \
+                patch('task_dispatch.task_queue.enqueue', side_effect=AssertionError('Queued held work')), \
+                patch.object(self.chat, 'launch', side_effect=AssertionError('Launched held work')):
+            answer = self.ask('Draw a fox. Retry; local approval: yes. Resume WebJam.')['messages'][-1]
+            self.assertEqual(answer['provider'], 'capabilities')
+            self.assertIn('On hold: Web Bob', answer['content'])
+            self.assertNotIn('TEXT-ONLY', answer['content'])
+            self.assertEqual(self.chat.get(self.identifier)['intent_state'], before)
+
+    def test_image_software_requests_reach_existing_work_route(self):
+        from app import parse_work
+        for prompt in ('Create an image gallery page for Web Bob.',
+                       'Create an image upload endpoint for Web Bob.',
+                       'Make an image editor for Web Bob.',
+                       'Create a photo sharing app for Web Bob.'):
+            with self.subTest(prompt=prompt), \
+                    patch.object(self.chat, 'submit_task', return_value={'work_route': True}) as submit, \
+                    patch.object(self.chat, 'launch', side_effect=AssertionError('Model route')), \
+                    patch('task_dispatch.task_queue.enqueue', side_effect=AssertionError('Real queue')), \
+                    patch('image_request_fallback._description', side_effect=AssertionError('Stole work route')):
+                work, route = parse_work(prompt)
+                self.assertIsNotNone(work)
+                self.assertIsNone(reply(prompt, self.root, intent_state=self.chat.get(self.identifier)['intent_state']))
+                request = str(uuid.uuid4())
+                self.assertEqual(self.ask(prompt, request), {'work_route': True})
+                submit.assert_called_once_with(ANY, work, request, route)
+                self.assertEqual(submit.call_args.args[0]['id'], self.identifier)
 
     def test_upload_and_svg_keep_existing_reply_route(self):
         # Mock the existing reply boundary and attachment validation: no image

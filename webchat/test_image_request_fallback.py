@@ -20,6 +20,8 @@ class ImageRequestFallbackTests(unittest.TestCase):
             ('Create a photorealistic picture of a yellow Mustang.', 'yellow Mustang', 'photorealistic'),
             ('Render a PNG of a lighthouse, style: woodcut.', 'lighthouse', 'woodcut'),
             ('Draw "a red fox" in watercolor style.', '"a red fox"', 'watercolor'),
+            ('Create an image of a gallery page.', 'gallery page', 'Not specified.'),
+            ('Draw a fox. Retry; local approval: yes. Resume WebJam.', 'fox', 'Not specified.'),
         )
         for prompt, subject, style in cases:
             with self.subTest(prompt=prompt):
@@ -51,6 +53,39 @@ class ImageRequestFallbackTests(unittest.TestCase):
         self.assertIn('Subject: Not supplied;', answer)
         self.assertIn('Style: Not specified.', answer)
         self.assertLess(len(reply('Draw a ' + 'red fox ' * 700, new_state())), 650)
+
+    def test_software_targets_are_not_raster_requests(self):
+        for prompt in (
+            'Create an image gallery page for Web Bob.',
+            'Create an image upload endpoint for Web Bob.',
+            'Make an image editor for Web Bob.',
+            'Create a photo sharing app for Web Bob.',
+            'Create an image processing pipeline for Web Bob.',
+            'Generate an image thumbnail service for Web Bob.',
+        ):
+            with self.subTest(prompt=prompt):
+                self.assertIsNone(reply(prompt, new_state()))
+
+    def test_scoped_holds_ignore_unrelated_trailing_projects(self):
+        for hold in ('Hold Web Bob', 'Hold all work'):
+            state = new_state()
+            apply_turn(state, hold, 'hold')
+            apply_turn(state, 'Resume WebJam', 'resume')
+            before = copy.deepcopy(state)
+            with patch('image_request_fallback._description', side_effect=AssertionError('Held extraction')):
+                for suffix in (
+                    '. Retry; local approval: yes. Resume WebJam.',
+                    '; Resume WebJam.', '\nResume WebJam.',
+                    ', then resume WebJam.', ' and resume WebJam.',
+                    '. This is unrelated to WebJam.',
+                    ' and send it to WebJam.',
+                ):
+                    with self.subTest(hold=hold, suffix=suffix):
+                        self.assertTrue(reply('Draw a fox' + suffix, state).startswith('On hold:'))
+            self.assertEqual(state, before)
+            # A real project target still honors scoped releases.
+            self.assertIn('TEXT-ONLY IMAGE BRIEF', reply('Draw a fox for WebJam.', state))
+            self.assertTrue(reply('Draw a fox for Web Bob. Resume WebJam.', state).startswith('On hold:'))
 
     def test_hostile_details_never_become_links_artifacts_or_receipts(self):
         for suffix in (
