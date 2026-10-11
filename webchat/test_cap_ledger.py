@@ -16,6 +16,98 @@ from local_tasks import LocalFiles, LocalTasks, LocalTaskError, LOCK_TIMEOUT, SE
 
 
 class CapabilityLedgerTests(unittest.TestCase):
+    B3_CONTENTS = (
+        '<property name="password" value="SYNTHETIC_ONLY_123"/>',
+        '<entry name="api_key">SYNTHETIC_ONLY_123</entry>',
+    ) + tuple('<item label="' + label + '">SYNTHETIC_ONLY_123</item>' for label in (
+        'PASSWORD', 'passwd', 'pwd', 'passphrase', 'secret', 'client_secret',
+        'token', 'bearer', 'api-key', 'apikey', 'access_key', 'private key',
+        'private_key', 'credential', 'credentials', 'auth',
+    )) + (
+        '{"name":"password","value":"SYNTHETIC_ONLY_123"}',
+        '["api_key", "SYNTHETIC_ONLY_123"]',
+        'password -> SYNTHETIC_ONLY_123',
+        '## passphrase\nSYNTHETIC_ONLY_123',
+        'SYNTHETIC_ONLY_123\n<!-- AUTH -->',
+        '<entry NAME=\'ToKeN\'>SYNTHETIC_ONLY_123</entry>',
+        'Remember to change your password tomorrow. SYNTHETIC_ONLY_123',
+    )
+
+    def test_ledger_B3_labels_in_any_syntax_refuse_entire_read(self):
+        for index, content in enumerate(self.B3_CONTENTS):
+            with self.subTest(content=content):
+                self.assert_secret_read_refused('Documents/export.txt', content,
+                                                ('SYNTHETIC_ONLY_123',), f'B3-read-{index}')
+        self.assertIn('pattern match', SECRET_REFUSAL)
+        self.assertIn('not a guarantee', SECRET_REFUSAL)
+
+    def test_ledger_B3_labelled_writes_never_echo_or_persist(self):
+        target = self.home / 'Documents/note.txt'
+        target.write_text('original')
+        for index, content in enumerate(self.B3_CONTENTS):
+            for kind, name in (('create', 'new.txt'), ('write', 'note.txt')):
+                with self.subTest(content=content, kind=kind):
+                    (target.parent / 'new.txt').unlink(missing_ok=True)
+                    target.write_text('original')
+                    command = f'{kind} file ~/Documents/{name}: {content}'
+                    with patch.object(self.actions, 'save') as save, \
+                            patch.object(self.files, 'execute', wraps=self.files.execute) as execute:
+                        reply = self.actions.handle(command, 'chat', f'B3-{kind}-{index}', self.state)
+                        self.assertEqual(reply, SECRET_REFUSAL)
+                        self.assertNotIn('SYNTHETIC_ONLY_123', reply)
+                        save.assert_not_called()
+                        execute.assert_not_called()
+                    self.assertFalse((target.parent / 'new.txt').exists())
+                    self.assertEqual(target.read_text(), 'original')
+                    with self.assertRaises(LocalTaskError):
+                        self.files.execute(dict(kind=kind, path=str(target.parent / name), content=content))
+                    # Previously saved draft previews must also use the guard.
+                    with self.assertRaises(LocalTaskError):
+                        self.actions.receipt(dict(state='draft', token='wblocal-' + 'a' * 32,
+                                                  spec=dict(kind=kind, path=str(target), content=content)))
+        with self.actions.locked() as rows:
+            self.assertEqual(rows, {})
+
+    def test_ledger_B3_benign_xml_json_and_text_still_read(self):
+        target = self.home / 'Documents/export.txt'
+        for index, content in enumerate((
+                '<property name="title" value="Morning notes"/>',
+                '<entry name="color">blue</entry>',
+                '{"title":"Morning notes","tasks":["water plants"]}',
+                'Remember to water the plants tomorrow.')):
+            with self.subTest(content=content):
+                target.write_text(content)
+                self.assertEqual(safe_read(content.encode()), content)
+                self.assertEqual(self.actions.handle('read file ~/Documents/export.txt', 'chat',
+                                                     f'B3-benign-{index}', self.state),
+                                 'File read: ' + str(target) + '\n' + content)
+
+    def test_ledger_B3_read_does_not_leak_into_chat_or_memory(self):
+        import uuid
+        from app import Chat
+        target = self.home / 'Documents/export.xml'
+        target.write_text(self.B3_CONTENTS[0])
+        providers, texting, calendar = Mock(), Mock(), Mock()
+        providers.timeouts = {}
+        providers.reply.side_effect = AssertionError('Unexpected provider call')
+        texting.handle.return_value = False
+        texting.public.side_effect = dict
+        calendar.handle.return_value = None
+        chat_root = self.root / 'B3-chat'
+        with patch('app.load_live_ops', return_value={}):
+            chat = Chat(chat_root / 'webchat', chat_root, providers, texting=texting,
+                        calendar=calendar, local_tasks=self.actions)
+            self.addCleanup(chat.close)
+            cid = chat.conversation_list()['conversations'][0]['id']
+            result = chat.submit(cid, 'read file ~/Documents/export.xml', str(uuid.uuid4()))
+        self.assertEqual(result['messages'][-1]['content'], SECRET_REFUSAL)
+        self.assertNotIn('SYNTHETIC_ONLY_123', json.dumps(result))
+        for folder in (chat_root, self.actions.folder):
+            for path in folder.rglob('*'):
+                if path.is_file():
+                    self.assertNotIn(b'SYNTHETIC_ONLY_123', path.read_bytes(), str(path))
+        providers.reply.assert_not_called()
+
     def test_ledger_B2_approval_language_never_saves_or_schedules(self):
         from reminders import Reminders, ReminderError, parse
         constraints = (

@@ -58,7 +58,13 @@ SECRET_ASSIGNMENT = re.compile(
     r'(?<![\w])' + SECRET_FIELD + r'[\"\']?\s*[:=]|'
     r'^[ \t]*' + SECRET_FIELD + r'[ \t]+\S', re.I | re.M)
 SECRET_KEY = re.compile(SECRET_FIELD, re.I)
-SECRET_REFUSAL = 'Secret files or credential content are outside the local file allowlist. No file content returned.'
+SECRET_LABEL = re.compile(
+    r'(?<![a-z0-9])(?:passwords?|passwd|pwd|passphrases?|secrets?|client[_ -]?secret|'
+    r'tokens?|bearer|api[_ -]?key|access[_ -]?key|private[_ -]?key|credentials?|auth)(?![a-z0-9])', re.I)
+SECRET_REFUSAL = (
+    "I didn't show this file because it looks like it may contain a password, key or token. "
+    "My check is a pattern match, not a guarantee either way, so I'm not displaying it. "
+    'Secret files or credential content are outside the local file allowlist. No file content returned.')
 
 
 def safe_read(data):
@@ -69,6 +75,10 @@ def safe_read(data):
     """
     from providers import KEY
     text = data.decode('utf-8')
+    # Labels count in any syntax, including prose and XML attribute values.
+    # Refuse before parsing, previewing, or persisting any of the file content.
+    if SECRET_LABEL.search(text):
+        raise LocalTaskError(SECRET_REFUSAL)
 
     def credential_fields(value):
         if isinstance(value, dict):
@@ -459,6 +469,8 @@ class LocalTasks:
         if row['state'] != 'draft':
             return 'That local draft was cancelled, replaced, or expired. Make a fresh request.'
         spec = row['spec']
+        if spec['kind'] in ('create', 'write'):
+            safe_read(spec['content'].encode('utf-8'))
         preview = '\nReplacement content:\n' + spec['content'] if spec['kind'] == 'write' else ''
         if spec['kind'] == 'create':
             return ("I haven't created it yet — the request contains approval language, so I'm checking first. "
