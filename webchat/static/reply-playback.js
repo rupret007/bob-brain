@@ -101,6 +101,7 @@ const ReplyPlayback = (() => {
       token += 1;
       const meta = active;
       active = null;
+      lastSource = null;
       state = "stopped";
       emit({ ...meta, reason: "user_stop" });
       state = "idle";
@@ -131,7 +132,6 @@ const ReplyPlayback = (() => {
         source = "message",
         enforceQuietHours = false,
       } = request || {};
-      lastSource = source;
       if (!deps.hasSpeech?.()) {
         state = "failed";
         active = {
@@ -153,6 +153,7 @@ const ReplyPlayback = (() => {
       }
       const built = buildUtteranceText(rawText, deps.speechText || ((value) => value));
       if (built.empty) return { ok: false, reason: "empty" };
+      lastSource = source;
       teardownPlayback();
       token += 1;
       const utterToken = token;

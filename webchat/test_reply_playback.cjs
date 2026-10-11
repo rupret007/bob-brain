@@ -147,8 +147,10 @@ test("quiet hours block latest manual start only when enforced", async () => {
   const blocked = await controller.start({ rawText: "late", source: "latest", enforceQuietHours: true });
   assert.equal(blocked.reason, "quiet_hours");
   assert.equal(speech.spoken.length, 0);
+  assert.equal(controller.getSnapshot().lastSource, null);
   const allowed = await controller.start({ rawText: "late", source: "message", enforceQuietHours: false });
   assert.equal(allowed.ok, true);
+  assert.equal(controller.getSnapshot().lastSource, "message");
 });
 
 test("silent no-start timeout fails honestly", async () => {
