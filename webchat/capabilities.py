@@ -162,6 +162,10 @@ def grounding(root, reply_providers, conversation_id=None):
                  limitation='Prepared is not accepted; imported authorship remains unverified; no automatic native Dot/Grok dispatch.'),
             dict(name='writing and reasoning', source='webchat/providers.py',
                  path='Replies and revisions in this conversation using configured model providers.'),
+            dict(name='Google Drive read', source='webchat/drive_read.py',
+                 path='Direct read of one pointed-at Google Doc or plain text file by file ID or Drive URL.',
+                 limitation='Read-only; no search, folders, binaries, sharing, or edits. '
+                            'Requires an explicit dedicated Drive OAuth credential.'),
             dict(name='research', source='webchat/bob_gaps.py; webchat/task_dispatch.py',
                  path='Server web search or a research task; cite only evidence actually retrieved.'),
             dict(name='local project work', source='webchat/task_dispatch.py; services/dispatch_worker.py',
@@ -199,6 +203,9 @@ QUESTIONS = {
                   'what does gh pr ready do', 'what does gh pr ready mean', 'explain gh pr ready'),
     'git_merge': ('what does merging a pr mean', 'what does merging a pull request mean',
                   'what does merge a pr mean', 'what is a pull request merge'),
+    'drive': ('can you read google drive', 'can you read a google doc',
+              'can you read drive files', 'can you open a google doc',
+              'can you read google docs'),
 }
 
 
@@ -247,5 +254,10 @@ def reply(text, root):
                       'does that; it does not merge the code. Web Bob keeps pull requests as drafts.'),
         'git_merge': ('Merging a pull request integrates its changes into the target branch. Reviewing a PR '
                       'or opening a draft does not merge it. Web Bob can prepare and review draft changes.'),
+        'drive': ('Yes—point me at a Google Doc or plain text Drive file with its file ID or Drive URL, '
+                  'for example “read drive FILE_ID”. I return a bounded text excerpt with the title, '
+                  'modified time, and source link. This needs a dedicated read-only Drive credential; '
+                  'otherwise I say needs Google auth. I do not search Drive, open folders, read binaries, '
+                  'or edit or share files.'),
     }
     return answers.get(kind)

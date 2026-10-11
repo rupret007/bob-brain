@@ -694,6 +694,59 @@ global and project holds. The separate reminder and BlueBubbles text-read paths
 are unchanged; outbound texts still require their existing exact draft approval.
 Tests inject Calendar and messaging clients and never call real services.
 
+### Google Drive (direct, read-only excerpt)
+
+Use `read drive FILE_ID`, `read google doc https://docs.google.com/document/d/FILE_ID/edit`,
+or `read drive https://drive.google.com/file/d/FILE_ID/view`. The command accepts a
+Drive file ID or a Drive/Docs URL that contains one. It fetches metadata, allows
+only a Google Doc (`application/vnd.google-apps.document`) or plain text
+(`text/plain`), and returns a bounded text excerpt with the title, modified time,
+and source link. Failures never become a successful read or an empty-file claim.
+Credential markers in the full body, title, or source link cause the whole read
+to be refused before content reaches a receipt or chat history. This conservative
+check cannot identify arbitrary unlabelled secrets. HTTP responses require a
+matching Content-Length or complete chunked framing.
+
+Drive uses a **dedicated** authorized-user OAuth JSON file with `client_id`,
+`client_secret`, and `refresh_token`, readable only by its owner (mode 0600).
+Set `BOB_GOOGLE_DRIVE_CREDENTIALS` in the server's environment to its path, or
+use `~/.config/webbob/google-drive.json`. Calendar credentials and
+`application_default_credentials.json` are not used. The user grant must be
+read-only Drive access (`https://www.googleapis.com/auth/drive.readonly`), and
+the Drive API must be enabled for that OAuth client. No service-account
+credentials, connector-session credentials, search, folder traversal, binaries,
+sharing, editing, sync, or paid model calls are used. Missing or invalid
+credentials return `needs Google auth`; this feature does not start a login
+flow or queue a coding job. Credentials are never printed, changed, or stored
+in chat. OAuth refresh and Google HTTPS calls occur only for an explicit read,
+with no automatic retries. Saved global and project holds are checked before
+auth or network. Tests inject the Drive client and never call real services.
+
+### Local Drive replacement proposals
+
+In typed Chat with Auto selected and no attachments, send
+`prepare drive replacement FILE_ID`, followed by a newline and the exact
+replacement text. Use one supported ID, not a URL. `drive proposal help`
+shows the command. The preview shows a small literal old/new diff, source ID,
+observed `modifiedTime`, and the exact replacement's SHA-256 digest.
+
+Then separately type `yes, save drive proposal PROPOSAL_ID` using the preview's
+ID within five minutes in the same conversation. Any intervening turn, changed
+proposal, or `cancel drive proposal` revokes approval. Saved holds block both
+preparation and saving. Source reads must be complete and at most 32 KiB;
+replacement text is at most 16 KiB of UTF-8, and the entire command plus replacement
+must also fit the 6,000-character message limit. The diff alone may be clipped.
+Empty replacement text is supported.
+
+Approval creates one private `drive-proposals/PROPOSAL_ID.json` under the chat
+data folder, recording the observed source version, source digest, and exact
+replacement. Its receipt says **Local proposal saved. Drive unchanged.** Source
+version is not reverified at save. Storage uncertainty consumes approval and
+requires a fresh preview; the receipt never claims an unconfirmed save succeeded.
+Preview/approval turns stay out of model context, voice tool results, and shared
+handoffs. This uses P13's existing read-only owner setup with no additional scope,
+model rewrite, Drive mutation, sharing, or send route.
+
 ### Local tasks, web lookups, and morning routines
 
 These commands run directly in the chat process, before coding-job routing:
