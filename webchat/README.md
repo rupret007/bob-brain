@@ -718,6 +718,30 @@ in chat. OAuth refresh and Google HTTPS calls occur only for an explicit read,
 with no automatic retries. Saved global and project holds are checked before
 auth or network. Tests inject the Drive client and never call real services.
 
+### Local Drive replacement proposals
+
+In typed Chat with Auto selected and no attachments, send
+`prepare drive replacement FILE_ID`, followed by a newline and the exact
+replacement text. Use one supported ID, not a URL. `drive proposal help`
+shows the command. The preview shows a small literal old/new diff, source ID,
+observed `modifiedTime`, and the exact replacement's SHA-256 digest.
+
+Then separately type `yes, save drive proposal PROPOSAL_ID` using the preview's
+ID within five minutes in the same conversation. Any intervening turn, changed
+proposal, or `cancel drive proposal` revokes approval. Saved holds block both
+preparation and saving. Source reads must be complete and at most 32 KiB;
+replacement text is at most 16 KiB within the existing 6,000-character message
+limit. The diff alone may be clipped. Empty replacement text is supported.
+
+Approval creates one private `drive-proposals/PROPOSAL_ID.json` under the chat
+data folder, recording the observed source version, source digest, and exact
+replacement. Its receipt says **Local proposal saved. Drive unchanged.** Source
+version is not reverified at save. Storage uncertainty consumes approval and
+requires a fresh preview; the receipt never claims an unconfirmed save succeeded.
+Preview/approval turns stay out of model context, voice tool results, and shared
+handoffs. This uses P13's existing read-only owner setup with no additional scope,
+model rewrite, Drive mutation, sharing, or send route.
+
 ### Local tasks, web lookups, and morning routines
 
 These commands run directly in the chat process, before coding-job routing:

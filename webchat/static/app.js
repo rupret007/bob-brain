@@ -775,9 +775,13 @@ if ($("login-form")) {
       setTimeout(() => { btn.textContent = "Copy"; }, 1200);
     } catch (_) { $("notice").textContent = "Could not copy — select the code manually."; }
   });
+  function composerMessage(value) {
+    // Local Drive replacements bind the exact typed text, including its ending.
+    return /^\s*prepare\s+drive\s+replacement\b/i.test(value) ? value : value.trim();
+  }
   $("composer").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const message = $("message").value.trim();
+    const message = composerMessage($("message").value);
     if (!chatReady || (!message && !pendingAttachments.length) || busy || sending || uploading) return;
     const provider = $("provider-choice").value;
     const attachIds = pendingAttachments.map((row) => row.media_id);
@@ -789,7 +793,7 @@ if ($("login-form")) {
     const submitted = draftRequest;
     try {
       const conversation = await api("/api/messages", submitted);
-      if (submitted.conversation_id === current && submitted.message === $("message").value.trim()) {
+      if (submitted.conversation_id === current && submitted.message === composerMessage($("message").value)) {
         $("message").value = "";
         $("message").style.height = "auto";
       }

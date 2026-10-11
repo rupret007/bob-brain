@@ -148,7 +148,7 @@ def password_at(folder):
 
 
 class Chat(TaskDispatch):
-    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, drive=None, local_tasks=None):
+    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, drive=None, local_tasks=None, drive_proposal_store=None):
         self.folder, self.root = folder, root
         folder.mkdir(parents=True, exist_ok=True)
         self.password = password_at(folder)
@@ -185,6 +185,8 @@ class Chat(TaskDispatch):
         from drive_read import DriveRead
         self.calendar = calendar if calendar is not None else CalendarActions(folder)
         self.drive = drive if drive is not None else DriveRead()
+        from drive_proposals import save_private
+        self.drive_proposal_store = drive_proposal_store if drive_proposal_store is not None else save_private
         # Keep direct lookups and routines on the established search adapter,
         # including its offline release/test injection boundary.
         self.local_tasks = local_tasks if local_tasks is not None else LocalTasks(
@@ -368,6 +370,7 @@ class Chat(TaskDispatch):
             message.pop('_generation', None)
             message.pop('_reply_contract', None)
             message.pop('_memory_edit', None)
+            message.pop('_drive_proposal', None)
         info = self.workers.get(value["id"])
         public["reply_stopping"] = bool(info and info["cancel"].is_set())
         return public
@@ -597,11 +600,17 @@ class Chat(TaskDispatch):
         if not isinstance(text, str):
             raise RequestError(400, "Write a message between 1 and 6,000 characters.")
         from memory_edit import Invalid as InvalidMemoryEdit, validate_request as validate_memory_edit
+        from drive_proposals import COMMAND as DRIVE_PROPOSAL_COMMAND, Invalid as InvalidDriveProposal
+        from drive_proposals import validate_request as validate_drive_proposal
         try:
             validate_memory_edit(text, self.redact)
-        except InvalidMemoryEdit as exc:
+            validate_drive_proposal(text, self.redact)
+        except (InvalidMemoryEdit, InvalidDriveProposal) as exc:
             raise RequestError(400, str(exc)) from None
-        text = text.strip()
+        # The newline separates command from replacement. Preserve all bytes of
+        # that replacement, including leading/trailing whitespace and newlines.
+        if not DRIVE_PROPOSAL_COMMAND.match(text):
+            text = text.strip()
         raw_attachments = attachments if attachments is not None else []
         try:
             attachment_metas = validate_attachment_ids(self.root, raw_attachments, conversation_id=identifier)
@@ -678,6 +687,11 @@ class Chat(TaskDispatch):
             # Voice reuses its saved user row; every path creates an explicit
             # reply without indexing a possibly empty message list.
             conversation["messages"].append(reply_message)
+            from drive_proposals import handle as drive_proposal_turn
+            proposal = drive_proposal_turn(self, conversation, text, request_id, source_voice=source_voice,
+                provider=provider, worker=worker, attachments=public_attachments)
+            if proposal is not None:
+                return proposal
             from conversation_focus import update as update_focus
             update_focus(conversation, source if source_voice else user_message)
             from self_improvement import observe_turn as observe_improvement_turn
@@ -739,6 +753,9 @@ class Chat(TaskDispatch):
                 return self.intent_reply(conversation, self.redact(calendar), provider='calendar')
             drive = self.drive.handle(text, identifier, request_id, intent_state)
             if drive is not None:
+                for message in conversation['messages']:
+                    if message.get('request_id') == request_id:
+                        message['private_memory'] = True
                 for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
                     conversation.pop(key, None)
                 return self.intent_reply(conversation, self.redact(drive), provider='drive')

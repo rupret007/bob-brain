@@ -348,7 +348,7 @@ class AdapterTests(unittest.TestCase):
             self.client.metadata(DOC_ID)
 
     def test_transport_is_bounded_no_proxy_no_redirect_no_retry_and_sanitizes_errors(self):
-        response = Mock()
+        response = Mock(status=200, headers={})
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
         response.read.return_value = b'{"id": "ok"}'
@@ -378,7 +378,7 @@ class AdapterTests(unittest.TestCase):
             request('https://www.googleapis.com/calendar/v3/calendars/primary/events')
 
     def test_oversized_http_body_and_redirect_never_verify_content(self):
-        response = Mock()
+        response = Mock(status=200, headers={})
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
         opener = Mock()
@@ -390,6 +390,28 @@ class AdapterTests(unittest.TestCase):
             response.read.return_value = b'[]'
             with self.assertRaisesRegex(DriveError, 'no content was verified'):
                 request('https://www.googleapis.com/drive/v3/files/' + DOC_ID)
+
+    def test_short_partial_and_broken_chunked_bodies_are_not_complete_exports(self):
+        import http.client
+        response = Mock(status=200, headers={})
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        response.read.return_value = b'partial'
+        opener = Mock(open=Mock(return_value=response))
+        with patch('drive_read.urllib.request.build_opener', return_value=opener):
+            for status, headers in ((200, {'Content-Length': '900'}), (206, {}),
+                                    (200, {'Content-Range': 'bytes 0-6/900'}),
+                                    (200, {'Content-Length': 'invalid'})):
+                response.status, response.headers = status, headers
+                with self.subTest(status=status, headers=headers), self.assertRaises(DriveError):
+                    request('https://www.googleapis.com/drive/v3/files/' + DOC_ID + '/export', as_json=False)
+            response.status, response.headers = 200, {}
+            response.read.side_effect = http.client.IncompleteRead(b'partial')
+            with self.assertRaises(DriveError):
+                request('https://www.googleapis.com/drive/v3/files/' + DOC_ID + '/export', as_json=False)
+            response.read.side_effect = None
+            response.headers = {'Content-Length': '7'}
+            self.assertEqual(request('https://www.googleapis.com/drive/v3/files/' + DOC_ID + '/export', as_json=False), 'partial')
 
     def test_parse_target_rejects_non_drive_hosts_and_folders(self):
         self.assertEqual(parse_target(DOC_ID), DOC_ID)
@@ -420,6 +442,9 @@ class RoutingTests(DriveFixture):
         self.assertFalse(self.providers.calls)
         self.assertFalse(task_queue.tasks(self.root))
         self.assertFalse(self.client.writes)
+        self.assertTrue(response['private_memory'])
+        self.assertNotIn('First paragraph of the doc.', json.dumps(Texting.provider_view(self.chat.get(self.cid))))
+        self.assertEqual(self.chat.coordination_records(self.chat.get(self.cid)), [])
 
     def test_needs_auth_is_direct_and_never_fabricates_content(self):
         self.client.error = NEEDS_AUTH

@@ -6,6 +6,7 @@ credentials are dedicated and explicit; Calendar and ADC files are never used.
 Merely constructing this module never contacts Google.
 """
 from datetime import datetime
+import http.client
 import json
 import os
 from pathlib import Path
@@ -61,7 +62,14 @@ def request(url, *, data=None, headers=None, form=False, as_json=True):
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     try:
         with opener.open(req, timeout=10) as response:
+            if response.status != 200 or response.headers.get('Content-Range') is not None:
+                raise ValueError('partial response')
+            length = response.headers.get('Content-Length')
             raw = response.read(BODY_LIMIT + 1)
+            # read(n) may return fewer bytes on early EOF without raising.
+            # A partial export must never look like a complete document.
+            if length is not None and (not length.isdecimal() or int(length) != len(raw)):
+                raise ValueError('incomplete response')
         if len(raw) > BODY_LIMIT:
             raise ValueError('large response')
         if as_json:
@@ -76,7 +84,7 @@ def request(url, *, data=None, headers=None, form=False, as_json=True):
         if exc.code == 404:
             raise DriveError('That Drive file could not be read; no content was returned.') from None
         raise DriveError('Google Drive rejected the request; no content was verified.') from None
-    except (OSError, ValueError, UnicodeError):
+    except (OSError, ValueError, UnicodeError, http.client.HTTPException):
         raise DriveError('Google Drive is unavailable or returned invalid data; no content was verified.') from None
 
 
