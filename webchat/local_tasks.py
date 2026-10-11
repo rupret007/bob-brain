@@ -25,6 +25,7 @@ import uuid
 from zoneinfo import ZoneInfo
 
 import chat_intent
+from approval_language import approval_requested
 from failover import atomic_text
 
 LIMIT = 64 * 1024
@@ -459,6 +460,10 @@ class LocalTasks:
             return 'That local draft was cancelled, replaced, or expired. Make a fresh request.'
         spec = row['spec']
         preview = '\nReplacement content:\n' + spec['content'] if spec['kind'] == 'write' else ''
+        if spec['kind'] == 'create':
+            return ("I haven't created it yet — the request contains approval language, so I'm checking first. "
+                    f'Create {spec["path"]}. Within one hour reply exactly “yes {row["token"]}” '
+                    f'to create it or “cancel {row["token"]}”.')
         return (f'Local draft; no file changed: {spec["kind"]} {spec["path"]}.{preview}\n'
                 f'Within one hour reply exactly “yes {row["token"]}” or “cancel {row["token"]}”.')
 
@@ -495,17 +500,18 @@ class LocalTasks:
                 if len(rows) >= 1000:
                     raise LocalTaskError('Local receipt limit reached. No action ran.')
                 spec = self.files.prepare(spec)
-                destructive = spec['kind'] in ('write', 'delete')
+                needs_confirmation = (spec['kind'] in ('write', 'delete') or
+                                      (spec['kind'] == 'create' and approval_requested(text)))
                 token = 'wblocal-' + uuid.uuid4().hex
                 row = dict(cid=cid, request_id=request_id, text=text, token=token, spec=spec,
-                           state='draft' if destructive else 'claimed', expires=self.clock() + 3600)
-                if destructive:
+                           state='draft' if needs_confirmation else 'claimed', expires=self.clock() + 3600)
+                if needs_confirmation:
                     for old in rows.values():
                         if old['cid'] == cid and old['state'] == 'draft':
                             old['state'] = 'replaced'
                 rows[token] = row
                 self.save(rows)
-                if destructive:
+                if needs_confirmation:
                     return self.receipt(row)
                 return self.finish(rows, row)
         except LocalTaskError as exc:

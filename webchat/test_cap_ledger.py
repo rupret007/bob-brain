@@ -16,6 +16,59 @@ from local_tasks import LocalFiles, LocalTasks, LocalTaskError, LOCK_TIMEOUT, SE
 
 
 class CapabilityLedgerTests(unittest.TestCase):
+    def test_ledger_B1_approval_language_requires_saved_exact_yes(self):
+        constraints = (
+            'but first ask for my confirmation', 'only after I approve',
+            'CONFIRM with me', 'approval needed', 'with permission', 'with consent',
+            'ask me whether to proceed', 'ask first', 'ask whether this is ready',
+            'ask before proceeding', 'check with me', 'my ok is needed',
+            'my okay is needed', 'my go-ahead is needed', 'my say-so is needed',
+            'say go to proceed', 'say yes to proceed', 'say ok to proceed',
+            'wait for me', 'wait until tomorrow', 'hold off', 'not yet',
+            "don't do this yet", 'until I return', 'before you proceed',
+            'before saving', 'before creating', 'before writing', 'before scheduling',
+            'only if ready', 'only when ready', 'only with my agreement',
+        )
+        target = self.home / 'Documents/note.txt'
+        for index, constraint in enumerate(constraints):
+            with self.subTest(constraint=constraint):
+                target.unlink(missing_ok=True)
+                command = 'create file ~/Documents/note.txt: hello, ' + constraint
+                actions = LocalTasks(self.root / f'B1-{index}', files=self.files, clock=self.clock)
+                with patch.object(self.files, 'execute', wraps=self.files.execute) as execute:
+                    reply = actions.handle(command, 'chat', 'request', self.state)
+                    self.assertFalse(target.exists())
+                    execute.assert_not_called()
+                    self.assertIn("I haven't created it yet", reply)
+                    with actions.locked() as rows:
+                        row, = rows.values()
+                    self.assertEqual(row['state'], 'draft')
+                    self.assertRegex(row['token'], r'^wblocal-[0-9a-f]{32}$')
+                    self.assertIn('yes ' + row['token'], reply)
+                    restored = LocalTasks(self.root / f'B1-{index}', files=self.files, clock=self.clock)
+                    self.assertEqual(restored.handle(command, 'chat', 'request', self.state), reply)
+                    restored.handle('yes', 'chat', 'bare-yes', self.state)
+                    self.assertFalse(target.exists())
+                    result = restored.handle('yes ' + row['token'], 'chat', 'confirmed', self.state)
+                    self.assertIn('File created:', result)
+                    self.assertEqual(target.read_text(), 'hello, ' + constraint)
+                    restored.handle('yes ' + row['token'], 'chat', 'replay', self.state)
+                    execute.assert_called_once()
+                target.unlink()
+
+    def test_ledger_B1_plain_create_and_destructive_approval_controls(self):
+        target = self.home / 'Documents/note.txt'
+        self.assertIn('File created:', self.actions.handle(
+            'create file ~/Documents/note.txt: hello', 'chat', 'plain', self.state))
+        self.assertEqual(target.read_text(), 'hello')
+        for index, command in enumerate((
+                'write file ~/Documents/note.txt: replacement, with my consent',
+                'delete file ~/Documents/note.txt, only with my permission')):
+            with self.subTest(command=command), patch.object(self.files, 'execute') as execute:
+                self.actions.handle(command, 'chat', f'B1-control-{index}', self.state)
+                execute.assert_not_called()
+                self.assertEqual(target.read_text(), 'hello')
+
     def setUp(self):
         # Load the real secret patterns without invoking git for build metadata.
         with patch('subprocess.check_output', side_effect=OSError('Offline build metadata')):
