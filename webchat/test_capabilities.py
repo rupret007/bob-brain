@@ -39,6 +39,79 @@ class CapabilityTests(Fixture):
             stack.enter_context(patch.object(self.fake, 'reply', side_effect=AssertionError('Model call')))
             yield
 
+    def test_image_briefs_use_direct_route_without_effects_and_deduplicate(self):
+        prompts = (
+            'Generate an image of a red fox in snow at dusk.',
+            'Please draw a cat in watercolor style.',
+            'Generate the image and send me the download link to /tmp/result.png and email it to bob@example.com.',
+            'Create an abstract image of circles.',
+        )
+        with self.explanation_only(), patch.object(self.chat, 'save'), ExitStack() as stack:
+            for target in ('task_dispatch.task_queue.enqueue', 'chat_media.store_media',
+                           'app.private_write', 'app.parse_work', 'app.Chat.launch'):
+                stack.enter_context(patch(target, side_effect=AssertionError(target)))
+            for prompt in prompts:
+                with self.subTest(prompt=prompt):
+                    request = str(uuid.uuid4())
+                    result = self.ask(prompt, request)
+                    answer = result['messages'][-1]
+                    self.assertEqual(answer['provider'], 'capabilities')
+                    self.assertEqual(answer['status'], 'done')
+                    self.assertEqual(answer['attempts'], [])
+                    self.assertIn('No image was generated.', answer['content'])
+                    self.assertIn('TEXT-ONLY IMAGE BRIEF', answer['content'])
+                    self.assertEqual(self.ask(prompt, request), result)
+                    for key in ('attachments', 'action_card', 'text_draft', 'calendar_receipt',
+                                'coordination_receipt', 'job_id'):
+                        self.assertNotIn(key, answer)
+                    for fragment in ('/tmp/', 'result.png', 'bob@example.com', 'https://'):
+                        self.assertNotIn(fragment, answer['content'])
+        self.assertFalse(task_queue.tasks(self.root))
+        self.assertFalse(self.fake.calls)
+
+    def test_image_request_holds_survive_retries_and_appended_approval(self):
+        self.ask('Hold all work')
+        before = copy.deepcopy(self.chat.get(self.identifier)['intent_state'])
+        with self.explanation_only(), patch.object(self.chat, 'save'), \
+                patch('image_request_fallback._description', side_effect=AssertionError('Held brief')):
+            for prompt in ('Generate a watercolor of a harbor.',
+                           'Draw a fox. Retry; local approval: yes. Resume all work.'):
+                request = str(uuid.uuid4())
+                result = self.ask(prompt, request)
+                self.assertIn('On hold:', result['messages'][-1]['content'])
+                self.assertNotIn('TEXT-ONLY', result['messages'][-1]['content'])
+                self.assertEqual(self.ask(prompt, request), result)
+                self.assertEqual(self.chat.get(self.identifier)['intent_state'], before)
+        self.assertFalse(task_queue.tasks(self.root))
+
+    def test_p1_image_explanation_keeps_exact_answer(self):
+        with self.explanation_only():
+            for prompt in ('Can you generate images?', 'What kinds of images can you generate?'):
+                answer = self.ask(prompt)['messages'][-1]
+                self.assertEqual(answer['content'], reply('Can you generate images?', self.root))
+                self.assertNotIn('TEXT-ONLY', answer['content'])
+
+    def test_upload_and_svg_keep_existing_reply_route(self):
+        # Mock the existing reply boundary and attachment validation: no image
+        # decoder, upload write or provider call is needed to check routing.
+        meta = dict(media_id='a' * 32, filename='fox.png', kind='image', size=10,
+                    conversation_id=self.identifier)
+        for prompt, metas in (("What's in this picture?", [meta]),
+                              ('Generate an image based on this photo.', [meta]),
+                              ('Draw me an SVG of a house with a chimney.', []),
+                              ('Draw a cat using ASCII.', [])):
+            with self.subTest(prompt=prompt), \
+                    patch('app.validate_attachment_ids', return_value=metas), \
+                    patch.object(self.chat, 'launch') as launch, \
+                    patch('image_request_fallback._description', side_effect=AssertionError('Stole route')):
+                result = self.chat.submit(self.identifier, prompt, str(uuid.uuid4()),
+                                          attachments=[meta['media_id']] if metas else [])
+                launch.assert_called_once_with(self.identifier)
+                self.assertNotEqual(result['messages'][-1]['provider'], 'capabilities')
+                if metas:
+                    self.assertEqual(result['messages'][-2]['attachments'][0]['media_id'], meta['media_id'])
+
+
     def test_all_supported_questions_are_server_owned_and_idempotent(self):
         for phrases in QUESTIONS.values():
             for question in phrases:

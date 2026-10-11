@@ -282,7 +282,8 @@ QUESTIONS = {
     'gmail': ('can you use gmail', 'can you read my gmail', 'can you send email through gmail'),
     'drive': ('can you use google drive', 'can you access google drive', 'can you save files to google drive'),
     'browser': ('can you browse the web', 'can you use a browser', 'can you open urls'),
-    'image_generation': ('can you generate images', 'can you create images', 'can you make images'),
+    'image_generation': ('can you generate images', 'can you create images', 'can you make images',
+                         'what kinds of images can you generate'),
     'voice_memos': ('can you transcribe voice memos', 'can i send voice memos',
                     "what's the longest voice memo i can send", 'what are your voice memo limits'),
     'media': ('can you read images', 'can you see photos', 'can you read files',
@@ -312,9 +313,12 @@ def workers_paused(root):
             (root / 'conductor/SOLO-WORKER').exists())
 
 
-def reply(text, root):
+def reply(text, root, *, intent_state=None):
     kind = topic(text)
     if kind is None:
+        if intent_state is not None:
+            from image_request_fallback import reply as image_reply
+            return image_reply(text, intent_state)
         return None
     paused = workers_paused(root)
     worker = ('Additional workers and council are paused for solo work; Jobs shows the observed activity.'
