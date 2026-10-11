@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 from failover import atomic_text
 from actions_intent import reminder_request, routine_request, routine_intent
+from approval_language import approval_requested
 
 ZONE = ZoneInfo('America/Chicago')
 HELP = ('Try “remind me to check the oven in 10 minutes”, “remind me to call Sam on 2026-10-01 at 14:00”, '
@@ -110,7 +111,7 @@ def parse(text, now):
     stripped = text.strip().rstrip('.?!')
     # Constraints anywhere in a recognized request apply before any schedule
     # variant (including recurring reminders) is allowed to create a row.
-    if re.search(r"\b(?:do\s+not|don't|don’t|never)\s+(?:(?:actually|ever|just|yet|really)\s+)*(?:save|create|schedule|set|add|execute)\b|"
+    if approval_requested(text) or re.search(r"\b(?:do\s+not|don't|don’t|never)\s+(?:(?:actually|ever|just|yet|really)\s+)*(?:save|create|schedule|set|add|execute)\b|"
                  r'\b(?:ask|confirm|check)(?:\s+with)?\s+me\s+(?:first|before)|'
                  r'\b(?:ask(?:\s+me)?|wait)\s+for\s+(?:my\s+)?(?:approval|confirmation|permission)\b|'
                  r'\b(?:get|pending|after)\s+my\s+(?:approval|confirmation)\b|'

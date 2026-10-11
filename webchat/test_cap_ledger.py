@@ -16,6 +16,48 @@ from local_tasks import LocalFiles, LocalTasks, LocalTaskError, LOCK_TIMEOUT, SE
 
 
 class CapabilityLedgerTests(unittest.TestCase):
+    def test_ledger_B2_approval_language_never_saves_or_schedules(self):
+        from reminders import Reminders, ReminderError, parse
+        constraints = (
+            'but ask me whether to schedule it first', 'only with my permission',
+            'CONFIRM with me', 'approval needed', 'permission needed', 'with consent',
+            'ask first', 'ask whether this is ready', 'ask before proceeding',
+            'check with me', 'my ok is needed', 'my okay is needed',
+            'my go-ahead is needed', 'my say-so is needed', 'say go to proceed',
+            'say yes to proceed', 'say ok to proceed', 'wait for me',
+            'wait until tomorrow', 'hold off', 'not yet', "don't do this yet",
+            'until I return', 'before you proceed', 'before saving', 'before creating',
+            'before writing', 'before scheduling', 'only if ready', 'only after review',
+            'only when ready', 'only with my agreement',
+        )
+        refusal = 'Nothing was saved. Send a new reminder request when you want it scheduled.'
+        for index, constraint in enumerate(constraints):
+            for prefix in ('create a reminder for 2am to stretch',
+                           'remind me at 2am to stretch',
+                           'remind me every 2 hours to stretch',
+                           'every morning remind me to stretch'):
+                with self.subTest(constraint=constraint, prefix=prefix):
+                    command = prefix + ', ' + constraint
+                    folder = self.root / f'B2-{index}'
+                    reminders = Reminders(folder, clock=self.clock)
+                    with patch.object(reminders, 'save', wraps=reminders.save) as save, \
+                            patch.object(reminders, 'create', wraps=reminders.create) as create:
+                        self.assertEqual(reminders.handle(command, 'chat', command), refusal)
+                        save.assert_not_called()
+                        create.assert_not_called()
+                    with self.assertRaisesRegex(ReminderError, 'Nothing was saved'):
+                        parse(command, self.clock())
+                    self.assertEqual(Reminders(folder, clock=self.clock).listing(), [])
+
+    def test_ledger_B2_plain_reminder_still_schedules(self):
+        from reminders import Reminders
+        reminders = Reminders(self.root / 'B2-plain', clock=self.clock)
+        self.assertIn('Reminder saved:', reminders.handle(
+            'remind me at 2am to stretch', 'chat', 'plain'))
+        row, = reminders.listing()
+        self.assertEqual(row['body'], 'stretch')
+        self.assertEqual(row['state'], 'pending')
+
     def test_ledger_B1_approval_language_requires_saved_exact_yes(self):
         constraints = (
             'but first ask for my confirmation', 'only after I approve',
