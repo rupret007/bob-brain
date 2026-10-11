@@ -1881,6 +1881,7 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/version":
             return self.send(200, BUILD)
         assets = {"/style.css": ("style.css", "text/css; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+                  "/action-history.js": ("action-history.js", "text/javascript; charset=utf-8"),
                   "/voice.js": ("voice.js", "text/javascript; charset=utf-8"),
                   "/voice-capture.js": ("voice-capture.js", "text/javascript; charset=utf-8"),
                   "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json")}
