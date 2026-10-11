@@ -461,6 +461,7 @@ if ($("login-form")) {
       const pending = ["queued", "running"].includes(message.status);
       const article = document.createElement("article");
       article.className = `message ${message.role} ${pending ? "pending" : ""} ${message.status === "error" ? "error" : ""}`;
+      if (message.id) article.dataset.messageId = message.id;
       if (message.texting) article.classList.add("texting");
       if (message.private_memory) article.classList.add("private-memory");
       if (message.role === "user") article.setAttribute("aria-label", "You");
@@ -634,6 +635,8 @@ if ($("login-form")) {
     }
     panel.replaceChildren(fragment);
     if (nearBottom || sending) panel.scrollTop = panel.scrollHeight;
+    window.ActionHistory?.mount?.();
+    window.ActionHistory?.updatePanel?.(conversation);
   }
   function textDraftCard(draft) {
     const card = document.createElement("section");
