@@ -26,7 +26,9 @@ ROUTINE_HELP = ('Try “every morning do read file ~/Documents/notes.txt”, '
                 '“every morning at 8am do search the web for Chicago weather”, or '
                 '“every morning remind me to stretch”. Morning defaults to 9am America/Chicago. '
                 'Read-only routines run in this chat while Web Bob is running; one overdue run catches up after restart. '
-                'Use “my routines” and “cancel routine ID”. Writes, deletes and sends cannot run unattended.')
+                'Use “my routines”, “pause routine ID”, “resume routine ID”, and “cancel routine ID”. '
+                'Resume schedules the next future occurrence without replaying missed runs; saved holds still apply. '
+                'Writes, deletes and sends cannot run unattended.')
 UNITS = {'second': 1, 'minute': 60, 'hour': 3600, 'day': 86400}
 DURATION = r'\d+\s+(?:seconds?|minutes?|hours?|days?)'
 CLOCK = r'\d{1,2}(?::\d{2}\s*(?:am|pm)?|\s*(?:am|pm))'
@@ -257,12 +259,12 @@ class Reminders:
             existing = next((r for r in rows if r['id'] == identifier), None)
             if existing:
                 return existing
-            if sum(r['state'] == 'pending' for r in rows) >= 200:
-                raise ReminderError('The reminder limit is reached. Cancel active reminders before adding more.')
+            if sum(r['state'] in ('pending', 'paused') for r in rows) >= 200:
+                raise ReminderError('The reminder limit is reached. Cancel pending or paused reminders before adding more.')
             before = list(rows)
             if len(rows) >= 400:
-                pending = [r for r in rows if r['state'] == 'pending']
-                completed = sorted((r for r in rows if r['state'] != 'pending'), key=lambda r: r['created_at'])[-199:]
+                pending = [r for r in rows if r['state'] in ('pending', 'paused')]
+                completed = sorted((r for r in rows if r['state'] not in ('pending', 'paused')), key=lambda r: r['created_at'])[-199:]
                 rows[:] = pending + completed
             row = dict(id=identifier, conversation_id=cid, body=body, due_at=due, interval_seconds=interval,
                        state='pending', created_at=self.clock(), occurrences=0)
@@ -279,9 +281,49 @@ class Reminders:
             return (sorted((r for r in rows if r['state'] == 'pending'), key=lambda r: r['due_at']) +
                     sorted((r for r in rows if r['state'] != 'pending'), key=lambda r: r.get('last_fired_at', r['created_at']), reverse=True))
 
-    def cancel(self, identifier):
+    def control_routine(self, command, identifier, cid):
+        # The due loop holds this same lock across the eligibility check and
+        # delivery/action claim. A pause either wins before that claim or waits
+        # for it; it cannot revoke work that already started.
         with self.locked() as rows:
-            row = next((r for r in rows if r['id'] == identifier), None)
+            row = next((r for r in rows if r['id'] == identifier and r['conversation_id'] == cid), None)
+            if not row or not (row.get('daily_time') or row.get('interval_seconds')):
+                return f'No routine {identifier} in this chat.'
+            if row['state'] not in ('pending', 'paused'):
+                return f"Routine {identifier} is {row['state']}; it cannot be {command}d."
+            target = 'paused' if command == 'pause' else 'pending'
+            if row['state'] == target:
+                return (f'Routine {identifier} is already paused.' if command == 'pause' else
+                        f"Routine {identifier} is already scheduled for {stamp(row['due_at'])}. Saved holds still apply.")
+            before = [dict(r) for r in rows]
+            now = self.clock()
+            row['state'] = target
+            if command == 'pause':
+                row['paused_at'] = now
+            else:
+                row.pop('paused_at', None)
+                if row.get('daily_time'):
+                    row['due_at'] = next_morning(now, row['daily_time'])
+                elif row['due_at'] <= now:
+                    # Retain the interval's original phase, skipping every
+                    # missed slot without consuming an occurrence identity.
+                    elapsed = int((now - row['due_at']) // row['interval_seconds']) + 1
+                    row['due_at'] += elapsed * row['interval_seconds']
+            self.save_change(rows, before)
+            if command == 'resume':
+                return (f"Resumed routine {identifier}; next scheduled occurrence {stamp(row['due_at'])}. "
+                        'Missed runs will not be replayed. Saved holds still apply; no action ran from this command.')
+            receipt = (f'Paused routine {identifier}; future runs are paused. '
+                       'This does not undo an action that started before the pause.')
+            if row.get('last_fired_at') is not None:
+                notice = uuid.uuid5(uuid.NAMESPACE_URL, 'reminder-notice:' + identifier + ':' + str(row['occurrences'] - 1)).hex
+                receipt += f" Last recorded delivery: {stamp(row['last_fired_at'])}, notice {notice}; see its result in chat."
+            return receipt
+
+    def cancel(self, identifier, cid=None):
+        with self.locked() as rows:
+            row = next((r for r in rows if r['id'] == identifier and
+                        (cid is None or r['conversation_id'] == cid)), None)
             if not row:
                 raise ReminderError('No reminder with that ID was found.')
             if row['state'] == 'fired':
@@ -302,6 +344,8 @@ class Reminders:
             changed = False
             now = self.clock()
             for row in rows:
+                # Recheck persisted eligibility under the execution lock, not
+                # from a listing snapshot. Paused routines launch no actions.
                 if row['state'] != 'pending' or row['due_at'] > now:
                     continue
                 notice = uuid.uuid5(uuid.NAMESPACE_URL, 'reminder-notice:' + row['id'] + ':' + str(row['occurrences'])).hex
@@ -343,14 +387,27 @@ class Reminders:
     def _handle(self, text, cid, request_id, *, local_tasks=None):
         command = text.strip().casefold().rstrip('.?!')
         if command in ('reminders', 'my reminders', 'list reminders', 'show reminders', 'routines', 'my routines',
-                       'timers', 'my timers', 'alarms', 'my alarms'):
-            rows = [r for r in self.listing() if r['state'] == 'pending']
-            return ('Your reminders (America/Chicago):\n' + '\n'.join(
-                f"• {'Read-only routine: ' if r.get('action') else ''}{r['body']} — {stamp(r['due_at'])}" + repeat_description(r) + f" · ID {r['id']}"
-                for r in rows)) if rows else 'You have no pending reminders. ' + HELP
+                       'list routines', 'show routines', 'timers', 'my timers', 'alarms', 'my alarms'):
+            owned = [r for r in self.listing() if r['conversation_id'] == cid]
+            rows = [r for r in owned if r['state'] == 'pending']
+            paused = [r for r in owned if r['state'] == 'paused']
+            sections = []
+            if rows:
+                sections.append('Your reminders (America/Chicago):\n' + '\n'.join(
+                    f"• {'Read-only routine: ' if r.get('action') else ''}{r['body']} — {stamp(r['due_at'])}" + repeat_description(r) + f" · ID {r['id']}"
+                    for r in rows))
+            if paused:
+                sections.append('Paused routines (no runs while paused):\n' + '\n'.join(
+                    f"• {r['body']} — paused." + repeat_description(r) + f" · ID {r['id']}" for r in paused))
+            return '\n\n'.join(sections) if sections else 'You have no pending reminders. ' + HELP
+        control = re.fullmatch(r'(pause|resume) routine ([0-9a-f]{16})', command)
+        if control:
+            return self.control_routine(control[1], control[2], cid)
+        if re.match(r'^(?:pause|resume) routine\b', command):
+            return 'Use “pause routine ID” or “resume routine ID” with an ID from “my routines”. Nothing changed.'
         cancel = re.fullmatch(r'cancel (?:reminder|routine|timer|alarm) ([0-9a-f]{16})', command)
         if cancel:
-            return self.cancel(cancel[1])
+            return self.cancel(cancel[1], cid)
         if reminder_request(text) or routine_intent(text) or re.match(r'^(?:remind me|set (?:a )?routine|cancel (?:reminder|routine|timer|alarm)|reminder help)\b', command):
             try:
                 parsed = parse(text, self.clock())
