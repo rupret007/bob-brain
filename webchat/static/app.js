@@ -394,7 +394,12 @@ if ($("login-form")) {
     attachmentPreviewState = {
       mediaId: att.media_id,
       filename: att.filename,
-      preview: { ...att.preview, conversation_id: conversationId, filename: att.filename || att.preview.filename, media_id: att.media_id },
+      preview: {
+        ...att.preview,
+        filename: att.filename || att.preview.filename,
+        media_id: att.media_id,
+        conversation_id: att.preview.conversation_id || conversationId,
+      },
       pageNumber: att.preview.default_page ?? (att.preview.pages?.[0]?.page ?? null),
       selectedText: "",
       selectionId: crypto.randomUUID(),

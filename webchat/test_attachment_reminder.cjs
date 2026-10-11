@@ -9,7 +9,7 @@ const vm = require("node:vm");
 
 const source = fs.readFileSync(path.join(__dirname, "static/attachment-reminder.js"), "utf8");
 
-function loadModule(dom = {}) {
+function loadModule(dom = {}, windowObj = {}) {
   const elements = new Map();
   const doc = {
     getElementById(id) {
@@ -19,7 +19,7 @@ function loadModule(dom = {}) {
   };
   const context = {
     document: doc,
-    window: {},
+    window: windowObj,
     module: { exports: {} },
   };
   vm.runInContext(source, vm.createContext(context));
@@ -232,11 +232,8 @@ test("T9 composer insert uses zero network; submit path is separate", () => {
 });
 
 test("T10 secrets are not read from window globals", () => {
-  const { AttachmentReminder } = loadModule();
   const secret = "sk-live-XXXX";
-  const prior = global.window;
-  global.window = { __SECRET_TOKEN: secret };
-  const { AttachmentReminder: AR, elements } = loadModule();
+  const { AttachmentReminder: AR, elements } = loadModule({}, { __SECRET_TOKEN: secret });
   makeDialogElements(elements);
   AR.openReminderDialog({
     preview: paperPdf,
@@ -253,7 +250,6 @@ test("T10 secrets are not read from window globals", () => {
     elements.get("attachment-reminder-receipt").textContent,
   ].join("\n");
   assert.ok(!dialogText.includes(secret));
-  global.window = prior;
 });
 
 test("voice transcription unavailable is reported honestly", () => {

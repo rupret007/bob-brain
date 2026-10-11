@@ -4,14 +4,6 @@ const AttachmentReminder = (() => {
   const SELECTION_CHAR_CAP = 2000;
   const SCHEDULE_EXAMPLES = "2026-10-15 08:00 or 10/15/2026 8:00";
 
-  function escapeHtml(text) {
-    return String(text)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-  }
-
   function normalizePreview(preview) {
     if (!preview || typeof preview !== "object") return null;
     return preview;
@@ -280,7 +272,6 @@ const AttachmentReminder = (() => {
   return {
     SELECTION_CHAR_CAP,
     SCHEDULE_EXAMPLES,
-    escapeHtml,
     normalizePreview,
     isOwned,
     pageEntry,
