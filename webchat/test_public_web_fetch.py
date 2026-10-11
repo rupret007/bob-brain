@@ -42,6 +42,7 @@ class FetchTests(unittest.TestCase):
         self.assertEqual((result['status'], result['reason']), (status, reason))
         self.assertEqual(result['excerpt'], '')
         self.assertIsNone(result['retrieved_at'])
+        self.assertNotIn('snapshot_text', result)
         self.assertNotIn('Webpage retrieved.', web.format_receipt(result))
 
     def test_public_html_is_bounded_evidence_with_timestamp_url_and_no_subresources(self):
@@ -68,6 +69,16 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(result['excerpt'], 'a' * web.MAX_EXCERPT)
         self.assertTrue(result['truncated'])
         self.assertNotIn('never-observed-in-excerpt', web.format_receipt(result))
+
+    def test_snapshot_caps_screened_plain_text_characters_independently_of_excerpt(self):
+        text = 'é' * 50000
+        self.body = ('<head>excluded</head><p>' + text + '</p><script>excluded</script>').encode()
+        result = self.fetch()
+        self.assertEqual(result['excerpt'], text[:4000])
+        self.assertEqual(result['snapshot_text'], text[:12000])
+        self.assertEqual(result['text_characters'], 50000)
+        self.assertNotIn('excluded', result['snapshot_text'])
+        self.connection.request.assert_called_once()
 
     def test_body_cap_declared_and_streamed_and_exact_limit(self):
         self.headers.update({'Content-Type': 'text/plain', 'Content-Length': str(web.MAX_BYTES + 1)})
@@ -261,9 +272,11 @@ class FetchTests(unittest.TestCase):
 
     def test_credentials_anywhere_in_body_never_enter_excerpt_or_receipt(self):
         for secret in (b'api_key=synthetic-secret', b'Authorization: Bearer synthetic-secret',
+                       b'Set-Cookie: session=synthetic-secret', b'Cookie: session=synthetic-secret',
                        b'<p>password&#61;synthetic-secret</p>',
                        b'<script>client_secret="synthetic-secret"</script>',
-                       b'<p>ordinary prose</p>' + b' ' * web.MAX_EXCERPT + b'access_token=synthetic-secret'):
+                       b'<p>ordinary prose</p>' + b' ' * web.MAX_EXCERPT + b'access_token=synthetic-secret',
+                       b'a' * (web.MAX_SNAPSHOT + 1) + b' access_token=synthetic-secret'):
             with self.subTest(secret=secret[:60]):
                 self.body = secret
                 result = self.fetch()
@@ -300,11 +313,14 @@ class WorkerTests(unittest.TestCase):
 
     def test_success_roundtrips_worker_evidence(self):
         result = dict(status='retrieved', final_url='https://example.com/', retrieved_at='2026-10-10T12:00:00+00:00',
-                      elapsed_ms=1, excerpt='actual fixture text', bytes_read=19, truncated=False)
+                      elapsed_ms=1, excerpt='actual fixture text', bytes_read=19, truncated=False,
+                      snapshot_text='actual fixture text', text_characters=19)
         process = Mock(returncode=0)
         process.communicate.return_value = (json.dumps(result), '')
         with patch('subprocess.Popen', return_value=process):
             actual = web.fetch_webpage('https://example.com/')
         self.assertEqual(actual['excerpt'], result['excerpt'])
         self.assertEqual(actual['retrieved_at'], result['retrieved_at'])
+        self.assertEqual(actual['snapshot_text'], result['snapshot_text'])
+        self.assertEqual(actual['text_characters'], result['text_characters'])
         process.kill.assert_not_called()
