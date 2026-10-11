@@ -1880,6 +1880,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, BUILD)
         assets = {"/style.css": ("style.css", "text/css; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                   "/voice.js": ("voice.js", "text/javascript; charset=utf-8"),
+                  "/plan-checklist.js": ("plan-checklist.js", "text/javascript; charset=utf-8"),
                   "/voice-capture.js": ("voice-capture.js", "text/javascript; charset=utf-8"),
                   "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json")}
         if route in assets:

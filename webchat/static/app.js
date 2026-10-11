@@ -16,6 +16,7 @@ if ($("login-form")) {
   });
 } else {
   let csrf = "", current = "", busy = false, replyStopping = false, sending = false, revision = "", polling = false, draftRequest = null, pollFailures = 0;
+  let latestJobsActivity = null;
   let pendingAttachments = [];
   let uploading = false, quickRequest = null;
   const composerDrafts = new Map();
@@ -594,6 +595,11 @@ if ($("login-form")) {
         }
         article.append(card);
       }
+      if (message.dispatch_intent || message.blocked_dispatch_intent || message.cancelled_dispatch_intent) {
+        const planModel = PlanChecklist.buildModel(conversation, message, latestJobsActivity, Date.now() / 1000);
+        const planNode = PlanChecklist.render(document, planModel, { openDetails, keyPrefix: message.id });
+        if (planNode) article.append(planNode);
+      }
       if (message.attempts?.length) {
         const rows = [...new Set(message.attempts.map((attempt) => {
           const name = providers[attempt.provider];
@@ -1126,6 +1132,7 @@ if ($("login-form")) {
     return (rows || []).filter((row) => { if (seen.has(row.key)) return false; seen.add(row.key); return true; });
   }
   function renderJobs(data) {
+    latestJobsActivity = data;
     const dispatch = data.dispatch;
     const waiting = Number.isInteger(dispatch?.queued) && dispatch.queued > 0
       ? ` ${dispatch.queued} ${dispatch.queued === 1 ? 'job is' : 'jobs are'} waiting.` : '';
@@ -1233,6 +1240,7 @@ if ($("login-form")) {
   }
   let jobsRefreshing = false, jobsFetchedAt = 0;
   function clearJobs() {
+    latestJobsActivity = null;
     $("jobs-dispatch").textContent = '';
     $("jobs-dispatch").hidden = true;
     $("jobs-notice").hidden = false;
