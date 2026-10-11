@@ -166,6 +166,71 @@ class RecoveryWordingTests(unittest.TestCase):
             for mock in mocks:
                 mock.assert_not_called()
 
+    def test_current_recovery_cases_precede_retained_failure_history(self):
+        records = {
+            f"old-{i}": dict(job_id=f"old-{i}", state="failed", updated_at=NOW - 7 * 86400,
+                             _journal="conductor/jobs.jsonl") for i in range(3)
+        }
+        records.update({
+            "capacity": dict(job_id="capacity", state="queued", updated_at=NOW,
+                             recovery="waiting for lane/worktree lease", _journal="conductor/jobs.jsonl"),
+            "result": dict(job_id="result", state="harvested", updated_at=NOW,
+                           recovery="deliverables persisted", _journal="conductor/jobs.jsonl"),
+        })
+        snap = snapshot()
+        snap["queue_jobs"] = _queue_jobs(records, set())
+        snap["queue_counts"] = {key: len(rows) for key, rows in snap["queue_jobs"].items()}
+        original = copy.deepcopy(snap)
+        notes = recovery_messages(snap)
+        self.assertEqual(len(notes), 3)
+        self.assertIn("Job `capacity`", notes[0])
+        self.assertIn("Deferred while waiting", notes[0])
+        self.assertIn("Job `result`", notes[1])
+        self.assertIn("A saved result is recorded", notes[1])
+        self.assertIn("Current outcome is unknown", notes[2])
+        for question in ("status", "status with diagnostics"):
+            answer = format_operational_reply(snap, text=question)
+            for note in notes:
+                self.assertIn(note, answer)
+        self.assertEqual(recovery_messages(snap), notes)
+        self.assertEqual(snap, original)
+        for note in notes:
+            self.assert_observational(note)
+
+    def test_fresh_lane_result_precedes_unusable_queue_evidence(self):
+        for fields, available in (
+            ({"updated_at": NOW - 86401}, True),
+            ({"updated_at": NOW + 1}, True),
+            ({"updated_at": None}, True),
+            ({"journal": "untrusted"}, True),
+            ({"job_id": None}, True),
+            ({}, False),
+        ):
+            with self.subTest(fields=fields, available=available):
+                snap = snapshot(bob_lanes={"finished_recent": [lane()]})
+                snap["inspection"]["queue_available"] = available
+                snap["queue_jobs"]["failed"] = [dict(job(), job_id=f"old-{i}") for i in range(3)]
+                for row in snap["queue_jobs"]["failed"]:
+                    row.update(fields)
+                notes = recovery_messages(snap)
+                self.assertIn("Lane `lane-p23`", notes[0])
+                self.assertIn("Open the saved result", notes[0])
+                self.assertIn("Current outcome is unknown", notes[1])
+                self.assertLessEqual(len(notes), 3)
+
+    def test_newest_fresh_evidence_wins_before_deduplication_and_limit(self):
+        snap = snapshot()
+        snap["queue_jobs"]["failed"] = [dict(job(), job_id=f"failure-{i}", updated_at=NOW - 60)
+                                          for i in range(3)]
+        snap["queue_jobs"]["failed"].insert(0, dict(job(), updated_at=NOW - 7 * 86400))
+        snap["queue_jobs"]["done"] = [job("harvested", recovery="deliverables persisted")]
+        notes = recovery_messages(snap)
+        self.assertEqual(len(notes), 3)
+        self.assertIn("Job `job-p23`", notes[0])
+        self.assertIn("A saved result is recorded", notes[0])
+        self.assertEqual(" ".join(notes).count("`job-p23`"), 1)
+        self.assertNotIn("Current outcome is unknown", " ".join(notes))
+
     def test_blocked_harvest_is_not_a_successful_result_receipt(self):
         records = {"job-p23": dict(job_id="job-p23", state="harvested", outcome="blocked",
                                     recovery="harvest_complete", updated_at=NOW,

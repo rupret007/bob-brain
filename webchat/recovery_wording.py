@@ -48,6 +48,26 @@ def _result_path(value):
     return None
 
 
+def _evidence_age(row, captured_at, available):
+    """Age of usable evidence, shared by wording and selection; None if unknown."""
+    lane = _identifier(row.get("screen")) if row.get("source") == "lane_collector" else None
+    journal = row.get("journal")
+    if (available is not True or not (_identifier(row.get("job_id")) or lane)
+            or not (lane or isinstance(journal, str) and journal in JOURNALS)):
+        return None
+    captured = _stamp(captured_at)
+    updated = _stamp(row.get("last_activity_at") if lane else row.get("updated_at"))
+    # Live lane paths were inspected at capture; historical lanes use the
+    # recorded activity timestamp. Never treat an old report as fresh work.
+    if lane and row.get("state") != "not_observed":
+        updated = captured
+    if captured is not None and updated is not None:
+        age = captured - updated
+        if 0 <= age <= MAX_AGE_SECONDS:
+            return age
+    return None
+
+
 def format_recovery_message(row, *, captured_at, available=True, hold_active=False):
     """Describe one projected journal/lane row and exactly one read-only step.
 
@@ -65,21 +85,14 @@ def format_recovery_message(row, *, captured_at, available=True, hold_active=Fal
     source = journal if isinstance(journal, str) and journal in JOURNALS else "lane_collector" if lane else None
     prefix = f"{identity}; recorded stage: {stage}"
     prefix += f" (source: {source}). " if source else ". "
-    captured = _stamp(captured_at)
-    updated = _stamp(row.get("updated_at") if not lane else row.get("last_activity_at"))
-    # Live lane paths were inspected at capture; historical lanes use the
-    # recorded activity timestamp. Never treat an old report as fresh work.
-    if lane and stage != "not_observed":
-        updated = captured
-    fresh = (available is True and captured is not None and updated is not None
-             and 0 <= captured - updated <= MAX_AGE_SECONDS and source is not None)
+    fresh = _evidence_age(row, captured_at, available) is not None
     path = _result_path(row.get("result_path")) if lane else None
     marker = row.get("recovery")
     recorded_result = (isinstance(marker, str) and marker in RESULT_MARKERS
                        and stage in ("running", "harvested", "succeeded")
                        and row.get("bucket") != "failed")
     next_step = "Inspect status for this job." if job_id else "Inspect status."
-    if not fresh or not (job_id or lane):
+    if not fresh:
         explanation = "Current outcome is unknown; evidence is missing, stale, or unavailable."
     elif stage == "queued" and marker == "waiting for lane/worktree lease":
         explanation = "Deferred while waiting for lane/worktree capacity. Start time is unknown."
@@ -116,6 +129,15 @@ def recovery_messages(snapshot):
     rows += [row for key in ("live", "finished_recent") for row in bob.get(key, [])
              if isinstance(row, dict) and row.get("source") == "lane_collector"
              and _result_path(row.get("result_path"))]
+
+    def priority(row):
+        age = _evidence_age(row, snapshot.get("captured_at"),
+                            inspection.get("queue_available") if row.get("journal") else True)
+        return (age is None, age if age is not None else 0)
+
+    # Rank across buckets and lanes before deduplication and the note limit.
+    # Freshest evidence wins; stable ties retain the existing snapshot order.
+    rows.sort(key=priority)
     notes, seen = [], set()
     for row in rows:
         identity = _identifier(row.get("job_id")) or _identifier(row.get("screen"))
