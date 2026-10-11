@@ -822,3 +822,19 @@ code { overflow-wrap: anywhere; font-size: 11px; }
   .jobs-page-header { margin-bottom: 24px; }
   .build-info { max-width: 12rem; }
 }
+
+.plan-checklist { margin-top: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--surface); font-size: 13px; }
+.plan-checklist-unavailable { color: var(--muted); font-size: 12px; font-style: italic; }
+.plan-checklist-header { font-weight: 600; margin-bottom: 4px; overflow-wrap: anywhere; }
+.plan-checklist-note { margin-bottom: 4px; }
+.plan-checklist-summary { font-size: 12px; margin-bottom: 8px; }
+.plan-checklist-steps { display: grid; gap: 6px; }
+.plan-step { margin: 0; padding: 0 2px; }
+.plan-step summary { display: flex; align-items: baseline; gap: 6px; min-height: 36px; }
+.plan-step-status { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); white-space: nowrap; }
+.plan-step-title { overflow-wrap: anywhere; }
+.plan-step.status-completed .plan-step-status { color: var(--accent); }
+.plan-step.status-failed .plan-step-status, .plan-step.status-unknown .plan-step-status { color: var(--danger); }
+.plan-step.status-held .plan-step-status, .plan-step.status-cancelled .plan-step-status { color: var(--muted); }
+.plan-step.is-stale .plan-step-status { font-style: italic; }
+.plan-step dl { grid-template-columns: minmax(60px, 30%) minmax(0, 1fr); }
