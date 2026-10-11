@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 
 import chat_intent
+from local_tasks import LocalTaskError, safe_read
 
 NEEDS_AUTH = 'needs Google auth'
 HELP = ('Try “read drive FILE_ID” or “read google doc https://docs.google.com/document/d/FILE_ID/edit”. '
@@ -65,6 +66,10 @@ def request(url, *, data=None, headers=None, form=False, as_json=True):
             if response.status != 200 or response.headers.get('Content-Range') is not None:
                 raise ValueError('partial response')
             length = response.headers.get('Content-Length')
+            # EOF alone cannot distinguish a complete body from a dropped
+            # connection. Chunked framing is checked by HTTPResponse.read().
+            if length is None and response.headers.get('Transfer-Encoding', '').lower() != 'chunked':
+                raise ValueError('unverifiable response length')
             raw = response.read(BODY_LIMIT + 1)
             # read(n) may return fewer bytes on early EOF without raising.
             # A partial export must never look like a complete document.
@@ -186,6 +191,15 @@ def verified_metadata(result, file_id):
 
 
 def receipt(meta, text):
+    # Check the entire source and displayed metadata before clipping or making
+    # a receipt: private_memory does not prevent UI/history disclosure.
+    try:
+        for value in (text, meta['name'], meta.get('webViewLink') or ''):
+            safe_read(value.encode('utf-8'))
+            if re.search(r'\bya29\.[A-Za-z0-9_.-]+', value):
+                raise LocalTaskError('Google access token')
+    except LocalTaskError:
+        raise DriveError('Credential content refused; no Drive file content returned.') from None
     excerpt = text if isinstance(text, str) else ''
     truncated = len(excerpt) > EXCERPT_LIMIT
     if truncated:

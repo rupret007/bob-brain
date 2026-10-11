@@ -702,6 +702,10 @@ Drive file ID or a Drive/Docs URL that contains one. It fetches metadata, allows
 only a Google Doc (`application/vnd.google-apps.document`) or plain text
 (`text/plain`), and returns a bounded text excerpt with the title, modified time,
 and source link. Failures never become a successful read or an empty-file claim.
+Credential markers in the full body, title, or source link cause the whole read
+to be refused before content reaches a receipt or chat history. This conservative
+check cannot identify arbitrary unlabelled secrets. HTTP responses require a
+matching Content-Length or complete chunked framing.
 
 Drive uses a **dedicated** authorized-user OAuth JSON file with `client_id`,
 `client_secret`, and `refresh_token`, readable only by its owner (mode 0600).
@@ -730,8 +734,9 @@ Then separately type `yes, save drive proposal PROPOSAL_ID` using the preview's
 ID within five minutes in the same conversation. Any intervening turn, changed
 proposal, or `cancel drive proposal` revokes approval. Saved holds block both
 preparation and saving. Source reads must be complete and at most 32 KiB;
-replacement text is at most 16 KiB within the existing 6,000-character message
-limit. The diff alone may be clipped. Empty replacement text is supported.
+replacement text is at most 16 KiB of UTF-8, and the entire command plus replacement
+must also fit the 6,000-character message limit. The diff alone may be clipped.
+Empty replacement text is supported.
 
 Approval creates one private `drive-proposals/PROPOSAL_ID.json` under the chat
 data folder, recording the observed source version, source digest, and exact

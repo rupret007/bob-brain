@@ -1,5 +1,6 @@
 """Drive reads: every Google side effect is injected; no live OAuth or models."""
 import copy
+import http.client
 import io
 import json
 import os
@@ -22,6 +23,15 @@ from texting_fixture import OfflineProviders
 DOC_ID = '1FixtureGoogleDocId0123456789abcd'
 TEXT_ID = '1FixturePlainTextId0123456789efgh'
 OTHER_ID = '1OtherConversationFile0123456789'
+SECRET_BODIES = (
+    '{"client_secret":"fixture-client-secret","refresh_token":"fixture-refresh-secret"}',
+    'client_secret,refresh_token\nfixture-client-secret,fixture-refresh-secret',
+    '-----BEGIN PRIVATE KEY-----\nfixture-private-key\n-----END PRIVATE KEY-----',
+    'Bearer fixture-bearer-token',
+    'ya29.fixture-access-token',
+    # Even a credential marker beyond the excerpt invalidates the whole read.
+    'ordinary prose\n' * EXCERPT_LIMIT + 'refresh_token=fixture-refresh-secret',
+)
 
 
 class FakeDrive:
@@ -122,6 +132,30 @@ class DriveReadTests(DriveFixture):
         self.assertFalse(self.client.export_calls)
         self.assertFalse(self.client.writes)
 
+    def test_credential_content_is_rejected_before_receipt_or_excerpt(self):
+        for mime in (DOC_MIME, TEXT_MIME):
+            for body in SECRET_BODIES:
+                with self.subTest(mime=mime, body=body[-80:]):
+                    self.client.meta['mimeType'] = mime
+                    self.client.content = body
+                    result = self.say('read drive ' + DOC_ID)
+                    self.assertEqual(result, 'Credential content refused; no Drive file content returned.')
+                    self.assert_failure(result)
+                    self.assertNotIn('fixture-', result)
+                    self.assertFalse(self.client.writes)
+
+    def test_credential_metadata_is_rejected_before_display(self):
+        for field, value in (('name', 'client_secret=fixture-client-secret'),
+                             ('webViewLink', 'https://drive.google.com/?access_token=fixture-access-token')):
+            with self.subTest(field=field):
+                original = self.client.meta[field]
+                self.client.meta[field] = value
+                result = self.say('read drive ' + DOC_ID)
+                self.assertIn('Credential content refused', result)
+                self.assertNotIn('fixture-', result)
+                self.assertNotIn(self.client.content, result)
+                self.client.meta[field] = original
+
     def test_drive_and_docs_urls_are_accepted(self):
         for text in (
                 'read google doc https://docs.google.com/document/d/' + DOC_ID + '/edit',
@@ -203,7 +237,7 @@ class DriveReadTests(DriveFixture):
         other = FakeDrive()
         other.meta = {
             'id': OTHER_ID,
-            'name': 'Secret other chat',
+            'name': 'Other chat notes',
             'mimeType': TEXT_MIME,
             'modifiedTime': '2026-10-11T12:00:00.000Z',
             'webViewLink': 'https://drive.google.com/file/d/' + OTHER_ID + '/view',
@@ -212,7 +246,7 @@ class DriveReadTests(DriveFixture):
         leaked = DriveRead(other).handle('read drive ' + OTHER_ID, 'beta', str(uuid.uuid4()), self.state)
         self.assertIn('CROSS-CONVERSATION-SECRET', leaked)
         self.assertNotIn('CROSS-CONVERSATION-SECRET', first)
-        self.assertNotIn('Secret other chat', first)
+        self.assertNotIn('Other chat notes', first)
         restored = DriveRead(self.client)
         again = restored.handle('drive help', 'alpha', str(uuid.uuid4()), self.state)
         self.assertEqual(again, HELP)
@@ -348,7 +382,7 @@ class AdapterTests(unittest.TestCase):
             self.client.metadata(DOC_ID)
 
     def test_transport_is_bounded_no_proxy_no_redirect_no_retry_and_sanitizes_errors(self):
-        response = Mock(status=200, headers={})
+        response = Mock(status=200, headers={'Content-Length': '12'})
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
         response.read.return_value = b'{"id": "ok"}'
@@ -378,7 +412,7 @@ class AdapterTests(unittest.TestCase):
             request('https://www.googleapis.com/calendar/v3/calendars/primary/events')
 
     def test_oversized_http_body_and_redirect_never_verify_content(self):
-        response = Mock(status=200, headers={})
+        response = Mock(status=200, headers={'Content-Length': str(BODY_LIMIT + 1)})
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
         opener = Mock()
@@ -388,11 +422,11 @@ class AdapterTests(unittest.TestCase):
             with self.assertRaisesRegex(DriveError, 'no content was verified'):
                 request('https://www.googleapis.com/drive/v3/files/' + DOC_ID, as_json=False)
             response.read.return_value = b'[]'
+            response.headers = {'Content-Length': '2'}
             with self.assertRaisesRegex(DriveError, 'no content was verified'):
                 request('https://www.googleapis.com/drive/v3/files/' + DOC_ID)
 
     def test_short_partial_and_broken_chunked_bodies_are_not_complete_exports(self):
-        import http.client
         response = Mock(status=200, headers={})
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
@@ -405,13 +439,38 @@ class AdapterTests(unittest.TestCase):
                 response.status, response.headers = status, headers
                 with self.subTest(status=status, headers=headers), self.assertRaises(DriveError):
                     request('https://www.googleapis.com/drive/v3/files/' + DOC_ID + '/export', as_json=False)
-            response.status, response.headers = 200, {}
+            response.status, response.headers = 200, {'Transfer-Encoding': 'chunked'}
             response.read.side_effect = http.client.IncompleteRead(b'partial')
             with self.assertRaises(DriveError):
                 request('https://www.googleapis.com/drive/v3/files/' + DOC_ID + '/export', as_json=False)
             response.read.side_effect = None
             response.headers = {'Content-Length': '7'}
             self.assertEqual(request('https://www.googleapis.com/drive/v3/files/' + DOC_ID + '/export', as_json=False), 'partial')
+
+    def test_http_framing_requires_length_or_complete_chunks(self):
+        # Exercise the real HTTP reader entirely in memory: no sockets/OAuth.
+        cases = (
+            (b'Content-Length: 7\r\n', b'content', 'content'),
+            (b'Transfer-Encoding: chunked\r\n', b'7\r\ncontent\r\n0\r\n\r\n', 'content'),
+            (b'Transfer-Encoding: chunked\r\n', b'7\r\ncontent\r\n', None),
+            (b'Transfer-Encoding: chunked\r\n', b'9\r\nshort', None),
+            (b'', b'partial', None),
+            (b'Content-Length: 90\r\n', b'partial', None),
+            (b'Content-Length: 0\r\n', b'', ''),
+        )
+        for headers, body, expected in cases:
+            with self.subTest(headers=headers, body=body):
+                wire = io.BytesIO(b'HTTP/1.1 200 OK\r\n' + headers + b'\r\n' + body)
+                response = http.client.HTTPResponse(Mock(makefile=Mock(return_value=wire)))
+                response.begin()
+                opener = Mock(open=Mock(return_value=response))
+                with patch('drive_read.urllib.request.build_opener', return_value=opener):
+                    if expected is None:
+                        with self.assertRaisesRegex(DriveError, 'no content was verified'):
+                            request('https://www.googleapis.com/drive/v3/files/' + DOC_ID, as_json=False)
+                    else:
+                        self.assertEqual(request('https://www.googleapis.com/drive/v3/files/' + DOC_ID,
+                                                 as_json=False), expected)
 
     def test_parse_target_rejects_non_drive_hosts_and_folders(self):
         self.assertEqual(parse_target(DOC_ID), DOC_ID)
@@ -445,6 +504,36 @@ class RoutingTests(DriveFixture):
         self.assertTrue(response['private_memory'])
         self.assertNotIn('First paragraph of the doc.', json.dumps(Texting.provider_view(self.chat.get(self.cid))))
         self.assertEqual(self.chat.coordination_records(self.chat.get(self.cid)), [])
+
+    def test_credentials_never_reach_submit_response_or_persisted_history(self):
+        # Keep the real receipt, Redactor and save paths, with a temporary root
+        # and injected Drive client. No actual credential file is read.
+        for mime in (DOC_MIME, TEXT_MIME):
+            for body in SECRET_BODIES:
+                with self.subTest(mime=mime, body=body[-80:]):
+                    self.client.meta['mimeType'] = mime
+                    self.client.content = body
+                    saved = []
+                    real_save = self.chat.save
+
+                    def capture(conversation):
+                        saved.append(copy.deepcopy(conversation))
+                        return real_save(conversation)
+
+                    with patch.object(self.chat, 'save', side_effect=capture):
+                        response = self.submit('read drive ' + DOC_ID)
+                    self.assertEqual(response['provider'], 'drive')
+                    self.assertIn('Credential content refused', response['content'])
+                    surfaces = [json.dumps(response), json.dumps(saved),
+                                json.dumps(self.chat.get(self.cid)),
+                                (self.chat.state / (self.cid + '.json')).read_text()]
+                    for surface in surfaces:
+                        self.assertNotIn('fixture-', surface)
+                        self.assertNotIn('ordinary prose', surface)
+                    self.assertTrue(saved)
+        self.assertFalse(self.providers.calls)
+        self.assertFalse(task_queue.tasks(self.root))
+        self.assertFalse(self.client.writes)
 
     def test_needs_auth_is_direct_and_never_fabricates_content(self):
         self.client.error = NEEDS_AUTH
