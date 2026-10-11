@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/style.css?v=__WEBBOB_SHA__">
   <script src="/voice.js?v=__WEBBOB_SHA__" defer></script>
   <script src="/action-history.js?v=__WEBBOB_SHA__" defer></script>
+  <script src="/attachment-reminder.js?v=__WEBBOB_SHA__" defer></script>
   <script src="/app.js?v=__WEBBOB_SHA__" defer></script>
 </head>
 <body>
@@ -198,6 +199,42 @@
     <p id="report-status" role="status"></p>
     <pre id="report-body" aria-busy="false"></pre>
     <button type="button" id="retry-report" hidden>Try again</button>
+  </dialog>
+
+  <dialog id="attachment-text-preview" class="attachment-text-preview" aria-labelledby="attachment-preview-title">
+    <div class="report-heading">
+      <h2 id="attachment-preview-title">Attachment excerpt</h2>
+      <button type="button" id="close-attachment-preview" aria-label="Close excerpt">Close</button>
+    </div>
+    <p id="attachment-preview-meta" class="muted attachment-preview-meta"></p>
+    <div class="attachment-preview-toolbar">
+      <button type="button" id="attachment-reminder-action" class="quiet" disabled>Add to reminder…</button>
+    </div>
+    <div id="attachment-preview-body" class="attachment-preview-body" tabindex="0"></div>
+  </dialog>
+
+  <dialog id="attachment-reminder-dialog" class="attachment-reminder-dialog" aria-labelledby="attachment-reminder-title">
+    <form method="dialog" class="attachment-reminder-form">
+      <h2 id="attachment-reminder-title">Reminder from attachment</h2>
+      <p class="attachment-reminder-meta">
+        <span id="attachment-reminder-filename"></span>
+        <span id="attachment-reminder-page" class="attachment-reminder-page"></span>
+      </p>
+      <p id="attachment-reminder-coverage" class="muted attachment-reminder-coverage"></p>
+      <p id="attachment-reminder-clipped" class="attachment-reminder-warning" hidden></p>
+      <p id="attachment-reminder-truncated" class="attachment-reminder-warning" hidden></p>
+      <p id="attachment-reminder-ownership" class="attachment-reminder-warning" hidden></p>
+      <label for="attachment-reminder-body">Reminder body</label>
+      <textarea id="attachment-reminder-body" rows="4" maxlength="6000"></textarea>
+      <label for="attachment-reminder-schedule">When (explicit date and time)</label>
+      <input id="attachment-reminder-schedule" type="text" inputmode="numeric" autocomplete="off" placeholder="2026-10-15 08:00">
+      <p id="attachment-reminder-schedule-error" class="attachment-reminder-error" role="alert"></p>
+      <p id="attachment-reminder-receipt" class="sr-only" aria-hidden="true"></p>
+      <div class="attachment-reminder-actions">
+        <button type="button" id="attachment-reminder-cancel">Cancel</button>
+        <button type="button" id="attachment-reminder-insert" class="primary">Insert into composer</button>
+      </div>
+    </form>
   </dialog>
 
   <dialog id="call-dialog" class="call-dialog" aria-labelledby="call-title" aria-describedby="call-status">
