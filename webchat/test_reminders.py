@@ -105,7 +105,11 @@ class ReminderTests(unittest.TestCase):
                 with self.subTest(prefix=prefix, suffix=suffix):
                     reply = self.store.handle(f'{prefix} every 2 hours to stretch {suffix}',
                                               'chat', str(uuid.uuid4()))
-                    self.assertIn('extra date or time clause', reply)
+                    # An "until" clause can also withhold consent; the shared
+                    # approval guard now asks before schedule parsing begins.
+                    expected = ('Send a new reminder request' if suffix.startswith('until ')
+                                else 'extra date or time clause')
+                    self.assertIn(expected, reply)
                     self.assertIn('Nothing was saved', reply)
                     self.assertFalse(self.store.listing())
         reply = self.store.handle('create a reminder every 2 hours to stretch', 'chat', 'valid')

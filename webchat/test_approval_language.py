@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 import uuid
 
 from app import Chat
-from approval_language import approval_requested
+from approval_language import approval_categories, approval_requested
 from local_tasks import LocalFiles, LocalTasks
 from reminders import ZONE
 from task_dispatch import task_queue
@@ -131,6 +131,33 @@ AUTHORIZED_BODIES = (
 )
 
 
+class ApprovalCategoryTests(unittest.TestCase):
+    def test_category_reasons_cover_the_semantic_corpus(self):
+        for category, phrases in POSITIVE.items():
+            if category == 'ambiguous_deferral':
+                continue  # Ambiguity can be detected by any overlapping category.
+            for phrase in phrases:
+                with self.subTest(category=category, phrase=phrase):
+                    self.assertIn(category, approval_categories(phrase))
+
+    def test_spelling_layout_and_content_boundaries_do_not_erase_hedges(self):
+        for phrases in POSITIVE.values():
+            for phrase in phrases:
+                variants = (phrase.upper(), phrase.replace(' ', '\n\t'),
+                            phrase.replace('-', '\u2011').replace("'", '\u2019'),
+                            'the requested content is "' + phrase + '"; do it now')
+                for variant in variants:
+                    with self.subTest(variant=variant):
+                        self.assertTrue(approval_requested(variant))
+
+    def test_negated_consent_does_not_silently_grant_authority(self):
+        for phrase in ('no approval needed', 'do not ask me first',
+                       'this is not a dry run', 'without my permission',
+                       'never wait for my say-so'):
+            with self.subTest(phrase=phrase):
+                self.assertTrue(approval_requested(phrase))
+
+
 class ApprovalIntentTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(dir='/private/tmp')
@@ -172,7 +199,7 @@ class ApprovalIntentTests(unittest.TestCase):
     def submit(self, text):
         reply = self.chat.submit(self.cid, text, str(uuid.uuid4()), actor='owner')['messages'][-1]
         self.providers.reply.assert_not_called()
-        self.texting.send.assert_not_called()
+        self.texting.andrea.deliver.assert_not_called()
         self.notifier.assert_not_called()
         self.search.assert_not_called()
         self.assertFalse(task_queue.tasks(self.root))
