@@ -107,6 +107,40 @@ class CapabilityLedgerTests(unittest.TestCase):
             self.assertIn('File created:', reply['content'])
             self.assertEqual((home / 'Documents/note.txt').read_text(), 'hello')
 
+    def test_ledger_B6_word_duration_qualifiers_need_clarification_through_chat(self):
+        qualifiers = (
+            'in two days', 'in one day', 'in three days', 'in four days',
+            'in five days', 'in six days', 'in seven days', 'in eight days',
+            'in nine days', 'in ten days', 'in eleven days', 'in twelve days',
+            'in twenty-one days', 'in a couple of days', 'in a few days',
+            'IN TWO DAYS', 'in two hours', 'in thirty minutes', 'in two weeks',
+            'in 2 days',
+        )
+        prefixes = ('Create a reminder for 2am to stretch',
+                    'remind me every 2 hours to stretch',
+                    'every morning remind me to stretch')
+        for prefix in prefixes:
+            for qualifier in qualifiers:
+                with self.subTest(prefix=prefix, qualifier=qualifier), \
+                        self.isolated_chat() as (chat, cid, home):
+                    reply = chat.submit(cid, prefix + ' ' + qualifier,
+                                        str(uuid.uuid4()))['messages'][-1]
+                    self.assertEqual(chat.reminders.listing(), [])
+                    self.assertEqual(reply['provider'], 'reminders')
+                    self.assertIn('extra date or time clause', reply['content'])
+                    self.assertIn('Nothing was saved', reply['content'])
+        from reminders import ZONE
+        for command, body, day in (
+                ('Create a reminder for 2am to stretch', 'stretch', 11),
+                ('Create a reminder for 2026-10-13 at 2am to stretch', 'stretch', 13),
+                ('Create a reminder for 2am to stretch in the garden', 'stretch in the garden', 11)):
+            with self.subTest(command=command), self.isolated_chat() as (chat, cid, home):
+                reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
+                self.assertIn('Reminder saved:', reply['content'])
+                row, = chat.reminders.listing()
+                self.assertEqual((row['body'], row['state'], row['due_at']),
+                                 (body, 'pending', datetime(2026, 10, day, 2, tzinfo=ZONE).timestamp()))
+
     B3_CONTENTS = (
         '<property name="password" value="SYNTHETIC_ONLY_123"/>',
         '<entry name="api_key">SYNTHETIC_ONLY_123</entry>',
