@@ -440,6 +440,23 @@ class ApprovalIntentTests(unittest.TestCase):
         self.assertEqual(len(positives), len(set(positives)))
         self.assertGreaterEqual(len(set(AUTHORIZED_BODIES)) * 2, 40)
 
+    def test_proposal_filename_still_requires_separate_exact_consent(self):
+        target = self.home / 'Documents/proposal.txt'
+        with patch.object(self.files, 'execute', wraps=self.files.execute) as execute:
+            reply = self.submit('create file ~/Documents/proposal.txt: hello')
+            self.assertIn("I haven't created it yet", reply['content'])
+            execute.assert_not_called()
+            self.assertFalse(target.exists())
+            with self.actions.locked() as rows:
+                row, = rows.values()
+            self.actions.handle('yes', self.cid, 'bare-yes', {})
+            execute.assert_not_called()
+            self.assertIn('File created:', self.submit('yes ' + row['token'])['content'])
+            self.assertEqual(target.read_text(), 'hello')
+            execute.assert_called_once()
+            self.submit('yes ' + row['token'])
+            execute.assert_called_once()
+
     def test_shared_hedges_do_not_depend_on_the_following_verb(self):
         for connector in ('after I', 'before you', 'until I', 'once you', 'when I', 'only after I'):
             for completion in ('sleep on it', 'noodle on it', 'return from lunch',

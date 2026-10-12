@@ -138,8 +138,8 @@ class CapabilityLedgerTests(unittest.TestCase):
         constraints = self.DEFERRED_CONSTRAINTS
         for constraint in constraints:
             with self.subTest(constraint=constraint), self.isolated_chat(now=now) as (chat, cid, home):
-                target = home / 'Documents/proposal.txt'
-                command = 'Create file ~/Documents/proposal.txt: hello' + constraint
+                target = home / 'Documents/result.txt'
+                command = 'Create file ~/Documents/result.txt: hello' + constraint
                 rows = {}
                 with patch.object(chat.local_tasks, 'locked', side_effect=lambda: nullcontext(rows)), \
                         patch.object(chat.local_tasks, 'save') as save, \
@@ -166,10 +166,10 @@ class CapabilityLedgerTests(unittest.TestCase):
                     chat.submit(cid, 'yes ' + row['token'], str(uuid.uuid4()))
                     execute.assert_called_once()
         with self.isolated_chat(now=now) as (chat, cid, home):
-            target = home / 'Documents/proposal.txt'
+            target = home / 'Documents/result.txt'
             with patch.object(chat.local_tasks.files, 'execute',
                               return_value='File created: ' + str(target)) as execute:
-                reply = chat.submit(cid, 'Create file ~/Documents/proposal.txt: hello',
+                reply = chat.submit(cid, 'Create file ~/Documents/result.txt: hello',
                                     str(uuid.uuid4()))['messages'][-1]
                 self.assertIn('File created:', reply['content'])
                 execute.assert_called_once()
@@ -189,8 +189,8 @@ class CapabilityLedgerTests(unittest.TestCase):
         )
         for constraint in constraints:
             with self.subTest(constraint=constraint), self.isolated_chat(now=now) as (chat, cid, home):
-                target = home / 'Documents/proposal.txt'
-                command = 'Create file ~/Documents/proposal.txt: hello' + constraint
+                target = home / 'Documents/result.txt'
+                command = 'Create file ~/Documents/result.txt: hello' + constraint
                 with patch.object(chat.local_tasks.files, 'execute',
                                   return_value='File created: ' + str(target)) as execute:
                     reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
@@ -212,10 +212,10 @@ class CapabilityLedgerTests(unittest.TestCase):
                     chat.submit(cid, 'yes ' + row['token'], str(uuid.uuid4()))
                     execute.assert_called_once()
         with self.isolated_chat(now=now) as (chat, cid, home):
-            target = home / 'Documents/proposal.txt'
+            target = home / 'Documents/result.txt'
             with patch.object(chat.local_tasks.files, 'execute',
                               return_value='File created: ' + str(target)) as execute:
-                reply = chat.submit(cid, 'Create file ~/Documents/proposal.txt: hello',
+                reply = chat.submit(cid, 'Create file ~/Documents/result.txt: hello',
                                     str(uuid.uuid4()))['messages'][-1]
                 self.assertIn('File created:', reply['content'])
                 execute.assert_called_once()
@@ -880,6 +880,7 @@ class CapabilityLedgerTests(unittest.TestCase):
         now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
         refusal = ('The reminder has an extra date or time clause. Nothing was saved. '
                    'Please use one schedule, such as “create a reminder for tomorrow at 2am to go to bed”.')
+        intent_refusal = 'Nothing was saved. Send a new reminder request when you want it scheduled.'
         for index, date in enumerate(('October 11', '10/11')):
             with self.subTest(date=date):
                 body = 'go to bed on ' + date
@@ -888,13 +889,14 @@ class CapabilityLedgerTests(unittest.TestCase):
                 rows = []
                 with patch.object(reminders, 'locked', side_effect=lambda: nullcontext(rows)), \
                         patch.object(reminders, 'save') as save:
-                    self.assertEqual(reminders.handle(command, 'chat', 'request'), refusal)
+                    self.assertEqual(reminders.handle(command, 'chat', 'request'), intent_refusal)
                     save.assert_not_called()
                     self.assertEqual(reminders.listing(), [])
-                for operation in (lambda: parse(command, now), lambda: reminder_body(body)):
+                for operation, expected in ((lambda: parse(command, now), intent_refusal),
+                                            (lambda: reminder_body(body), refusal)):
                     with self.assertRaises(ReminderError) as raised:
                         operation()
-                    self.assertEqual(str(raised.exception), refusal)
+                    self.assertEqual(str(raised.exception), expected)
 
     def test_ledger_F15r6r7_abbreviated_and_day_first_month_date_swallowed(self):
         from reminders import Reminders, ReminderError, ZONE, parse, reminder_body

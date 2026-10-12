@@ -105,9 +105,10 @@ class ReminderTests(unittest.TestCase):
                 with self.subTest(prefix=prefix, suffix=suffix):
                     reply = self.store.handle(f'{prefix} every 2 hours to stretch {suffix}',
                                               'chat', str(uuid.uuid4()))
-                    # An "until" clause can also withhold consent; the shared
-                    # approval guard now asks before schedule parsing begins.
+                    # Consent clauses and unresolved nonnumeric adjuncts are
+                    # refused before the scheduling parser is reached.
                     expected = ('Send a new reminder request' if suffix.startswith('until ')
+                                or suffix == 'starting today at noon'
                                 else 'extra date or time clause')
                     self.assertIn(expected, reply)
                     self.assertIn('Nothing was saved', reply)
@@ -125,7 +126,9 @@ class ReminderTests(unittest.TestCase):
             for suffix in ('tomorrow', 'today', 'on 2026-10-11', 'at 3pm', 'next week'):
                 with self.subTest(prefix=prefix, suffix=suffix):
                     reply = self.store.handle(f'{prefix} stretch {suffix}', 'chat', str(uuid.uuid4()))
-                    self.assertIn('extra date or time clause', reply)
+                    expected = ('Send a new reminder request' if prefix.startswith('every morning')
+                                and suffix.startswith(('on ', 'at ')) else 'extra date or time clause')
+                    self.assertIn(expected, reply)
                     self.assertIn('Nothing was saved', reply)
                     self.assertFalse(self.store.listing())
         reply = self.store.handle('every morning remind me to stretch', 'chat', 'valid')

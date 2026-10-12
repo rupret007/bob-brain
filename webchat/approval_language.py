@@ -14,7 +14,7 @@ positives are preferable to executing a potentially unapproved effect.
 import re
 import unicodedata
 
-from actions_intent import reminder_request
+from actions_intent import reminder_request, routine_request
 
 
 def _words(expression):
@@ -47,7 +47,8 @@ _CONDITION = _words(
     r'on\s+(?:the\s+)?condition|subject\s+to|'
     r'only\s+(?:after|before|when|once|with|upon)')
 _NEGATION = _words(r'no|not|nothing|never|without|\w+n\'t|undone|un[a-z]+(?:ed|en)')
-_UNCERTAINTY = _words(r'maybe|perhaps|possibly|unsure|uncertain\w*|undecided|tentative\w*')
+_UNCERTAINTY = _words(r'maybe|perhaps|possib\w*|potential\w*|probab\w*|may|might|'
+                      r'unsure|uncertain\w*|undecided|tentative\w*')
 
 # Semantic vocabulary is shared across sentence shapes. Inflections belong to
 # a family; adding a new sentence is not necessary for different word order,
@@ -66,11 +67,12 @@ _PERCEPTION = _words(r'see|look\w*|check\w*|inspect\w*|examin\w*|peek\w*|view\w*
 _REVIEW = _words(
     r'review\w*|scrutini\w*|assess\w*|evaluat\w*|vet|vets|vetted|vetting|audit\w*|'
     r'double\s+check\w*')
+_CONSULTATION = _words(r'consult\w*|feedback|opinions?|input')
 _FOR_REVIEW = _words(r'for\s+(?:(?:my|our|a)\s+)?review\w*')
 _LOOK_ACTION = _words(r'go|look')
 _OVER = _words(r'over')
 _DRAFT = _words(r'draft\w*|provisional\w*')
-_PROPOSAL = _words(r'propos\w*')
+_PROPOSAL = _words(r'propos\w*|suggest\w*')
 _SIMULATION = _words(
     r'dry\s+run|simulat\w*|pretend\w*|rehears\w*|hypothetic\w*|'
     r'demonstrat\w*|mock\w*|illustrat\w*|examples?|thought\s+experiment\w*|'
@@ -91,11 +93,11 @@ _QUALIFIER = _words(r'but|except\w*|however|although|though|nevertheless')
 # punctuation or known consent words. Treat literal content with these shapes
 # conservatively too; we cannot prove that it is not an action restriction.
 # Filename dots, decimals and clock colons alone are not clause boundaries.
-_CLAUSE_BOUNDARY = re.compile(r'[;,\u2013\u2014]|[.!?]\s+\S|[()]')
+_CLAUSE_BOUNDARY = re.compile(r'[;,\u2013\u2014\r\n\v\f\u0085\u2028\u2029]|[.!?]\s+\S|[()]')
 _COORDINATION = _words(r'and|or|nor|then|also|plus')
-_ADJUNCT = _words(r'as|in|for|with|by|past|under')
+_ADJUNCT = _words(r'as|in|for|with|by|past|under|on|at')
 
-# The only resolved in/for adjunct is a time operand. This recognizes syntax,
+# The only resolved in/for/on/at adjunct is a time operand. This recognizes syntax,
 # not time validity: the scheduling parser must still validate the full request.
 # Normalization replaces ISO date hyphens with spaces. Only numeric quantities
 # can be resolved here: a word such as "second" may mean a second opinion.
@@ -105,6 +107,11 @@ _TIME_OPERAND = re.compile(
     r'\d{4} \d{2} \d{2}|today|tomorrow|'
     r'\d{1,2}(?::\d{2}\s*(?:am|pm)?|\s*(?:am|pm))'
     r')\b')
+# ISO timestamps used after at/on are also explicit operands. Keep this
+# separate from the existing in/for grammar; only the newly scanned markers
+# need this exception. The scheduling parser still validates the timestamp.
+_ISO_OPERAND = re.compile(r'\s+\d{4} \d{2} \d{2}t\d{2}:\d{2}(?::\d{2})?'
+                          r'(?:z|[+ ]\d{2}:\d{2})\b')
 
 
 def _unresolved_structure(text):
@@ -112,9 +119,15 @@ def _unresolved_structure(text):
         return True
     scheduling = (reminder_request(text) or
                   re.match(r'^(?:remind me|set (?:a )?routine)\b', text))
+    morning = routine_request(text)
     for marker in _ADJUNCT.finditer(text):
-        if (scheduling and marker[0] in ('in', 'for') and
-                _TIME_OPERAND.match(text, marker.end())):
+        # Bare morning syntax resolves only its header clock, never a time
+        # modifier in the arbitrary body. Preserve all previous refusals.
+        header_clock = (morning and marker[0] == 'at' and
+                        marker.start() < morning.start('mode'))
+        if ((scheduling or header_clock) and marker[0] in ('in', 'for', 'on', 'at') and
+                (_TIME_OPERAND.match(text, marker.end()) or
+                 (marker[0] in ('on', 'at') and _ISO_OPERAND.match(text, marker.end())))):
             # Resolve only this marker. Never remove its complement or the
             # remaining text from the semantic or structural scans: a valid
             # time does not license an inline restriction later in the request.
@@ -136,8 +149,9 @@ def _preview_first(text):
 def _draft_only(text):
     # Negative language may describe content, but may also prohibit an effect.
     # We cannot safely infer the scope of that negation, so ask in either case.
-    return bool(_DRAFT.search(text) or _NEGATION.search(text) or
-                (_PROPOSAL.search(text) and _RESTRICTION.search(text)))
+    # A proposal or suggestion does not authorize execution, even without
+    # "only" or another restriction word. Literal content is ambiguous too.
+    return bool(_DRAFT.search(text) or _NEGATION.search(text) or _PROPOSAL.search(text))
 
 
 def _wait_for_ok(text):
@@ -171,11 +185,14 @@ def _review_first(text):
 def _ambiguous_deferral(text):
     # Incomplete hedges still ask. A missing object is not permission, e.g.
     # "before proceeding", "until later", "only after ...", or "maybe".
-    # A separate first-person request or restriction has an unresolved scope,
-    # even when its complement contains no known decision/consent vocabulary.
+    # Priority, ownership and consultation have unresolved scope even when
+    # their complements contain no known decision/consent vocabulary. Do not
+    # infer that "first", "my ..." or "... to me" describes harmless content.
     return bool(_UNCERTAINTY.search(text) or _INCOMPLETE_HEDGE.search(text) or
                 _QUALIFIER.search(text) or _SELF_REQUEST.search(text) or
-                _RESTRICTION.search(text))
+                _RESTRICTION.search(text) or _PRIORITY.search(text) or
+                _OWNERSHIP.search(text) or _CONSULT.search(text) or
+                _CONSULTATION.search(text))
 
 
 _DETECTORS = {
@@ -197,8 +214,10 @@ def approval_categories(text):
     """
     normalized = _normalize(text)
     reasons = {name for name, detector in _DETECTORS.items() if detector(normalized)}
-    # Inspect punctuation before whitespace/dash normalization. Never strip
-    # quoted spans or a putative content suffix to manufacture authorization.
+    # Inspect clause boundaries (including line separators) before whitespace/
+    # dash normalization. An unrecognized secondary line must still ASK;
+    # flattening it into the body would manufacture authorization. Never strip
+    # quoted spans or a putative content suffix from either scan.
     if (_CLAUSE_BOUNDARY.search(unicodedata.normalize('NFKC', text)) or
             _unresolved_structure(normalized)):
         reasons.add('unresolved_clause')
