@@ -119,6 +119,58 @@ POSITIVE = {
     ),
 }
 
+# Independently reported constructions and varied syntax, not just substitutions
+# in the original seven reproductions. All are exercised without punctuation too.
+PREGATE = {
+    'conditional_approval': (
+        'after getting a thumbs up from me',
+        'once the details have been signed off by me',
+        'contingent on my acceptance',
+        'upon receiving clearance from the owner',
+        'after the owner has had a chance to respond',
+        'once the outstanding questions are settled',
+        'contingent upon a satisfactory outcome',
+        'dependent on a decision from the team',
+    ),
+    'wait_for_ok': (
+        'the details must be signed off by me',
+        'my acceptance is necessary',
+        'a thumbs up from the owner is needed',
+        'let me think it over',
+        'give us time to consider the consequences',
+        'let me reflect on the plan',
+        'I need time to mull this over',
+        'the owner has to grant clearance',
+    ),
+    'dry_run': (
+        'for discussion purposes only',
+        'as an example',
+        'just talk me through it',
+        'for explanatory purposes',
+        'this is an illustrative example',
+        'talk us through the process',
+        'describe the steps to me',
+        'explain the outcome to us',
+        'walk me through the process',
+        'for educational purposes only',
+        'for demonstration purposes',
+        'as a thought experiment',
+    ),
+}
+for _category, _phrases in PREGATE.items():
+    POSITIVE[_category] += _phrases
+
+# Unknown restrictions must be caught by their clause structure even if none
+# of their words belongs to a known consent/deferral family.
+UNRESOLVED = (
+    '; the next move belongs to someone else',
+    ', there is another step involved',
+    '. The next move belongs to someone else',
+    ' — the next move belongs to someone else',
+    ' but there is another step involved',
+    ' except the next move belongs to someone else',
+)
+
 # 24 distinct, clearly authorized bodies, each used for both action types:
 # 48 negative requests. Mix command forms as well as content.
 AUTHORIZED_BODIES = (
@@ -205,11 +257,11 @@ class ApprovalIntentTests(unittest.TestCase):
         self.assertFalse(task_queue.tasks(self.root))
         return reply
 
-    def assert_blocked(self, hedge, lane, prefix=None):
+    def assert_blocked(self, hedge, lane, prefix=None, separator='; '):
         target = self.home / 'Documents/result.txt'
         prefix = prefix or ('create a reminder for 2am to stretch' if lane == 'reminder'
                             else 'create file ~/Documents/result.txt: hello')
-        command = prefix + '; ' + hedge
+        command = prefix + separator + hedge
         with patch.object(self.chat.reminders, 'create', wraps=self.chat.reminders.create) as create, \
                 patch.object(self.chat.reminders, 'save', wraps=self.chat.reminders.save) as save, \
                 patch.object(self.files, 'execute', wraps=self.files.execute) as execute:
@@ -234,7 +286,7 @@ class ApprovalIntentTests(unittest.TestCase):
 
     def test_corpus_size_and_unique_examples(self):
         positives = [text for phrases in POSITIVE.values() for text in phrases]
-        self.assertGreaterEqual(len(set(positives)), 60)
+        self.assertGreaterEqual(len(set(positives)), 100)
         self.assertEqual(len(positives), len(set(positives)))
         self.assertGreaterEqual(len(set(AUTHORIZED_BODIES)) * 2, 40)
 
@@ -247,9 +299,9 @@ class ApprovalIntentTests(unittest.TestCase):
                     self.assertTrue(approval_requested(connector + ' ' + completion))
 
 
-def positive_case(hedge, lane, prefix=None):
+def positive_case(hedge, lane, prefix=None, separator='; '):
     def test(self):
-        self.assert_blocked(hedge, lane, prefix)
+        self.assert_blocked(hedge, lane, prefix, separator)
     return test
 
 
@@ -292,3 +344,15 @@ for _index, _body in enumerate(AUTHORIZED_BODIES):
     for _lane in ('reminder', 'file'):
         setattr(ApprovalIntentTests, f'test_authorized_{_index:02d}_{_lane}',
                 authorized_case(_body, _lane, _index))
+
+for _category, _phrases in PREGATE.items():
+    for _index, _hedge in enumerate(_phrases):
+        for _lane in ('reminder', 'file'):
+            for _layout, _separator in (('inline', ' '), ('newline', '\n')):
+                setattr(ApprovalIntentTests,
+                        f'test_pregate_{_category}_{_index:02d}_{_lane}_{_layout}',
+                        positive_case(_hedge, _lane, separator=_separator))
+for _index, _clause in enumerate(UNRESOLVED):
+    for _lane in ('reminder', 'file'):
+        setattr(ApprovalIntentTests, f'test_unresolved_clause_{_index:02d}_{_lane}',
+                positive_case(_clause, _lane, separator=''))
