@@ -49,6 +49,49 @@ class CapabilityLedgerTests(unittest.TestCase):
             finally:
                 chat.close()
 
+    DEFERRED_CONSTRAINTS = (
+        '; after I give the green light.', '; let me see it first.',
+        '; AFTER I GIVE THE GREEN LIGHT.', '; after I give the green-light.',
+        '; once I give a green light.', '; when I give you the green light.',
+        '; pending the green light.', '; green light required.',
+        '; after I give the go-ahead.', '; once I give you the go ahead.',
+        '; let me see this first.', '; LET ME SEE IT FIRST.',
+        '; let me see the result first.', '; let me look at it first.',
+        '; let me check it first.', '; let me inspect it first.',
+    )
+
+    def test_ledger_B9_deferred_and_preview_requests_never_schedule_through_chat(self):
+        from reminders import ZONE
+        now = datetime(2026, 10, 12, 13, tzinfo=ZONE).timestamp()
+        constraints = self.DEFERRED_CONSTRAINTS
+        prefixes = ('Create a reminder for 2am to go to bed',
+                    'Set a timer for 10 minutes to stretch',
+                    'remind me every 2 hours to stretch',
+                    'every morning remind me to stretch')
+        for prefix in prefixes:
+            for constraint in constraints:
+                with self.subTest(prefix=prefix, constraint=constraint), \
+                        self.isolated_chat(now=now) as (chat, cid, home):
+                    rows = []
+                    with patch.object(chat.reminders, 'locked', side_effect=lambda: nullcontext(rows)), \
+                            patch.object(chat.reminders, 'save') as save, \
+                            patch.object(chat.reminders, 'create', wraps=chat.reminders.create) as create:
+                        reply = chat.submit(cid, prefix + constraint, str(uuid.uuid4()))['messages'][-1]
+                        self.assertEqual(chat.reminders.listing(), [])
+                        create.assert_not_called()
+                        save.assert_not_called()
+                        self.assertEqual(reply['provider'], 'reminders')
+                        self.assertIn('Nothing was saved', reply['content'])
+                        self.assertNotIn('Reminder saved:', reply['content'])
+        for command, body, due in (
+                (prefixes[0], 'go to bed', datetime(2026, 10, 13, 2, tzinfo=ZONE).timestamp()),
+                (prefixes[1], 'stretch', now + 600)):
+            with self.subTest(control=command), self.isolated_chat(now=now) as (chat, cid, home):
+                reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
+                self.assertIn('Reminder saved:', reply['content'])
+                row, = chat.reminders.listing()
+                self.assertEqual((row['body'], row['state'], row['due_at']), (body, 'pending', due))
+
     def test_ledger_B7_draft_and_conditional_requests_never_schedule_through_chat(self):
         from reminders import ZONE
         now = datetime(2026, 10, 12, 13, tzinfo=ZONE).timestamp()
