@@ -1,0 +1,267 @@
+"""Adversarial consent corpus: verify effects through Chat.submit, offline.
+
+These examples specify behavior, not the detector's vocabulary. Each positive
+hedge is exercised against BOTH a schedule and a file create. Quoted content is
+deliberately ambiguous: asking again is safer than assuming consent.
+"""
+from datetime import datetime
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import Mock, patch
+import uuid
+
+from app import Chat
+from approval_language import approval_requested
+from local_tasks import LocalFiles, LocalTasks
+from reminders import ZONE
+from task_dispatch import task_queue
+
+
+POSITIVE = {
+    'conditional_approval': (
+        'only if I authorize it',
+        'provided I agree',
+        'after I give the green light',
+        'once you hear back from me',
+        'after I make up my mind',
+        'if I decide this is what I want',
+        'unless I explicitly say to proceed',
+        'when I have made a decision',
+        'on condition that I am happy with it',
+        'assuming I am comfortable with the result',
+        'subject to my decision',
+        'providing that I choose to proceed',
+    ),
+    'preview_first': (
+        'let me see it first',
+        'show me a preview',
+        'let me look at the result before you proceed',
+        'let me check the proposed result first',
+        'I would like to see what it looks like first',
+        'show me what you would do first',
+        'give me a chance to inspect the result',
+        'can I take a look first',
+        'I want a peek at the result first',
+        'show the proposed result to me first',
+        'let me carefully examine the result',
+        'I need to see the result before anything happens',
+    ),
+    'draft_only': (
+        'draft only',
+        'just a draft',
+        "don't actually do it",
+        'do not make any changes',
+        'this is only a proposal',
+        'keep this as a rough draft',
+        'prepare a provisional version',
+        'nothing should actually be changed',
+        'without making anything permanent',
+        'no changes are to be made',
+        'leave the actual action undone',
+        'do not carry this out',
+    ),
+    'wait_for_ok': (
+        'wait for my OK',
+        'wait for the green light',
+        'wait for my go-ahead',
+        'wait for my say-so',
+        'pause until I get back to you',
+        'hold off for now',
+        'not yet',
+        'await my signal',
+        'keep it on hold',
+        'put the action on pause',
+        'give me time to decide',
+        'my nod is needed',
+    ),
+    'dry_run': (
+        'dry run',
+        'dry-run only',
+        'simulate the operation',
+        'simulation mode please',
+        'pretend to do it',
+        'a rehearsal only',
+        'walk me through what would happen',
+        'show what would happen without executing anything',
+        'hypothetically speaking',
+        'just demonstrate the steps',
+        'a mock execution',
+        'for illustration only',
+    ),
+    'review_first': (
+        'review first',
+        'I need to review',
+        'for my review',
+        'I must scrutinize the result first',
+        'let me assess the proposed result',
+        'I want to evaluate it first',
+        'I need a chance to vet the result',
+        'I would like to go over it first',
+        'my assessment comes first',
+        'I need to look it over',
+        'give me an opportunity to audit it',
+        'let me double-check the details',
+    ),
+    'ambiguous_deferral': (
+        'after I noodle on it',
+        'before you do anything',
+        'until I get back',
+        'not right now',
+        'hold this for later',
+        'maybe do this',
+        'I am not sure about this',
+        'only after the next step',
+        '"let me see it first" is the text',
+        'the label is "draft only"',
+        'the text says "if I choose to proceed"',
+        'the title is "dry run"',
+    ),
+}
+
+# 24 distinct, clearly authorized bodies, each used for both action types:
+# 48 negative requests. Mix command forms as well as content.
+AUTHORIZED_BODIES = (
+    'stretch', 'drink water', 'walk the dog', 'call Sam', 'water the plants',
+    'take a break', 'check the oven', 'stand up', 'feed the cat', 'pack lunch',
+    'read a book', 'charge the phone', 'go to bed', 'brush teeth', 'start dinner',
+    'bring the umbrella', 'pick up groceries', 'turn the lights off',
+    'open the curtains', 'clean the desk', 'wash the dishes', 'take the laundry out',
+    'practice piano', 'write a postcard',
+)
+
+
+class ApprovalIntentTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(dir='/private/tmp')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.home = self.root / 'home'
+        (self.home / 'Documents').mkdir(parents=True)
+        self.now = datetime(2026, 10, 12, 13, tzinfo=ZONE).timestamp()
+        # Guard every outbound/effect adapter; real writes are confined to tmp.
+        for target in ('urllib.request.OpenerDirector.open', 'subprocess.run',
+                       'reminders.notify_macos', 'app.parse_work'):
+            guard = patch(target, side_effect=AssertionError('Unexpected effect: ' + target))
+            guard.start()
+            self.addCleanup(guard.stop)
+        clock = patch('time.time', return_value=self.now)
+        clock.start()
+        self.addCleanup(clock.stop)
+        live = patch('app.load_live_ops', return_value={})
+        live.start()
+        self.addCleanup(live.stop)
+        self.providers, self.texting, self.calendar = Mock(), Mock(), Mock()
+        self.providers.timeouts = {}
+        self.providers.reply.side_effect = AssertionError('Unexpected model call')
+        self.texting.handle.return_value = False
+        self.texting.public.side_effect = dict
+        self.calendar.handle.return_value = None
+        self.notifier = Mock()
+        self.search = Mock(side_effect=AssertionError('Unexpected search'))
+        self.files = LocalFiles(self.home, clock=lambda: self.now)
+        self.actions = LocalTasks(self.root / 'local', files=self.files,
+                                  search=self.search, clock=lambda: self.now)
+        self.chat = Chat(self.root / 'chat', self.root, self.providers,
+                         texting=self.texting, calendar=self.calendar,
+                         reminder_notifier=self.notifier, local_tasks=self.actions)
+        self.chat.reminders.clock = lambda: self.now
+        self.addCleanup(self.chat.close)
+        self.cid = self.chat.conversation_list()['conversations'][0]['id']
+
+    def submit(self, text):
+        reply = self.chat.submit(self.cid, text, str(uuid.uuid4()), actor='owner')['messages'][-1]
+        self.providers.reply.assert_not_called()
+        self.texting.send.assert_not_called()
+        self.notifier.assert_not_called()
+        self.search.assert_not_called()
+        self.assertFalse(task_queue.tasks(self.root))
+        return reply
+
+    def assert_blocked(self, hedge, lane, prefix=None):
+        target = self.home / 'Documents/result.txt'
+        prefix = prefix or ('create a reminder for 2am to stretch' if lane == 'reminder'
+                            else 'create file ~/Documents/result.txt: hello')
+        command = prefix + '; ' + hedge
+        with patch.object(self.chat.reminders, 'create', wraps=self.chat.reminders.create) as create, \
+                patch.object(self.chat.reminders, 'save', wraps=self.chat.reminders.save) as save, \
+                patch.object(self.files, 'execute', wraps=self.files.execute) as execute:
+            reply = self.submit(command)
+            create.assert_not_called()
+            save.assert_not_called()
+            execute.assert_not_called()
+            self.assertFalse(target.exists())
+            self.assertEqual(self.chat.reminders.listing(), [])
+            if lane == 'reminder':
+                self.assertEqual(reply['provider'], 'reminders')
+                self.assertIn('Nothing was saved', reply['content'])
+            else:
+                self.assertEqual(reply['provider'], 'local-tasks')
+                self.assertIn("I haven't created it yet", reply['content'])
+                with self.actions.locked() as rows:
+                    row, = (r for r in rows.values() if r['state'] == 'draft')
+                self.assertIn('yes ' + row['token'], reply['content'])
+                self.actions.handle('yes', self.cid, 'bare-yes', {})
+                execute.assert_not_called()
+        self.assertTrue(approval_requested(command))
+
+    def test_corpus_size_and_unique_examples(self):
+        positives = [text for phrases in POSITIVE.values() for text in phrases]
+        self.assertGreaterEqual(len(set(positives)), 60)
+        self.assertEqual(len(positives), len(set(positives)))
+        self.assertGreaterEqual(len(set(AUTHORIZED_BODIES)) * 2, 40)
+
+    def test_shared_hedges_do_not_depend_on_the_following_verb(self):
+        for connector in ('after I', 'before you', 'until I', 'once you', 'when I', 'only after I'):
+            for completion in ('sleep on it', 'noodle on it', 'return from lunch',
+                               'finish pondering', 'talk to Sam', 'have more information',
+                               'take a second look', 'reach a conclusion'):
+                with self.subTest(connector=connector, completion=completion):
+                    self.assertTrue(approval_requested(connector + ' ' + completion))
+
+
+def positive_case(hedge, lane, prefix=None):
+    def test(self):
+        self.assert_blocked(hedge, lane, prefix)
+    return test
+
+
+def authorized_case(body, lane, index):
+    def test(self):
+        if lane == 'reminder':
+            prefix = ('create a reminder for 2am to ', 'please set an alarm for 2am to ',
+                      'could you schedule a reminder for 2am to ', 'remind me at 2am to ')[index % 4]
+            command = prefix + body
+            self.assertFalse(approval_requested(command))
+            reply = self.submit(command)
+            self.assertIn('Reminder saved:', reply['content'])
+            row, = self.chat.reminders.listing()
+            self.assertEqual((row['body'], row['state']), (body, 'pending'))
+            self.assertEqual(row['due_at'], datetime(2026, 10, 13, 2, tzinfo=ZONE).timestamp())
+        else:
+            prefix = ('create file ', 'please create a file ', 'could you create file ',
+                      'create a local file ')[index % 4]
+            command = prefix + '~/Documents/result.txt: ' + body
+            self.assertFalse(approval_requested(command))
+            reply = self.submit(command)
+            self.assertIn('File created:', reply['content'])
+            self.assertEqual((self.home / 'Documents/result.txt').read_text(), body)
+    return test
+
+
+# Separate unittest cases keep every paraphrase visible in failing-first output.
+for _category, _phrases in POSITIVE.items():
+    for _index, _hedge in enumerate(_phrases):
+        for _lane in ('reminder', 'file'):
+            setattr(ApprovalIntentTests, f'test_block_{_category}_{_index:02d}_{_lane}',
+                    positive_case(_hedge, _lane))
+    for _index, _prefix in enumerate(('set a timer for 10 minutes to stretch',
+                                      'remind me every 2 hours to stretch',
+                                      'every morning remind me to stretch',
+                                      'every morning do read file ~/Documents/result.txt')):
+        setattr(ApprovalIntentTests, f'test_schedule_form_{_category}_{_index:02d}',
+                positive_case(_phrases[0], 'reminder', _prefix))
+for _index, _body in enumerate(AUTHORIZED_BODIES):
+    for _lane in ('reminder', 'file'):
+        setattr(ApprovalIntentTests, f'test_authorized_{_index:02d}_{_lane}',
+                authorized_case(_body, _lane, _index))
