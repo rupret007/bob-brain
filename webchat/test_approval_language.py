@@ -223,6 +223,48 @@ INLINE_RESTRICTIONS = (
 )
 POSITIVE['ambiguous_deferral'] += INLINE_RESTRICTIONS
 
+# Third independent review: consultation order, non-execution modes and
+# uncertainty must not depend on a particular verb or a restriction word.
+CONSULTATION_RESTRICTIONS = (
+    'get my take first',
+    'first get back to me',
+    'on paper',
+    'merely a suggestion',
+    'potentially',
+    'at the proposal stage',
+    'get our perspective first',
+    'first collect feedback',
+    'get another perspective initially',
+    'initially bounce the idea around',
+    'my input comes ahead of execution',
+    'our response comes next',
+    'get my take',
+    'get back to me',
+    'return the details to us',
+    'consult the owner',
+    'seek feedback',
+    'gather opinions',
+    'solicit input',
+    'on a provisional basis',
+    'on the drawing board',
+    'on the table',
+    'at the idea stage',
+    'at a preliminary stage',
+    'at the discussion stage',
+    'a proposal',
+    'proposed operation',
+    'suggested action',
+    'a suggestion',
+    'a possible step',
+    'a possibility',
+    'potential action',
+    'probably',
+    'might proceed',
+    'may proceed',
+    'potentially feasible',
+)
+POSITIVE['ambiguous_deferral'] += CONSULTATION_RESTRICTIONS
+
 # Unknown restrictions must be caught by their clause structure even if none
 # of their words belongs to a known consent/deferral family.
 UNRESOLVED = (
@@ -247,6 +289,30 @@ AUTHORIZED_BODIES = (
 
 
 class ApprovalCategoryTests(unittest.TestCase):
+    def test_unknown_secondary_lines_remain_unresolved(self):
+        for boundary in ('\n', '\r', '\r\n', '\u0085', '\u2028', '\u2029'):
+            for tail in ('glorp the flibbert', 'a zibble stage', 'the quux process'):
+                with self.subTest(boundary=repr(boundary), tail=tail):
+                    self.assertIn('unresolved_clause', approval_categories(
+                        'create a reminder for 2am to stretch' + boundary + tail))
+
+    def test_priority_and_personal_constraints_need_no_known_complement(self):
+        for fragment in ('first glorp the flibbert', 'glorp the flibbert first',
+                         'initially glorp it', 'my zibble', 'our quux',
+                         'glorp it to me', 'glorp it to us', 'on a zibble',
+                         'at the quux stage'):
+            with self.subTest(fragment=fragment):
+                self.assertTrue(approval_requested(
+                    'create a reminder for 2am to stretch ' + fragment))
+
+    def test_clock_operands_do_not_resolve_non_time_adjuncts(self):
+        for prefix in ('create a reminder for 2am to stretch',
+                       'remind me at 2am to stretch',
+                       'every morning at 8am remind me to stretch'):
+            for tail in ('at the quux stage', 'on a zibble', 'at 2am on paper'):
+                with self.subTest(prefix=prefix, tail=tail):
+                    self.assertTrue(approval_requested(prefix + ' ' + tail))
+
     def test_unresolved_grammar_does_not_depend_on_complement_vocabulary(self):
         for connector in ('and', 'or', 'then', 'also', 'plus', 'as', 'in', 'for',
                           'with', 'under', 'by', 'past'):
@@ -454,3 +520,13 @@ for _index, _hedge in enumerate(INLINE_RESTRICTIONS):
                                 ('quoted', '"' + _hedge + '"')):
             setattr(ApprovalIntentTests, f'test_repair_{_index:02d}_{_lane}_{_layout}',
                     positive_case(_value, _lane, separator=' '))
+
+for _index, _hedge in enumerate(CONSULTATION_RESTRICTIONS):
+    for _lane in ('reminder', 'file'):
+        for _layout, _value in (('newline', _hedge), ('quoted', '"' + _hedge + '"')):
+            setattr(ApprovalIntentTests, f'test_consultation_{_index:02d}_{_lane}_{_layout}',
+                    positive_case(_value, _lane, separator='\n' if _layout == 'newline' else ' '))
+for _index, _tail in enumerate(('glorp the flibbert', 'a zibble stage', 'the quux process')):
+    for _lane in ('reminder', 'file'):
+        setattr(ApprovalIntentTests, f'test_unknown_line_{_index:02d}_{_lane}',
+                positive_case(_tail, _lane, separator='\n'))
