@@ -1,6 +1,6 @@
 """Capability ledger regressions using a temporary home and offline adapters."""
 import json
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
 import fcntl
 import os
@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+import uuid
 from unittest.mock import Mock, patch
 
 import chat_intent
@@ -16,6 +17,59 @@ from local_tasks import LocalFiles, LocalTasks, LocalTaskError, LOCK_TIMEOUT, SE
 
 
 class CapabilityLedgerTests(unittest.TestCase):
+    @contextmanager
+    def isolated_chat(self):
+        from app import Chat
+        from reminders import ZONE
+        providers, texting, calendar, notifier = Mock(), Mock(), Mock(), Mock()
+        providers.timeouts = {}
+        providers.reply.side_effect = AssertionError('Unexpected provider call')
+        texting.handle.return_value = False
+        texting.public.side_effect = dict
+        calendar.handle.return_value = None
+        now = datetime(2026, 10, 11, 1, 47, tzinfo=ZONE).timestamp()
+        with tempfile.TemporaryDirectory(dir=self.root) as folder, \
+                patch('app.load_live_ops', return_value={}), \
+                patch('time.time', return_value=now):
+            root = Path(folder)
+            home = root / 'home'
+            (home / 'Documents').mkdir(parents=True)
+            actions = LocalTasks(root / 'local', files=LocalFiles(home, clock=lambda: now),
+                                 search=self.search, clock=lambda: now)
+            chat = Chat(root / 'webchat', root, providers, texting=texting,
+                        calendar=calendar, reminder_notifier=notifier, local_tasks=actions)
+            chat.reminders.clock = lambda: now
+            cid = chat.conversation_list()['conversations'][0]['id']
+            try:
+                yield chat, cid, home
+                providers.reply.assert_not_called()
+                notifier.assert_not_called()
+                self.search.assert_not_called()
+            finally:
+                chat.close()
+
+    def test_ledger_B4_review_and_dry_run_never_schedule_through_chat(self):
+        constraints = (
+            'but I need to review it first', 'but run this as a dry run',
+            'review first', 'REVIEW FIRST', 'for my review', 'needs reviewing',
+            'send it for review', 'review-only', 'let me review it',
+            'I want to review this', 'dry-run', 'DRY RUN', 'a dry run please',
+            'perform a dry-run first', 'dry run only', 'this is a dry run',
+        )
+        for constraint in constraints:
+            with self.subTest(constraint=constraint), self.isolated_chat() as (chat, cid, home):
+                reply = chat.submit(cid, 'Create a reminder for 2am to stretch, ' + constraint,
+                                    str(uuid.uuid4()))['messages'][-1]
+                self.assertEqual(chat.reminders.listing(), [])
+                self.assertEqual(reply['provider'], 'reminders')
+                self.assertIn('Nothing was saved', reply['content'])
+                self.assertNotIn('Reminder saved:', reply['content'])
+                reply = chat.submit(cid, 'remind me at 2am to stretch', str(uuid.uuid4()))['messages'][-1]
+                self.assertIn('Reminder saved:', reply['content'])
+                row, = chat.reminders.listing()
+                self.assertEqual((row['body'], row['state'], row['due_at']),
+                                 ('stretch', 'pending', self.clock() + 86400 + 780))
+
     B3_CONTENTS = (
         '<property name="password" value="SYNTHETIC_ONLY_123"/>',
         '<entry name="api_key">SYNTHETIC_ONLY_123</entry>',
