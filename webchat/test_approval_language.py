@@ -206,6 +206,20 @@ INLINE_RESTRICTIONS = (
     'under human supervision',
     'run it by me',
     'run the idea past me',
+    'leave it at the planning stage',
+    'leave it unperformed',
+    'retain the current state',
+    'preserve the current state',
+    'later consideration',
+    'further deliberation',
+    'more thought needed',
+    'theoretical exercise',
+    'conceptual exercise',
+    'speculative exercise',
+    'testing the operation',
+    'trial execution',
+    'unperformed',
+    'unapplied',
 )
 POSITIVE['ambiguous_deferral'] += INLINE_RESTRICTIONS
 
@@ -247,6 +261,12 @@ class ApprovalCategoryTests(unittest.TestCase):
                               'and flibbert it'):
                 with self.subTest(time=time, qualifier=qualifier):
                     self.assertTrue(approval_requested('set a timer ' + time + ' ' + qualifier))
+
+    def test_time_operands_only_resolve_scheduling_syntax(self):
+        for qualifier in ('for 2 days', 'in 10 minutes', 'for tomorrow'):
+            with self.subTest(qualifier=qualifier):
+                self.assertTrue(approval_requested('create file ~/Documents/result.txt: hello ' + qualifier))
+
 
     def test_category_reasons_cover_the_semantic_corpus(self):
         for category, phrases in POSITIVE.items():
