@@ -70,6 +70,43 @@ class CapabilityLedgerTests(unittest.TestCase):
                 self.assertEqual((row['body'], row['state'], row['due_at']),
                                  ('stretch', 'pending', self.clock() + 86400 + 780))
 
+    def test_ledger_B5_preview_creation_requires_exact_yes_through_chat(self):
+        constraints = (
+            'just show me a preview', 'preview only', 'PREVIEW ONLY',
+            'preview first', 'a preview please', 'send me a preview',
+            'I need a preview', 'let me preview it', 'preview this',
+            'preview-only', 'for preview', 'show the preview',
+            'give me a preview', 'preview before proceeding',
+            'run this as a dry run', 'I need to review it first',
+        )
+        for constraint in constraints:
+            with self.subTest(constraint=constraint), self.isolated_chat() as (chat, cid, home):
+                target = home / 'Documents/note.txt'
+                command = 'create file ~/Documents/note.txt: hello; ' + constraint
+                with patch.object(chat.local_tasks.files, 'execute',
+                                  wraps=chat.local_tasks.files.execute) as execute:
+                    reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
+                    self.assertFalse(target.exists())
+                    execute.assert_not_called()
+                    self.assertEqual(reply['provider'], 'local-tasks')
+                    self.assertIn("I haven't created it yet", reply['content'])
+                    with chat.local_tasks.locked() as rows:
+                        row, = rows.values()
+                    self.assertEqual(row['state'], 'draft')
+                    self.assertIn('yes ' + row['token'], reply['content'])
+                    chat.submit(cid, 'yes', str(uuid.uuid4()))
+                    self.assertFalse(target.exists())
+                    execute.assert_not_called()
+                    reply = chat.submit(cid, 'yes ' + row['token'], str(uuid.uuid4()))['messages'][-1]
+                    self.assertIn('File created:', reply['content'])
+                    self.assertEqual(target.read_text(), 'hello; ' + constraint)
+                    execute.assert_called_once()
+        with self.isolated_chat() as (chat, cid, home):
+            reply = chat.submit(cid, 'create file ~/Documents/note.txt: hello',
+                                str(uuid.uuid4()))['messages'][-1]
+            self.assertIn('File created:', reply['content'])
+            self.assertEqual((home / 'Documents/note.txt').read_text(), 'hello')
+
     B3_CONTENTS = (
         '<property name="password" value="SYNTHETIC_ONLY_123"/>',
         '<entry name="api_key">SYNTHETIC_ONLY_123</entry>',
