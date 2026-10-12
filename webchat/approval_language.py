@@ -4,6 +4,7 @@ This is a pattern/intent check, not a natural-language guarantee. Categories
 combine grammatical relationships with semantic word families; they are not a
 catalogue of accepted consent sentences. Shared hedges intentionally do not
 depend on the verb that follows them ("after I sleep on it", for example).
+Unresolved clause structure also requires ASK, independently of vocabulary.
 
 Ambiguity means ASK. Scan the entire request, including quotes, filenames and
 requested content: a putative content boundary must not hide withheld consent.
@@ -27,18 +28,19 @@ def _normalize(text):
     return re.sub(r'\s+', ' ', text)
 
 
-# Shared grammatical signals. In particular, temporal + person/possessor is
-# enough to defer; its complement can contain ANY verb, not just "approve".
+# Shared grammatical signals. Temporal prerequisites can have a person,
+# gerund, or passive clause as their complement. Do not require an adjacent
+# pronoun: the unparsed complement is not evidence of present authorization.
 _PERSONAL = _words(r'i|i\'\w+|me|my|mine|we|us|our|you|your')
 _SELF_REQUEST = _words(r'i|i\'\w+|we|let\s+(?:me|us)|give\s+(?:me|us)')
 _CONSULT = _words(r'(?:with|to)\s+(?:me|us)|show\w*\s+(?:me|us)')
 _PRIORITY = _words(r'first|before|prior|initially')
 _RESTRICTION = _words(r'only|just|keep|remain\w*|need\w*|requir\w*|must')
 _OWNERSHIP = _words(r'my|our')
-_TEMPORAL_PERSON = _words(
-    r'(?:after|before|until|once|when|upon)\s+(?:i|we|you|my|our|your|me|us)')
+_PREREQUISITE = _words(r'after|before|until|once|when|upon')
 _CONDITION = _words(
-    r'if|unless|provided|providing|assuming|conditional\w*|'
+    r'if|unless|provided|providing|assuming|conditional\w*|contingent\w*|'
+    r'depend\w*\s+(?:on|upon)|'
     r'on\s+(?:the\s+)?condition|subject\s+to|'
     r'only\s+(?:after|before|when|once|with|upon)')
 _NEGATION = _words(r'no|not|nothing|never|without|\w+n\'t|undone|unexecuted|uncommitted')
@@ -49,10 +51,11 @@ _UNCERTAINTY = _words(r'maybe|perhaps|possibly|unsure|uncertain\w*|undecided|ten
 # intervening modifiers, request subjects or objects.
 _CONSENT = _words(
     r'confirm\w*|approv\w*|permission\w*|consent\w*|agree\w*|'
-    r'authori[sz]\w*|assent\w*|ok(?:ay)?|green\s+light|go\s+ahead|say\s+so|'
-    r'sign\s+off|blessing|nod|signal|say\s+(?:go|yes)')
+    r'authori[sz]\w*|assent\w*|accept\w*|clearance|ok(?:ay)?|green\s+light|go\s+ahead|say\s+so|'
+    r'sign(?:s|ed|ing)?\s+off|thumbs?\s+up|blessing|nod|signal|say\s+(?:go|yes)')
 _WAIT = _words(r'wait\w*|await\w*|hold\w*|paus\w*|defer\w*|pending|postpon\w*')
-_DECISION = _words(r'decid\w*|decision\w*|deliberat\w*|ponder\w*')
+_DECISION = _words(r'decid\w*|decision\w*|deliberat\w*|ponder\w*|'
+                   r'think\w*|thought\w*|consider\w*|reflect\w*|mull\w*')
 _ASK = _words(r'ask\w*')
 _WHETHER = _words(r'whether')
 _PREVIEW = _words(r'preview\w*')
@@ -67,16 +70,28 @@ _DRAFT = _words(r'draft\w*|provisional\w*')
 _PROPOSAL = _words(r'propos\w*')
 _SIMULATION = _words(
     r'dry\s+run|simulat\w*|pretend\w*|rehears\w*|hypothetic\w*|'
-    r'demonstrat\w*|mock\w*|illustrat\w*')
+    r'demonstrat\w*|mock\w*|illustrat\w*|examples?|thought\s+experiment\w*')
 _COUNTERFACTUAL = _words(r'would|could')
 _QUESTION = _words(r'what|how')
-_EXPLANATION = _words(r'show\w*|explain\w*|walk\w*|describe\w*')
+_EXPLANATION = _words(r'show\w*|explain\w*|walk\w*|describe\w*|talk\w*')
+_GUIDED_EXPLANATION = _words(r'(?:talk|walk)\w*\s+(?:me|us)\s+through')
+_PURPOSE = _words(r'for\s+(?:\w+\s+){0,4}purposes?')
+_DISCUSSION = _words(r'discuss\w*|explanat\w*|educat\w*')
+_MODE = _words(r'for|as')
 _INCOMPLETE_HEDGE = _words(r'before|until')
 _DELAY = _words(r'yet|now')
+_QUALIFIER = _words(r'but|except\w*|however|although|though|nevertheless')
+
+# A second clause cannot be silently absorbed into arbitrary reminder/file
+# content. This fallback is independent of the semantic vocabulary, including
+# for words we have never seen. Filename dots, decimals and clock colons alone
+# are not clause boundaries. Plain multiline content is still allowed, but
+# all its words are scanned by the semantic detectors.
+_CLAUSE_BOUNDARY = re.compile(r'[;,\u2013\u2014]|[.!?]\s+\S|[()]')
 
 
 def _conditional_approval(text):
-    return bool(_CONDITION.search(text) or _TEMPORAL_PERSON.search(text))
+    return bool(_CONDITION.search(text) or _PREREQUISITE.search(text))
 
 
 def _preview_first(text):
@@ -102,6 +117,9 @@ def _wait_for_ok(text):
 
 def _dry_run(text):
     return bool(_SIMULATION.search(text) or
+                _PURPOSE.search(text) or _GUIDED_EXPLANATION.search(text) or
+                (_DISCUSSION.search(text) and (_MODE.search(text) or _RESTRICTION.search(text))) or
+                (_EXPLANATION.search(text) and _CONSULT.search(text)) or
                 (_COUNTERFACTUAL.search(text) and _QUESTION.search(text) and _EXPLANATION.search(text)))
 
 
@@ -118,7 +136,11 @@ def _review_first(text):
 def _ambiguous_deferral(text):
     # Incomplete hedges still ask. A missing object is not permission, e.g.
     # "before proceeding", "until later", "only after ...", or "maybe".
-    return bool(_UNCERTAINTY.search(text) or _INCOMPLETE_HEDGE.search(text))
+    # A separate first-person request or restriction has an unresolved scope,
+    # even when its complement contains no known decision/consent vocabulary.
+    return bool(_UNCERTAINTY.search(text) or _INCOMPLETE_HEDGE.search(text) or
+                _QUALIFIER.search(text) or _SELF_REQUEST.search(text) or
+                _RESTRICTION.search(text))
 
 
 _DETECTORS = {
@@ -139,7 +161,12 @@ def approval_categories(text):
     allowlists and effect protections. This check must never override those gates.
     """
     normalized = _normalize(text)
-    return frozenset(name for name, detector in _DETECTORS.items() if detector(normalized))
+    reasons = {name for name, detector in _DETECTORS.items() if detector(normalized)}
+    # Inspect punctuation before whitespace/dash normalization. Never strip
+    # quoted spans or a putative content suffix to manufacture authorization.
+    if _CLAUSE_BOUNDARY.search(unicodedata.normalize('NFKC', text)):
+        reasons.add('unresolved_clause')
+    return frozenset(reasons)
 
 
 def approval_requested(text):

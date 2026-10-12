@@ -171,6 +171,13 @@ class ActionIntentTests(unittest.TestCase):
         chat.reminders.clock = lambda: self.now
         cid = chat.new_conversation()['id']
         body = 'text Alex, delete a file, and spend money'
+        # Multiple clauses now need clarification before scheduling, even
+        # when they could have been intended as literal reminder content.
+        chat.submit(cid, 'Create a reminder in 1 second to ' + body, str(uuid.uuid4()))
+        self.assertIn('Nothing was saved', chat.history(cid)['messages'][-1]['content'])
+        self.assertFalse(chat.reminders.listing())
+        notify.assert_not_called()
+        body = 'text Alex and delete a file and spend money'
         chat.submit(cid, 'Create a reminder in 1 second to ' + body, str(uuid.uuid4()))
         self.now += 2
         chat.deliver_reminders()

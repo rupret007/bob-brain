@@ -122,6 +122,16 @@ POSITIVE = {
 # Independently reported constructions and varied syntax, not just substitutions
 # in the original seven reproductions. All are exercised without punctuation too.
 PREGATE = {
+    'ambiguous_deferral': (
+        'let me sleep on it',
+        'give us a moment',
+        'I want another opinion',
+        'we should settle this',
+        'requires another step',
+        'this needs further thought',
+        'this depends on the outcome',
+        'only a possibility',
+    ),
     'conditional_approval': (
         'after getting a thumbs up from me',
         'once the details have been signed off by me',

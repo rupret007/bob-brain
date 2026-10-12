@@ -886,6 +886,7 @@ class CapabilityLedgerTests(unittest.TestCase):
         now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
         refusal = ('The reminder has an extra date or time clause. Nothing was saved. '
                    'Please use one schedule, such as “create a reminder for tomorrow at 2am to go to bed”.')
+        clause_refusal = ('Nothing was saved. Send a new reminder request when you want it scheduled.')
         for index, date in enumerate(('Oct 11', '11 October.')):
             with self.subTest(date=date):
                 body = 'go to bed, on ' + date
@@ -894,13 +895,16 @@ class CapabilityLedgerTests(unittest.TestCase):
                 rows = []
                 with patch.object(reminders, 'locked', side_effect=lambda: nullcontext(rows)), \
                         patch.object(reminders, 'save') as save:
-                    self.assertEqual(reminders.handle(command, 'chat', 'request'), refusal)
+                    self.assertEqual(reminders.handle(command, 'chat', 'request'), clause_refusal)
                     save.assert_not_called()
                     self.assertEqual(reminders.listing(), [])
-                for operation in (lambda: parse(command, now), lambda: reminder_body(body)):
+                # The full request now stops at the earlier clause guard;
+                # direct body validation must still reject the extra date.
+                for operation, expected in ((lambda: parse(command, now), clause_refusal),
+                                            (lambda: reminder_body(body), refusal)):
                     with self.assertRaises(ReminderError) as raised:
                         operation()
-                    self.assertEqual(str(raised.exception), refusal)
+                    self.assertEqual(str(raised.exception), expected)
 
     def test_ledger_F16_trailing_timezone_qualifier_swallowed(self):
         from reminders import Reminders, ReminderError, ZONE, parse
