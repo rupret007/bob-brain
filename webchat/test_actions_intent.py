@@ -9,7 +9,7 @@ import uuid
 
 import actions_intent
 from app import Chat
-from reminders import Reminders, ZONE, parse
+from reminders import ReminderError, Reminders, ZONE, parse
 from task_dispatch import task_queue
 from texting_fixture import OfflineProviders
 
@@ -71,8 +71,9 @@ class ActionIntentTests(unittest.TestCase):
                      'Create a file', 'Start a job: create a timer for 10 minutes'):
             with self.subTest(text=text):
                 if text == 'Create a reminder component in app.py':
-                    # Even a recognized noun cannot cause a guessed schedule.
-                    self.assertIsNone(parse(text, self.now))
+                    # An unresolved adjunct now asks even before time parsing.
+                    with self.assertRaisesRegex(ReminderError, 'Nothing was saved'):
+                        parse(text, self.now)
                 else:
                     self.assertIsNone(actions_intent.handle(self.store, text, 'chat', text))
         self.assertFalse(self.store.listing())
@@ -178,6 +179,12 @@ class ActionIntentTests(unittest.TestCase):
         self.assertFalse(chat.reminders.listing())
         notify.assert_not_called()
         body = 'text Alex and delete a file and spend money'
+        chat.submit(cid, 'Create a reminder in 1 second to ' + body, str(uuid.uuid4()))
+        self.assertIn('Nothing was saved', chat.history(cid)['messages'][-1]['content'])
+        self.assertFalse(chat.reminders.listing())
+        notify.assert_not_called()
+        # A single plain reminder still delivers as data, never as a send.
+        body = 'text Alex'
         chat.submit(cid, 'Create a reminder in 1 second to ' + body, str(uuid.uuid4()))
         self.now += 2
         chat.deliver_reminders()

@@ -407,6 +407,11 @@ class ReminderChatTests(unittest.TestCase):
 
     def test_body_is_not_executed_as_text_or_work(self):
         self.say('remind me every 1 minute to start a job and text Alex: send now')
+        self.assertFalse(self.chat.reminders.listing())
+        self.assertIn('Nothing was saved', self.chat.history(self.cid)['messages'][-1]['content'])
+        self.notify.assert_not_called()
+        # Keep the original data-not-instructions assertion on a plain body.
+        self.say('remind me every 1 minute to start a job')
         self.now += 60
         self.chat.deliver_reminders()
         self.assertIn('Reminder:', self.chat.history(self.cid)['messages'][-1]['content'])

@@ -14,6 +14,8 @@ positives are preferable to executing a potentially unapproved effect.
 import re
 import unicodedata
 
+from actions_intent import reminder_request
+
 
 def _words(expression):
     return re.compile(r'\b(?:' + expression + r')\b')
@@ -35,7 +37,8 @@ _PERSONAL = _words(r'i|i\'\w+|me|my|mine|we|us|our|you|your')
 _SELF_REQUEST = _words(r'i|i\'\w+|we|let\s+(?:me|us)|give\s+(?:me|us)')
 _CONSULT = _words(r'(?:with|to)\s+(?:me|us)|show\w*\s+(?:me|us)')
 _PRIORITY = _words(r'first|before|prior|initially')
-_RESTRICTION = _words(r'only|just|keep|remain\w*|need\w*|requir\w*|must')
+_RESTRICTION = _words(r'only|just|keep|remain\w*|leav\w*|retain\w*|preserv\w*|'
+                      r'need\w*|requir\w*|must')
 _OWNERSHIP = _words(r'my|our')
 _PREREQUISITE = _words(r'after|before|until|once|when|upon')
 _CONDITION = _words(
@@ -43,7 +46,7 @@ _CONDITION = _words(
     r'depend\w*\s+(?:on|upon)|'
     r'on\s+(?:the\s+)?condition|subject\s+to|'
     r'only\s+(?:after|before|when|once|with|upon)')
-_NEGATION = _words(r'no|not|nothing|never|without|\w+n\'t|undone|unexecuted|uncommitted')
+_NEGATION = _words(r'no|not|nothing|never|without|\w+n\'t|undone|un[a-z]+(?:ed|en)')
 _UNCERTAINTY = _words(r'maybe|perhaps|possibly|unsure|uncertain\w*|undecided|tentative\w*')
 
 # Semantic vocabulary is shared across sentence shapes. Inflections belong to
@@ -70,7 +73,8 @@ _DRAFT = _words(r'draft\w*|provisional\w*')
 _PROPOSAL = _words(r'propos\w*')
 _SIMULATION = _words(
     r'dry\s+run|simulat\w*|pretend\w*|rehears\w*|hypothetic\w*|'
-    r'demonstrat\w*|mock\w*|illustrat\w*|examples?|thought\s+experiment\w*')
+    r'demonstrat\w*|mock\w*|illustrat\w*|examples?|thought\s+experiment\w*|'
+    r'test(?:s|ed|ing)?|trials?|theor(?:y|ies|etic\w*)|conceptual\w*|speculat\w*')
 _COUNTERFACTUAL = _words(r'would|could')
 _QUESTION = _words(r'what|how')
 _EXPLANATION = _words(r'show\w*|explain\w*|walk\w*|describe\w*|talk\w*')
@@ -83,11 +87,40 @@ _DELAY = _words(r'yet|now')
 _QUALIFIER = _words(r'but|except\w*|however|although|though|nevertheless')
 
 # A second clause cannot be silently absorbed into arbitrary reminder/file
-# content. This fallback is independent of the semantic vocabulary, including
-# for words we have never seen. Filename dots, decimals and clock colons alone
-# are not clause boundaries. Plain multiline content is still allowed, but
-# all its words are scanned by the semantic detectors.
+# content. Coordination and adjuncts have unresolved scope even without any
+# punctuation or known consent words. Treat literal content with these shapes
+# conservatively too; we cannot prove that it is not an action restriction.
+# Filename dots, decimals and clock colons alone are not clause boundaries.
 _CLAUSE_BOUNDARY = re.compile(r'[;,\u2013\u2014]|[.!?]\s+\S|[()]')
+_COORDINATION = _words(r'and|or|nor|then|also|plus')
+_ADJUNCT = _words(r'as|in|for|with|by|past|under')
+
+# The only resolved in/for adjunct is a time operand. This recognizes syntax,
+# not time validity: the scheduling parser must still validate the full request.
+# Normalization replaces ISO date hyphens with spaces. Only numeric quantities
+# can be resolved here: a word such as "second" may mean a second opinion.
+_TIME_OPERAND = re.compile(
+    r'\s+(?:'
+    r'\d+\s+(?:seconds?|minutes?|hours?|days?)|'
+    r'\d{4} \d{2} \d{2}|today|tomorrow|'
+    r'\d{1,2}(?::\d{2}\s*(?:am|pm)?|\s*(?:am|pm))'
+    r')\b')
+
+
+def _unresolved_structure(text):
+    if _COORDINATION.search(text):
+        return True
+    scheduling = (reminder_request(text) or
+                  re.match(r'^(?:remind me|set (?:a )?routine)\b', text))
+    for marker in _ADJUNCT.finditer(text):
+        if (scheduling and marker[0] in ('in', 'for') and
+                _TIME_OPERAND.match(text, marker.end())):
+            # Resolve only this marker. Never remove its complement or the
+            # remaining text from the semantic or structural scans: a valid
+            # time does not license an inline restriction later in the request.
+            continue
+        return True
+    return False
 
 
 def _conditional_approval(text):
@@ -108,9 +141,11 @@ def _draft_only(text):
 
 
 def _wait_for_ok(text):
+    # A pending decision can be expressed without a person or clause marker.
+    # Its scope may be the operation itself, even inside apparent content.
     return bool(_CONSENT.search(text) or _WAIT.search(text) or
                 (_NEGATION.search(text) and _DELAY.search(text)) or
-                (_DECISION.search(text) and _PERSONAL.search(text)) or
+                _DECISION.search(text) or
                 (_ASK.search(text) and
                  (_PERSONAL.search(text) or _PRIORITY.search(text) or _WHETHER.search(text))))
 
@@ -164,7 +199,8 @@ def approval_categories(text):
     reasons = {name for name, detector in _DETECTORS.items() if detector(normalized)}
     # Inspect punctuation before whitespace/dash normalization. Never strip
     # quoted spans or a putative content suffix to manufacture authorization.
-    if _CLAUSE_BOUNDARY.search(unicodedata.normalize('NFKC', text)):
+    if (_CLAUSE_BOUNDARY.search(unicodedata.normalize('NFKC', text)) or
+            _unresolved_structure(normalized)):
         reasons.add('unresolved_clause')
     return frozenset(reasons)
 

@@ -300,19 +300,34 @@ class CapabilityLedgerTests(unittest.TestCase):
                                         str(uuid.uuid4()))['messages'][-1]
                     self.assertEqual(chat.reminders.listing(), [])
                     self.assertEqual(reply['provider'], 'reminders')
-                    self.assertIn('extra date or time clause', reply['content'])
+                    # Numeric extra times reach the time parser; unresolved
+                    # word quantities now ask at the earlier intent boundary.
+                    expected = ('extra date or time clause' if qualifier == 'in 2 days'
+                                and not prefix.startswith('every morning')
+                                else 'Send a new reminder request')
+                    self.assertIn(expected, reply['content'])
                     self.assertIn('Nothing was saved', reply['content'])
         from reminders import ZONE
         for command, body, day in (
                 ('Create a reminder for 2am to stretch', 'stretch', 11),
                 ('Create a reminder for 2026-10-13 at 2am to stretch', 'stretch', 13),
-                ('Create a reminder for 2am to stretch in the garden', 'stretch in the garden', 11)):
+                ('Create a reminder for 2am to stretch outdoors', 'stretch outdoors', 11)):
             with self.subTest(command=command), self.isolated_chat() as (chat, cid, home):
                 reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
                 self.assertIn('Reminder saved:', reply['content'])
                 row, = chat.reminders.listing()
                 self.assertEqual((row['body'], row['state'], row['due_at']),
                                  (body, 'pending', datetime(2026, 10, day, 2, tzinfo=ZONE).timestamp()))
+        # Scope of "in" can describe either content or execution mode; ask.
+        with self.isolated_chat() as (chat, cid, home):
+            with patch.object(chat.reminders, 'create') as create, \
+                    patch.object(chat.reminders, 'save') as save:
+                reply = chat.submit(cid, 'Create a reminder for 2am to stretch in the garden',
+                                    str(uuid.uuid4()))['messages'][-1]
+                self.assertIn('Nothing was saved', reply['content'])
+                create.assert_not_called()
+                save.assert_not_called()
+                self.assertFalse(chat.reminders.listing())
 
     B3_CONTENTS = (
         '<property name="password" value="SYNTHETIC_ONLY_123"/>',
