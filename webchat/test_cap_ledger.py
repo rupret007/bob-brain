@@ -132,6 +132,49 @@ class CapabilityLedgerTests(unittest.TestCase):
                 row, = chat.reminders.listing()
                 self.assertEqual((row['body'], row['state'], row['due_at']), (body, 'pending', due))
 
+    def test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat(self):
+        from reminders import ZONE
+        now = datetime(2026, 10, 12, 13, tzinfo=ZONE).timestamp()
+        constraints = self.DEFERRED_CONSTRAINTS
+        for constraint in constraints:
+            with self.subTest(constraint=constraint), self.isolated_chat(now=now) as (chat, cid, home):
+                target = home / 'Documents/proposal.txt'
+                command = 'Create file ~/Documents/proposal.txt: hello' + constraint
+                rows = {}
+                with patch.object(chat.local_tasks, 'locked', side_effect=lambda: nullcontext(rows)), \
+                        patch.object(chat.local_tasks, 'save') as save, \
+                        patch.object(chat.local_tasks.files, 'execute',
+                                  return_value='File created: ' + str(target)) as execute:
+                    reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
+                    execute.assert_not_called()
+                    self.assertFalse(target.exists())
+                    self.assertEqual(reply['provider'], 'local-tasks')
+                    self.assertIn("I haven't created it yet", reply['content'])
+                    with chat.local_tasks.locked() as rows:
+                        row, = rows.values()
+                    save.assert_called_once()
+                    self.assertEqual(row['state'], 'draft')
+                    self.assertEqual(row['expires'], now + 3600)
+                    self.assertIn('yes ' + row['token'], reply['content'])
+                    chat.submit(cid, 'yes', str(uuid.uuid4()))
+                    execute.assert_not_called()
+                    reply = chat.submit(cid, 'yes ' + row['token'], str(uuid.uuid4()))['messages'][-1]
+                    self.assertIn('File created:', reply['content'])
+                    execute.assert_called_once_with(row['spec'])
+                    self.assertEqual(row['state'], 'done')
+                    self.assertEqual(row['spec']['content'], 'hello' + constraint)
+                    chat.submit(cid, 'yes ' + row['token'], str(uuid.uuid4()))
+                    execute.assert_called_once()
+        with self.isolated_chat(now=now) as (chat, cid, home):
+            target = home / 'Documents/proposal.txt'
+            with patch.object(chat.local_tasks.files, 'execute',
+                              return_value='File created: ' + str(target)) as execute:
+                reply = chat.submit(cid, 'Create file ~/Documents/proposal.txt: hello',
+                                    str(uuid.uuid4()))['messages'][-1]
+                self.assertIn('File created:', reply['content'])
+                execute.assert_called_once()
+                self.assertEqual(execute.call_args.args[0]['content'], 'hello')
+
     def test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat(self):
         from reminders import ZONE
         now = datetime(2026, 10, 12, 13, tzinfo=ZONE).timestamp()

@@ -9,6 +9,7 @@ import re
 _APPROVAL = re.compile(
     r'\b(?:confirm\w*|approv\w*|permission\w*|consent\w*)\b|'
     r'\b(?:draft\w*|agree\w*|conditional\w*|provided)\b|'
+    r'\b(?:green[\s-]+light|go[\s-]+ahead)\b|\blet\s+me\s+(?:see|look|check|inspect)\b|'
     r'\breview\w*(?:\s+(?:it|this))?[\s-]+(?:first|only|required|needed)\b|'
     r'\b(?:for|needs?|let\s+me|want\s+to|need\s+to)\s+(?:(?:my|a)\s+)?review\w*\b|'
     r'\bdry[\s-]+run\b|\bpreview\w*\b|'
