@@ -170,6 +170,45 @@ PREGATE = {
 for _category, _phrases in PREGATE.items():
     POSITIVE[_category] += _phrases
 
+# Second independent pre-gate: no punctuation may be needed to withhold intent.
+# Include unknown complements so a consent-word list cannot satisfy the suite.
+INLINE_RESTRICTIONS = (
+    'and run it by me',
+    'and run the idea past me',
+    'and leave it at the planning stage',
+    'and leave it unperformed',
+    'as a test run',
+    'in theory',
+    'for later consideration',
+    'and circulate the concept internally',
+    'and park the whole thing',
+    'and shelve the operation',
+    'or put the concept on the back burner',
+    'then get another pair of eyes on it',
+    'plus a second opinion',
+    'also get a second opinion',
+    'as a tabletop exercise',
+    'as an academic exercise',
+    'as a conceptual sketch',
+    'as a possible future step',
+    'as a feasibility exercise',
+    'in principle',
+    'in an imaginary setting',
+    'in a sandbox',
+    'in the realm of possibilities',
+    'in the planning stage',
+    'for a future conversation',
+    'for a second opinion',
+    'for eventual deliberation',
+    'for later discussion',
+    'for a feasibility exercise',
+    'with a human in the loop',
+    'under human supervision',
+    'run it by me',
+    'run the idea past me',
+)
+POSITIVE['ambiguous_deferral'] += INLINE_RESTRICTIONS
+
 # Unknown restrictions must be caught by their clause structure even if none
 # of their words belongs to a known consent/deferral family.
 UNRESOLVED = (
@@ -194,6 +233,21 @@ AUTHORIZED_BODIES = (
 
 
 class ApprovalCategoryTests(unittest.TestCase):
+    def test_unresolved_grammar_does_not_depend_on_complement_vocabulary(self):
+        for connector in ('and', 'or', 'then', 'also', 'plus', 'as', 'in', 'for',
+                          'with', 'under', 'by', 'past'):
+            for complement in ('glorp the flibbert', 'a zibble stage', 'the quux process'):
+                with self.subTest(connector=connector, complement=complement):
+                    self.assertIn('unresolved_clause', approval_categories(
+                        'create a reminder for 2am to stretch ' + connector + ' ' + complement))
+
+    def test_time_complement_cannot_hide_another_qualifier(self):
+        for time in ('for 2am', 'in 10 minutes', 'for tomorrow at 2am'):
+            for qualifier in ('as a zibble', 'in the quux stage', 'for a glorp',
+                              'and flibbert it'):
+                with self.subTest(time=time, qualifier=qualifier):
+                    self.assertTrue(approval_requested('set a timer ' + time + ' ' + qualifier))
+
     def test_category_reasons_cover_the_semantic_corpus(self):
         for category, phrases in POSITIVE.items():
             if category == 'ambiguous_deferral':
@@ -366,3 +420,17 @@ for _index, _clause in enumerate(UNRESOLVED):
     for _lane in ('reminder', 'file'):
         setattr(ApprovalIntentTests, f'test_unresolved_clause_{_index:02d}_{_lane}',
                 positive_case(_clause, _lane, separator=''))
+
+# Exercise every hedge inline/newline/quoted through both real routing lanes.
+# Existing corpus cases also get inline coverage, not just punctuation coverage.
+for _category, _phrases in POSITIVE.items():
+    for _index, _hedge in enumerate(_phrases):
+        for _lane in ('reminder', 'file'):
+            setattr(ApprovalIntentTests, f'test_inline_{_category}_{_index:02d}_{_lane}',
+                    positive_case(_hedge, _lane, separator=' '))
+for _index, _hedge in enumerate(INLINE_RESTRICTIONS):
+    for _lane in ('reminder', 'file'):
+        for _layout, _value in (('newline', _hedge.replace(' ', '\n')),
+                                ('quoted', '"' + _hedge + '"')):
+            setattr(ApprovalIntentTests, f'test_repair_{_index:02d}_{_lane}_{_layout}',
+                    positive_case(_value, _lane, separator=' '))
