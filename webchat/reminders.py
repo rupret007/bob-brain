@@ -111,7 +111,9 @@ def parse(text, now):
     stripped = text.strip().rstrip('.?!')
     # Constraints anywhere in a recognized request apply before any schedule
     # variant (including recurring reminders) is allowed to create a row.
-    if approval_requested(text) or re.search(r"\b(?:do\s+not|don't|don’t|never)\s+(?:(?:actually|ever|just|yet|really)\s+)*(?:save|create|schedule|set|add|execute)\b|"
+    if approval_requested(text) or re.search(
+                 r'\b(?:draft\w*|agree\w*|conditional\w*|provided)\b|'
+                 r"\b(?:do\s+not|don't|don’t|never)\s+(?:(?:actually|ever|just|yet|really)\s+)*(?:save|create|schedule|set|add|execute)\b|"
                  r'\b(?:ask|confirm|check)(?:\s+with)?\s+me\s+(?:first|before)|'
                  r'\b(?:ask(?:\s+me)?|wait)\s+for\s+(?:my\s+)?(?:approval|confirmation|permission)\b|'
                  r'\b(?:get|pending|after)\s+my\s+(?:approval|confirmation)\b|'

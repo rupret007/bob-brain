@@ -18,7 +18,7 @@ from local_tasks import LocalFiles, LocalTasks, LocalTaskError, LOCK_TIMEOUT, SE
 
 class CapabilityLedgerTests(unittest.TestCase):
     @contextmanager
-    def isolated_chat(self):
+    def isolated_chat(self, now=None):
         from app import Chat
         from reminders import ZONE
         providers, texting, calendar, notifier = Mock(), Mock(), Mock(), Mock()
@@ -27,7 +27,8 @@ class CapabilityLedgerTests(unittest.TestCase):
         texting.handle.return_value = False
         texting.public.side_effect = dict
         calendar.handle.return_value = None
-        now = datetime(2026, 10, 11, 1, 47, tzinfo=ZONE).timestamp()
+        if now is None:
+            now = datetime(2026, 10, 11, 1, 47, tzinfo=ZONE).timestamp()
         with tempfile.TemporaryDirectory(dir=self.root) as folder, \
                 patch('app.load_live_ops', return_value={}), \
                 patch('time.time', return_value=now):
@@ -47,6 +48,46 @@ class CapabilityLedgerTests(unittest.TestCase):
                 self.search.assert_not_called()
             finally:
                 chat.close()
+
+    def test_ledger_B7_draft_and_conditional_requests_never_schedule_through_chat(self):
+        from reminders import ZONE
+        now = datetime(2026, 10, 12, 13, tzinfo=ZONE).timestamp()
+        constraints = (
+            '; draft only.', ', provided I agree.',
+            '; DRAFT ONLY.', '; draft-only.', '; just a draft.',
+            '; keep this as a draft.', '; draft it first.', '; for drafting.',
+            ', if I agree.', ', when I agree.', ', once I agree.',
+            ', subject to my agreement.', ', agreement required.',
+            ', PROVIDED I AGREE.', ', provided I accept.',
+            ', conditional on my decision.',
+        )
+        prefixes = ('Create a reminder for 2am to go to bed',
+                    'Set a timer for 10 minutes to stretch',
+                    'remind me every 2 hours to stretch',
+                    'every morning remind me to stretch')
+        for prefix in prefixes:
+            for constraint in constraints:
+                with self.subTest(prefix=prefix, constraint=constraint), \
+                        self.isolated_chat(now=now) as (chat, cid, home):
+                    rows = []
+                    with patch.object(chat.reminders, 'locked', side_effect=lambda: nullcontext(rows)), \
+                            patch.object(chat.reminders, 'save') as save, \
+                            patch.object(chat.reminders, 'create', wraps=chat.reminders.create) as create:
+                        reply = chat.submit(cid, prefix + constraint, str(uuid.uuid4()))['messages'][-1]
+                        self.assertEqual(chat.reminders.listing(), [])
+                        create.assert_not_called()
+                        save.assert_not_called()
+                        self.assertEqual(reply['provider'], 'reminders')
+                        self.assertIn('Nothing was saved', reply['content'])
+                        self.assertNotIn('Reminder saved:', reply['content'])
+        for command, body, due in (
+                (prefixes[0], 'go to bed', datetime(2026, 10, 13, 2, tzinfo=ZONE).timestamp()),
+                (prefixes[1], 'stretch', now + 600)):
+            with self.subTest(control=command), self.isolated_chat(now=now) as (chat, cid, home):
+                reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
+                self.assertIn('Reminder saved:', reply['content'])
+                row, = chat.reminders.listing()
+                self.assertEqual((row['body'], row['state'], row['due_at']), (body, 'pending', due))
 
     def test_ledger_B4_review_and_dry_run_never_schedule_through_chat(self):
         constraints = (
