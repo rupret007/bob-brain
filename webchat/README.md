@@ -694,6 +694,30 @@ global and project holds. The separate reminder and BlueBubbles text-read paths
 are unchanged; outbound texts still require their existing exact draft approval.
 Tests inject Calendar and messaging clients and never call real services.
 
+### Google Drive (direct, read-only excerpt)
+
+Use `read drive FILE_ID`, `read google doc https://docs.google.com/document/d/FILE_ID/edit`,
+or `read drive https://drive.google.com/file/d/FILE_ID/view`. The command accepts a
+Drive file ID or a Drive/Docs URL that contains one. It fetches metadata, allows
+only a Google Doc (`application/vnd.google-apps.document`) or plain text
+(`text/plain`), and returns a bounded text excerpt with the title, modified time,
+and source link. Failures never become a successful read or an empty-file claim.
+
+Drive uses a **dedicated** authorized-user OAuth JSON file with `client_id`,
+`client_secret`, and `refresh_token`, readable only by its owner (mode 0600).
+Set `BOB_GOOGLE_DRIVE_CREDENTIALS` in the server's environment to its path, or
+use `~/.config/webbob/google-drive.json`. Calendar credentials and
+`application_default_credentials.json` are not used. The user grant must be
+read-only Drive access (`https://www.googleapis.com/auth/drive.readonly`), and
+the Drive API must be enabled for that OAuth client. No service-account
+credentials, connector-session credentials, search, folder traversal, binaries,
+sharing, editing, sync, or paid model calls are used. Missing or invalid
+credentials return `needs Google auth`; this feature does not start a login
+flow or queue a coding job. Credentials are never printed, changed, or stored
+in chat. OAuth refresh and Google HTTPS calls occur only for an explicit read,
+with no automatic retries. Saved global and project holds are checked before
+auth or network. Tests inject the Drive client and never call real services.
+
 ### Local tasks, web lookups, and morning routines
 
 These commands run directly in the chat process, before coding-job routing:
