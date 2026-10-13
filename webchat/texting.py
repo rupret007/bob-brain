@@ -396,12 +396,16 @@ class Texting:
         value = copy.deepcopy(conversation)
         value.pop("_texting", None)
         value.pop("pending_memory_removal", None)
+        value.pop("_gmail", None)
         if any(m.get("texting") for m in value["messages"]):
             value["title"] = "Conversation with private texting history"
         if any(m.get('private_memory') for m in value['messages']):
             value['title'] = 'Conversation with private saved memory'
-        # Thread contents, phone numbers and confirmation tokens stay out of model context.
-        value["messages"] = [m for m in value["messages"] if not m.get("texting") and not m.get('private_memory')]
+        if any(m.get('private_mail') for m in value['messages']):
+            value['title'] = 'Conversation with private Gmail history'
+        # Thread contents, phone numbers, mail bodies and confirmation tokens stay out of model context.
+        value["messages"] = [m for m in value["messages"]
+                             if not m.get("texting") and not m.get('private_memory') and not m.get('private_mail')]
         return value
 
     def resolve(self, query):

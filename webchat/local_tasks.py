@@ -399,11 +399,13 @@ class LocalTasks:
                     roots.add(Path(policy['accounting_root']).resolve())
         except (AdmissionDenied, OSError, ValueError, TypeError):
             raise LocalTaskError('Runtime storage protection could not be verified. No local file action ran.') from None
-        # Calendar accepts an operator-configured OAuth file anywhere, including
-        # visible home directories. Recheck it for saved drafts and routines too.
-        credentials = os.environ.get('BOB_GOOGLE_CALENDAR_CREDENTIALS')
-        if credentials:
-            roots.add(Path(credentials).expanduser().resolve())
+        # Calendar and Gmail accept operator-configured OAuth files anywhere,
+        # including visible home directories. Recheck them for saved drafts
+        # and routines too so chat cannot read or rewrite those secrets.
+        for name in ('BOB_GOOGLE_CALENDAR_CREDENTIALS', 'BOB_GOOGLE_GMAIL_CREDENTIALS'):
+            credentials = os.environ.get(name)
+            if credentials:
+                roots.add(Path(credentials).expanduser().resolve())
         return roots
 
     @contextmanager
