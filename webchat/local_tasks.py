@@ -200,7 +200,10 @@ def parse(text):
 class LocalFiles:
     """OS boundary. Test with a temporary home, never the real owner's files."""
     def __init__(self, home=None, clock=time.time, excluded=(), protected=None):
-        self.home = (Path.home() if home is None else Path(home)).resolve()
+        # Preserve the trusted home spelling (for example macOS /var versus
+        # /private/var), while all file access stays under its canonical root.
+        self.home_alias = (Path.home() if home is None else Path(home)).absolute()
+        self.home = self.home_alias.resolve()
         self.clock = clock
         self.excluded = tuple(Path(p).resolve() for p in excluded)
         self.protected = protected
@@ -213,12 +216,19 @@ class LocalFiles:
                 raise LocalTaskError('Use one file path.')
             value = args[0]
         path = self.home / value[2:] if value.startswith('~/') else self.home if value == '~' else Path(value)
-        try:
-            parts = path.relative_to(self.home).parts
-        except ValueError:
+        for home in (self.home, self.home_alias):
+            try:
+                parts = path.relative_to(home).parts
+                break
+            except ValueError:
+                continue
+        else:
             raise LocalTaskError('Path must be inside your home directory.') from None
         if any(p.startswith('.') or p.casefold() in ('library', 'applications') or '\x00' in p for p in parts):
             raise LocalTaskError('Private/configuration paths and traversal are outside the allowlist.')
+        # Only translate the trusted prefix. Resolving a user-supplied suffix
+        # would hide symlinks or traversal before the O_NOFOLLOW boundary.
+        path = self.home.joinpath(*parts)
         # macOS commonly uses a case-insensitive filesystem. A spelling change
         # must not allow editing the server's saved holds or consent receipts.
         folded = tuple(p.casefold() for p in path.parts)
@@ -365,6 +375,7 @@ class LocalTasks:
 
     def file_worker(self, method, args, kwargs):
         payload = dict(folder=str(self.folder.parent), root=str(self.root), home=str(self.files.home),
+                       home_alias=str(self.files.home_alias),
                        now=self.clock(), method=method, args=args, kwargs=kwargs)
         process = subprocess.Popen([sys.executable, str(Path(__file__).with_name('local_task_worker.py'))],
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,

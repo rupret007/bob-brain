@@ -16,6 +16,9 @@ def run(request):
     actions = LocalTasks(request['folder'], root=request['root'], search=no_search,
                          clock=lambda: request['now'], _worker=True)
     actions.files.home = Path(request['home'])
+    # The canonical root remains pinned by the parent; this alias only changes
+    # lexical matching of the trusted prefix, never where file access occurs.
+    actions.files.home_alias = Path(request.get('home_alias', request['home']))
     method, args = request['method'], request['args']
     if method not in ('handle', 'validate_routine'):
         raise LocalTaskError('Unsupported file worker operation.')

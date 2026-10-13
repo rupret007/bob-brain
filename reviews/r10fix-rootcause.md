@@ -1,5 +1,175 @@
 # R10 release regression investigation
 
+## Follow-up investigation at cf5a5dd (recorded before further product edits)
+
+The driver committed the first repair as `cf5a5dd1c997b7b28ef85434d643fb5f6a0685df`.
+The latest outside-sandbox receipts are in
+`/Users/jeffstory/Documents/bob-overnight-inject/local-cursor-codex-leftovers-1005/goal1006d/r10fix-verify-1/`.
+They report 3065 Webchat tests with **86 failures and one skip**, one Services
+failure, and two browser command-line errors. The original consent, provenance,
+dispatch, priorities and source-label failure clusters no longer appear.
+The earlier investigation and attempt-one results are retained below as history.
+
+### Remaining local-file failures: trusted home alias lost
+
+First bad commit: `1678809277f377c45efc70493d38a31b500dd33c`, which introduced
+`LocalFiles`. Its original `webchat/local_tasks.py:126` resolves the trusted home,
+while line 139 compares the unresolved input with that resolved home. At
+`cf5a5dd` these are lines 203 and 217. `git show 1678809:webchat/local_tasks.py`
+and `git log -p cf83a9a..HEAD -- webchat/local_tasks.py` establish the source.
+macOS `/var` is a symlink to `/private/var`: an absolute path under a temporary
+home spelled `/var/folders/.../home` fails `relative_to` against the canonical
+`/private/var/folders/.../home`. The allowlist rejects it before evaluating the
+intended runtime-storage or secret-content boundary.
+
+All 86 failures have this cause, including literal punctuation paths, protected
+runtime/accounting/calendar paths, legacy-draft creation and armored PGP reads.
+Unmodified current tests reproduce it with the host's default temporary directory:
+52 tests, 86 failures, zero errors/skips; receipt:
+`/private/tmp/r10fix-validation-2/local-tasks-before.log`.
+
+Repair direction: retain the trusted home spelling as well as its canonical
+path, derive the suffix lexically from either, and perform exclusions and file
+operations beneath the canonical home. Preserve the unmodified suffix for
+traversal/private-path checks and descriptor-based `O_NOFOLLOW` operations.
+Do **not** resolve the entire user path, which would hide symlink components.
+Pass the same trusted alias through `LocalTasks.file_worker` and
+`webchat/local_task_worker.py:run`, which currently transfer only canonical home.
+No existing assertion or expected string needs changing.
+
+### Services repo spelling and missing browser dependency setup
+
+The single Services failure compares a canonical saved repository path with an
+unresolved fixture path (`services/test_api_workers.py:204`). Its canonicalization
+is `services/dispatch_worker.py:32`, introduced in `1f6c042e`, before `cf83a9a`;
+it is unchanged in this regression range. The release harness already sets
+`TMPDIR=/private/tmp` at `release/solo.py:871–873`, introduced in `4f40935c`, to
+give repository-identity fixtures canonical paths. Preserve production repo
+identity and run the requested full suites with the existing release setup.
+Separately verify the local-file repair under the default `/var` path so the
+release environment cannot conceal that product regression.
+
+Four focused historical runs confirm that the unchanged Services test fails
+with default `/var` temporary paths at both `cf83a9a` and `cf5a5dd`, and passes
+at both revisions with `TMPDIR=/private/tmp`. Receipts:
+`/private/tmp/r10fix-services-research/{baseline,current}-{default,canonical}.log`.
+
+The single skip is attributable to the unchanged browser dependency check at
+`webchat/test_texting_e2e.py:89–95`: it needs the shared installed Playwright via
+`BOB_PLAYWRIGHT_MODULE`, as supplied by `release/solo.py:874`. The media tools
+are present. Direct Node probes confirm that default `require('playwright')`
+fails while requiring the shared module succeeds. Full verification explicitly
+supplies this existing dependency and reports skips rather than altering tests.
+
+### Latest browser receipts did not execute either proof
+
+Both `cold.log` and `remaining.log` contain only argparse's required
+`--output-dir` error. This is an invocation error, not evidence of a remaining
+browser regression. The argument predates `cf83a9a` and the existing release
+harness supplies it at `release/solo.py:847–849`. Run each Python driver with a
+distinct output directory and the installed Playwright module. Both scripts
+use isolated synthetic fixtures; real external delivery and model calls are
+forbidden by their existing assertions. The prior repair preserved all original
+browser assertions/expected strings, added separate exact-token confirmation,
+and asserts zero scheduled reminders before that confirmation. Both JavaScript
+files pass `node --check` at `cf5a5dd`.
+
+### Follow-up implementation and focused verification
+
+`LocalFiles` now retains both spellings of the trusted home. It translates only
+that prefix before protected-storage comparisons; user suffixes still undergo
+the original private-path/traversal checks and `O_NOFOLLOW` descriptor opens.
+The child worker receives the alias separately and installs the parent's
+canonical root verbatim. It does not resolve that root again: replacing the
+canonical home with a symlink must remain a refusal. This boundary was checked
+in an independent code review as well as a real subprocess regression test.
+
+The **unchanged 52 local-task tests now pass, zero skipped**, under the host's
+default `/var` temporary directory. Before/after receipts:
+`/private/tmp/r10fix-validation-2/local-tasks-before.log` and
+`/private/tmp/r10fix-validation-2/local-tasks-after.log`.
+Five new tests in `webchat/test_local_home_alias.py` also pass, zero skipped.
+They cover alias/canonical reads, user suffix symlinks and traversal, protected
+trees through either spelling (including case variants), alias retargeting
+across the actual child-worker boundary, and canonical-home symlink replacement.
+No existing test, assertion, expected string, or browser script was edited in
+this follow-up. The four prohibited files are byte-identical to `cf5a5dd`.
+
+### Follow-up full verification
+
+All requested checks were run against the final product code with independent
+temporary `BOB_ROOT` directories, the existing release credential/generation
+environment sanitization, `TMPDIR=/private/tmp`, and
+`BOB_PLAYWRIGHT_MODULE=/Users/jeffstory/Documents/bob-overnight-inject/conductor/webchat/node_modules/playwright`.
+The receipts and the exact synthetic runner are in
+`/private/tmp/r10fix-validation-2/` (`run_check.py`, per-check JSON receipts and
+the following logs). No existing tests were patched or skipped to bypass errors.
+
+| Command/check | Tests | Final result in this sandbox | Log |
+| --- | ---: | --- | --- |
+| `python3 -m unittest discover -s webchat -p 'test_*.py'` | 3070 | 0 assertion failures, 185 errors, 0 skipped | `webchat.log` |
+| `python3 -m unittest discover -s services -p 'test_*.py'` | 313 | 2 failures, 3 errors, 0 skipped | `services.log` |
+| `python3 -m unittest discover -s reviews -p 'test_*.py'` | 211 | 2 errors, 0 skipped | `reviews.log` |
+| `python3 -m unittest discover -s release -p 'test_*.py'` | 108 | 2 errors, 0 skipped | `release.log` |
+| Cold-start browser proof with required output directory | attempted | loopback bind denied before Node | `cold-browser.log` |
+| Remaining browser proof with required output directory | attempted | loopback bind denied before Node | `remaining-browser.log` |
+
+**Sandbox blocks sockets:** all 183 Webchat socket errors, both Reviews errors,
+both Release errors, and both browser attempts fail on loopback `socket.bind`
+with `PermissionError: [Errno 1] Operation not permitted`. The remaining two
+Webchat errors are denied `ps` executions. Every failure/error block was
+classified; none is unexplained. Services has two denied `ps` calls, two nested
+`sandbox-exec` denials (exit 71), and one screen-inventory failure:
+`screen -ls` under the release TMPDIR reports
+`Cannot access /private/tmp.screen: No such file or directory`.
+These Services paths are unchanged since the passing release baseline.
+The latest outside-run Services repo-spelling assertion does not recur with
+the existing release environment. These results are **not** a passing release
+check; the driver must rerun outside this sandbox.
+
+The exact browser commands used (with the environment above) are:
+
+```sh
+python3 webchat/cold_start_proof.py --output-dir /private/tmp/r10fix-validation-2/cold-browser
+python3 webchat/remaining_proof.py --output-dir /private/tmp/r10fix-validation-2/remaining-browser
+```
+
+Do not omit `--output-dir` on the outside rerun; the latest supplied receipts
+never reached either browser proof for that reason. Both JavaScript syntax
+checks and `git diff --check` pass. No paid API calls, external messages,
+deployment, or push were performed. The added five tests account for the
+increase from 3065 to 3070; all original tests are intact.
+
+### Follow-up commit blocked by the filesystem sandbox
+
+Both the requested `git add` and normal
+`git commit -m 'fix(r10): restore consent/provenance/ask-first gates broken since cf83a9a'`
+were attempted after verification. Both failed with exit 128:
+
+```
+fatal: Unable to create '/Users/jeffstory/Documents/bob-overnight-inject/bob-brain/.git/worktrees/webbob-h2h-cand-268056a/index.lock': Operation not permitted
+```
+
+The linked worktree's Git metadata is outside the writable roots; this session
+does not permit escalation. No commit was created, metadata relocated, changes
+discarded, or push attempted. HEAD remains `cf5a5dd` on `draft/webbob-h2h-r10`.
+The worktree cannot be made clean by the requested normal commit here: these
+four prepared files remain uncommitted:
+
+- `reviews/r10fix-rootcause.md`
+- `webchat/local_tasks.py`
+- `webchat/local_task_worker.py`
+- `webchat/test_local_home_alias.py` (new)
+
+After outside-sandbox verification, the driver can create the requested commit:
+
+```sh
+git add -- reviews/r10fix-rootcause.md webchat/local_tasks.py webchat/local_task_worker.py webchat/test_local_home_alias.py
+git commit -m 'fix(r10): restore consent/provenance/ask-first gates broken since cf83a9a'
+```
+
+## Original investigation and attempt-one history
+
 Research recorded before changing product code or proof interactions. Candidate:
 `draft/webbob-h2h-r10`, `268056aeae7c824b7968faaa995ce24bb17d4630`;
 known passing baseline: `cf83a9a`. Investigated the 80 intervening commits with
