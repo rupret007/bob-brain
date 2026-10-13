@@ -276,6 +276,20 @@ UNRESOLVED = (
     ' except the next move belongs to someone else',
 )
 
+# The latest review plus families of negative action and simulation wording.
+EFFECT_RESTRICTIONS = (
+    'avoid actually scheduling anything', 'stop short of actually scheduling it',
+    'avoid actually saving anything', 'stop short of actually saving it',
+    'using practice mode', 'this is a walkthrough',
+    'avoid making changes', 'avoiding execution', 'refrain from proceeding',
+    'prevent execution', 'suppress the operation', 'skip execution',
+    'cease processing', 'halt execution', 'omit the actual operation',
+    'abstain from acting', 'a practice session', 'practising the steps',
+    'a training exercise', 'a sandbox exercise', 'a tutorial',
+    'a tabletop exercise', 'a walkthrough session', 'an imaginary exercise',
+)
+POSITIVE['ambiguous_deferral'] += EFFECT_RESTRICTIONS
+
 # 24 distinct, clearly authorized bodies, each used for both action types:
 # 48 negative requests. Mix command forms as well as content.
 AUTHORIZED_BODIES = (
@@ -433,6 +447,84 @@ class ApprovalIntentTests(unittest.TestCase):
                 self.actions.handle('yes', self.cid, 'bare-yes', {})
                 execute.assert_not_called()
         self.assertTrue(approval_requested(command))
+
+    def test_empty_detector_result_is_not_effect_authorization(self):
+        # Unknown vocabulary and plain content must both require consent.
+        for lane in ('reminder', 'file'):
+            for body in ('hello', 'glorp the flibbert', 'zibble quux'):
+                with self.subTest(lane=lane, body=body), \
+                        patch.object(self.chat.reminders, 'create') as create, \
+                        patch.object(self.chat.reminders, 'save') as save, \
+                        patch.object(self.files, 'execute') as execute:
+                    prefix = ('create a reminder for 2am to ' if lane == 'reminder'
+                              else 'create file ~/Documents/result.txt: ')
+                    self.assertFalse(approval_requested(prefix + body))
+                    reply = self.submit(prefix + body)
+                    create.assert_not_called()
+                    save.assert_not_called()
+                    execute.assert_not_called()
+                    self.assertIn('reply exactly', reply['content'])
+
+    def reminder_draft(self, body='stretch'):
+        import re
+        reply = self.submit('create a reminder for 2am to ' + body)
+        self.assertIn('Nothing was saved', reply['content'])
+        return re.search(r'yes (wbrem-[0-9a-f]{32})', reply['content'])[1]
+
+    def test_reminder_exact_consent_restart_and_replay(self):
+        from reminders import Reminders
+        token = self.reminder_draft()
+        self.assertEqual(self.chat.reminders.listing(), [])
+        restored = Reminders(self.chat.reminders.folder, clock=lambda: self.now)
+        self.chat.reminders = restored
+        with patch.object(restored, 'create', wraps=restored.create) as create:
+            for text in ('yes ' + token + ' please', 'yes ' + token.upper(), 'yes wbrem-bad'):
+                self.submit(text)
+            create.assert_not_called()
+            reply = self.submit('yes ' + token)
+            self.assertIn('Reminder saved: stretch', reply['content'])
+            self.submit('yes ' + token)
+            create.assert_called_once()
+        self.assertEqual(len(restored.listing()), 1)
+
+    def test_reminder_draft_binding_expiry_replacement_and_cancel(self):
+        token = self.reminder_draft()
+        store = self.chat.reminders
+        with patch.object(store, 'create', wraps=store.create) as create:
+            for cid, actor in (('another-chat', 'owner'), (self.cid, 'someone-else')):
+                store.handle('yes ' + token, cid, 'different-request', actor=actor)
+            with store.draft_lock() as drafts:
+                rid = drafts[token]['request_id']
+            store.handle('yes ' + token, self.cid, rid, actor='owner')
+            create.assert_not_called()
+            replacement = self.reminder_draft('drink water')
+            self.submit('yes ' + token)
+            self.submit('cancel ' + replacement)
+            self.submit('yes ' + replacement)
+            expired = self.reminder_draft()
+            self.now += 3601
+            self.submit('yes ' + expired)
+            create.assert_not_called()
+
+    def test_reminder_confirmation_checks_saved_hold_and_original_project(self):
+        token = self.reminder_draft('review WebBob')
+        self.submit('Hold WebBob')
+        reply = self.submit('yes ' + token)
+        self.assertIn('On hold:', reply['content'])
+        self.assertFalse(self.chat.reminders.listing())
+        self.submit('resume WebBob')
+        self.assertIn('Reminder saved:', self.submit('yes ' + token)['content'])
+
+    def test_reminder_draft_and_consumption_storage_failures_never_create(self):
+        with patch.object(self.chat.reminders, 'save_drafts', side_effect=OSError('disk full')), \
+                patch.object(self.chat.reminders, 'create') as create:
+            self.submit('create a reminder for 2am to stretch')
+            create.assert_not_called()
+        token = self.reminder_draft()
+        with patch.object(self.chat.reminders, 'save_drafts', side_effect=OSError('disk full')), \
+                patch.object(self.chat.reminders, 'create') as create:
+            self.submit('yes ' + token)
+            create.assert_not_called()
 
     def test_corpus_size_and_unique_examples(self):
         positives = [text for phrases in POSITIVE.values() for text in phrases]
