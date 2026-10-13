@@ -196,8 +196,11 @@ class WebSearchGapTests(GapFixture):
             search.assert_not_called()
             self.identifier = self.chat.new_conversation()['id']
             failed = self.submit('look up Python programming language')['messages'][-1]
-            self.assertIn('unconfirmed', failed['content'])
+            self.assertIn('Instant Answer lookup failed', failed['content'])
+            self.assertIn('http_error', failed['content'])
+            self.assertIn('Source pages were not opened', failed['content'])
             self.assertNotIn('Source:', failed['content'])
+            self.assertNotIn('offline', failed['content'])
             search.assert_called_once_with('Python programming language')
 
     def test_default_morning_lookup_uses_same_mockable_search_adapter(self):
@@ -227,7 +230,10 @@ class WebSearchGapTests(GapFixture):
     def test_web_search_network_error_surfaces_in_chat(self):
         with patch("app.web_search", side_effect=URLError("network down")):
             result = self.submit("what was the score of the Mets game last night?")
-        self.assertIn("could not complete a web search", result["messages"][-1]["content"].lower())
+        content = result["messages"][-1]["content"]
+        self.assertIn("instant answer lookup failed", content.lower())
+        self.assertIn("http_error", content)
+        self.assertNotIn("network down", content)
 
 
 class ScreenshotGapTests(GapFixture):
@@ -458,10 +464,14 @@ class UnitTests(unittest.TestCase):
             self.assertEqual(len(remaining), 2)
 
     def test_format_web_search_reply_tolerates_missing_keys(self):
-        self.assertEqual(format_web_search_reply({}), "")
+        empty = format_web_search_reply({})
+        self.assertIn("no instant answer", empty.lower())
+        self.assertIn("source pages were not opened", empty.lower())
+        self.assertNotIn("https://example.com", empty)
         reply = format_web_search_reply({"heading": "Title", "source": "https://example.com"})
-        self.assertIn("Title", reply)
-        self.assertIn("https://example.com", reply)
+        self.assertIn("no instant answer", reply.lower())
+        self.assertNotIn("https://example.com", reply)
+        self.assertNotIn("Title —", reply)
 
     def test_resolve_capture_path(self):
         with tempfile.TemporaryDirectory() as tmp:

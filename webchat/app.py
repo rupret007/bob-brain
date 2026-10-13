@@ -70,13 +70,13 @@ from bob_gaps import (
     append_profile_memory,
     capture_reply,
     capture_screenshot,
-    format_web_search_reply,
     memory_confirm_prompt,
     needs_web_search,
     parse_memory_confirm,
     parse_remember,
     parse_screenshot,
     resolve_capture_path,
+    web_lookup_receipt,
     web_search,
 )
 from bob_gaps import MEMORY_CANCEL as MEMORY_DISMISS
@@ -186,7 +186,7 @@ class Chat(TaskDispatch):
         # Keep direct lookups and routines on the established search adapter,
         # including its offline release/test injection boundary.
         self.local_tasks = local_tasks if local_tasks is not None else LocalTasks(
-            folder, root=root, search=lambda query: format_web_search_reply(web_search(query)))
+            folder, root=root, search=self._local_web_lookup)
         for path in self.state.glob("*.json"):
             if not UUID.fullmatch(path.stem):
                 continue
@@ -449,6 +449,17 @@ class Chat(TaskDispatch):
             return self.public(conversation)
         return None
 
+    @staticmethod
+    def _local_web_lookup(query):
+        try:
+            return web_lookup_receipt(query, web_search(query))
+        except TimeoutError:
+            return web_lookup_receipt(query, {"status": "timeout"})
+        except URLError:
+            return web_lookup_receipt(query, {"status": "http_error"})
+        except (OSError, ValueError, TypeError, KeyError):
+            return web_lookup_receipt(query, {"status": "invalid"})
+
     def try_bob_gaps(self, conversation, text, request_id, provider="auto"):
         """Local parity tools before provider dispatch."""
         if provider != "auto":
@@ -474,9 +485,11 @@ class Chat(TaskDispatch):
         if needs_web_search(text):
             try:
                 result = web_search(text)
-                reply = format_web_search_reply(result)
+                reply = web_lookup_receipt(text, result)
             except (OSError, URLError, ValueError, TimeoutError) as exc:
-                reply = f"I could not complete a web search right now ({exc})."
+                kind = "timeout" if isinstance(exc, TimeoutError) else (
+                    "http_error" if isinstance(exc, URLError) else "invalid")
+                reply = web_lookup_receipt(text, {"status": kind})
             conversation["messages"][-1].update(status="done", content=reply, provider="state")
             self.save(conversation)
             self.conversations[identifier] = conversation
