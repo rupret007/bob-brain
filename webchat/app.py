@@ -218,15 +218,21 @@ class Chat(TaskDispatch):
 
     def save(self, conversation):
         messages = conversation.get('messages', [])
-        # Texting owns exact delivery/consent wording and recipient-authored text.
+        # Product receipts own exact source/consent wording. Preserve reviewed
+        # evidence text after authority and provenance checks as well.
         if (messages and messages[-1].get('role') == 'assistant' and messages[-1].get('status') == 'done'
                 and not messages[-1].get('texting')
-                and messages[-1].get('provider') not in ('drafts', 'calendar', 'reminders')
+                and messages[-1].get('provider') not in ('drafts', 'calendar', 'reminders', 'project-context')
+                and not messages[-1].get('authority_review')
+                and not messages[-1].get('result_provenance_review')
                 and not messages[-1].get('artifact')):
             from reply_quality import check
             ask = next((m.get('content', '') for m in reversed(messages) if m.get('role') == 'user'
                         and m.get('request_id') == messages[-1].get('request_id')), '')
-            messages[-1]['content'] = check(ask, messages[-1].get('content', ''))
+            previous_answer = next((m.get('content', '') for m in reversed(messages[:-1])
+                                    if m.get('role') == 'assistant' and m.get('status') == 'done'), '')
+            messages[-1]['content'] = check(ask, messages[-1].get('content', ''),
+                                           previous_answer=previous_answer)
         conversation["updated_at"] = time.time()
         if self.ledger_root(conversation['id']) != self.root:
             # Fixture context must remain excluded after its in-memory overlay

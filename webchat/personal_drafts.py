@@ -14,8 +14,9 @@ def pending(chat, conversation, *, include_texting=True, include_work=True):
         if include_texting and row.get('state') == 'pending':
             found.append((row['body'], 'Use the exact “yes ' + row['token'] + '” message from the text draft.'))
     for store, state, render in ((chat.calendar, 'draft', chat.calendar.receipt),
-                                  (chat.reminders, 'draft', chat.reminders.draft_receipt)):
-        lock = store.locked if store is chat.calendar else store.draft_lock
+                                  (chat.reminders, 'draft', chat.reminders.draft_receipt),
+                                  (chat.local_tasks, 'draft', chat.local_tasks.receipt)):
+        lock = store.draft_lock if store is chat.reminders else store.locked
         with lock() as rows:
             for row in rows.values():
                 if row['cid'] == conversation['id'] and row['state'] == state:
@@ -116,8 +117,20 @@ def handle(chat, conversation, text, request_id):
                     and not pending(chat, conversation, include_texting=False, include_work=False)):
                 return None
             rows = pending(chat, conversation)
-        except (OSError, ValueError, KeyError):
+        except (OSError, ValueError, KeyError, AttributeError, TypeError):
+            # An adapter without draft inspection cannot establish consent or
+            # rule out competing drafts. Ask instead of choosing an action.
             return 'I could not verify the pending draft. Which action do you want to approve?'
+        from task_dispatch import FOLLOW_UP, PREAMBLE, followup_work
+        if not rows and FOLLOW_UP.fullmatch(PREAMBLE.sub('', text.strip())):
+            work, _ = followup_work(conversation)
+            previous = conversation.get('messages', [])[:-2]
+            last = previous[-1] if previous else {}
+            # A current conversational offer or work clarification belongs to
+            # the dispatcher. Stored proposals retain their explicit consent.
+            if (work or re.fullmatch(r'go ahead[.!? ]*', text, re.I)
+                    or last.get('content') == 'What would you like me to work on?'):
+                return None
         if not rows:
             if re.search(r'\bsend\b', text, re.I):
                 return ('Which draft and recipient do you mean? '

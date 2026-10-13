@@ -14,11 +14,12 @@ def creative_request(text):
                           r'\bideas for (?:our |my |the |an? )?(?:next )?(?:EP|album|song|story)\b', ask, re.I))))
 
 
-def check(ask, content):
+def check(ask, content, *, previous_answer=''):
     if creative_request(ask):
         return content
-    if re.fullmatch(r'(?:please )?fix it[.!? ]*', ask, re.I) and content.strip() in (
-            'What would you like me to work on?', 'Ready when you are.'):
+    if (previous_answer != 'What would you like me to work on?'
+            and re.fullmatch(r'(?:please )?fix it[.!? ]*', ask, re.I) and content.strip() in (
+            'What would you like me to work on?', 'Ready when you are.')):
         return "What's broken? Paste the error and tell me what you expected to happen."
     if re.search(r'\bpush everything to the max\b', ask, re.I) and content.strip() == 'Which projects should I work on?':
         stop = ' until midnight' if re.search(r'\buntil midnight\b', ask, re.I) else ''
