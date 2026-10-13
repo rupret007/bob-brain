@@ -220,7 +220,7 @@ class RoundFourTests(unittest.TestCase):
 
     def test_T08_move_policy_asks_preferences_and_reviewable_change(self):
         rules = self.policy('Move my dentist appointment to next week sometime.')
-        for part in ('ask preferred days/times', "other party's availability", 'proposed change for OK before rescheduling', 'availability is unverified'):
+        for part in ('ask preferred days/times', "other party's availability", 'proposed change for OK before rescheduling', 'Do not imply availability has been checked'):
             self.assertIn(part, rules)
 
     def test_T17_latest_file_policy_compares_versions_and_counts_only_inspected_contents(self):

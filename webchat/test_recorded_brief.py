@@ -31,7 +31,7 @@ class RecordedBriefTests(unittest.TestCase):
         reply = self.say('How are the projects going? Short version')
         self.assertIn('Web Bob: draft tests passed', reply)
         self.assertIn('WebJam: waiting for review', reply)
-        self.assertEqual(len([line for line in reply.splitlines() if line.startswith('•')]), 5)
+        self.assertEqual(len([line for line in reply.splitlines() if line.startswith('•')]), 2)
         self.assertIn('not a live check', reply)
         self.assertFalse(self.providers.calls)
         self.assertIn('draft tests passed', self.say('Is the thing done yet'))

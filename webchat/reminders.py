@@ -452,7 +452,7 @@ class Reminders:
                     interval_seconds=row['interval'], daily_time=row['daily_time'], weekly_time=row.get('weekly_time'))) +
                 (f" Read-only action: {row['action']}." if row['action'] else '')).rstrip('.')
         return (preview +
-                (". It isn't running yet—use a phone or oven timer if you need it counting now." if relative else '.') +
+                (". OK to set it? It isn't running yet—use a phone or oven timer if you need it counting now." if relative else '.') +
                 f"\nReply `yes {row['token']}` to set.")
 
     def draft(self, text, cid, request_id, actor, body, due, interval, daily_time, action, *, weekly_time=None, assumption=''):

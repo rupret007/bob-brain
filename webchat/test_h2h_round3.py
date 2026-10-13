@@ -119,7 +119,7 @@ class RoundThreeTests(unittest.TestCase):
 
     def test_relative_oven_has_no_computed_clock_and_schedules_nothing(self):
         reply = self.say('Can you remind me in 20 min to check the oven')['content']
-        self.assertEqual(reply.splitlines()[0], "Draft reminder: check the oven in 20 minutes. It isn't running yet—use a phone or oven timer if you need it counting now.")
+        self.assertEqual(reply.splitlines()[0], "Draft reminder: check the oven in 20 minutes. OK to set it? It isn't running yet—use a phone or oven timer if you need it counting now.")
         self.assertIn("It isn't running yet", reply)
         self.assertRegex(reply, r'Reply `yes wbrem-[a-f0-9]{32}` to set\.')
         self.assertNotRegex(reply, r'\d{1,2}:\d{2}|\b(?:AM|PM)\b')

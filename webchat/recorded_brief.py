@@ -1,8 +1,6 @@
 """Short answers from saved facts, with no inference of live completion."""
 import re
 
-KNOWN_PROJECTS = ('Web Bob', 'WebJam', 'AdoptIQ', 'StoryBoard', 'Turdanoid')
-
 def reply(root, text):
     ask = text.strip().rstrip('.?!').casefold()
     decision = ask == 'what did we decide'
@@ -42,8 +40,6 @@ def reply(root, text):
                     detail = detail[len(name) + 1:].strip()
                 grouped.setdefault(name, detail)
         if grouped:
-            if projects:
-                grouped = {name: grouped.get(name, 'current status isn’t fetched') for name in KNOWN_PROJECTS}
             return 'Here’s the latest I have saved (not a live check):\n' + '\n'.join(
                 f'• {name}: {detail}' for name, detail in list(grouped.items())[:10])
     # The existing saved-note reader supplies a fallback without asking a model
@@ -55,14 +51,9 @@ def reply(root, text):
     if section:
         lines = [line.strip().lstrip('-* ') for line in section[1].splitlines() if line.strip()][:5]
         if lines:
-            if projects:
-                return ('Saved notes (not a live check):\n' + '\n'.join(
-                    '• ' + name + ': ' + next((line.split(':', 1)[1].strip() for line in lines
-                                              if line.startswith(name + ':')), 'current status isn’t fetched')
-                    for name in KNOWN_PROJECTS))
             return 'Saved notes (not a live check):\n' + '\n'.join('• ' + line[:300] for line in lines)
     if projects:
-        return ('Web Bob, WebJam, AdoptIQ, StoryBoard, and Turdanoid: current status isn’t fetched. '
-                'I can check and give you one line each: status, blocker, next step.')
+        return ('The current status isn’t fetched. '
+                'I can check active projects and give you one line each: status, blocker, next step.')
     return ('I don’t have that decision in my notes yet. Which decision do you mean?' if decision else
             'I don’t have an update saved yet. Which project or task do you mean?')

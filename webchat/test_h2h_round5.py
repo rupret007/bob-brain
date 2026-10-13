@@ -22,7 +22,7 @@ class RoundFiveTests(unittest.TestCase):
     def test_T04_exact_answer_and_one_approval_line(self):
         answer = self.say('Can you remind me in 20 min to check the oven')['content']
         preview, footer = answer.splitlines()
-        self.assertEqual(preview, "Draft reminder: check the oven in 20 minutes. It isn't running yet—use a phone or oven timer if you need it counting now.")
+        self.assertEqual(preview, "Draft reminder: check the oven in 20 minutes. OK to set it? It isn't running yet—use a phone or oven timer if you need it counting now.")
         self.assertRegex(footer, r'^Reply `yes wbrem-[a-f0-9]{32}` to set\.$')
         self.assertFalse(self.chat.reminders.listing())
         self.assertNotIn('Nothing was saved', answer)
@@ -33,11 +33,11 @@ class RoundFiveTests(unittest.TestCase):
                      'preserving the meeting', 'do not ask dates for general advice', 'Only for actual calendar conflict checks'):
             self.assertIn(part, rules)
 
-    def test_T08_preferences_and_ready_office_message_wait_for_ok(self):
+    def test_T08_preferences_and_conditional_plan_wait_for_ok(self):
         rules = self.policy('Move my dentist appointment to next week sometime.')
-        for part in ('first ask preferred days/times AND offer a short ready draft', 'a greeting, the requested move',
-                     'question about available slots', 'Wait for OK before sending or rescheduling',
-                     "other party's availability", 'availability is unverified'):
+        for part in ('ask preferred days/times if missing', 'do not add a full message draft unless requested',
+                     'show the proposed change for OK before rescheduling', 'Wait for OK before sending or rescheduling',
+                     "other party's availability", 'Do not imply availability has been checked'):
             self.assertIn(part, rules)
         self.client.create.assert_not_called()
 
@@ -109,16 +109,16 @@ class RoundFiveTests(unittest.TestCase):
         self.assertFalse(task_queue.tasks(self.root))
         self.bridge.deliver.assert_not_called()
 
-    def test_T34_known_projects_without_fetched_status(self):
+    def test_T34_no_roster_without_fetched_status(self):
         answer = self.say('How are the projects going? Short version.')['content']
         for project in ('Web Bob', 'WebJam', 'AdoptIQ', 'StoryBoard', 'Turdanoid'):
-            self.assertIn(project, answer)
+            self.assertNotIn(project, answer)
         self.assertIn('current status isn’t fetched', answer)
         self.assertIn('one line each', answer)
         self.assertNotIn('Which project', answer)
         self.assertFalse(self.providers.calls)
 
-    def test_partial_project_records_do_not_hide_other_projects(self):
+    def test_partial_project_records_do_not_invent_other_projects(self):
         state = ledger.default_state()
         state['jobs'] = [dict(job_id='one', plain_now='Web Bob: review pending')]
         ledger.save_state(self.root, state)
@@ -126,7 +126,7 @@ class RoundFiveTests(unittest.TestCase):
         self.assertIn('Web Bob: review pending', answer)
         self.assertIn('not a live check', answer)
         for project in ('WebJam', 'AdoptIQ', 'StoryBoard', 'Turdanoid'):
-            self.assertIn(project + ': current status isn’t fetched', answer)
+            self.assertNotIn(project, answer)
 
     def test_T40_decline_guidance_no_excuses_and_waits_for_ok(self):
         rules = self.policy('Help me word a polite no to playing a free benefit show next month.')
