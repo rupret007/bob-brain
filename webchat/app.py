@@ -218,12 +218,12 @@ class Chat(TaskDispatch):
 
     def save(self, conversation):
         messages = conversation.get('messages', [])
-        # Product receipts and private memory own their exact source wording.
+        # Product receipts, capability answers and private memory own their exact source wording.
         # Preserve reviewed evidence after authority and provenance checks too.
         if (messages and messages[-1].get('role') == 'assistant' and messages[-1].get('status') == 'done'
                 and not messages[-1].get('texting')
                 and not messages[-1].get('private_memory')
-                and messages[-1].get('provider') not in ('drafts', 'calendar', 'reminders', 'project-context')
+                and messages[-1].get('provider') not in ('drafts', 'calendar', 'reminders', 'project-context', 'capabilities')
                 and not messages[-1].get('authority_review')
                 and not messages[-1].get('result_provenance_review')
                 and not messages[-1].get('artifact')):
