@@ -61,7 +61,7 @@ class RoundThreeTests(unittest.TestCase):
             with self.subTest(suffix=suffix):
                 reply = self.say('Draft a text to the band saying practice is moved to Thursday at 7' + suffix)
                 card = reply['text_draft']
-                self.assertEqual(card['body'], 'Practice is moved to Thursday at 7.')
+                self.assertEqual(card['body'], 'Hey! Practice is moved to Thursday at 7. Let me know if that creates a conflict.')
                 self.assertEqual(card['recipient']['guid'], 'iMessage;+;band')
                 self.assertEqual(card['state'], 'pending')
                 self.assertRegex(card['confirm_message'], r'^yes wbtxt-[a-f0-9]{32}$')
@@ -86,9 +86,9 @@ class RoundThreeTests(unittest.TestCase):
             with self.subTest(target=target):
                 reply = self.say('Tell ' + target + ' we need a setlist by Wednesday.')
                 card = reply['text_draft']
-                self.assertEqual(card['body'], 'We need a setlist by Wednesday.')
+                self.assertEqual(card['body'], 'Hey! We need a setlist by Wednesday. Please share your song picks.')
                 self.assertEqual(card['recipient']['guid'], 'iMessage;+;pops')
-                self.assertIn('Not sent. To send, reply: yes wbtxt-', reply['content'])
+                self.assertIn('Reply `yes wbtxt-', reply['content'])
                 self.assertEqual(card['state'], 'pending')
                 self.assertIn('exact', self.say('yes')['content'])
         self.bridge.deliver.assert_not_called()
@@ -119,9 +119,9 @@ class RoundThreeTests(unittest.TestCase):
 
     def test_relative_oven_has_no_computed_clock_and_schedules_nothing(self):
         reply = self.say('Can you remind me in 20 min to check the oven')['content']
-        self.assertEqual(reply.splitlines()[0], 'Reminder to check the oven in 20 minutes — OK to set it?')
-        self.assertIn('Not running yet.', reply)
-        self.assertRegex(reply, r'reply exactly “yes wbrem-[a-f0-9]{32}”')
+        self.assertEqual(reply.splitlines()[0], "Draft reminder: check the oven in 20 minutes. It isn't running yet—use a phone or oven timer if you need it counting now.")
+        self.assertIn("It isn't running yet", reply)
+        self.assertRegex(reply, r'Reply `yes wbrem-[a-f0-9]{32}` to set\.')
         self.assertNotRegex(reply, r'\d{1,2}:\d{2}|\b(?:AM|PM)\b')
         self.assertFalse(self.chat.reminders.listing())
         row, = json.loads((self.chat.reminders.folder / 'drafts.json').read_text()).values()
@@ -183,7 +183,7 @@ class RoundThreeTests(unittest.TestCase):
         reply = self.say('Make me a simple spreadsheet to track gig payments: date, venue, amount, paid yes/no.')
         self.assertEqual(reply['provider'], 'dispatcher')
         self.assertIn('date, venue, amount, paid yes/no', reply['content'])
-        self.assertIn('No job has started', reply['content'])
+        self.assertIn('Spreadsheet template:', reply['content'])
         self.assertFalse(task_queue.tasks(self.root))
         from answer_intent import requires_research
         for ask in ('Research the latest Gemini pricing and cite sources',

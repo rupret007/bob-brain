@@ -55,7 +55,7 @@ class TextingDraftRoutingTests(unittest.TestCase):
                 self.assertEqual(save.call_count, 1)
                 self.assertEqual(answer['provider'], 'texting')
                 if phrase.startswith('draft'):
-                    self.assertRegex(answer['content'], r'Not sent\. To send, reply: yes wbtxt-[a-f0-9]{32}$')
+                    self.assertRegex(answer['content'], r'Reply `yes wbtxt-[a-f0-9]{32}` to send\.$')
                 else:
                     self.assertIn('Nothing sent', answer['content'])
                     self.assertIn('exact', answer['content'])
@@ -71,7 +71,7 @@ class TextingDraftRoutingTests(unittest.TestCase):
         with patch.object(self.chat, 'save', wraps=self.chat.save) as save:
             answer = self.say('Text Andrea that hello')
         self.assertEqual(save.call_count, 1)
-        self.assertIn('pending your OK', answer['content'])
+        self.assertIn('I’ll wait for your OK before sending.', answer['content'])
         self.assertEqual(self.disk()['_personal_action']['kind'], 'text')
         self.assertEqual(self.disk()['_personal_action']['state'], 'draft')
         self.assertEqual(self.disk(), self.chat.conversations[self.cid])

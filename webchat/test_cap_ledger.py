@@ -155,7 +155,7 @@ class CapabilityLedgerTests(unittest.TestCase):
                     execute.assert_not_called()
                     self.assertFalse(target.exists())
                     self.assertEqual(reply['provider'], 'local-tasks')
-                    self.assertIn("I haven't created it yet", reply['content'])
+                    self.assertIn('Draft file:', reply['content'])
                     with chat.local_tasks.locked() as rows:
                         row, = rows.values()
                     save.assert_called_once()
@@ -205,7 +205,7 @@ class CapabilityLedgerTests(unittest.TestCase):
                     execute.assert_not_called()
                     self.assertFalse(target.exists())
                     self.assertEqual(reply['provider'], 'local-tasks')
-                    self.assertIn("I haven't created it yet", reply['content'])
+                    self.assertIn('Draft file:', reply['content'])
                     with chat.local_tasks.locked() as rows:
                         row, = rows.values()
                     self.assertEqual(row['state'], 'draft')
@@ -274,7 +274,7 @@ class CapabilityLedgerTests(unittest.TestCase):
                     self.assertFalse(target.exists())
                     execute.assert_not_called()
                     self.assertEqual(reply['provider'], 'local-tasks')
-                    self.assertIn("I haven't created it yet", reply['content'])
+                    self.assertIn('Draft file:', reply['content'])
                     with chat.local_tasks.locked() as rows:
                         row, = rows.values()
                     self.assertEqual(row['state'], 'draft')
@@ -503,7 +503,7 @@ class CapabilityLedgerTests(unittest.TestCase):
                     reply = actions.handle(command, 'chat', 'request', self.state)
                     self.assertFalse(target.exists())
                     execute.assert_not_called()
-                    self.assertIn("I haven't created it yet", reply)
+                    self.assertIn('Draft file:', reply)
                     with actions.locked() as rows:
                         row, = rows.values()
                     self.assertEqual(row['state'], 'draft')

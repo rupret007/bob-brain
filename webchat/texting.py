@@ -352,6 +352,21 @@ def message_body(body, *, natural=False):
     return cleaned
 
 
+def compose_body(clean, compose):
+    """Polish indirect requests; explicit colon/quoted bodies stay literal."""
+    natural = bool(re.match(r'tell\s', clean, re.I) or
+                   re.search(r' (?:saying|that) $', clean[:compose.start(2)], re.I))
+    body = message_body(compose[2], natural=natural)
+    if not natural or body.startswith(('"', '“', "'", '‘')):
+        return body
+    cta = ''
+    if re.search(r'\bsetlist\b', body, re.I):
+        cta = ' Please share your song picks.'
+    elif re.search(r'\b(?:moved|moving|rescheduled|late)\b', body, re.I):
+        cta = ' Let me know if that creates a conflict.'
+    return ('Hey! ' + body + cta) if not re.match(r'(?:hi|hey|hello)\b', body, re.I) else body + cta
+
+
 def recipient(chat):
     guid = chat.get("guid")
     people = chat.get("participants")
@@ -483,8 +498,8 @@ class Texting:
         from instinct import READ_ONLY
         return (READ_ONLY if draft.get('read_only') else
                 f"Draft to {target.get('name') or target.get('guid', 'this recipient')}:\n\n{body}\n\n" +
-                ("Held as a draft. Not sent. When ready, reply: " if held else "Not sent. To send, reply: ") +
-                f"yes {draft['token']}")
+                ("When ready, reply " if held else "Reply ") +
+                f"`yes {draft['token']}` to send.")
 
     def confirm(self, conversation, text, actor, request_id, persist):
         state = conversation.get("_texting", {})
@@ -634,8 +649,7 @@ class Texting:
                     query, body = replace[2], replace[3]
                 else:
                     query, body = compose[1], compose[2]
-                    body = message_body(body, natural=bool(re.match(r'tell\s', clean, re.I)
-                                                          or ' saying ' in clean.lower()))
+                    body = compose_body(clean, compose)
                 target = recipient(self.resolve(query.strip()))
                 if redact(json.dumps(target, ensure_ascii=False)) != json.dumps(target, ensure_ascii=False):
                     raise TextingError("The thread details contain sensitive credentials; no draft was prepared.")
@@ -674,7 +688,7 @@ class Texting:
             # choices are untrusted and cannot select this fallback.
             if compose and not replace and re.search(r'not configured|unavailable', content.partition('\n')[0], re.I):
                 from personal_drafts import save_draft
-                content = save_draft(conversation, request_id, 'text', compose[1], message_body(compose[2]),
+                content = save_draft(conversation, request_id, 'text', compose[1], compose_body(clean, compose),
                                      content + ' The draft remains pending until the recipient and transport are verified.')
         answer["content"] = redact(content)
         # Every handled turn is saved once here. Confirmations also persist consumed

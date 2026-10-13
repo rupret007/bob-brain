@@ -45,7 +45,7 @@ class QualityTests(unittest.TestCase):
     def test_spreadsheet_stays_pending_until_bound_confirmation(self):
         reply = self.say('Make me a simple spreadsheet to track gig payments: date, venue, amount, paid yes/no.')
         self.assertIn('date, venue, amount, paid yes/no', reply)
-        self.assertTrue(reply.endswith('OK to create this spreadsheet?'))
+        self.assertIn('Reply `yes, start job proposal ' + self.chat.get(self.cid)['pending_job_id'] + '` to create the file.', reply)
         self.assertFalse(task_queue.tasks(self.root))
         self.assertIsNotNone(self.chat.get(self.cid).get('pending_job'))
         self.assertFalse(self.providers.calls)

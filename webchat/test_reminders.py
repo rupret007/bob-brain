@@ -95,8 +95,8 @@ class ReminderTests(unittest.TestCase):
         ask = 'remind me about stretching tomorrow at 9am'
         reply = self.store.extracted('{"body":"stretching","when":"tomorrow at 9am"}',
                                      ask, 'chat', 'one', 'owner', chat_intent.new_state())
-        self.assertIn('Reminder: stretching', reply)
-        self.assertIn('OK to set it?', reply)
+        self.assertIn('Draft reminder: stretching', reply)
+        self.assertRegex(reply, r'Reply `yes wbrem-[a-f0-9]{32}` to set\.$')
         self.assertFalse(self.store.listing())
         confirmed = confirm_reply(self, reply, lambda text: self.store.handle(text, 'chat', 'two'))
         self.assertIn('Reminder saved', confirmed)

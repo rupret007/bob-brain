@@ -438,7 +438,7 @@ class Reminders:
             return ('That reminder draft is ' + row['state'] +
                     '. Check “my reminders” before making a fresh request.')
         when = stamp(row['due'])
-        lead = f"Reminder: {row['body']} — "
+        lead = f"Draft reminder: {row['body']} — "
         request = reminder_request(row['text'])
         relative = re.search(r'\bin (\d+)\s+(seconds?|minutes?|mins?|hours?|hrs?|days?)\b',
                              request['clause'], re.I) if request else None
@@ -447,13 +447,13 @@ class Reminders:
             unit = {'min': 'minute', 'hr': 'hour'}.get(unit, unit)
             delay = relative[1] + ' ' + unit + ('s' if int(relative[1]) != 1 else '')
             when = 'in ' + delay
-            lead = f"Reminder to {row['body']} "
-        return (row.get("assumption", "") + lead + when + repeat_description(dict(
+            lead = f"Draft reminder: {row['body']} "
+        preview = (row.get("assumption", "") + lead + when + repeat_description(dict(
                     interval_seconds=row['interval'], daily_time=row['daily_time'], weekly_time=row.get('weekly_time'))) +
-                (f" Read-only action: {row['action']}." if row['action'] else '') +
-                ' — OK to set it?\nNothing was saved. Not running yet. ' +
-                ('Use a phone or oven timer if you need it counting now. ' if relative else '') +
-                f"To set it, reply exactly “yes {row['token']}”")
+                (f" Read-only action: {row['action']}." if row['action'] else '')).rstrip('.')
+        return (preview +
+                (". It isn't running yet—use a phone or oven timer if you need it counting now." if relative else '.') +
+                f"\nReply `yes {row['token']}` to set.")
 
     def draft(self, text, cid, request_id, actor, body, due, interval, daily_time, action, *, weekly_time=None, assumption=''):
         if not 1 <= len(body) <= 1000:

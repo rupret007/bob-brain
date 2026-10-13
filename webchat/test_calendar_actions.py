@@ -443,7 +443,7 @@ class RoutingTests(CalendarFixture):
     def test_needs_auth_is_direct_and_never_fabricates_events(self):
         self.client.error = NEEDS_AUTH
         reply = self.submit('Create a calendar event Dentist tomorrow at 2pm')['content']
-        self.assertIn('draft for your calendar', reply)
+        self.assertIn('Draft for your calendar', reply)
         self.assertIn('Dentist', reply)
         self.assertIn("isn't added yet", reply)
         self.assertIn('OK to add it', reply)

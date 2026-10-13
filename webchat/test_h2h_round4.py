@@ -22,8 +22,8 @@ class RoundFourTests(unittest.TestCase):
     def test_T10_hold_is_draft_only_with_later_exact_approval(self):
         answer = self.say("Draft a text to the band saying practice is moved to Thursday at 7, but don't send it yet.")
         body = answer['text_draft']['body']
-        self.assertEqual(body, 'Practice is moved to Thursday at 7.')
-        self.assertIn('Held as a draft. Not sent. When ready, reply: yes wbtxt-', answer['content'])
+        self.assertEqual(body, 'Hey! Practice is moved to Thursday at 7. Let me know if that creates a conflict.')
+        self.assertIn('When ready, reply `yes wbtxt-', answer['content'])
         self.assertNotIn('OK to send', answer['content'])
         row = self.chat.get(self.cid)['_texting']['drafts'][answer['text_draft']['id']]
         self.assertEqual(row['fingerprint'], fingerprint(row))
@@ -32,7 +32,7 @@ class RoundFourTests(unittest.TestCase):
     def test_T14_short_approval_preserves_full_token(self):
         answer = self.say('Tell the Pops of Punk group chat we need a setlist by Wednesday.')
         self.assertIn('We need a setlist by Wednesday.', answer['content'])
-        self.assertRegex(answer['content'], r'Not sent\. To send, reply: yes wbtxt-[a-f0-9]{32}$')
+        self.assertRegex(answer['content'], r'Reply `yes wbtxt-[a-f0-9]{32}` to send\.$')
         self.assertLess(len(answer['content'].split()), 35)
         self.assertEqual(answer['text_draft']['state'], 'pending')
         self.bridge.deliver.assert_not_called()
@@ -68,9 +68,9 @@ class RoundFourTests(unittest.TestCase):
     def test_T04_relative_timer_inactive_with_immediate_alternative(self):
         answer = self.say('Can you remind me in 20 min to check the oven')['content']
         self.assertIn('in 20 minutes', answer)
-        self.assertIn('Not running yet', answer)
+        self.assertIn("It isn't running yet", answer)
         self.assertIn('phone or oven timer', answer)
-        self.assertRegex(answer, r'To set it, reply exactly “yes wbrem-[a-f0-9]{32}”$')
+        self.assertRegex(answer, r'Reply `yes wbrem-[a-f0-9]{32}` to set\.$')
         self.assertNotRegex(answer, r'\d{1,2}:\d{2}|\b(?:AM|PM)\b')
         self.assertFalse(self.chat.reminders.listing())
 
@@ -82,7 +82,7 @@ class RoundFourTests(unittest.TestCase):
         self.assertIn('Please send the load-in time', answer)
         self.assertIn('Thanks,\nJeff', answer)
         self.assertIn('verify the email thread and recipient', answer)
-        self.assertIn('pending your OK', answer)
+        self.assertIn('I’ll wait for your OK before sending.', answer)
         self.assertIn('still pending', self.say('go ahead')['content'])
         self.bridge.deliver.assert_not_called()
         answer = self.say("Could you reply to Sam's email and tell them the plan looks good.")['content']
@@ -109,7 +109,7 @@ class RoundFourTests(unittest.TestCase):
         self.assertLessEqual(len(body.split()), 35)
         self.assertIn('Thanks for having us last weekend', body)
         self.assertTrue(body.endswith('Jeff'))
-        self.assertIn('pending your OK', answer)
+        self.assertIn('I’ll wait for your OK before sending.', answer)
         self.assertNotRegex(body, r'crowd|success|smoothly|rock|music')
 
     def test_T35_unbounded_work_does_not_invent_constraints_or_start(self):
@@ -215,12 +215,12 @@ class RoundFourTests(unittest.TestCase):
 
     def test_T07_calendar_conflict_policy_requests_window_and_no_false_check(self):
         rules = self.policy('Do I have anything conflicting with the show night on the 24th?')
-        for part in ('missing month/date and start/end times', 'including travel and preparation time', 'nothing has been checked or changed'):
+        for part in ('missing month/date and start/end times', 'including travel and preparation time', 'conflicts remain unchecked'):
             self.assertIn(part, rules)
 
     def test_T08_move_policy_asks_preferences_and_reviewable_change(self):
         rules = self.policy('Move my dentist appointment to next week sometime.')
-        for part in ('ask preferred days/times', "other party's availability", 'proposed change for OK before rescheduling', 'nothing has been checked or changed'):
+        for part in ('ask preferred days/times', "other party's availability", 'proposed change for OK before rescheduling', 'availability is unverified'):
             self.assertIn(part, rules)
 
     def test_T17_latest_file_policy_compares_versions_and_counts_only_inspected_contents(self):

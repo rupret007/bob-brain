@@ -850,9 +850,8 @@ class Chat(TaskDispatch):
                 conversation['pending_job_id'] = request_id
                 columns = text.partition(':')[2].strip().rstrip('.') or 'Please specify the columns.'
                 return self.intent_reply(conversation,
-                    f'Proposed spreadsheet: {columns}\nNo job has started. '
-                    f'Reply “yes, start job proposal {request_id}” after reviewing this draft. '
-                    'OK to create this spreadsheet?')
+                    f'Spreadsheet template:\n\n```csv\n{columns}\n```\n\n'
+                    f'Reply `yes, start job proposal {request_id}` to create the file.')
             from worker_assignment import requested_workers
             assignments = requested_workers(text, conversation)
             if assignments:

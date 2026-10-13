@@ -11,7 +11,7 @@ from texting import Texting
 
 def approve_reminder(fixture, draft):
     """Exercise the same separate, token-bound consent turn as a chat user."""
-    token = re.search(r'reply exactly “(yes wbrem-[0-9a-f]{32})”', draft['content'])
+    token = re.search(r'Reply `(yes wbrem-[0-9a-f]{32})`', draft['content'])
     assert token is not None, draft
     return fixture.answer(token[1])
 

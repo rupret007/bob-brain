@@ -441,7 +441,7 @@ class ApprovalIntentTests(unittest.TestCase):
                 self.assertIn('Nothing was saved', reply['content'])
             else:
                 self.assertEqual(reply['provider'], 'local-tasks')
-                self.assertIn("I haven't created it yet", reply['content'])
+                self.assertIn('Draft file:', reply['content'])
                 with self.actions.locked() as rows:
                     row, = (r for r in rows.values() if r['state'] == 'draft')
                 self.assertIn('yes ' + row['token'], reply['content'])
@@ -464,7 +464,7 @@ class ApprovalIntentTests(unittest.TestCase):
                     create.assert_not_called()
                     save.assert_not_called()
                     execute.assert_not_called()
-                    self.assertIn('reply exactly', reply['content'])
+                    self.assertRegex(reply['content'], r'Reply `yes (?:wbrem|wblocal)-[a-f0-9]{32}` to (?:set|create)\.$')
 
     def test_detector_false_negatives_cannot_authorize_either_effect_lane(self):
         # The effect boundary must survive *every* detector returning no match.
@@ -478,7 +478,7 @@ class ApprovalIntentTests(unittest.TestCase):
                     prefix = ('create a reminder for 2am to stretch ' if lane == 'reminder'
                               else 'create file ~/Documents/result.txt: hello ')
                     reply = self.submit(prefix + tail)
-                    self.assertIn('reply exactly', reply['content'])
+                    self.assertRegex(reply['content'], r'Reply `yes (?:wbrem|wblocal)-[a-f0-9]{32}` to (?:set|create)\.$')
                     create.assert_not_called()
                     save.assert_not_called()
                     execute.assert_not_called()
@@ -487,7 +487,7 @@ class ApprovalIntentTests(unittest.TestCase):
 
     def reminder_draft(self, body='stretch'):
         reply = self.submit('create a reminder for 2am to ' + body)
-        self.assertIn('Nothing was saved', reply['content'])
+        self.assertIn('Draft reminder:', reply['content'])
         return re.search(r'yes (wbrem-[0-9a-f]{32})', reply['content'])[1]
 
     def test_reminder_exact_consent_restart_and_replay(self):
@@ -596,7 +596,7 @@ class ApprovalIntentTests(unittest.TestCase):
         target = self.home / 'Documents/proposal.txt'
         with patch.object(self.files, 'execute', wraps=self.files.execute) as execute:
             reply = self.submit('create file ~/Documents/proposal.txt: hello')
-            self.assertIn("I haven't created it yet", reply['content'])
+            self.assertIn('Draft file:', reply['content'])
             execute.assert_not_called()
             self.assertFalse(target.exists())
             with self.actions.locked() as rows:

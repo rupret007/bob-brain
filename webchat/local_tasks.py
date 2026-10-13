@@ -473,11 +473,10 @@ class LocalTasks:
             safe_read(spec['content'].encode('utf-8'))
         preview = '\nReplacement content:\n' + spec['content'] if spec['kind'] == 'write' else ''
         if spec['kind'] == 'create':
-            return ("I haven't created it yet — please confirm the proposed file and content first. "
-                    f'Create {spec["path"]}. Content:\n{spec["content"]}\nWithin one hour reply exactly “yes {row["token"]}” '
-                    f'to create it or “cancel {row["token"]}”.')
-        return (f'Local draft; no file changed: {spec["kind"]} {spec["path"]}.{preview}\n'
-                f'Within one hour reply exactly “yes {row["token"]}” or “cancel {row["token"]}”.')
+            return (f'Draft file: {spec["path"]}\n{spec["content"]}\n'
+                    f'Reply `yes {row["token"]}` to create.')
+        return (f'Local draft: {spec["kind"]} {spec["path"]}.{preview}\n'
+                f'Reply `yes {row["token"]}` to apply.')
 
     def execute(self, spec):
         return self.search(spec['query']) if spec['kind'] == 'search' else self.files.execute(spec)

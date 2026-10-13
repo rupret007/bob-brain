@@ -48,9 +48,9 @@ class RoundTwoTests(unittest.TestCase):
 
     def test_oven_delay_clock_and_separate_durable_consent(self):
         reply = self.say('Can you remind me in 20 min to check the oven')['content']
-        self.assertEqual(reply.splitlines()[0], 'Reminder to check the oven in 20 minutes — OK to set it?')
+        self.assertEqual(reply.splitlines()[0], "Draft reminder: check the oven in 20 minutes. It isn't running yet—use a phone or oven timer if you need it counting now.")
         self.assertNotIn('Proposed reminder', reply)
-        self.assertIn('Not running yet.', reply)
+        self.assertIn("It isn't running yet", reply)
         self.assertFalse(self.chat.reminders.listing())
         row, = json.loads((self.chat.reminders.folder / 'drafts.json').read_text()).values()
         # Chat owns the reminder storage location; reopening it must retain the draft.
@@ -113,7 +113,7 @@ class RoundTwoTests(unittest.TestCase):
                 reply = self.say(ask)['content']
                 self.assertIn('Assuming morning means 9am America/Chicago.', reply)
                 self.assertIn('09:00 AM', reply)
-                self.assertIn('OK to set it?', reply)
+                self.assertRegex(reply, r'Reply `yes wbrem-[a-f0-9]{32}` to set\.$')
                 self.assertIn('yes wbrem-', reply)
                 self.assertFalse(self.chat.reminders.listing())
                 with self.chat.reminders.draft_lock() as rows:
@@ -173,8 +173,8 @@ class RoundTwoTests(unittest.TestCase):
         self.assertIn('Hi there,\n\nThanks for having us last weekend.', reply)
         self.assertIn('We really appreciate it', reply)
         self.assertIn('\nJeff', reply)
-        self.assertTrue(reply.endswith('OK to send to the venue owner?'))
-        self.assertIn('draft', reply)
+        self.assertTrue(reply.endswith('I’ll wait for your OK before sending.'))
+        self.assertIn('Draft for ', reply)
         self.assertNotRegex(reply, r'(?i)transport|auth|config|sent|smoothly')
         self.assertIn('draft is still pending', self.say('go ahead')['content'])
         self.assertFalse(self.providers.calls)
@@ -196,11 +196,11 @@ class RoundTwoTests(unittest.TestCase):
                 self.assertIn('dinner with Andrea', reply)
                 self.assertIn('07:00 PM', reply)
                 self.assertNotRegex(reply, r'(?i)auth|config|transport|OAuth')
-                self.assertTrue(reply.endswith('OK to add it to your calendar?'))
+                self.assertTrue(reply.endswith('OK to add it to your calendar?' if unavailable else 'to add to your calendar.'))
                 self.client.create.assert_not_called()
         reply = self.say('create a calendar event Dentist tomorrow at 2pm')['content']
         self.assertIn('Dentist', reply)
-        self.assertIn('pending your OK', reply)
+        self.assertIn('Draft for your calendar:', reply)
         self.assertNotRegex(reply, r'(?i)auth|config|transport')
         self.assertIn('pending', self.say('go ahead')['content'])
 

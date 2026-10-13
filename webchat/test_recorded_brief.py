@@ -31,7 +31,7 @@ class RecordedBriefTests(unittest.TestCase):
         reply = self.say('How are the projects going? Short version')
         self.assertIn('Web Bob: draft tests passed', reply)
         self.assertIn('WebJam: waiting for review', reply)
-        self.assertEqual(len([line for line in reply.splitlines() if line.startswith('•')]), 2)
+        self.assertEqual(len([line for line in reply.splitlines() if line.startswith('•')]), 5)
         self.assertIn('not a live check', reply)
         self.assertFalse(self.providers.calls)
         self.assertIn('draft tests passed', self.say('Is the thing done yet'))
@@ -57,7 +57,12 @@ class RecordedBriefTests(unittest.TestCase):
     def test_empty_records_ask_one_question_and_never_guess(self):
         for ask in ('What did we decide?', 'Is the thing done yet', 'How are the projects going? Short version'):
             reply = self.say(ask)
-            self.assertEqual(reply.count('?'), 1)
+            if ask.startswith('How are the projects'):
+                self.assertIn('current status isn’t fetched', reply)
+                self.assertIn('one line each', reply)
+                self.assertEqual(reply.count('?'), 0)
+            else:
+                self.assertEqual(reply.count('?'), 1)
             self.assertNotIn('completed', reply)
         self.assertFalse(self.providers.calls)
 

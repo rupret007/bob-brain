@@ -44,7 +44,7 @@ class PersonalDraftTests(unittest.TestCase):
     def test_natural_text_has_concrete_body_and_bound_question(self):
         reply = self.say("Text Andrea that I'm running 15 minutes late.")
         self.assertIn("I'm running 15 minutes late.", reply)
-        self.assertRegex(reply, r'Not sent\. To send, reply: yes wbtxt-[a-f0-9]{32}$')
+        self.assertRegex(reply, r'Reply `yes wbtxt-[a-f0-9]{32}` to send\.$')
         self.assertIn('yes wbtxt-', reply)
         self.assertIn('exact', self.say('send it'))
         self.chat.texting.andrea.deliver.assert_not_called()
@@ -59,7 +59,7 @@ class PersonalDraftTests(unittest.TestCase):
             with self.subTest(ask=ask):
                 reply = self.say(ask)
                 self.assertIn(body, reply)
-                self.assertTrue(reply.endswith('I’ll wait for your OK before sending.') if 'email' in ask.lower() else reply.endswith('?'))
+                self.assertTrue(reply.endswith('I’ll wait for your OK before sending.') if not ask.startswith('Book ') else reply.endswith('?'))
                 self.assertEqual(len(pending(self.chat, self.chat.get(self.cid))), 1)
                 self.assertIn('pending', self.say('go ahead'))
         self.assertFalse(self.providers.calls)
@@ -68,15 +68,15 @@ class PersonalDraftTests(unittest.TestCase):
     def test_unresolved_text_transport_keeps_draft(self):
         self.chat.texting.resolve.side_effect = TextingError('Text transport is not configured.')
         reply = self.say('Tell the Pops of Punk group chat we need a setlist by Wednesday.')
-        self.assertIn('we need a setlist by Wednesday', reply)
-        self.assertIn('pending', reply)
+        self.assertIn('We need a setlist by Wednesday', reply)
+        self.assertTrue(reply.startswith('Draft for '))
         self.assertEqual(len(pending(self.chat, self.chat.get(self.cid))), 1)
 
     def test_calendar_natural_language_uses_native_separate_consent(self):
         reply = self.say('Put dinner with Andrea on the calendar Saturday at 7.')
         self.assertIn('07:00 PM', reply)
         self.assertIn('one-hour', reply)
-        self.assertTrue(reply.endswith('OK to add it to your calendar?'))
+        self.assertTrue(reply.endswith('to add to your calendar.'))
         self.assertIn('yes wbcal-', reply)
         self.client.create.assert_not_called()
         self.say('Email Mike hello')
@@ -89,7 +89,7 @@ class PersonalDraftTests(unittest.TestCase):
         self.client.configured.side_effect = CalendarError(NEEDS_AUTH)
         reply = self.say('create a calendar event Dentist tomorrow at 2pm')
         self.assertIn('Dentist', reply)
-        self.assertIn('pending', reply)
+        self.assertTrue(reply.startswith('Draft for '))
         self.assertIn('OK to add it', reply)
         self.assertEqual(len(pending(self.chat, self.chat.get(self.cid))), 1)
         self.client.create.assert_not_called()

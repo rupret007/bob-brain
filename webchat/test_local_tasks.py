@@ -55,7 +55,7 @@ class LocalFixture(unittest.TestCase):
             return copy.deepcopy(rows)
 
     def draft(self, text='delete file ~/Documents/note.txt', rid=None):
-        self.assertIn('Local draft; no file changed', self.say(text, rid))
+        self.assertIn('Local draft:', self.say(text, rid))
         return next(r for r in self.rows().values() if r['state'] == 'draft')
 
 
@@ -373,7 +373,7 @@ class LocalTaskTests(LocalFixture):
         self.assertIn('2026-10-10T01:47:00-05:00', self.say('terminal: date'))
         self.assertIn('original', self.say('run in terminal: cat "~/Documents/note.txt"'))
         self.assertIn('note.txt', self.say('terminal: ls ~/Documents'))
-        self.assertIn("I haven't created it yet", self.say('create file ~/Documents/new.txt: hello\nworld'))
+        self.assertIn('Draft file:', self.say('create file ~/Documents/new.txt: hello\nworld'))
         self.assertFalse((self.home / 'Documents/new.txt').exists())
         row, = (row for row in self.rows().values() if row['state'] == 'draft')
         self.assertIn('File created:', self.say('yes ' + row['token']))

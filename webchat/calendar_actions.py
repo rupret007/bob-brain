@@ -274,8 +274,7 @@ class CalendarActions:
                 f'{stamp(datetime.fromisoformat(event["start"]["dateTime"]).timestamp())} to '
                 f'{stamp(datetime.fromisoformat(event["end"]["dateTime"]).timestamp())}. '
                 f'On your primary calendar, without invitations or alerts.\n'
-                f'To approve this draft, reply exactly “yes {row["token"]}” within an hour, '
-                f'or “cancel {row["token"]}” to cancel. OK to add it to your calendar?')
+                f'Reply `yes {row["token"]}` to add to your calendar.')
 
     def control(self, command, token, cid, request_id, intent_state):
         import chat_intent

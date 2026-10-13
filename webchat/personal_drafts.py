@@ -52,10 +52,10 @@ def replace_pending(chat, conversation, *, keep=None):
 
 
 def save_draft(conversation, request_id, kind, target, body, limitation, *, question=None):
-    question = question or f'OK to send to {target}?'
+    question = question or 'I’ll wait for your OK before sending.'
     conversation['_personal_action'] = dict(request_id=request_id, kind=kind, target=target,
                                             body=body, limitation=limitation, question=question, state='draft')
-    return f'Here’s a draft for {target}, pending your OK:\n\n{body}\n\n{question}'
+    return f'Draft for {target}:\n\n{body}\n\n{question}'
 
 
 def outbound(text):
@@ -73,13 +73,15 @@ def outbound(text):
         if body[-1] not in '.!?':
             body += '.'
         # Use the supplied topic; questions request details without inventing them.
-        subject = 'Follow-up'
+        subject = body.rstrip('.!?')[:80]
         gig = re.search(r'\b(?:gig|show) on (.+?)[.!?]*$', body, re.I)
         if gig:
             subject = 'Gig on ' + gig[1].rstrip('.!?')
             body += ' Please send the load-in time and any setup details we should know.'
         elif re.search(r'\b(?:estimate|estimated|payment|invoice)\b', body, re.I):
-            subject = 'Payment timing'
+            subject = ('Quarterly estimate due date' if re.search(r'\bquarterly\b', body, re.I)
+                       else 'Invoice due date' if re.search(r'\binvoice\b', body, re.I)
+                       else 'Payment due date')
             body += ' Please confirm the due date and amount to pay.'
         greeting = 'Hi,' if re.match(r'(?:my|the|our)\b', target, re.I) else f'Hi {target},'
         return 'email', target, f'Subject: {subject}\n\n{greeting}\n\n{body}\n\nThanks,\nJeff'
@@ -117,6 +119,9 @@ def handle(chat, conversation, text, request_id):
         return rows[0][1]
     if re.fullmatch(r'book it[.!? ]*', text, re.I):
         return 'Which booking do you mean? I’ll prepare the details and total cost for your OK.'
+    vague = re.fullmatch(r'(?:can you |could you |please )?handle (?:the thing|something) with ([\w -]+)[.? !]*', text.strip(), re.I)
+    if vague:
+        return f'What do you need handled with {vague[1].strip()}?'
     spec = outbound(text)
     natural_calendar = re.fullmatch(r'(?:put|add) (.+?) (?:on|to) (?:my |the |your )?calendar (.+)', text.strip().rstrip('.?!'), re.I)
     if not spec and not natural_calendar:

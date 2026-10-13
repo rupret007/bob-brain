@@ -6,7 +6,7 @@ import uuid
 def confirm_reply(test, reply, send):
     """Require a real draft, then submit its exact token in a separate request."""
     content = reply['content'] if isinstance(reply, dict) else reply
-    match = re.search(r'reply exactly “(yes (?:wbrem|wblocal)-[0-9a-f]{32})”', content)
+    match = re.search(r'Reply `(yes (?:wbrem|wblocal)-[0-9a-f]{32})`', content)
     test.assertIsNotNone(match, content)
     return send(match[1])
 
