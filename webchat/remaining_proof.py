@@ -5,19 +5,27 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
+import tempfile
 import threading
 
 from app import Server
 from instinct_fixture import InstinctFixture
+from proof_runtime import playwright_environment
 from task_dispatch import task_queue
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output-dir', type=Path, required=True)
+    parser.add_argument('--output-dir', type=Path,
+                        help='Save screenshots and evidence here (default: a unique private temporary directory).')
     args = parser.parse_args()
     os.umask(0o077)
+    if args.output_dir is None:
+        args.output_dir = Path(tempfile.mkdtemp(prefix='webbob-remaining-proof-'))
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    print('Proof output: ' + str(args.output_dir.resolve()), file=sys.stderr)
+    environment = playwright_environment(Path(__file__).resolve().parent)
     with InstinctFixture() as fixture:
         config = fixture.root / 'bin/band_messages_watch_run.py'
         config.parent.mkdir()
@@ -36,7 +44,8 @@ def main():
         try:
             result = subprocess.run(['node', str(Path(__file__).with_name('browser_remaining.cjs'))],
                 input=json.dumps(dict(url=f'http://127.0.0.1:{server.server_port}', password=fixture.chat.password,
-                                     output=str(args.output_dir.resolve()))), text=True, capture_output=True, timeout=100)
+                                     output=str(args.output_dir.resolve()))), text=True, capture_output=True, timeout=100,
+                env=environment)
             if result.returncode:
                 raise RuntimeError(result.stderr)
             evidence = json.loads(result.stdout)
@@ -47,7 +56,7 @@ def main():
             assert not any(c.get('_texting', {}).get('audit') for c in fixture.chat.conversations.values())
             utility = subprocess.run(['node', str(Path(__file__).with_name('browser_utility_controls.cjs'))],
                 input=json.dumps(dict(url=f'http://127.0.0.1:{server.server_port}', password=fixture.chat.password)),
-                text=True, capture_output=True, timeout=100)
+                text=True, capture_output=True, timeout=100, env=environment)
             if utility.returncode:
                 raise RuntimeError(utility.stderr)
             evidence['utility_controls'] = json.loads(utility.stdout)
@@ -56,7 +65,8 @@ def main():
             fixture.mock.drop_send_response = True
             delivery = subprocess.run(['node', str(Path(__file__).with_name('browser_delivery.cjs'))],
                 input=json.dumps(dict(url=f'http://127.0.0.1:{server.server_port}', password=fixture.chat.password,
-                                     output=str(args.output_dir.resolve()))), text=True, capture_output=True, timeout=100)
+                                     output=str(args.output_dir.resolve()))), text=True, capture_output=True, timeout=100,
+                env=environment)
             if delivery.returncode:
                 raise RuntimeError(delivery.stderr)
             recovered = json.loads(delivery.stdout)

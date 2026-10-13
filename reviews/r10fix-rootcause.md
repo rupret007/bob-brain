@@ -1,5 +1,160 @@
 # R10 release regression investigation
 
+## Attempt-three research at 9eec945 (before product/harness edits)
+
+The driver committed attempt two as `9eec945ab7dbd992723f8a9d3494326c63a9d527`.
+The latest outside-sandbox receipts are
+`/Users/jeffstory/Documents/bob-overnight-inject/local-cursor-codex-leftovers-1005/goal1006d/r10fix-verify-2/`.
+`webchat.log` reports **3070 tests, zero failures/errors, one skip**. The original
+consent/provenance/dispatch/source-label regressions and the subsequent home-alias
+regression no longer fail. `services.log` reports the same single temporary-path
+identity failure documented below. Both browser logs still stop at argument
+parsing; neither has exercised the repaired browser interactions.
+
+The remaining causes were rechecked with `git log -p`, `git blame`, and direct
+Node module probes before making further edits:
+
+| Remaining result | Exact source and introducing commit | Repair direction |
+| --- | --- | --- |
+| Cold proof requires `--output-dir` | `webchat/cold_start_proof.py:17`, `99c7ab95e101742b10f345f3098c571ff23df44c` | Allow the requested bare invocation, retaining evidence in a unique private temporary directory and reporting its path. |
+| Remaining proof requires `--output-dir` | `webchat/remaining_proof.py:17`, `0e144270e7b045cb6cc672bd5b5309863f7f984c` | Same default, with every existing assertion preserved. |
+| Webchat browser test skipped | `webchat/test_texting_e2e.py:89–95`, skip introduced in `a13a4b659dac`; explicit module override in `e1f9ee1b9292` | Supply the already installed shared Playwright module through the existing environment contract. Do not edit the test or its skip/assertion logic. |
+| Services repository identity comparison fails | `services/dispatch_worker.py:32`, canonicalization introduced in `1f6c042e066d6c9048553f03908ed3218f2f5fe3`; compared at `services/test_api_workers.py:204` | Use canonical temporary paths, as the release harness already does. Keep production repository canonicalization intact. |
+
+All four causes predate `cf83a9a`; none was introduced in the 80-commit regression
+range. `4f40935c20b35bf87e1096e8154bbdf17dedccc1` explicitly sets canonical
+`TMPDIR` in the release harness. Current `release/solo.py:871–874` also supplies
+`BOB_PLAYWRIGHT_MODULE`. The outside rerun omitted this existing setup: default
+`require('playwright')` from this worktree fails, while the shared installed
+module at `conductor/webchat/node_modules/playwright` loads successfully.
+
+To make the next rerun reproducible, add a checked-in offline verification entry
+point for these four unchanged discovery suites and two unchanged browser
+assertion sets. It must supply release-equivalent environment isolation, require
+the installed browser dependency, retain logs, and fail on any skip or nonzero
+exit. The two standalone proof drivers will also discover the existing local or
+shared browser runtime (explicit override takes precedence), without modifying
+application startup or installing anything from the network.
+
+Static review confirms the current browser confirmation expressions match the
+product's exact draft token and scheduled reminder ID. Due-notification matching
+and request-ID retry deduplication remain intact. A one-second draft legitimately
+expires if confirmation arrives late; this investigation does not authorize
+relaxing that consent rule or any timing/safety assertion.
+
+### Additional reproduced source-integrity gap in the same wording pass
+
+An independent in-process replay found that `Chat.save` still rewrites literal
+saved-memory inspection. Save the note `Keep the original receipt for the
+lifecycle stage handback.` with its separate memory-proposal confirmation, then
+ask `show my saved memories`: the displayed note becomes `Keep the original
+confirmation for the status saved update.` Although storage remains intact,
+the direct inspection no longer faithfully quotes its source.
+
+The first bad runtime commit is again `13ce547a4b69493b7a7b98a1f2ce147dfd1da8be`,
+which adds the presentation pass at `webchat/app.py:220–225` in that revision;
+the substitutions originate in `eb52e9cf` (`webchat/reply_quality.py:31–42` at
+the current HEAD). The attempt-one exclusions at current `app.py:224–228`
+preserve reviewed receipts but omit the existing `private_memory` marker.
+Repair that same save boundary to preserve private-memory text, including its
+existing redaction, and add a separate regression test without touching existing
+tests. The original receipt/provenance gates and ordinary reply improvements
+remain in force.
+
+### Attempt-three implementation and verification
+
+`Chat.save` now preserves `private_memory` source text. Two new tests exercise
+separate memory-proposal consent, literal inspection, retry identity, unchanged
+storage, redaction, and exclusion from model history. Historical replay with the
+same script passes at `13ce547a^`, fails at `13ce547a`, and passes after this fix.
+Receipts: `/private/tmp/r10fix-validation-3/literal-memory-history-before.log`,
+`literal-memory-history-introduced.log`, and `private-memory-focused.log`.
+The 30 focused memory/wording tests and 157 tests covering the original safety
+clusters plus both new test modules pass with zero skips. A first focused-only
+invocation lacked the repository/state import paths; its import-error log is
+retained separately and the corrected invocation passes (`safety-clusters.log`).
+
+Both proof drivers now accept the literal commands requested in this task,
+allocate unique private evidence directories when omitted, print their paths,
+and discover the installed Playwright runtime. Explicit runtime overrides remain
+authoritative. Six new tests cover discovery and configuration boundaries.
+The installed shared runtime is also linked at the already ignored
+`webchat/node_modules/playwright` in this worktree; a direct default Node
+`require('playwright')` now succeeds without any environment override. This
+local dependency setup performs no download and is not part of the commit.
+`reviews/r10fix_verify.py` runs all four unchanged discovery suites and both
+proofs with isolated synthetic roots, stripped credential/generation variables,
+canonical `/private/tmp` on macOS, installed Playwright, and Python assertions
+enabled. It rejects skipped/empty suites and nonzero exits, invalidates stale
+green receipts before setup, and terminates timed-out process groups. Independent
+synthetic runner tests verified all these behaviors, including cleanup of a
+TERM-resistant browser-like grandchild (`runner-review/review-receipt.json`).
+The parser uses the final anchored unittest summary, so earlier printed
+`skipped=0` output cannot mask a real skipped test.
+
+Full requested verification against the repaired product code is retained in
+`/private/tmp/r10fix-validation-3/full/`:
+
+| Check | Tests | Result in this sandbox |
+| --- | ---: | --- |
+| Webchat discovery | 3078 | 0 assertion failures; 185 errors; 0 skipped |
+| Services discovery | 313 | 2 failures; 3 errors; 0 skipped |
+| Reviews discovery | 211 | 2 errors; 0 skipped |
+| Release discovery | 108 | 2 errors; 0 skipped |
+| Cold-start browser proof | attempted | loopback bind denied before Node |
+| Remaining browser proof | attempted | loopback bind denied before Node |
+
+**Sandbox blocks sockets:** every one of the 183 Webchat socket errors, both
+Reviews errors, both Release errors, and both proof errors reports
+`PermissionError: [Errno 1] Operation not permitted` at `socket.bind`. The other
+two Webchat errors deny `ps`. Services has two denied `ps` calls, two nested
+`sandbox-exec` denials, and one unavailable screen-inventory check. All blocks
+were classified; there are no unexplained failures. The full run initially used
+the canonical host temporary directory; Services was then rerun with the final
+runner's release-equivalent `/private/tmp` and has the same restrictions
+(`canonical-services/services.log`). Its outside-run path-comparison assertion
+does not recur. These are **not passing release/browser receipts**.
+
+The literal bare proof commands were also attempted (`cold-bare.log`,
+`remaining-bare.log`). They now pass argument parsing and runtime discovery and
+reach the same socket denial. An additional in-process replay confirms capability
+answers, draft-before-consent, one saved reminder after request-ID retry, actual
+due-message formatting, recurring reminder IDs, and cancellation with zero
+provider/network calls (`offline-browser-replay.log`); this is not a substitute
+for a real browser run. Reminder expiration safety remains unchanged.
+
+All 165 existing tracked test files are byte-identical to `9eec945`. All 17
+existing Python proof assertions are unchanged; neither browser JavaScript file
+was edited in this attempt. The four prohibited files are unchanged. Both Node
+syntax checks and `git diff --check` pass. No paid API calls, external sends,
+remote push, or deployment were performed.
+
+The driver can rerun the complete requested checks outside this sandbox with:
+
+```sh
+python3 reviews/r10fix_verify.py --output-dir /private/tmp/r10fix-outside-3
+```
+
+### Attempt-three commit restriction
+
+Both staging the eight prepared files and the requested normal commit were
+attempted and failed with exit 128 because this linked worktree's Git metadata
+lies outside the writable sandbox roots:
+
+```
+fatal: Unable to create '/Users/jeffstory/Documents/bob-overnight-inject/bob-brain/.git/worktrees/webbob-h2h-cand-268056a/index.lock': Operation not permitted
+```
+
+HEAD remains `9eec945` on `draft/webbob-h2h-r10`, with eight prepared files
+uncommitted. Permission escalation is unavailable. The requested normal commit must be
+performed by the outside driver after verification; no metadata was relocated
+or changes discarded to manufacture a clean worktree. The intended command is:
+
+```sh
+git add -- reviews/r10fix-rootcause.md reviews/r10fix_verify.py webchat/app.py webchat/cold_start_proof.py webchat/remaining_proof.py webchat/proof_runtime.py webchat/test_private_memory_source_text.py webchat/test_proof_runtime.py
+git commit -m 'fix(r10): restore consent/provenance/ask-first gates broken since cf83a9a'
+```
+
 ## Follow-up investigation at cf5a5dd (recorded before further product edits)
 
 The driver committed the first repair as `cf5a5dd1c997b7b28ef85434d643fb5f6a0685df`.
