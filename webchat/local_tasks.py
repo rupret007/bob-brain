@@ -25,7 +25,7 @@ import uuid
 from zoneinfo import ZoneInfo
 
 import chat_intent
-from approval_language import approval_requested
+from approval_language import approval_categories
 from failover import atomic_text
 
 LIMIT = 64 * 1024
@@ -35,7 +35,7 @@ TIMED_OUT = 'Local action timed out; no successful result was verified. ' + (
     'Any consumed confirmation will not be replayed. Inspect the file before making a new request.')
 HELP = ('Local tasks: read file ~/Documents/notes.txt; list files ~/Documents; '
         'create file ~/Documents/note.txt: hello; write file ~/Documents/note.txt: replacement; '
-        'delete file ~/Documents/note.txt. Overwrites and deletes need an exact yes wblocal-… reply. '
+        'delete file ~/Documents/note.txt. Creates, overwrites and deletes need a separate exact yes wblocal-… reply. '
         'Terminal: run terminal: pwd, date, ls PATH, or cat PATH (no shell). '
         'Web: search the web for QUERY, or look up QUERY. '
         'Only visible paths under your home are allowed; credential files, private/configuration trees, symlinks, '
@@ -473,8 +473,8 @@ class LocalTasks:
             safe_read(spec['content'].encode('utf-8'))
         preview = '\nReplacement content:\n' + spec['content'] if spec['kind'] == 'write' else ''
         if spec['kind'] == 'create':
-            return ("I haven't created it yet — the request contains approval language, so I'm checking first. "
-                    f'Create {spec["path"]}. Within one hour reply exactly “yes {row["token"]}” '
+            return ("I haven't created it yet — please confirm the proposed file and content first. "
+                    f'Create {spec["path"]}. Content:\n{spec["content"]}\nWithin one hour reply exactly “yes {row["token"]}” '
                     f'to create it or “cancel {row["token"]}”.')
         return (f'Local draft; no file changed: {spec["kind"]} {spec["path"]}.{preview}\n'
                 f'Within one hour reply exactly “yes {row["token"]}” or “cancel {row["token"]}”.')
@@ -512,11 +512,13 @@ class LocalTasks:
                 if len(rows) >= 1000:
                     raise LocalTaskError('Local receipt limit reached. No action ran.')
                 spec = self.files.prepare(spec)
-                needs_confirmation = (spec['kind'] in ('write', 'delete') or
-                                      (spec['kind'] == 'create' and approval_requested(text)))
+                # Arbitrary text is never proof of authorization. Even an empty
+                # detector result requires separate consent for every mutation.
+                needs_confirmation = spec['kind'] in ('create', 'write', 'delete')
                 token = 'wblocal-' + uuid.uuid4().hex
                 row = dict(cid=cid, request_id=request_id, text=text, token=token, spec=spec,
-                           state='draft' if needs_confirmation else 'claimed', expires=self.clock() + 3600)
+                           state='draft' if needs_confirmation else 'claimed', expires=self.clock() + 3600,
+                           approval_categories=sorted(approval_categories(text)))
                 if needs_confirmation:
                     for old in rows.values():
                         if old['cid'] == cid and old['state'] == 'draft':

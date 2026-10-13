@@ -731,9 +731,9 @@ class Chat(TaskDispatch):
                 if scopes:
                     return self.intent_reply(conversation, chat_intent.hold_reply(scopes))
             try:
-                reminder = actions_intent.handle(self.reminders, text, identifier, request_id, local_tasks=self.local_tasks)
+                reminder = actions_intent.handle(self.reminders, text, identifier, request_id, local_tasks=self.local_tasks, intent_state=intent_state, actor=actor)
                 if reminder is None:
-                    reminder = self.reminders.handle(text, identifier, request_id, local_tasks=self.local_tasks)
+                    reminder = self.reminders.handle(text, identifier, request_id, local_tasks=self.local_tasks, intent_state=intent_state, actor=actor)
             except ReminderError as exc:
                 reminder = str(exc)
             if reminder is not None:

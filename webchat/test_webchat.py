@@ -75,13 +75,15 @@ class Fixture(unittest.TestCase):
 
 
 class StateTests(Fixture):
-    def test_create_reminder_for_2am_executes_directly_with_defaults(self):
+    def test_create_reminder_for_2am_confirms_with_defaults(self):
         from reminders import ZONE
         from task_dispatch import task_queue
         self.chat.reminders.clock = lambda: datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
         with patch('app.parse_work', side_effect=AssertionError('Reminder entered coding queue')):
             result = self.chat.submit(self.identifier, 'Create a reminder for 2am to go to bed', str(uuid.uuid4()))
-        reply = result['messages'][-1]
+        from consent_fixture import confirm_chat
+        self.assertFalse(self.chat.reminders.listing())
+        reply = confirm_chat(self, self.chat, self.identifier, result['messages'][-1])
         self.assertEqual(reply['provider'], 'reminders')
         self.assertIn('Reminder saved: go to bed', reply['content'])
         self.assertIn('Oct 10, 2026 at 02:00 AM CDT', reply['content'])

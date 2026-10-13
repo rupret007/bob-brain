@@ -1,4 +1,6 @@
 """Capability ledger regressions using a temporary home and offline adapters."""
+from consent_fixture import confirm_reply, confirm_chat
+
 import json
 from contextlib import contextmanager, nullcontext
 from datetime import datetime
@@ -88,6 +90,8 @@ class CapabilityLedgerTests(unittest.TestCase):
                 (prefixes[1], 'stretch', now + 600)):
             with self.subTest(control=command), self.isolated_chat(now=now) as (chat, cid, home):
                 reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
+                self.assertFalse(chat.reminders.listing())
+                reply = confirm_chat(self, chat, cid, reply)
                 self.assertIn('Reminder saved:', reply['content'])
                 row, = chat.reminders.listing()
                 self.assertEqual((row['body'], row['state'], row['due_at']), (body, 'pending', due))
@@ -128,6 +132,8 @@ class CapabilityLedgerTests(unittest.TestCase):
                 (prefixes[1], 'stretch', now + 600)):
             with self.subTest(control=command), self.isolated_chat(now=now) as (chat, cid, home):
                 reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
+                self.assertFalse(chat.reminders.listing())
+                reply = confirm_chat(self, chat, cid, reply)
                 self.assertIn('Reminder saved:', reply['content'])
                 row, = chat.reminders.listing()
                 self.assertEqual((row['body'], row['state'], row['due_at']), (body, 'pending', due))
@@ -171,6 +177,8 @@ class CapabilityLedgerTests(unittest.TestCase):
                               return_value='File created: ' + str(target)) as execute:
                 reply = chat.submit(cid, 'Create file ~/Documents/result.txt: hello',
                                     str(uuid.uuid4()))['messages'][-1]
+                execute.assert_not_called()
+                reply = confirm_chat(self, chat, cid, reply)
                 self.assertIn('File created:', reply['content'])
                 execute.assert_called_once()
                 self.assertEqual(execute.call_args.args[0]['content'], 'hello')
@@ -217,6 +225,8 @@ class CapabilityLedgerTests(unittest.TestCase):
                               return_value='File created: ' + str(target)) as execute:
                 reply = chat.submit(cid, 'Create file ~/Documents/result.txt: hello',
                                     str(uuid.uuid4()))['messages'][-1]
+                execute.assert_not_called()
+                reply = confirm_chat(self, chat, cid, reply)
                 self.assertIn('File created:', reply['content'])
                 execute.assert_called_once()
                 self.assertEqual(execute.call_args.args[0]['content'], 'hello')
@@ -238,6 +248,8 @@ class CapabilityLedgerTests(unittest.TestCase):
                 self.assertIn('Nothing was saved', reply['content'])
                 self.assertNotIn('Reminder saved:', reply['content'])
                 reply = chat.submit(cid, 'remind me at 2am to stretch', str(uuid.uuid4()))['messages'][-1]
+                self.assertFalse(chat.reminders.listing())
+                reply = confirm_chat(self, chat, cid, reply)
                 self.assertIn('Reminder saved:', reply['content'])
                 row, = chat.reminders.listing()
                 self.assertEqual((row['body'], row['state'], row['due_at']),
@@ -277,6 +289,7 @@ class CapabilityLedgerTests(unittest.TestCase):
         with self.isolated_chat() as (chat, cid, home):
             reply = chat.submit(cid, 'create file ~/Documents/note.txt: hello',
                                 str(uuid.uuid4()))['messages'][-1]
+            reply = confirm_chat(self, chat, cid, reply)
             self.assertIn('File created:', reply['content'])
             self.assertEqual((home / 'Documents/note.txt').read_text(), 'hello')
 
@@ -314,6 +327,8 @@ class CapabilityLedgerTests(unittest.TestCase):
                 ('Create a reminder for 2am to stretch outdoors', 'stretch outdoors', 11)):
             with self.subTest(command=command), self.isolated_chat() as (chat, cid, home):
                 reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
+                self.assertFalse(chat.reminders.listing())
+                reply = confirm_chat(self, chat, cid, reply)
                 self.assertIn('Reminder saved:', reply['content'])
                 row, = chat.reminders.listing()
                 self.assertEqual((row['body'], row['state'], row['due_at']),
@@ -457,8 +472,10 @@ class CapabilityLedgerTests(unittest.TestCase):
     def test_ledger_B2_plain_reminder_still_schedules(self):
         from reminders import Reminders
         reminders = Reminders(self.root / 'B2-plain', clock=self.clock)
-        self.assertIn('Reminder saved:', reminders.handle(
-            'remind me at 2am to stretch', 'chat', 'plain'))
+        draft = reminders.handle('remind me at 2am to stretch', 'chat', 'plain')
+        self.assertFalse(reminders.listing())
+        receipt = confirm_reply(self, draft, lambda text: reminders.handle(text, 'chat', 'confirmed'))
+        self.assertIn('Reminder saved:', receipt)
         row, = reminders.listing()
         self.assertEqual(row['body'], 'stretch')
         self.assertEqual(row['state'], 'pending')
@@ -505,8 +522,10 @@ class CapabilityLedgerTests(unittest.TestCase):
 
     def test_ledger_B1_plain_create_and_destructive_approval_controls(self):
         target = self.home / 'Documents/note.txt'
-        self.assertIn('File created:', self.actions.handle(
-            'create file ~/Documents/note.txt: hello', 'chat', 'plain', self.state))
+        draft = self.actions.handle('create file ~/Documents/note.txt: hello', 'chat', 'plain', self.state)
+        self.assertFalse(target.exists())
+        receipt = confirm_reply(self, draft, lambda text: self.actions.handle(text, 'chat', 'confirmed', self.state))
+        self.assertIn('File created:', receipt)
         self.assertEqual(target.read_text(), 'hello')
         for index, command in enumerate((
                 'write file ~/Documents/note.txt: replacement, with my consent',
@@ -978,8 +997,9 @@ class CapabilityLedgerTests(unittest.TestCase):
         reminders = Reminders(folder, clock=self.clock)
         refusal = 'Reminder storage failed. The requested change was not saved.'
         with patch.object(reminders, 'save', side_effect=OSError('disk full')) as save:
-            self.assertEqual(reminders.handle('set a timer for 10 minutes', 'chat', 'request'),
-                             refusal)
+            draft = reminders.handle('set a timer for 10 minutes', 'chat', 'request')
+            receipt = confirm_reply(self, draft, lambda text: reminders.handle(text, 'chat', 'confirmed'))
+            self.assertEqual(receipt, refusal)
             save.assert_called_once()
             attempted, = save.call_args.args[0]
             self.assertEqual(attempted['body'], 'Timer')
@@ -1005,8 +1025,9 @@ class CapabilityLedgerTests(unittest.TestCase):
             self.addCleanup(chat.close)
             try:
                 cid = chat.conversation_list()['conversations'][0]['id']
-                self.assertIn('Reminder saved:', chat.reminders.handle(
-                    'set a timer for 1 second', cid, 'request'))
+                draft = chat.reminders.handle('set a timer for 1 second', cid, 'request')
+                receipt = confirm_reply(self, draft, lambda text: chat.reminders.handle(text, cid, 'confirmed'))
+                self.assertIn('Reminder saved:', receipt)
                 row, = chat.reminders.listing()
                 self.assertEqual(row['state'], 'pending')
                 chat.start_background()
@@ -1214,8 +1235,10 @@ class CapabilityLedgerTests(unittest.TestCase):
             with actions.locked() as rows:
                 token, = rows
             reminders = Reminders(folder, clock=self.clock)
-            self.assertIn('Read-only routine saved:', reminders.handle(
-                'every morning do ' + command, 'chat', 'F6-save-routine', local_tasks=actions))
+            draft = reminders.handle('every morning do ' + command, 'chat', 'F6-save-routine', local_tasks=actions)
+            receipt = confirm_reply(self, draft, lambda text: reminders.handle(
+                text, 'chat', 'F6-confirm-routine', local_tasks=actions))
+            self.assertIn('Read-only routine saved:', receipt)
             target.write_text(content)
             with patch.dict(os.environ, BOB_GOOGLE_CALENDAR_CREDENTIALS='~/Documents/google-calendar.json'):
                 restored = self.production_actions(folder)

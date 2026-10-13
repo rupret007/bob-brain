@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 import uuid
 
 from app import Chat
+from consent_fixture import confirm_reply
 from reminders import Reminders, ReminderError, instant, notify_macos, parse, stamp, ZONE
 from task_dispatch import task_queue
 from texting_fixture import OfflineProviders
@@ -23,6 +24,10 @@ class ReminderTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.now = datetime(2026, 9, 29, 9, 0, tzinfo=ZONE).timestamp()
         self.store = Reminders(self.root, clock=lambda: self.now)
+
+    def schedule(self, text, cid, rid):
+        draft = self.store.handle(text, cid, rid)
+        return confirm_reply(self, draft, lambda value: self.store.handle(value, cid, rid + '-confirm'))
 
     def test_relative_absolute_and_explicit_timezone(self):
         self.assertEqual(instant('in 10 minutes', self.now), self.now + 600)
@@ -63,13 +68,13 @@ class ReminderTests(unittest.TestCase):
                 instant(delay, self.now)
         row = self.store.create('chat', 'request', 'Check oven', self.now + 60)
         self.store.save([dict(row, id=str(i)) for i in range(200)])
-        reply = self.store.handle('Set a timer for 10 minutes', 'chat', 'new-request')
+        reply = self.schedule('Set a timer for 10 minutes', 'chat', 'new-request')
         self.assertIn('limit', reply)
         self.assertNotIn('saved:', reply)
         self.assertEqual(len(self.store.listing()), 200)
 
     def test_timer_list_and_cancel_aliases(self):
-        self.store.handle('Set a timer for 10 minutes', 'chat', 'timer')
+        self.schedule('Set a timer for 10 minutes', 'chat', 'timer')
         row, = self.store.listing()
         self.assertIn(row['id'], self.store.handle('my timers', 'chat', 'list'))
         self.assertEqual(self.store.handle('cancel timer ' + row['id'], 'chat', 'cancel'), 'Reminder cancelled.')
@@ -77,7 +82,7 @@ class ReminderTests(unittest.TestCase):
 
     def test_failed_create_never_returns_success_receipt(self):
         with patch.object(self.store, 'save', side_effect=OSError('disk full')):
-            reply = self.store.handle('Create a reminder for 2am to go to bed', 'chat', 'request')
+            reply = self.schedule('Create a reminder for 2am to go to bed', 'chat', 'request')
         self.assertIn('requested change was not saved', reply)
         self.assertFalse(self.store.listing())
 
@@ -113,7 +118,7 @@ class ReminderTests(unittest.TestCase):
                     self.assertIn(expected, reply)
                     self.assertIn('Nothing was saved', reply)
                     self.assertFalse(self.store.listing())
-        reply = self.store.handle('create a reminder every 2 hours to stretch', 'chat', 'valid')
+        reply = self.schedule('create a reminder every 2 hours to stretch', 'chat', 'valid')
         self.assertIn('Reminder saved: stretch', reply)
         row, = self.store.listing()
         self.assertEqual(row['due_at'], self.now + 7200)
@@ -131,7 +136,7 @@ class ReminderTests(unittest.TestCase):
                     self.assertIn(expected, reply)
                     self.assertIn('Nothing was saved', reply)
                     self.assertFalse(self.store.listing())
-        reply = self.store.handle('every morning remind me to stretch', 'chat', 'valid')
+        reply = self.schedule('every morning remind me to stretch', 'chat', 'valid')
         self.assertIn('Reminder saved: stretch', reply)
         row, = self.store.listing()
         self.assertEqual(row['due_at'], datetime(2026, 10, 10, 9, tzinfo=ZONE).timestamp())
@@ -143,18 +148,24 @@ class ReminderTests(unittest.TestCase):
             save(rows)
             raise OSError('failure after replacement')
         with patch.object(self.store, 'save', side_effect=write_then_fail):
-            reply = self.store.handle('set a timer for 10 minutes', 'chat', 'request')
+            reply = self.schedule('set a timer for 10 minutes', 'chat', 'request')
         self.assertIn('unconfirmed', reply)
         self.assertNotIn('Reminder saved:', reply)
         restored = Reminders(self.root, clock=lambda: self.now)
         self.assertEqual(len(restored.listing()), 1)
-        self.assertIn('Reminder saved:', restored.handle('set a timer for 10 minutes', 'chat', 'request'))
+        self.assertIn('unconfirmed', restored.handle('set a timer for 10 minutes', 'chat', 'request'))
         self.assertEqual(len(restored.listing()), 1)
 
     def test_failed_save_with_unreadable_outcome_is_uncertain(self):
+        draft = self.store.handle('set a timer for 10 minutes', 'chat', 'request')
+        original_read = Path.read_text
+        def read(path, *args, **kwargs):
+            if path == self.store.path:
+                raise OSError('readback unavailable')
+            return original_read(path, *args, **kwargs)
         with patch.object(self.store, 'save', side_effect=OSError('disk full')), \
-                patch.object(Path, 'read_text', side_effect=OSError('readback unavailable')):
-            reply = self.store.handle('set a timer for 10 minutes', 'chat', 'request')
+                patch.object(Path, 'read_text', read):
+            reply = confirm_reply(self, draft, lambda text: self.store.handle(text, 'chat', 'confirm'))
         self.assertIn('unconfirmed', reply)
         self.assertNotIn('was not saved', reply)
 
@@ -168,15 +179,15 @@ class ReminderTests(unittest.TestCase):
     def test_storage_unavailable_returns_receipt_for_create_list_and_cancel(self):
         for command in ('set a timer for 10 minutes', 'my reminders', 'cancel reminder ' + 'a' * 16):
             with self.subTest(command=command), patch.object(self.store, 'locked', side_effect=OSError('unavailable')):
-                reply = self.store.handle(command, 'chat', 'request')
+                reply = (self.schedule(command, 'chat', 'request') if command.startswith('set ')
+                         else self.store.handle(command, 'chat', 'request'))
                 self.assertIn('Reminder storage is unavailable', reply)
                 self.assertIn('no successful change was verified', reply)
 
     def test_receipt_uses_persisted_recurrence_on_duplicate_request(self):
-        self.store.handle('Set a reminder every 2 hours to stretch', 'chat', 'request')
+        self.schedule('Set a reminder every 2 hours to stretch', 'chat', 'request')
         reply = self.store.handle('Set a reminder in 10 minutes to something else', 'chat', 'request')
-        self.assertIn('stretch', reply)
-        self.assertIn('Repeats every 120 minutes', reply)
+        self.assertIn('Request ID already used', reply)
         self.assertNotIn('something else', reply)
 
     def test_idempotent_concurrent_creation_survives_restart(self):
@@ -264,6 +275,9 @@ class ReminderChatTests(unittest.TestCase):
     def say(self, text, request_id=None):
         return self.chat.submit(self.cid, text, request_id or str(uuid.uuid4()))['messages'][-1]
 
+    def schedule(self, text, request_id=None):
+        return confirm_reply(self, self.say(text, request_id), self.say)
+
     def test_ambiguous_schedule_stays_in_reminder_lane_without_saving(self):
         self.now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
         for command in ('create a reminder for 2am to go to bed tomorrow',
@@ -278,7 +292,7 @@ class ReminderChatTests(unittest.TestCase):
 
     def test_storage_failure_returns_direct_not_done_receipt_without_side_effects(self):
         with patch.object(self.chat.reminders, 'save', side_effect=OSError('disk full')):
-            reply = self.say('set a timer for 10 minutes')
+            reply = self.schedule('set a timer for 10 minutes')
         self.assertEqual(reply['provider'], 'reminders')
         self.assertIn('requested change was not saved', reply['content'])
         self.assertFalse(self.chat.reminders.listing())
@@ -287,7 +301,7 @@ class ReminderChatTests(unittest.TestCase):
         self.notify.assert_not_called()
 
     def test_real_chat_create_list_fire_and_cancel_without_models_or_jobs(self):
-        reply = self.say('remind me to review Instinct in 1 minute')
+        reply = self.schedule('remind me to review Instinct in 1 minute')
         self.assertEqual(reply['provider'], 'reminders')
         self.assertIn('Reminder saved', reply['content'])
         self.assertIn('review Instinct', self.say('my reminders')['content'])
@@ -307,6 +321,7 @@ class ReminderChatTests(unittest.TestCase):
         rid = str(uuid.uuid4())
         first = self.say('remind me to check oven in 1 second', rid)
         self.assertEqual(self.say('remind me to check oven in 1 second', rid), first)
+        confirm_reply(self, first, self.say)
         self.now += 2
         self.chat.deliver_reminders()
         restored = Chat(self.chat.folder, self.root, self.providers, reminder_notifier=self.notify)
@@ -319,7 +334,7 @@ class ReminderChatTests(unittest.TestCase):
         self.notify.assert_called_once_with('check oven')
 
     def test_crash_after_saved_chat_before_store_update_cannot_duplicate(self):
-        self.say('remind me to check oven in 1 second')
+        self.schedule('remind me to check oven in 1 second')
         self.now += 2
         with patch.object(self.chat.reminders, 'save', side_effect=OSError('disk')):
             with self.assertRaises(OSError):
@@ -331,7 +346,7 @@ class ReminderChatTests(unittest.TestCase):
         self.notify.assert_called_once_with('check oven')
 
     def test_overdue_timer_survives_restart_and_notifies_once_after_persistence(self):
-        self.say('Set a timer for 1 second')
+        self.schedule('Set a timer for 1 second')
         folder = self.chat.folder
         self.chat.close()
         restored = Chat(folder, self.root, self.providers, reminder_notifier=self.notify)
@@ -349,7 +364,7 @@ class ReminderChatTests(unittest.TestCase):
         self.assertEqual(observed, [('Timer', 'fired', 1)])
 
     def test_notification_failure_keeps_chat_and_fired_state(self):
-        self.say('Set an alarm in 1 second to check oven')
+        self.schedule('Set an alarm in 1 second to check oven')
         self.now += 2
         self.notify.side_effect = RuntimeError('notification unavailable')
         self.chat.deliver_reminders()
@@ -361,7 +376,7 @@ class ReminderChatTests(unittest.TestCase):
         self.notify.assert_called_once()
 
     def test_failed_chat_write_keeps_pending_and_never_notifies(self):
-        self.say('Set a timer for 1 second')
+        self.schedule('Set a timer for 1 second')
         self.now += 2
         with patch.object(self.chat, 'save', side_effect=OSError('disk full')):
             with self.assertRaises(OSError):
@@ -372,7 +387,7 @@ class ReminderChatTests(unittest.TestCase):
         self.notify.assert_called_once_with('Timer')
 
     def test_no_early_or_cancelled_notification_and_redacted_os_body(self):
-        self.say('Set a timer for 10 seconds')
+        self.schedule('Set a timer for 10 seconds')
         self.chat.deliver_reminders()
         self.notify.assert_not_called()
         row, = self.chat.reminders.listing()
@@ -385,7 +400,7 @@ class ReminderChatTests(unittest.TestCase):
         self.assertNotIn('sk-' + 'a' * 25, self.notify.call_args.args[0])
 
     def test_active_voice_defers_reminder_without_losing_it(self):
-        self.say('remind me to check oven in 1 second')
+        self.schedule('remind me to check oven in 1 second')
         self.now += 2
         with patch.object(self.chat.voice, 'active', return_value=True):
             self.chat.deliver_reminders()
@@ -397,7 +412,7 @@ class ReminderChatTests(unittest.TestCase):
         self.chat.reminders.clock = time.time
         self.providers.start_probes = Mock()
         self.providers.circuit = Mock()
-        self.say('Set a timer for 1 second to check oven')
+        self.schedule('Set a timer for 1 second to check oven')
         self.chat.start_background()
         deadline = time.monotonic() + 4
         while time.monotonic() < deadline and self.chat.reminders.listing()[0]['state'] == 'pending':
@@ -414,7 +429,7 @@ class ReminderChatTests(unittest.TestCase):
         self.assertIn('Nothing was saved', self.chat.history(self.cid)['messages'][-1]['content'])
         self.notify.assert_not_called()
         # Keep the original data-not-instructions assertion on a plain body.
-        self.say('remind me every 1 minute to start a job')
+        self.schedule('remind me every 1 minute to start a job')
         self.now += 60
         self.chat.deliver_reminders()
         self.assertIn('Reminder:', self.chat.history(self.cid)['messages'][-1]['content'])

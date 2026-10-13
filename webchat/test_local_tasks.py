@@ -16,6 +16,7 @@ from unittest.mock import Mock, patch
 import uuid
 
 from app import Chat
+from consent_fixture import confirm_reply
 import chat_intent
 from local_tasks import LocalFiles, LocalTasks, LocalTaskError, LIMIT, UNCERTAIN, parse, search_web
 from reminders import Reminders, ZONE, next_morning
@@ -99,7 +100,8 @@ class RuntimeProtectionTests(LocalFixture):
             self.assertEqual(target.read_bytes(), before)
             self.assertFalse(target.with_name(target.name + '.new').exists())
         self.assertEqual(self.rows(), {})
-        self.assertIn('File created:', self.say('create file ~/Documents/personal.txt: allowed'))
+        draft = self.say('create file ~/Documents/personal.txt: allowed')
+        self.assertIn('File created:', confirm_reply(self, draft, self.say))
         self.assertIn('File read:', self.say('read file ~/Documents/personal.txt'))
 
     def test_case_variants_and_routines_cannot_access_protected_storage(self):
@@ -377,7 +379,8 @@ class LocalTaskTests(LocalFixture):
         self.assertIn('File created:', self.say('yes ' + row['token']))
         self.assertEqual((self.home / 'Documents/new.txt').read_text(), 'hello\nworld')
         self.assertEqual((self.home / 'Documents/new.txt').stat().st_mode & 0o777, 0o600)
-        self.assertIn('File created:', self.say('write file ~/Documents/another.txt: text'))
+        draft = self.say('write file ~/Documents/another.txt: text')
+        self.assertIn('File created:', confirm_reply(self, draft, self.say))
         self.assertIn('already exists', self.say('create file ~/Documents/note.txt: no'))
         self.assertEqual(self.file.read_text(), 'original')
 
@@ -628,11 +631,14 @@ class RoutineChatTests(LocalFixture):
         with patch('app.parse_work', side_effect=AssertionError('Personal action entered coding queue')):
             return (chat or self.chat).submit(self.cid, text, str(uuid.uuid4()), actor='owner')['messages'][-1]
 
+    def schedule(self, text, chat=None):
+        return confirm_reply(self, self.submit(text, chat), lambda value: self.submit(value, chat))
+
     def test_direct_routes_and_pr1_incident_regression(self):
         for text in ('read file ~/Documents/note.txt', 'terminal: date', 'look up Python',
                      'create file ~/Documents/new.txt: hello'):
             self.assertEqual(self.submit(text)['provider'], 'state' if text.startswith('look up') else 'local-tasks')
-        receipt = self.submit('Create a reminder for 2am to go to bed')
+        receipt = self.schedule('Create a reminder for 2am to go to bed')
         self.assertEqual(receipt['provider'], 'reminders')
         self.assertIn('Reminder saved: go to bed', receipt['content'])
         self.assertIn('Oct 10, 2026 at 02:00 AM CDT', receipt['content'])
@@ -641,7 +647,7 @@ class RoutineChatTests(LocalFixture):
         self.notifier.assert_not_called()
 
     def test_morning_actions_execute_on_same_scheduler_without_queue_or_notifications(self):
-        receipt = self.submit('every morning do read file ~/Documents/note.txt')['content']
+        receipt = self.schedule('every morning do read file ~/Documents/note.txt')['content']
         self.assertIn('Read-only routine saved:', receipt)
         self.assertIn('09:00 America/Chicago', receipt)
         row, = self.chat.reminders.listing()
@@ -662,7 +668,7 @@ class RoutineChatTests(LocalFixture):
         self.notifier.assert_not_called()
 
     def test_restart_catches_up_once_and_returns_to_local_morning(self):
-        self.submit('set a routine every morning at 8am do look up Python')
+        self.schedule('set a routine every morning at 8am do look up Python')
         row, = self.chat.reminders.listing()
         self.chat.close()
         self.now = row['due_at'] + 3 * 86400 + 1800
@@ -678,7 +684,7 @@ class RoutineChatTests(LocalFixture):
         self.assertGreater(row['due_at'], self.now)
 
     def test_saved_routine_rechecks_secret_content_after_restart(self):
-        self.submit('every morning do terminal: cat ~/Documents/note.txt')
+        self.schedule('every morning do terminal: cat ~/Documents/note.txt')
         row, = self.chat.reminders.listing()
         self.chat.close()
         secret = 'synthetic-routine-refresh-secret'
@@ -695,8 +701,8 @@ class RoutineChatTests(LocalFixture):
         self.notifier.assert_not_called()
 
     def test_scheduler_limits_routine_io_per_tick_so_owner_controls_can_run(self):
-        self.submit('every morning do look up Python')
-        self.submit('every morning do look up SQLite')
+        self.schedule('every morning do look up Python')
+        self.schedule('every morning do look up SQLite')
         self.now += 86400
         self.chat.deliver_reminders()
         self.assertEqual(self.search.call_count, 1)
@@ -717,7 +723,7 @@ class RoutineChatTests(LocalFixture):
         self.assertFalse(self.chat.reminders.listing())
 
     def test_personal_morning_reminder_remains_notification_only(self):
-        self.submit('every morning remind me to stretch')
+        self.schedule('every morning remind me to stretch')
         row, = self.chat.reminders.listing()
         self.assertNotIn('action', row)
         self.now = row['due_at']
@@ -731,7 +737,7 @@ class RoutineChatTests(LocalFixture):
                      'create a reminder every morning do read file ~/Documents/note.txt',
                      'set an alarm every morning to read file ~/Documents/note.txt',
                      'set a routine every morning to stretch'):
-            self.assertIn('Reminder saved:', self.submit(text)['content'])
+            self.assertIn('Reminder saved:', self.schedule(text)['content'])
         self.assertTrue(all('action' not in row for row in self.chat.reminders.listing()))
         self.now += 86400
         self.chat.deliver_reminders()
@@ -755,7 +761,7 @@ class RoutineChatTests(LocalFixture):
         self.texting.andrea.deliver.assert_not_called()
 
     def test_persisted_holds_block_registration_and_execution_until_explicit_resume(self):
-        self.submit('every morning do look up WebBob docs')
+        self.schedule('every morning do look up WebBob docs')
         self.chat.submit(self.cid, 'Hold WebBob', str(uuid.uuid4()))
         before = copy.deepcopy(self.chat.get(self.cid)['intent_state'])
         self.assertIn('On hold:', self.submit('every morning do look up WebBob docs')['content'])
@@ -770,7 +776,7 @@ class RoutineChatTests(LocalFixture):
         self.search.assert_called_once_with('WebBob docs')
 
     def test_cancelled_busy_and_shutdown_routines_never_execute(self):
-        self.submit('every morning do look up Python')
+        self.schedule('every morning do look up Python')
         row, = self.chat.reminders.listing()
         self.now = row['due_at']
         with patch.object(self.chat.voice, 'busy', return_value=True):
@@ -779,14 +785,14 @@ class RoutineChatTests(LocalFixture):
         self.submit('cancel routine ' + row['id'])
         self.chat.deliver_reminders()
         self.search.assert_not_called()
-        self.submit('every morning do look up Python')
+        self.schedule('every morning do look up Python')
         self.now += 86400
         self.chat.close()
         self.chat.deliver_reminders()
         self.search.assert_not_called()
 
     def test_failed_chat_save_reuses_durable_action_receipt_after_restart(self):
-        self.submit('every morning do look up Python')
+        self.schedule('every morning do look up Python')
         self.now += 86400
         with patch.object(self.chat, 'save', side_effect=OSError('disk full')):
             with self.assertRaises(OSError):
@@ -798,7 +804,7 @@ class RoutineChatTests(LocalFixture):
         self.assertIn('Fixture search answer', restored.history(self.cid)['messages'][-1]['content'])
 
     def test_file_receipt_survives_file_removal_before_delivery_retry(self):
-        self.submit('every morning do read file ~/Documents/note.txt')
+        self.schedule('every morning do read file ~/Documents/note.txt')
         self.now += 86400
         with patch.object(self.chat, 'save', side_effect=OSError('disk full')):
             with self.assertRaises(OSError):
@@ -809,7 +815,7 @@ class RoutineChatTests(LocalFixture):
         self.assertIn('original', restored.history(self.cid)['messages'][-1]['content'])
 
     def test_failed_lookup_reports_failure_then_next_morning_can_retry(self):
-        self.submit('every morning do look up Python')
+        self.schedule('every morning do look up Python')
         self.search.side_effect = TimeoutError('secret transport detail')
         self.now += 86400
         self.chat.deliver_reminders()

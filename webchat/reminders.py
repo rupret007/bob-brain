@@ -14,11 +14,13 @@ from zoneinfo import ZoneInfo
 from failover import atomic_text
 from actions_intent import reminder_request, routine_request, routine_intent
 from approval_language import approval_requested
+import chat_intent
 
 ZONE = ZoneInfo('America/Chicago')
 HELP = ('Try “remind me to check the oven in 10 minutes”, “remind me to call Sam on 2026-10-01 at 14:00”, '
         '“remind me every 2 hours to stretch”, “my reminders”, or “cancel reminder ID”. '
         'You can also say “create a reminder for 2am to go to bed” or “set a timer for 10 minutes”. '
+        'A valid request produces a draft; confirm its exact token in a separate message to schedule it. '
         'Times use America/Chicago; a clock time without a date means its next occurrence. '
         'Reminders appear here and in Jobs while Web Bob is running; overdue reminders arrive when it returns. '
         'Local macOS notifications require owner opt-in and notification permission. '
@@ -334,16 +336,129 @@ class Reminders:
                 except Exception:
                     pass  # OS failure must not undo or block durable chat delivery.
 
-    def handle(self, text, cid, request_id, *, local_tasks=None):
+    @contextmanager
+    def draft_lock(self):
+        # Drafts are not scheduled items and cannot be delivered. Serialize
+        # confirmation separately so create() can take its normal item lock.
+        path = self.folder / 'drafts.json'
+        lock_path = self.folder / 'drafts.lock'
+        if path.is_symlink() or lock_path.is_symlink():
+            raise ReminderError('Reminder draft storage must use private regular files.')
+        with lock_path.open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                if path.exists() and path.stat().st_size > 2 * 1024 * 1024:
+                    raise ReminderError('Reminder draft storage is full. Nothing was saved.')
+                drafts = json.loads(path.read_text()) if path.exists() else {}
+                if not isinstance(drafts, dict):
+                    raise ReminderError('Reminder draft storage needs repair. Nothing was saved.')
+                yield drafts
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def save_drafts(self, drafts):
+        path = self.folder / 'drafts.json'
+        atomic_text(path, json.dumps(drafts, ensure_ascii=False))
+        path.chmod(0o600)
+
+    def draft_receipt(self, row):
+        if row['state'] == 'done':
+            return row['receipt']
+        if row['state'] != 'draft':
+            return ('That reminder draft is ' + row['state'] +
+                    '. Check “my reminders” before making a fresh request.')
+        return (f"Nothing was saved to your reminders. Proposed reminder: {row['body']} — "
+                f"{stamp(row['due'])}." + repeat_description(dict(
+                    interval_seconds=row['interval'], daily_time=row['daily_time'])) +
+                (f" Read-only action: {row['action']}." if row['action'] else '') +
+                f" Within one hour reply exactly “yes {row['token']}” to schedule it, "
+                f"or “cancel {row['token']}”.")
+
+    def draft(self, text, cid, request_id, actor, body, due, interval, daily_time, action):
+        if not 1 <= len(body) <= 1000:
+            raise ReminderError('Keep a reminder between 1 and 1,000 characters.')
+        with self.draft_lock() as drafts:
+            existing = next((r for r in drafts.values() if r['cid'] == cid and
+                             r['request_id'] == request_id), None)
+            if existing:
+                return (self.draft_receipt(existing) if existing['text'] == text and
+                        existing['actor'] == actor else 'Request ID already used for another reminder.')
+            if len(drafts) >= 1000:
+                raise ReminderError('Reminder draft limit reached. Nothing was saved.')
+            for old in drafts.values():
+                if old['cid'] == cid and old['state'] == 'draft':
+                    old['state'] = 'replaced'
+            token = 'wbrem-' + uuid.uuid4().hex
+            row = dict(token=token, text=text, cid=cid, request_id=request_id,
+                       actor=actor, body=body, due=due, interval=interval,
+                       daily_time=daily_time, action=action, state='draft',
+                       expires=self.clock() + 3600)
+            drafts[token] = row
+            self.save_drafts(drafts)
+            return self.draft_receipt(row)
+
+    def control(self, command, token, cid, request_id, actor, intent_state, local_tasks):
+        with self.draft_lock() as drafts:
+            row = drafts.get(token)
+            if not row or row['cid'] != cid or row['actor'] != actor:
+                return 'No matching reminder draft in this conversation.'
+            if row['state'] != 'draft':
+                return self.draft_receipt(row)
+            if command == 'cancel':
+                row['state'] = 'cancelled'
+                self.save_drafts(drafts)
+                return 'Reminder draft cancelled. Nothing was saved to your reminders.'
+            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(row['text']))
+            if scopes:
+                return chat_intent.hold_reply(scopes)
+            if request_id == row['request_id']:
+                return 'Confirm the reminder in a separate message.'
+            if self.clock() >= min(row['expires'], row['due']):
+                row['state'] = 'expired'
+                self.save_drafts(drafts)
+                return self.draft_receipt(row)
+            if row['action']:
+                if local_tasks is None:
+                    return 'Local routine actions are unavailable. Nothing was saved.'
+                from local_tasks import LocalTaskError
+                try:
+                    local_tasks.validate_routine(row['action'])
+                except LocalTaskError as exc:
+                    return str(exc)
+            # Persist consumed consent BEFORE create. An interrupted or uncertain
+            # attempt must never run again on replay, even across a restart.
+            row.update(state='unconfirmed', approved_request_id=request_id)
+            self.save_drafts(drafts)
+            created = self.create(cid, row['request_id'], row['body'], row['due'], row['interval'],
+                                  daily_time=row['daily_time'], action=row['action'])
+            row.update(state='done', receipt=self.created_receipt(created))
+            self.save_drafts(drafts)
+            return row['receipt']
+
+    def created_receipt(self, row):
+        repeat = repeat_description(row)
+        if row.get('action'):
+            return (f"Read-only routine saved: {row['body']} — {stamp(row['due_at'])}.{repeat} ID {row['id']}. "
+                    'Results will appear in this chat while Web Bob is running, with one catch-up run after restart. '
+                    'Saved holds are checked before each run. No job or message to another person will be sent.')
+        return f"Reminder saved: {row['body']} — {stamp(row['due_at'])}.{repeat} ID {row['id']}. It will appear in this chat while Web Bob is running (or when it restarts); macOS alerts require owner opt-in; no text, email or job will be sent."
+
+    def handle(self, text, cid, request_id, *, local_tasks=None, intent_state=None, actor='owner'):
         try:
-            return self._handle(text, cid, request_id, local_tasks=local_tasks)
+            return self._handle(text, cid, request_id, local_tasks=local_tasks,
+                                intent_state=intent_state or chat_intent.new_state(), actor=actor)
         except ReminderError as exc:
             return str(exc)
         except (OSError, UnicodeError, json.JSONDecodeError):
             return ('Reminder storage is unavailable; no successful change was verified. '
                     'Check “my reminders” once storage is available before trying again.')
 
-    def _handle(self, text, cid, request_id, *, local_tasks=None):
+    def _handle(self, text, cid, request_id, *, local_tasks=None, intent_state=None, actor='owner'):
+        control = re.fullmatch(r'(yes|cancel) (wbrem-[0-9a-f]{32})', text.strip())
+        if control:
+            return self.control(control[1], control[2], cid, request_id, actor, intent_state or chat_intent.new_state(), local_tasks)
+        if re.match(r'^(?:yes|cancel)\s+wbrem-', text.strip(), re.I):
+            return 'Use the exact confirmation message from the reminder draft. Nothing was saved.'
         command = text.strip().casefold().rstrip('.?!')
         if command in ('reminders', 'my reminders', 'list reminders', 'show reminders', 'routines', 'my routines',
                        'timers', 'my timers', 'alarms', 'my alarms'):
@@ -368,13 +483,12 @@ class Reminders:
                     if local_tasks is None:
                         return 'Local routine actions are unavailable. ' + ROUTINE_HELP
                     action = local_tasks.validate_routine(body)
-                row = self.create(cid, request_id, body, due, interval, daily_time=daily_time, action=action)
-                repeat = repeat_description(row)
-                if row.get('action'):
-                    return (f"Read-only routine saved: {row['body']} — {stamp(row['due_at'])}.{repeat} ID {row['id']}. "
-                            'Results will appear in this chat while Web Bob is running, with one catch-up run after restart. '
-                            'Saved holds are checked before each run. No job or message to another person will be sent.')
-                return f"Reminder saved: {row['body']} — {stamp(row['due_at'])}.{repeat} ID {row['id']}. It will appear in this chat while Web Bob is running (or when it restarts); macOS alerts require owner opt-in; no text, email or job will be sent."
+                # Recognizing a schedule and finding no hedge does not prove
+                # that arbitrary free text authorizes an effect. Always ASK.
+                scopes = chat_intent.blocked_scopes(intent_state or chat_intent.new_state(), chat_intent.projects(text))
+                if scopes:
+                    return chat_intent.hold_reply(scopes)
+                return self.draft(text, cid, request_id, actor, body, due, interval, daily_time, action)
             except (UnicodeError, json.JSONDecodeError):
                 raise  # Storage corruption is not a date/time parsing error.
             except ValueError as exc:

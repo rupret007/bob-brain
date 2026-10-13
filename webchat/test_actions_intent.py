@@ -9,6 +9,7 @@ import uuid
 
 import actions_intent
 from app import Chat
+from consent_fixture import confirm_reply, confirm_chat
 from reminders import ReminderError, Reminders, ZONE, parse
 from task_dispatch import task_queue
 from texting_fixture import OfflineProviders
@@ -30,6 +31,8 @@ class ActionIntentTests(unittest.TestCase):
                 with self.subTest(text=text):
                     self.assertEqual(parse(text, self.now), ('go to bed', due, None))
                     receipt = actions_intent.handle(self.store, text, 'chat', text)
+                    receipt = confirm_reply(self, receipt, lambda value: self.store.handle(
+                        value, 'chat', text + '-confirm'))
                     self.assertIn('Reminder saved: go to bed', receipt)
 
     def test_supported_clause_orders_and_sensible_body_defaults(self):
@@ -154,7 +157,8 @@ class ActionIntentTests(unittest.TestCase):
             chat = Chat(self.root / 'chat', self.root, providers)
             cid = chat.new_conversation()['id']
             chat.reminders.clock = lambda: self.now
-            chat.submit(cid, 'Set a timer in 1 second', str(uuid.uuid4()))
+            draft = chat.submit(cid, 'Set a timer in 1 second', str(uuid.uuid4()))['messages'][-1]
+            confirm_chat(self, chat, cid, draft)
             chat.close()
             restored = Chat(self.root / 'chat', self.root, providers)
             self.addCleanup(restored.close)
@@ -185,7 +189,8 @@ class ActionIntentTests(unittest.TestCase):
         notify.assert_not_called()
         # A single plain reminder still delivers as data, never as a send.
         body = 'text Alex'
-        chat.submit(cid, 'Create a reminder in 1 second to ' + body, str(uuid.uuid4()))
+        draft = chat.submit(cid, 'Create a reminder in 1 second to ' + body, str(uuid.uuid4()))['messages'][-1]
+        confirm_chat(self, chat, cid, draft)
         self.now += 2
         chat.deliver_reminders()
         self.assertIn('Reminder: ' + body, chat.history(cid)['messages'][-1]['content'])

@@ -7,6 +7,7 @@ deliberately ambiguous: asking again is safer than assuming consent.
 from datetime import datetime
 from pathlib import Path
 import tempfile
+import re
 import unittest
 from unittest.mock import Mock, patch
 import uuid
@@ -465,8 +466,26 @@ class ApprovalIntentTests(unittest.TestCase):
                     execute.assert_not_called()
                     self.assertIn('reply exactly', reply['content'])
 
+    def test_detector_false_negatives_cannot_authorize_either_effect_lane(self):
+        # The effect boundary must survive *every* detector returning no match.
+        for lane in ('reminder', 'file'):
+            for tail in EFFECT_RESTRICTIONS[:6]:
+                with self.subTest(lane=lane, tail=tail), \
+                        patch('approval_language.approval_categories', return_value=frozenset()), \
+                        patch.object(self.chat.reminders, 'create') as create, \
+                        patch.object(self.chat.reminders, 'save') as save, \
+                        patch.object(self.files, 'execute') as execute:
+                    prefix = ('create a reminder for 2am to stretch ' if lane == 'reminder'
+                              else 'create file ~/Documents/result.txt: hello ')
+                    reply = self.submit(prefix + tail)
+                    self.assertIn('reply exactly', reply['content'])
+                    create.assert_not_called()
+                    save.assert_not_called()
+                    execute.assert_not_called()
+                    self.assertFalse(self.chat.reminders.listing())
+                    self.assertFalse((self.home / 'Documents/result.txt').exists())
+
     def reminder_draft(self, body='stretch'):
-        import re
         reply = self.submit('create a reminder for 2am to ' + body)
         self.assertIn('Nothing was saved', reply['content'])
         return re.search(r'yes (wbrem-[0-9a-f]{32})', reply['content'])[1]
@@ -475,7 +494,7 @@ class ApprovalIntentTests(unittest.TestCase):
         from reminders import Reminders
         token = self.reminder_draft()
         self.assertEqual(self.chat.reminders.listing(), [])
-        restored = Reminders(self.chat.reminders.folder, clock=lambda: self.now)
+        restored = Reminders(self.chat.reminders.folder.parent, clock=lambda: self.now)
         self.chat.reminders = restored
         with patch.object(restored, 'create', wraps=restored.create) as create:
             for text in ('yes ' + token + ' please', 'yes ' + token.upper(), 'yes wbrem-bad'):
@@ -512,7 +531,8 @@ class ApprovalIntentTests(unittest.TestCase):
         reply = self.submit('yes ' + token)
         self.assertIn('On hold:', reply['content'])
         self.assertFalse(self.chat.reminders.listing())
-        self.submit('resume WebBob')
+        with patch('app.parse_work', return_value=(None, None)):
+            self.submit('resume WebBob')
         self.assertIn('Reminder saved:', self.submit('yes ' + token)['content'])
 
     def test_reminder_draft_and_consumption_storage_failures_never_create(self):
@@ -525,6 +545,46 @@ class ApprovalIntentTests(unittest.TestCase):
                 patch.object(self.chat.reminders, 'create') as create:
             self.submit('yes ' + token)
             create.assert_not_called()
+
+    def test_unconfirmed_reminder_never_delivers_or_retries_after_create_error(self):
+        token = self.reminder_draft()
+        with patch.object(self.chat.reminders, 'create', side_effect=OSError('unknown outcome')) as create:
+            self.assertNotIn('Reminder saved:', self.submit('yes ' + token)['content'])
+            self.submit('yes ' + token)
+            create.assert_called_once()
+        self.now += 86400
+        self.chat.deliver_reminders()
+        self.assertFalse(self.chat.reminders.listing())
+        self.notifier.assert_not_called()
+
+    def test_reminder_draft_due_time_cannot_roll_forward_on_late_consent(self):
+        draft = self.submit('set a timer for 1 second')
+        token = re.search(r'yes (wbrem-[0-9a-f]{32})', draft['content'])[1]
+        self.now += 2
+        self.assertIn('expired', self.submit('yes ' + token)['content'])
+        self.assertFalse(self.chat.reminders.listing())
+
+    def test_concurrent_reminder_confirmations_create_once(self):
+        from concurrent.futures import ThreadPoolExecutor
+        token = self.reminder_draft()
+        store = self.chat.reminders
+        with patch.object(store, 'create', wraps=store.create) as create:
+            with ThreadPoolExecutor(4) as pool:
+                replies = list(pool.map(lambda i: store.handle('yes ' + token, self.cid,
+                                    'confirm-' + str(i), actor='owner'), range(8)))
+            create.assert_called_once()
+        self.assertTrue(all('Reminder saved:' in reply for reply in replies))
+        self.assertEqual(len(store.listing()), 1)
+
+    def test_routine_confirmation_revalidates_path_without_scheduling(self):
+        target = self.home / 'Documents/note.txt'
+        target.write_text('plain')
+        draft = self.submit('every morning do read file ~/Documents/note.txt')
+        token = re.search(r'yes (wbrem-[0-9a-f]{32})', draft['content'])[1]
+        target.unlink()
+        reply = self.submit('yes ' + token)
+        self.assertIn('path is unavailable', reply['content'])
+        self.assertFalse(self.chat.reminders.listing())
 
     def test_corpus_size_and_unique_examples(self):
         positives = [text for phrases in POSITIVE.values() for text in phrases]
@@ -572,6 +632,9 @@ def authorized_case(body, lane, index):
             command = prefix + body
             self.assertFalse(approval_requested(command))
             reply = self.submit(command)
+            self.assertEqual(self.chat.reminders.listing(), [])
+            token = re.search(r'yes (wbrem-[0-9a-f]{32})', reply['content'])[1]
+            reply = self.submit('yes ' + token)
             self.assertIn('Reminder saved:', reply['content'])
             row, = self.chat.reminders.listing()
             self.assertEqual((row['body'], row['state']), (body, 'pending'))
@@ -582,6 +645,9 @@ def authorized_case(body, lane, index):
             command = prefix + '~/Documents/result.txt: ' + body
             self.assertFalse(approval_requested(command))
             reply = self.submit(command)
+            self.assertFalse((self.home / 'Documents/result.txt').exists())
+            token = re.search(r'yes (wblocal-[0-9a-f]{32})', reply['content'])[1]
+            reply = self.submit('yes ' + token)
             self.assertIn('File created:', reply['content'])
             self.assertEqual((self.home / 'Documents/result.txt').read_text(), body)
     return test

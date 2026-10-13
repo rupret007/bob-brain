@@ -47,6 +47,9 @@ _CONDITION = _words(
     r'on\s+(?:the\s+)?condition|subject\s+to|'
     r'only\s+(?:after|before|when|once|with|upon)')
 _NEGATION = _words(r'no|not|nothing|never|without|\w+n\'t|undone|un[a-z]+(?:ed|en)')
+# Negative-action predicates carry withholding force even without not/never.
+_INHIBITION = _words(r'avoid\w*|refrain\w*|prevent\w*|suppress\w*|skip\w*|'
+                     r'ceas\w*|halt\w*|omit\w*|abstain\w*|stop\w*')
 _UNCERTAINTY = _words(r'maybe|perhaps|possib\w*|potential\w*|probab\w*|may|might|'
                       r'unsure|uncertain\w*|undecided|tentative\w*')
 
@@ -76,7 +79,11 @@ _PROPOSAL = _words(r'propos\w*|suggest\w*')
 _SIMULATION = _words(
     r'dry\s+run|simulat\w*|pretend\w*|rehears\w*|hypothetic\w*|'
     r'demonstrat\w*|mock\w*|illustrat\w*|examples?|thought\s+experiment\w*|'
+    r'walkthrough\w*|training|sandbox\w*|'
+    r'tutorial\w*|tabletop\w*|imaginar\w*|'
     r'test(?:s|ed|ing)?|trials?|theor(?:y|ies|etic\w*)|conceptual\w*|speculat\w*')
+_PRACTICE = _words(r'practic\w*|practis\w*')
+_SIMULATION_CONTEXT = _words(r'mode|session|steps|exercise|operation|execution')
 _COUNTERFACTUAL = _words(r'would|could')
 _QUESTION = _words(r'what|how')
 _EXPLANATION = _words(r'show\w*|explain\w*|walk\w*|describe\w*|talk\w*')
@@ -151,7 +158,8 @@ def _draft_only(text):
     # We cannot safely infer the scope of that negation, so ask in either case.
     # A proposal or suggestion does not authorize execution, even without
     # "only" or another restriction word. Literal content is ambiguous too.
-    return bool(_DRAFT.search(text) or _NEGATION.search(text) or _PROPOSAL.search(text))
+    return bool(_DRAFT.search(text) or _NEGATION.search(text) or
+                _INHIBITION.search(text) or _PROPOSAL.search(text))
 
 
 def _wait_for_ok(text):
@@ -166,6 +174,7 @@ def _wait_for_ok(text):
 
 def _dry_run(text):
     return bool(_SIMULATION.search(text) or
+                (_PRACTICE.search(text) and _SIMULATION_CONTEXT.search(text)) or
                 _PURPOSE.search(text) or _GUIDED_EXPLANATION.search(text) or
                 (_DISCUSSION.search(text) and (_MODE.search(text) or _RESTRICTION.search(text))) or
                 (_EXPLANATION.search(text) and _CONSULT.search(text)) or
@@ -209,7 +218,9 @@ _DETECTORS = {
 def approval_categories(text):
     """Return overlapping reasons to ASK; an empty result is not a consent grant.
 
-    Callers must still enforce their own routing, holds, exact confirmation,
+    An empty result cannot authorize arbitrary content. Effect callers require
+    separate exact confirmation even when no category matches. They also enforce
+    their own routing, holds,
     allowlists and effect protections. This check must never override those gates.
     """
     normalized = _normalize(text)

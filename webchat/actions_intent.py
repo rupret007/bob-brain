@@ -28,8 +28,8 @@ def reminder_request(text):
     return REMINDER.fullmatch(text.strip())
 
 
-def handle(store, text, conversation_id, request_id, *, local_tasks=None):
+def handle(store, text, conversation_id, request_id, *, local_tasks=None, intent_state=None, actor='owner'):
     """A recognized but incomplete action stays here; it never becomes a job."""
     if reminder_request(text) or routine_intent(text):
-        return store.handle(text, conversation_id, request_id, local_tasks=local_tasks)
+        return store.handle(text, conversation_id, request_id, local_tasks=local_tasks, intent_state=intent_state, actor=actor)
     return None
