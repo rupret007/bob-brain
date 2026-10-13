@@ -148,7 +148,7 @@ def password_at(folder):
 
 
 class Chat(TaskDispatch):
-    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, local_tasks=None):
+    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, local_tasks=None, file_watch=None):
         self.folder, self.root = folder, root
         folder.mkdir(parents=True, exist_ok=True)
         self.password = password_at(folder)
@@ -187,6 +187,9 @@ class Chat(TaskDispatch):
         # including its offline release/test injection boundary.
         self.local_tasks = local_tasks if local_tasks is not None else LocalTasks(
             folder, root=root, search=lambda query: format_web_search_reply(web_search(query)))
+        from file_watch import FileWatch
+        self.file_watch = file_watch if file_watch is not None else FileWatch(
+            folder, self.local_tasks.files)
         for path in self.state.glob("*.json"):
             if not UUID.fullmatch(path.stem):
                 continue
@@ -746,6 +749,11 @@ class Chat(TaskDispatch):
                     conversation.pop(key, None)
                 return self.intent_reply(conversation, self.redact(local),
                                          provider='state' if LOCAL_SEARCH.fullmatch(text.strip()) else 'local-tasks')
+            watched = self.file_watch.handle(text, identifier, request_id, intent_state)
+            if watched is not None:
+                for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
+                    conversation.pop(key, None)
+                return self.intent_reply(conversation, self.redact(watched), provider='file-watch')
             from teammates import handle as teammate_turn
             teammate = teammate_turn(self, conversation, text, request_id)
             if teammate is not None:
@@ -1328,6 +1336,39 @@ class Chat(TaskDispatch):
                 return True
             self.reminders.deliver_due(deliver, lambda body: self.reminder_notifier(self.redact(body)))
 
+    def deliver_file_watches(self):
+        with self.lock:
+            if self.closing.is_set():
+                return
+            def deliver(row, notice, content):
+                conversation = self.conversations.get(row['conversation_id'])
+                if not conversation:
+                    return False
+                if any(m.get('file_watch_notice') == notice for m in conversation['messages']):
+                    return True
+                if row['conversation_id'] in self.workers or self.voice.busy(row['conversation_id']):
+                    return False
+                if any(m.get('status') in ('queued', 'running', 'waiting') for m in conversation['messages']):
+                    return False
+                state = chat_intent.state_for(conversation)
+                scopes = chat_intent.blocked_scopes(state, chat_intent.projects(row.get('path', '')))
+                if scopes:
+                    return False  # A scheduler tick never lifts a saved hold.
+                if any(marker in content for marker in ('\n', 'File read:', 'File created:', 'File overwritten:')):
+                    content = 'Watched file changed. No file content was read or executed.'
+                value = copy.deepcopy(conversation)
+                value['messages'].append(dict(
+                    id=str(uuid.uuid4()), role='assistant', status='done', provider='file-watch',
+                    content=self.redact(content), created_at=time.time(),
+                    file_watch_notice=notice, file_watch_id=row['id']))
+                self.save(value)
+                self.conversations[value['id']] = value
+                return True
+            def intent_state_for(cid):
+                conversation = self.conversations.get(cid)
+                return chat_intent.state_for(conversation) if conversation else chat_intent.new_state()
+            self.file_watch.poll(deliver, intent_state_for)
+
     def start_background(self):
         self.providers.start_probes()
         def loop():
@@ -1335,6 +1376,7 @@ class Chat(TaskDispatch):
                 try:
                     if not self.closing.is_set():
                         self.deliver_reminders()
+                        self.deliver_file_watches()
                         self.migrate_legacy_tasks()
                         self.reconcile_tasks()
                         self.retry_queued()
