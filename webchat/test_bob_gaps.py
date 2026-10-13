@@ -203,7 +203,10 @@ class WebSearchGapTests(GapFixture):
     def test_default_morning_lookup_uses_same_mockable_search_adapter(self):
         with patch('app.web_search', return_value=dict(
                 answer='Python is a programming language.', source='https://www.python.org/')) as search:
-            self.submit('every morning do look up Python programming language')
+            from consent_fixture import confirm_chat
+            draft = self.submit('every morning do look up Python programming language')['messages'][-1]
+            self.assertFalse(self.chat.reminders.listing())
+            confirm_chat(self, self.chat, self.identifier, draft)
             row, = self.chat.reminders.listing()
             search.assert_not_called()
             with patch.object(self.chat.reminders, 'clock', return_value=row['due_at']):

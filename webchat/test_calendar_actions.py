@@ -459,10 +459,13 @@ class RoutingTests(CalendarFixture):
             self.assertEqual(self.chat.get(self.cid)['intent_state'], before)
         self.assertFalse(self.client.creates)
 
-    def test_pr1_2am_reminder_executes_directly(self):
+    def test_pr1_2am_reminder_requires_separate_consent(self):
         self.chat.reminders.clock = lambda: self.now
+        from consent_fixture import confirm_reply
         response = self.submit('Create a reminder for 2am to go to bed')
         self.assertEqual(response['provider'], 'reminders')
+        self.assertFalse(self.chat.reminders.listing())
+        response = confirm_reply(self, response, self.submit)
         self.assertIn('Reminder saved: go to bed', response['content'])
         self.assertIn('Oct 10, 2026 at 02:00 AM CDT', response['content'])
         self.assertFalse(self.client.creates)
