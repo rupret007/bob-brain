@@ -442,8 +442,13 @@ class RoutingTests(CalendarFixture):
 
     def test_needs_auth_is_direct_and_never_fabricates_events(self):
         self.client.error = NEEDS_AUTH
-        for text in ('Create a calendar event Dentist tomorrow at 2pm', 'calendar today'):
-            self.assertEqual(self.submit(text)['content'], NEEDS_AUTH)
+        reply = self.submit('Create a calendar event Dentist tomorrow at 2pm')['content']
+        self.assertIn('Draft for your calendar', reply)
+        self.assertIn('needs authentication', reply)
+        self.assertIn('remains pending', reply)
+        self.assertIn('OK to add it', reply)
+        self.assertEqual(self.submit('calendar today')['content'], NEEDS_AUTH)
+        self.assertFalse(self.client.creates)
         self.assertFalse(self.providers.calls)
 
     def test_saved_global_and_project_holds_block_drafts_and_confirmation(self):

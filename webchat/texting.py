@@ -453,7 +453,10 @@ class Texting:
         state["active"] = identifier
         conversation["messages"][-1]["text_draft_id"] = identifier
         from instinct import READ_ONLY
-        return READ_ONLY if draft.get('read_only') else "Draft ready for review. Nothing sent."
+        return (READ_ONLY if draft.get('read_only') else
+                f"Draft to {target.get('name') or target.get('guid', 'this recipient')}:\n\n{body}\n\n"
+                f"Reply exactly “yes {draft['token']}” in a separate message. "
+                f"OK to send this to {target.get('name') or 'this recipient'}?")
 
     def confirm(self, conversation, text, actor, request_id, persist):
         state = conversation.get("_texting", {})
@@ -549,7 +552,8 @@ class Texting:
         check_delivery = re.fullmatch(r"check text delivery ([0-9a-f]{16})", clean, re.I)
         replace = re.fullmatch(r"replace text draft ([0-9a-f]{16}) to (.+?):\s*([\s\S]+)", clean, re.I)
         compose = re.fullmatch(r"(?:draft|write|compose|send) (?:a )?(?:text|reply|sms|message)(?: reply)? to (.+?)(?::\s*| saying )([\s\S]+)", clean, re.I)
-        compose = compose or re.fullmatch(r"text (.+?):\s*([\s\S]+)", clean, re.I)
+        compose = compose or re.fullmatch(r"text (.+?)(?::\s*| that )([\s\S]+)", clean, re.I)
+        compose = compose or re.fullmatch(r"tell (.+?) group chat ([\s\S]+)", clean, re.I)
         read = re.fullmatch(r"(read|show|summari[sz]e) (?:the )?(?:recent )?(?:texts?|messages?|imessages?|sms|thread) (?:from |with |in |for )?(.+)", clean, re.I)
         listing = command in ("texts", "list texts", "show texts", "recent texts", "show recent texts", "list recent texts", "summarize recent texts", "summarize texts")
         # Incomplete texting commands only — not colloquial chat like “text me when you're free”.
@@ -626,6 +630,10 @@ class Texting:
                     content = HELP
         except TextingError as exc:
             content = str(exc)
+            if compose and not replace and re.search(r'not configured|unavailable|No matching thread|Several threads match', content, re.I):
+                from personal_drafts import save_draft
+                content = save_draft(conversation, request_id, 'text', compose[1], compose[2],
+                                     content + ' The draft remains pending until the recipient and transport are verified.')
         answer["content"] = redact(content)
         # Every handled turn is saved once here. Confirmations also persist consumed
         # consent before delivery so an interrupted receipt cannot authorize a replay.
