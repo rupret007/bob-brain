@@ -70,6 +70,8 @@ from bob_gaps import (
     append_profile_memory,
     capture_reply,
     capture_screenshot,
+    dispatch_status_from_conversation,
+    dispatch_status_question,
     format_web_search_reply,
     memory_confirm_prompt,
     needs_web_search,
@@ -755,6 +757,11 @@ class Chat(TaskDispatch):
             from reply_authority import correcting_status
             if correcting_status(text, conversation):
                 return self.status_reply(conversation, text)
+            if dispatch_status_question(text):
+                scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
+                hold = {"active": True} if scopes or intent_state.get("holds") else None
+                reply = dispatch_status_from_conversation(conversation, hold=hold)
+                return self.intent_reply(conversation, self.redact(reply), provider="state")
             memory_turn = self.bob_gaps_memory_turn(conversation, text, request_id, provider=provider)
             if memory_turn:
                 return memory_turn
