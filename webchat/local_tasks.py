@@ -27,6 +27,7 @@ from zoneinfo import ZoneInfo
 import chat_intent
 from approval_language import approval_requested
 from failover import atomic_text
+from public_web_fetch import FetchError, fetch_webpage, format_receipt, validate_url
 
 LIMIT = 64 * 1024
 OPERATION_TIMEOUT = 5
@@ -37,7 +38,7 @@ HELP = ('Local tasks: read file ~/Documents/notes.txt; list files ~/Documents; '
         'create file ~/Documents/note.txt: hello; write file ~/Documents/note.txt: replacement; '
         'delete file ~/Documents/note.txt. Overwrites and deletes need an exact yes wblocal-… reply. '
         'Terminal: run terminal: pwd, date, ls PATH, or cat PATH (no shell). '
-        'Web: search the web for QUERY, or look up QUERY. '
+        'Web: search the web for QUERY, look up QUERY, or read webpage https://example.com/page. '
         'Only visible paths under your home are allowed; credential files, private/configuration trees, symlinks, '
         'hard links and special files are excluded.')
 UNCERTAIN = ('Local action outcome is unconfirmed. It will not be replayed automatically; '
@@ -47,6 +48,7 @@ FILE = re.compile(r'^' + PREFIX + r'(read|create|write|delete)\s+(?:a\s+)?(?:loc
 LIST = re.compile(r'^' + PREFIX + r'list\s+files(?:\s+in)?(?:\s+([\s\S]*))?$', re.I)
 TERMINAL = re.compile(r'^' + PREFIX + r'(?:run\s+(?:in\s+)?(?:the\s+)?terminal|terminal)\s*:\s*([\s\S]*)$', re.I)
 SEARCH = re.compile(r'^' + PREFIX + r'(?:search\s+(?:the\s+)?web(?:\s+for)?|look\s+up)\b\s*([\s\S]*)$', re.I)
+WEBPAGE = re.compile(r'^' + PREFIX + r'read\s+(?:a\s+|the\s+)?web\s*page\b\s*([\s\S]*)$', re.I)
 CONTROL = re.compile(r'^(yes|cancel)\s+(wblocal-[0-9a-f]{32})$', re.I)
 SECRET_PATH = re.compile(
     r'(?:^|[._ -])(?:credentials?|secrets?|passwords?|tokens?|private[ _-]?keys?|'
@@ -159,6 +161,13 @@ def search_web(query, opener=None):
 def parse(text):
     """Recognized but invalid commands stay in this lane, never a coding job."""
     text = text.strip()
+    match = WEBPAGE.fullmatch(text)
+    if match:
+        try:
+            return dict(kind='webpage', url=validate_url(match[1].strip()))
+        except FetchError as exc:
+            raise LocalTaskError('Webpage unopened: ' + str(exc) +
+                                 '. Use read webpage followed by one public HTTP(S) URL.') from None
     match = SEARCH.fullmatch(text)
     if match:
         query = match[1].strip()
@@ -350,13 +359,14 @@ class LocalFiles:
 
 
 class LocalTasks:
-    def __init__(self, folder, files=None, search=None, clock=time.time, *, root=None, _worker=False):
+    def __init__(self, folder, files=None, search=None, clock=time.time, *, root=None, _worker=False, fetch=None):
         self.folder = Path(folder) / 'local-tasks'
         self.root = Path(root if root is not None else os.environ.get('BOB_ROOT', Path(folder).parent.parent)).resolve()
         self.files = files if files is not None else LocalFiles(
             clock=clock, excluded=(folder, Path(__file__).resolve().parent.parent),
             protected=self.protected_paths)
         self.search = search if search is not None else search_web
+        self.fetch = fetch if fetch is not None else fetch_webpage
         self.clock = clock
         # Explicitly injected file adapters are the in-process test boundary.
         # Production file work, including receipts and routine validation, runs
@@ -479,7 +489,17 @@ class LocalTasks:
         return (f'Local draft; no file changed: {spec["kind"]} {spec["path"]}.{preview}\n'
                 f'Within one hour reply exactly “yes {row["token"]}” or “cancel {row["token"]}”.')
 
-    def execute(self, spec):
+    def execute(self, spec, *, intent_state=None, text=''):
+        if spec['kind'] == 'webpage':
+            if intent_state is None:
+                raise LocalTaskError('Webpage unopened: saved permissions could not be verified.')
+            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
+            if scopes:
+                return chat_intent.hold_reply(scopes)
+            try:
+                return format_receipt(self.fetch(spec['url']))
+            except Exception:
+                raise LocalTaskError('Webpage failed; no retrieved excerpt or page content was verified.') from None
         return self.search(spec['query']) if spec['kind'] == 'search' else self.files.execute(spec)
 
     def handle(self, text, cid, request_id, intent_state, *, routine=False):
@@ -525,15 +545,15 @@ class LocalTasks:
                 self.save(rows)
                 if needs_confirmation:
                     return self.receipt(row)
-                return self.finish(rows, row)
+                return self.finish(rows, row, intent_state=intent_state)
         except LocalTaskError as exc:
             return str(exc)
         except (OSError, ValueError, TypeError, KeyError):
             return 'Local request could not finish. No successful result was verified. ' + UNCERTAIN
 
-    def finish(self, rows, row):
+    def finish(self, rows, row, *, intent_state=None):
         try:
-            result = self.execute(row['spec'])
+            result = self.execute(row['spec'], intent_state=intent_state, text=row['text'])
             if not isinstance(result, str) or not result:
                 raise LocalTaskError('No result was returned.')
             row.update(state='done', receipt=result)
