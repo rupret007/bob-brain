@@ -257,7 +257,7 @@ class RoundTwoTests(unittest.TestCase):
     def test_parity_consent_helper_preserves_pending_and_due_delivery(self):
         fixture = Mock()
         fixture.answer = self.say
-        draft = self.say('remind me to check the oven in 10 minutes')
+        draft = self.say('create a reminder to check the oven in 10 minutes')
         self.assertFalse(self.chat.reminders.listing())
         confirmed = approve_reminder(fixture, draft)
         self.assertIn('no text, email or job', confirmed['content'])

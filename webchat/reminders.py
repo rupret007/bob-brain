@@ -20,7 +20,8 @@ ZONE = ZoneInfo('America/Chicago')
 HELP = ('Try “remind me to check the oven in 10 minutes”, “remind me to call Sam on 2026-10-01 at 14:00”, '
         '“remind me every 2 hours to stretch”, “my reminders”, or “cancel reminder ID”. '
         'You can also say “create a reminder for 2am to go to bed” or “set a timer for 10 minutes”. '
-        'A valid request produces a draft; confirm its exact token in a separate message to schedule it. '
+        'Explicit “remind me to … in …” and “remind me every …” interval requests save personal reminders directly. '
+        'Other valid requests produce a draft; confirm its exact token in a separate message to schedule it. '
         'Times use America/Chicago; a clock time without a date means its next occurrence. '
         'Reminders appear here and in Jobs while Web Bob is running; overdue reminders arrive when it returns. '
         'Local macOS notifications require owner opt-in and notification permission. '
@@ -32,6 +33,10 @@ ROUTINE_HELP = ('Try “every morning do read file ~/Documents/notes.txt”, '
                 'Use “my routines” and “cancel routine ID”. Writes, deletes and sends cannot run unattended.')
 UNITS = {'second': 1, 'minute': 60, 'hour': 3600, 'day': 86400}
 DURATION = r'\d+\s+(?:seconds?|minutes?|hours?|days?)'
+PERSONAL_INTERVAL_REQUEST = re.compile(
+    r'^(?:please\s+)*remind me (?:to [\s\S]+? in \d+\s+'
+    r'(?:seconds?|minutes?|mins?|hours?|hrs?|days?)|'
+    r'every \d+\s+(?:minutes?|hours?|days?) to [\s\S]+?)[.!?]*$', re.I)
 CLOCK = r'\d{1,2}(?::\d{2}\s*(?:am|pm)?|\s*(?:am|pm))'
 WHEN = (r'(?:(?:in\s+)?' + DURATION + r'|(?:on\s+)?(?:\d{4}-\d{2}-\d{2}|today|tomorrow)'
         r'(?:\s+at)?\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?|'
@@ -661,11 +666,25 @@ class Reminders:
                     if local_tasks is None:
                         return 'Local routine actions are unavailable. ' + ROUTINE_HELP
                     action = local_tasks.validate_routine(body)
-                # Recognizing a schedule and finding no hedge does not prove
-                # that arbitrary free text authorizes an effect. Always ASK.
                 scopes = chat_intent.blocked_scopes(intent_state or chat_intent.new_state(), chat_intent.projects(text), action_text=text)
                 if scopes:
                     return chat_intent.hold_reply(scopes)
+                # A complete, explicit request to remind the speaker authorizes
+                # this local reminder. Inspect the original wording: normalized
+                # requests and model extractions are not fresh authorization.
+                # Parsing above still rejects approval clauses and ambiguity.
+                if action is None and not assumption and PERSONAL_INTERVAL_REQUEST.fullmatch(text.strip()):
+                    with self.draft_lock() as drafts:
+                        changed = False
+                        for old in drafts.values():
+                            if old['cid'] == cid and old['state'] in ('draft', 'needs_time'):
+                                old['state'] = 'replaced'
+                                changed = True
+                        if changed:
+                            self.save_drafts(drafts)
+                        row = self.create(cid, request_id, body, due, interval,
+                                          daily_time=daily_time, action=action, weekly_time=weekly)
+                    return self.created_receipt(row)
                 return self.draft(text, cid, request_id, actor, body, due, interval, daily_time, action, weekly_time=weekly, assumption=assumption)
             except (UnicodeError, json.JSONDecodeError):
                 raise  # Storage corruption is not a date/time parsing error.

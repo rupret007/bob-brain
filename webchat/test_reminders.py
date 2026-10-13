@@ -401,7 +401,7 @@ class ReminderChatTests(unittest.TestCase):
         self.notify.assert_not_called()
 
     def test_real_chat_create_list_fire_and_cancel_without_models_or_jobs(self):
-        reply = self.schedule('remind me to review Instinct in 1 minute')
+        reply = self.schedule('remind me in 1 minute to review Instinct')
         self.assertEqual(reply['provider'], 'reminders')
         self.assertIn('Reminder saved', reply['content'])
         self.assertIn('review Instinct', self.say('my reminders')['content'])
@@ -419,8 +419,8 @@ class ReminderChatTests(unittest.TestCase):
 
     def test_idempotent_request_and_restart_deliver_only_once(self):
         rid = str(uuid.uuid4())
-        first = self.say('remind me to check oven in 1 second', rid)
-        self.assertEqual(self.say('remind me to check oven in 1 second', rid), first)
+        first = self.say('create a reminder to check oven in 1 second', rid)
+        self.assertEqual(self.say('create a reminder to check oven in 1 second', rid), first)
         confirm_reply(self, first, self.say)
         self.now += 2
         self.chat.deliver_reminders()
@@ -434,7 +434,7 @@ class ReminderChatTests(unittest.TestCase):
         self.notify.assert_called_once_with('check oven')
 
     def test_crash_after_saved_chat_before_store_update_cannot_duplicate(self):
-        self.schedule('remind me to check oven in 1 second')
+        self.schedule('create a reminder to check oven in 1 second')
         self.now += 2
         with patch.object(self.chat.reminders, 'save', side_effect=OSError('disk')):
             with self.assertRaises(OSError):
@@ -500,7 +500,7 @@ class ReminderChatTests(unittest.TestCase):
         self.assertNotIn('sk-' + 'a' * 25, self.notify.call_args.args[0])
 
     def test_active_voice_defers_reminder_without_losing_it(self):
-        self.schedule('remind me to check oven in 1 second')
+        self.schedule('create a reminder to check oven in 1 second')
         self.now += 2
         with patch.object(self.chat.voice, 'active', return_value=True):
             self.chat.deliver_reminders()
@@ -529,7 +529,7 @@ class ReminderChatTests(unittest.TestCase):
         self.assertIn('Nothing was saved', self.chat.history(self.cid)['messages'][-1]['content'])
         self.notify.assert_not_called()
         # Keep the original data-not-instructions assertion on a plain body.
-        self.schedule('remind me every 1 minute to start a job')
+        self.schedule('create a reminder every 1 minute to start a job')
         self.now += 60
         self.chat.deliver_reminders()
         self.assertIn('Reminder:', self.chat.history(self.cid)['messages'][-1]['content'])
