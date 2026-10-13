@@ -453,7 +453,7 @@ class Texting:
             raise TextingError("Several threads match. Use an exact thread ID; I won’t choose a recipient for you.\n" + choices)
         return matches[0]
 
-    def draft(self, conversation, target, body, actor, request_id):
+    def draft(self, conversation, target, body, actor, request_id, *, held=False):
         if not actor:
             raise TextingError("Log in again before preparing a confirmation-bound text draft.")
         if not body.strip() or len(body) > 4000:
@@ -482,9 +482,9 @@ class Texting:
         conversation["messages"][-1]["text_draft_id"] = identifier
         from instinct import READ_ONLY
         return (READ_ONLY if draft.get('read_only') else
-                f"Draft to {target.get('name') or target.get('guid', 'this recipient')}:\n\n{body}\n\n"
-                f"Reply exactly “yes {draft['token']}” in a separate message. "
-                f"OK to send this to {target.get('name') or 'this recipient'}?")
+                f"Draft to {target.get('name') or target.get('guid', 'this recipient')}:\n\n{body}\n\n" +
+                ("Held as a draft. Not sent. When ready, reply: " if held else "Not sent. To send, reply: ") +
+                f"yes {draft['token']}")
 
     def confirm(self, conversation, text, actor, request_id, persist):
         state = conversation.get("_texting", {})
@@ -639,7 +639,8 @@ class Texting:
                 target = recipient(self.resolve(query.strip()))
                 if redact(json.dumps(target, ensure_ascii=False)) != json.dumps(target, ensure_ascii=False):
                     raise TextingError("The thread details contain sensitive credentials; no draft was prepared.")
-                content = self.draft(conversation, target, body, actor, request_id)
+                held = bool(compose and message_body(compose[2]) != compose[2].strip())
+                content = self.draft(conversation, target, body, actor, request_id, held=held)
             else:
                 self.invalidate(conversation)
                 if listing:

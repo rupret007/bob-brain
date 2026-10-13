@@ -50,7 +50,7 @@ class RoundTwoTests(unittest.TestCase):
         reply = self.say('Can you remind me in 20 min to check the oven')['content']
         self.assertEqual(reply.splitlines()[0], 'Reminder to check the oven in 20 minutes — OK to set it?')
         self.assertNotIn('Proposed reminder', reply)
-        self.assertIn('Nothing was saved to your reminders yet.', reply)
+        self.assertIn('Not running yet.', reply)
         self.assertFalse(self.chat.reminders.listing())
         row, = json.loads((self.chat.reminders.folder / 'drafts.json').read_text()).values()
         # Chat owns the reminder storage location; reopening it must retain the draft.

@@ -227,7 +227,7 @@ class CalendarActions:
                 return 'Use the exact yes wbcal-… or cancel wbcal-… message from the draft. Nothing created.'
             if text.lower() == 'calendar help':
                 return HELP
-            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
+            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text), action_text=text)
             if scopes:
                 return chat_intent.hold_reply(scopes)
             if CREATE.fullmatch(text):
@@ -289,7 +289,7 @@ class CalendarActions:
                 row['state'] = 'cancelled'
                 self.save(rows)
                 return 'Calendar draft cancelled. Nothing created.'
-            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(row['text']))
+            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(row['text']), action_text=row['text'])
             if scopes:
                 return chat_intent.hold_reply(scopes)
             if request_id == row['request_id']:

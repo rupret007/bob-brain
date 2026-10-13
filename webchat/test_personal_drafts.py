@@ -44,7 +44,7 @@ class PersonalDraftTests(unittest.TestCase):
     def test_natural_text_has_concrete_body_and_bound_question(self):
         reply = self.say("Text Andrea that I'm running 15 minutes late.")
         self.assertIn("I'm running 15 minutes late.", reply)
-        self.assertTrue(reply.endswith('OK to send this to Andrea?'))
+        self.assertRegex(reply, r'Not sent\. To send, reply: yes wbtxt-[a-f0-9]{32}$')
         self.assertIn('yes wbtxt-', reply)
         self.assertIn('exact', self.say('send it'))
         self.chat.texting.andrea.deliver.assert_not_called()
@@ -59,7 +59,7 @@ class PersonalDraftTests(unittest.TestCase):
             with self.subTest(ask=ask):
                 reply = self.say(ask)
                 self.assertIn(body, reply)
-                self.assertTrue(reply.endswith('?'))
+                self.assertTrue(reply.endswith('I’ll wait for your OK before sending.') if 'email' in ask.lower() else reply.endswith('?'))
                 self.assertEqual(len(pending(self.chat, self.chat.get(self.cid))), 1)
                 self.assertIn('pending', self.say('go ahead'))
         self.assertFalse(self.providers.calls)

@@ -55,7 +55,7 @@ class TextingDraftRoutingTests(unittest.TestCase):
                 self.assertEqual(save.call_count, 1)
                 self.assertEqual(answer['provider'], 'texting')
                 if phrase.startswith('draft'):
-                    self.assertTrue(answer['content'].endswith('OK to send this to Andrea?'))
+                    self.assertRegex(answer['content'], r'Not sent\. To send, reply: yes wbtxt-[a-f0-9]{32}$')
                 else:
                     self.assertIn('Nothing sent', answer['content'])
                     self.assertIn('exact', answer['content'])

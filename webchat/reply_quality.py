@@ -22,8 +22,9 @@ def check(ask, content):
         return "What's broken? Paste the error and tell me what you expected to happen."
     if re.search(r'\bpush everything to the max\b', ask, re.I) and content.strip() == 'Which projects should I work on?':
         stop = ' until midnight' if re.search(r'\buntil midnight\b', ask, re.I) else ''
-        return (f'I can draft a focused plan for your OK{stop}, keeping existing holds and spending limits. '
-                'Which projects should I focus on, and what time and spending limits should I keep?')
+        return (f'I can draft a focused plan for your OK{stop} (America/Chicago). '
+                'Which projects should I focus on, and what time and spending limits or resource caps should apply? '
+                'Nothing started from this request. Publishing, deployment and spending need your OK.')
     # Preserve quoted material, code, links, identifiers and transport tokens.
     # Technical questions may legitimately ask about the internal vocabulary.
     words = {

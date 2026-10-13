@@ -500,7 +500,7 @@ class LocalTasks:
             spec = parse(text)
             if spec is None:
                 return None
-            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
+            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text), action_text=text)
             if scopes:
                 return chat_intent.hold_reply(scopes)
             if routine:
@@ -557,7 +557,7 @@ class LocalTasks:
                 row['state'] = 'cancelled'
                 self.save(rows)
                 return 'Local draft cancelled. No file changed.'
-            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(row['text']))
+            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(row['text']), action_text=row['text'])
             if scopes:
                 return chat_intent.hold_reply(scopes)
             if request_id == row['request_id']:

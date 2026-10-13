@@ -451,9 +451,9 @@ class Reminders:
         return (row.get("assumption", "") + lead + when + repeat_description(dict(
                     interval_seconds=row['interval'], daily_time=row['daily_time'], weekly_time=row.get('weekly_time'))) +
                 (f" Read-only action: {row['action']}." if row['action'] else '') +
-                ' — OK to set it?\nNothing was saved to your reminders yet. ' +
-                f"To approve this draft, reply exactly “yes {row['token']}” within an hour, "
-                f"or “cancel {row['token']}” to cancel.")
+                ' — OK to set it?\nNothing was saved. Not running yet. ' +
+                ('Use a phone or oven timer if you need it counting now. ' if relative else '') +
+                f"To set it, reply exactly “yes {row['token']}”")
 
     def draft(self, text, cid, request_id, actor, body, due, interval, daily_time, action, *, weekly_time=None, assumption=''):
         if not 1 <= len(body) <= 1000:
@@ -489,7 +489,7 @@ class Reminders:
                 row['state'] = 'cancelled'
                 self.save_drafts(drafts)
                 return 'Reminder draft cancelled. Nothing was saved to your reminders.'
-            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(row['text']))
+            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(row['text']), action_text=row['text'])
             if scopes:
                 return chat_intent.hold_reply(scopes)
             if request_id == row['request_id']:
@@ -544,7 +544,7 @@ class Reminders:
         # Model text is untrusted. Only literal spans can become draft operands;
         # deterministic parsing and the unchanged consent detector still apply.
         try:
-            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
+            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text), action_text=text)
             if scopes:
                 return chat_intent.hold_reply(scopes)
             value = json.loads(output)
@@ -580,7 +580,10 @@ class Reminders:
         if not match or approval_requested(text):
             return None
         when = match[1] + match[2].capitalize() + (' ' + match[3] if match[3] else '')
+        defaults = {'morning': '9 AM', 'afternoon': '2 PM', 'evening': '8 PM', 'night': '8 PM'}
+        suggestion = defaults.get((match[3] or '').lower(), '9 AM')
         return self.incomplete(text, cid, request_id, actor, reminder_body(match[4]), when,
+                               f'I suggest {suggestion} Central (America/Chicago), pending your OK. '
                                'What time should I use?')
 
     def handle(self, text, cid, request_id, *, local_tasks=None, intent_state=None, actor='owner', allow_model=False):
@@ -630,9 +633,14 @@ class Reminders:
                 if missing:
                     return missing
                 event = re.fullmatch(r'remind me before (.+?) to (.+)', normalized, re.I)
-                if event and re.fullmatch(r'[\w \'’-]{1,80}', event[1]) and not approval_requested('remind me in 1 minute to ' + event[1] + ' ' + event[2]):
+                # An unresolved event has no due time or approvable token. Asking
+                # for its time is safe even when words like "rehearsal" trigger
+                # the conservative consent detector. Scheduling still goes
+                # through parse() and a separate exact-token confirmation.
+                if event and re.fullmatch(r'[\w \'’-]{1,80}', event[1]):
                     return self.incomplete(text, cid, request_id, actor, event[2], 'before ' + event[1],
-                                           'When is ' + event[1] + '?')
+                                           'When is ' + event[1] + '? I suggest an hour before; '
+                                           'I’ll wait for your OK before scheduling.')
                 parsed = parse(normalized, self.clock())
                 if not parsed:
                     body_only = re.fullmatch(r'remind me to (.+)', normalized, re.I)
@@ -655,7 +663,7 @@ class Reminders:
                     action = local_tasks.validate_routine(body)
                 # Recognizing a schedule and finding no hedge does not prove
                 # that arbitrary free text authorizes an effect. Always ASK.
-                scopes = chat_intent.blocked_scopes(intent_state or chat_intent.new_state(), chat_intent.projects(text))
+                scopes = chat_intent.blocked_scopes(intent_state or chat_intent.new_state(), chat_intent.projects(text), action_text=text)
                 if scopes:
                     return chat_intent.hold_reply(scopes)
                 return self.draft(text, cid, request_id, actor, body, due, interval, daily_time, action, weekly_time=weekly, assumption=assumption)

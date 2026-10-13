@@ -69,14 +69,25 @@ def outbound(text):
         body = re.sub(r'\s*\.\s*show me first$', '', body, flags=re.I)
         if body.lower().startswith('asking if '):
             body = 'Could you let me know if ' + body[10:].rstrip('.?') + '?'
-        return 'email', target, body[0].upper() + body[1:]
+        body = body[0].upper() + body[1:]
+        if body[-1] not in '.!?':
+            body += '.'
+        # Use the supplied topic; questions request details without inventing them.
+        subject = 'Follow-up'
+        gig = re.search(r'\b(?:gig|show) on (.+?)[.!?]*$', body, re.I)
+        if gig:
+            subject = 'Gig on ' + gig[1].rstrip('.!?')
+            body += ' Please send the load-in time and any setup details we should know.'
+        elif re.search(r'\b(?:estimate|estimated|payment|invoice)\b', body, re.I):
+            subject = 'Payment timing'
+            body += ' Please confirm the due date and amount to pay.'
+        greeting = 'Hi,' if re.match(r'(?:my|the|our)\b', target, re.I) else f'Hi {target},'
+        return 'email', target, f'Subject: {subject}\n\n{greeting}\n\n{body}\n\nThanks,\nJeff'
     note = re.fullmatch(r'write (?:a )?(?:quick )?thank-you note to (.+?) for (.+)', clean, re.I)
     if note:
         if re.search(r'\bvenue owner\b', note[1], re.I):
             return 'note', note[1], ('Hi there,\n\nThanks for ' + note[2] +
-                '. We really appreciate it — getting to share our music at your venue means a lot to us. '
-                'Thank you for making room for live music and giving our band a place to play. '
-                'We’d love to come back for another show whenever the timing works for you.\n\n'
+                '. We really appreciate it and would love to come back.\n\n'
                 'Thanks again,\nJeff')
         return 'note', note[1], ('Hi there,\n\nThanks for ' + note[2] +
                                   '. We really appreciate it and would love to do it again.\n\nThanks again,\nJeff')
@@ -110,7 +121,7 @@ def handle(chat, conversation, text, request_id):
     natural_calendar = re.fullmatch(r'(?:put|add) (.+?) (?:on|to) (?:my |the |your )?calendar (.+)', text.strip().rstrip('.?!'), re.I)
     if not spec and not natural_calendar:
         return None
-    scopes = chat_intent.blocked_scopes(state, chat_intent.projects(text))
+    scopes = chat_intent.blocked_scopes(state, chat_intent.projects(text), action_text=text)
     if scopes:
         return chat_intent.hold_reply(scopes)
     replace_pending(chat, conversation)
@@ -140,6 +151,11 @@ def handle(chat, conversation, text, request_id):
                           'What date, time, and duration should I use?')
     kind, target, body = spec
     limitation = ''
+    if kind == 'email':
+        reply_to_thread = bool(re.search(r"\breply to .+?['’]s email\b", text, re.I))
+        review = ('I’d verify the email thread and recipient before sending. ' if reply_to_thread else '')
+        return save_draft(conversation, request_id, kind, target, body, limitation,
+                          question=review + 'I’ll wait for your OK before sending.')
     return save_draft(conversation, request_id, kind, target, body, limitation,
                       question=f'OK to proceed with this booking once the details are verified?' if kind == 'booking' else None)
 

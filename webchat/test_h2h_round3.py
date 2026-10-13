@@ -88,7 +88,7 @@ class RoundThreeTests(unittest.TestCase):
                 card = reply['text_draft']
                 self.assertEqual(card['body'], 'We need a setlist by Wednesday.')
                 self.assertEqual(card['recipient']['guid'], 'iMessage;+;pops')
-                self.assertIn('Reply exactly', reply['content'])
+                self.assertIn('Not sent. To send, reply: yes wbtxt-', reply['content'])
                 self.assertEqual(card['state'], 'pending')
                 self.assertIn('exact', self.say('yes')['content'])
         self.bridge.deliver.assert_not_called()
@@ -120,7 +120,7 @@ class RoundThreeTests(unittest.TestCase):
     def test_relative_oven_has_no_computed_clock_and_schedules_nothing(self):
         reply = self.say('Can you remind me in 20 min to check the oven')['content']
         self.assertEqual(reply.splitlines()[0], 'Reminder to check the oven in 20 minutes — OK to set it?')
-        self.assertIn('Nothing was saved to your reminders yet.', reply)
+        self.assertIn('Not running yet.', reply)
         self.assertRegex(reply, r'reply exactly “yes wbrem-[a-f0-9]{32}”')
         self.assertNotRegex(reply, r'\d{1,2}:\d{2}|\b(?:AM|PM)\b')
         self.assertFalse(self.chat.reminders.listing())
@@ -133,10 +133,11 @@ class RoundThreeTests(unittest.TestCase):
         body = self.chat.get(self.cid)['_personal_action']['body']
         self.assertTrue(body.startswith('Hi there,\n\n'))
         self.assertIn('Thanks for having us last weekend.', body)
-        self.assertIn('our music at your venue', body)
-        self.assertIn('come back for another show', body)
+        self.assertIn('We really appreciate it', body)
+        self.assertIn('would love to come back', body)
         self.assertTrue(body.endswith('Thanks again,\nJeff'))
-        self.assertGreater(len(body.split()), 55)
+        self.assertLessEqual(len(body.split()), 35)
+        self.assertEqual(body.count('.'), 2)
         self.assertIn(body, reply['content'])
         self.assertIn('pending', self.say('go ahead')['content'])
         self.assertFalse(task_queue.tasks(self.root))

@@ -755,7 +755,7 @@ class Chat(TaskDispatch):
             import actions_intent
             if (actions_intent.reminder_request(text) or actions_intent.routine_intent(text)
                     or actions_intent.routine_request(text) or re.match(r'^remind me\b', text, re.I)):
-                scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
+                scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text), action_text=text)
                 if scopes:
                     return self.intent_reply(conversation, chat_intent.hold_reply(scopes))
             try:
@@ -841,7 +841,7 @@ class Chat(TaskDispatch):
                     return improvement
             from reply_quality import spreadsheet_proposal
             if spreadsheet_proposal(text):
-                scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
+                scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text), action_text=text)
                 if scopes:
                     return self.intent_reply(conversation, chat_intent.hold_reply(scopes))
                 from personal_drafts import replace_pending
