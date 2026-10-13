@@ -497,7 +497,8 @@ class Texting:
         conversation["messages"][-1]["text_draft_id"] = identifier
         from instinct import READ_ONLY
         return (READ_ONLY if draft.get('read_only') else
-                f"Draft to {target.get('name') or target.get('guid', 'this recipient')}:\n\n{body}\n\n" +
+                f"Draft to {target.get('name') or target.get('guid', 'this recipient')}" +
+                (" (not sent)" if held else "") + f":\n\n{body}\n\n" +
                 ("When ready, reply " if held else "Reply ") +
                 f"`yes {draft['token']}` to send.")
 

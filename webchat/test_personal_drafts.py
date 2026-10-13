@@ -59,7 +59,12 @@ class PersonalDraftTests(unittest.TestCase):
             with self.subTest(ask=ask):
                 reply = self.say(ask)
                 self.assertIn(body, reply)
-                self.assertTrue(reply.endswith('I’ll wait for your OK before sending.') if not ask.startswith('Book ') else reply.endswith('?'))
+                if ask.startswith('Reply to '):
+                    self.assertTrue(reply.endswith('OK to send once those match?'))
+                    self.assertIn('verify the email thread and recipient', reply)
+                    self.assertNotIn('Subject:', reply)
+                else:
+                    self.assertTrue(reply.endswith('I’ll wait for your OK before sending.') if not ask.startswith('Book ') else reply.endswith('?'))
                 self.assertEqual(len(pending(self.chat, self.chat.get(self.cid))), 1)
                 self.assertIn('pending', self.say('go ahead'))
         self.assertFalse(self.providers.calls)

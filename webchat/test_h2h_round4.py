@@ -76,13 +76,13 @@ class RoundFourTests(unittest.TestCase):
 
     def test_T11_complete_reply_requires_thread_and_recipient_verification(self):
         answer = self.say("Reply to Mike's email and tell him we're in for the gig on the 24th.")['content']
-        self.assertIn('Subject: Gig on the 24th', answer)
+        self.assertNotIn('Subject:', answer)
         self.assertIn('Hi Mike,', answer)
         self.assertIn("We're in for the gig on the 24th.", answer)
         self.assertIn('Please send the load-in time', answer)
         self.assertIn('Thanks,\nJeff', answer)
         self.assertIn('verify the email thread and recipient', answer)
-        self.assertIn('I’ll wait for your OK before sending.', answer)
+        self.assertTrue(answer.endswith('OK to send once those match?'))
         self.assertIn('still pending', self.say('go ahead')['content'])
         self.bridge.deliver.assert_not_called()
         answer = self.say("Could you reply to Sam's email and tell them the plan looks good.")['content']
@@ -246,7 +246,7 @@ class RoundFourTests(unittest.TestCase):
 
     def test_T38_bio_policy_honors_count_without_fabrication(self):
         rules = self.policy('Write a 2-sentence bio for Rad Dad Band for a venue listing.')
-        for part in ('invented genre, repertoire', 'audience response', 'playful dad energy and dad jokes', 'Honor exact sentence counts'):
+        for part in ('invented genre, repertoire', 'audience response', 'restrained humor only if requested', 'Honor exact sentence counts'):
             self.assertIn(part, rules)
         bio = 'Rad Dad Band packs a dad-sized sense of humor. Grab a seat and brace yourself for the dad jokes.'
         self.providers.reply = Mock(return_value=dict(content=bio, provider='fixture', attempts=[]))

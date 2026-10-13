@@ -55,13 +55,15 @@ def save_draft(conversation, request_id, kind, target, body, limitation, *, ques
     question = question or 'I’ll wait for your OK before sending.'
     conversation['_personal_action'] = dict(request_id=request_id, kind=kind, target=target,
                                             body=body, limitation=limitation, question=question, state='draft')
-    return f'Draft for {target}:\n\n{body}\n\n{question}'
+    separator = ' ' if kind == 'calendar' else '\n\n'
+    return f'Draft for {target}:{separator}{body}\n\n{question}'
 
 
 def outbound(text):
     clean = re.sub(r'^(?:please |can you |could you )', '', text.strip(), flags=re.I).rstrip('.?!')
     clean = re.sub(r'^(?:send|draft|write) (?:an? )?email to ', 'email ', clean, flags=re.I)
     email = re.fullmatch(r"reply to (.+?)['’]s email and tell (?:him|her|them) (.+)", clean, re.I)
+    reply_to_thread = email is not None
     email = email or re.fullmatch(r'email (.+?)(?::\s*| (?=asking |that ))(.+)', clean, re.I)
     email = email or re.fullmatch(r'email ((?:my )?\S+) (.+)', clean, re.I)
     if email:
@@ -84,7 +86,9 @@ def outbound(text):
                        else 'Payment due date')
             body += ' Please confirm the due date and amount to pay.'
         greeting = 'Hi,' if re.match(r'(?:my|the|our)\b', target, re.I) else f'Hi {target},'
-        return 'email', target, f'Subject: {subject}\n\n{greeting}\n\n{body}\n\nThanks,\nJeff'
+        # A reply belongs to an existing thread whose subject is not yet known.
+        header = '' if reply_to_thread else f'Subject: {subject}\n\n'
+        return 'email', target, f'{header}{greeting}\n\n{body}\n\nThanks,\nJeff'
     note = re.fullmatch(r'write (?:a )?(?:quick )?thank-you note to (.+?) for (.+)', clean, re.I)
     if note:
         if re.search(r'\bvenue owner\b', note[1], re.I):
@@ -114,8 +118,10 @@ def handle(chat, conversation, text, request_id):
             rows = pending(chat, conversation)
         except (OSError, ValueError, KeyError):
             return 'I could not verify the pending draft. Which action do you want to approve?'
-        if len(rows) != 1:
-            return 'Which action do you want to approve? Please name the draft and recipient or destination.'
+        if not rows:
+            return 'Which action or draft do you mean? I’m missing the context for that approval.'
+        if len(rows) > 1:
+            return 'Which action do you want to approve? There’s more than one pending draft or proposal.'
         return rows[0][1]
     if re.fullmatch(r'book it[.!? ]*', text, re.I):
         return 'Which booking do you mean? I’ll prepare the details and total cost for your OK.'
@@ -158,9 +164,10 @@ def handle(chat, conversation, text, request_id):
     limitation = ''
     if kind == 'email':
         reply_to_thread = bool(re.search(r"\breply to .+?['’]s email\b", text, re.I))
-        review = ('I’d verify the email thread and recipient before sending. ' if reply_to_thread else '')
+        review = ('I’d verify the email thread and recipient first. OK to send once those match?'
+                  if reply_to_thread else 'I’ll wait for your OK before sending.')
         return save_draft(conversation, request_id, kind, target, body, limitation,
-                          question=review + 'I’ll wait for your OK before sending.')
+                          question=review)
     return save_draft(conversation, request_id, kind, target, body, limitation,
                       question=f'OK to proceed with this booking once the details are verified?' if kind == 'booking' else None)
 
