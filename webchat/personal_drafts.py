@@ -119,6 +119,9 @@ def handle(chat, conversation, text, request_id):
         except (OSError, ValueError, KeyError):
             return 'I could not verify the pending draft. Which action do you want to approve?'
         if not rows:
+            if re.search(r'\bsend\b', text, re.I):
+                return ('Which draft and recipient do you mean? '
+                        'Once identified, I’d show the exact message for your OK before sending.')
             return 'Which action or draft do you mean? I’m missing the context for that approval.'
         if len(rows) > 1:
             return 'Which action do you want to approve? There’s more than one pending draft or proposal.'
