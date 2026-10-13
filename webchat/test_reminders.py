@@ -29,6 +29,76 @@ class ReminderTests(unittest.TestCase):
         draft = self.store.handle(text, cid, rid)
         return confirm_reply(self, draft, lambda value: self.store.handle(value, cid, rid + '-confirm'))
 
+    def test_h2h_natural_requests_are_drafts_with_separate_consent(self):
+        cases = [
+            ("Remind me tomorrow at 9 to call the vet about Biscuit's shots", '09:00 AM'),
+            ('Set a reminder every Sunday night to put the trash out', '8pm'),
+            ('Can you remind me in 20 min to check the oven', '09:20 AM'),
+            ('Could you remind me in 2 hrs to stretch', '11:00 AM'),
+        ]
+        for index, (ask, expected) in enumerate(cases):
+            with self.subTest(ask=ask):
+                draft = self.store.handle(ask, 'chat', str(index))
+                self.assertIn(expected, draft)
+                self.assertIn('yes wbrem-', draft)
+                self.assertFalse(self.store.listing())
+        self.assertIn('Assuming AM', self.store.handle(cases[0][0], 'other', 'one'))
+
+    def test_event_relative_is_durable_incomplete_draft_with_one_question(self):
+        ask = 'remind me before band practice to restring the strat'
+        reply = self.store.handle(ask, 'chat', 'one')
+        self.assertIn('restring the strat', reply)
+        self.assertIn('When is band practice?', reply)
+        self.assertEqual(reply.count('?'), 1)
+        row, = json.loads((self.store.folder / 'drafts.json').read_text()).values()
+        self.assertEqual(row['state'], 'needs_time')
+        restored = Reminders(self.root, clock=lambda: self.now)
+        self.assertEqual(restored.handle(ask, 'chat', 'one'), reply)
+        self.assertIn('When is band practice?', restored.handle('yes ' + row['token'], 'chat', 'two'))
+        self.assertFalse(restored.listing())
+
+    def test_weekly_schedule_preserves_local_time_across_dst(self):
+        self.now = datetime(2026, 10, 25, 21, tzinfo=ZONE).timestamp()
+        self.schedule('Set a reminder every Sunday night to put the trash out', 'chat', 'one')
+        row, = self.store.listing()
+        self.assertEqual(row['due_at'], datetime(2026, 11, 1, 20, tzinfo=ZONE).timestamp())
+        self.now = row['due_at']
+        self.store.deliver_due(Mock(return_value=True))
+        self.assertEqual(self.store.listing()[0]['due_at'], datetime(2026, 11, 8, 20, tzinfo=ZONE).timestamp())
+
+    def test_weekly_catchup_keeps_upcoming_same_day_and_rejects_dst_fold(self):
+        from reminders import next_weekday
+        now = datetime(2026, 11, 1, 10, tzinfo=ZONE).timestamp()
+        self.assertEqual(next_weekday(now, dict(day=6, clock='8pm')),
+                         datetime(2026, 11, 1, 20, tzinfo=ZONE).timestamp())
+        self.now = datetime(2026, 11, 1, 0, tzinfo=ZONE).timestamp()
+        reply = self.store.handle('remind me every Sunday at 1:30am to stretch', 'chat', 'fold')
+        self.assertIn('daylight-saving', reply)
+        self.assertFalse(self.store.listing())
+
+    def test_model_extraction_of_literal_schedule_still_needs_fresh_consent(self):
+        import chat_intent
+        ask = 'remind me about stretching tomorrow at 9am'
+        reply = self.store.extracted('{"body":"stretching","when":"tomorrow at 9am"}',
+                                     ask, 'chat', 'one', 'owner', chat_intent.new_state())
+        self.assertIn('Proposed reminder: stretching', reply)
+        self.assertFalse(self.store.listing())
+        confirmed = confirm_reply(self, reply, lambda text: self.store.handle(text, 'chat', 'two'))
+        self.assertIn('Reminder saved', confirmed)
+        self.assertEqual(len(self.store.listing()), 1)
+
+    def test_extraction_cannot_invent_time_or_bypass_consent(self):
+        import chat_intent
+        for output in ('not json', '{"body":"stretch","when":"tomorrow at 9am"}',
+                       '{"body":"invented","when":null}'):
+            reply = self.store.extracted(output, 'remind me soon to stretch', 'chat', 'one', 'owner', chat_intent.new_state())
+            self.assertNotIn('yes wbrem-', reply)
+            self.assertFalse(self.store.listing())
+        reply = self.store.extracted('{"body":"stretch","when":"soon"}',
+                                    'remind me soon to stretch', 'chat', 'two', 'owner', chat_intent.new_state())
+        self.assertIn('Draft reminder: stretch', reply)
+        self.assertEqual(reply.count('?'), 1)
+
     def test_relative_absolute_and_explicit_timezone(self):
         self.assertEqual(instant('in 10 minutes', self.now), self.now + 600)
         self.assertEqual(instant('tomorrow at 9am', self.now), self.now + 86400)
@@ -277,6 +347,21 @@ class ReminderChatTests(unittest.TestCase):
 
     def schedule(self, text, request_id=None):
         return confirm_reply(self, self.say(text, request_id), self.say)
+
+    def test_unknown_reminder_uses_structured_model_extraction_only(self):
+        self.providers.reply = Mock(return_value=dict(content='{"body":"stretch","when":"soon"}', provider='fixture', attempts=[]))
+        self.say('remind me soon to stretch')
+        deadline = time.monotonic() + 3
+        while self.cid in self.chat.workers and time.monotonic() < deadline:
+            time.sleep(.01)
+        reply = self.chat.history(self.cid)['messages'][-1]
+        self.assertIn('Draft reminder: stretch', reply['content'])
+        prompt = self.providers.reply.call_args.args[0]['messages'][-2]['content']
+        self.assertIn('JSON only', prompt)
+        self.assertIn('verbatim', prompt)
+        self.assertFalse(task_queue.tasks(self.root))
+        self.assertFalse(self.chat.reminders.listing())
+        self.notify.assert_not_called()
 
     def test_ambiguous_schedule_stays_in_reminder_lane_without_saving(self):
         self.now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()

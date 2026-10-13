@@ -25,7 +25,11 @@ def routine_intent(text):
 
 
 def reminder_request(text):
-    return REMINDER.fullmatch(text.strip())
+    match = REMINDER.fullmatch(text.strip())
+    if match:
+        return match
+    match = re.fullmatch(r'(?:(?:please\s+)|(?:(?:can|could|would) you\s+))*remind me\s+([\s\S]+)', text.strip(), re.I)
+    return dict(kind='reminder', clause=match[1]) if match else None
 
 
 def handle(store, text, conversation_id, request_id, *, local_tasks=None, intent_state=None, actor='owner'):

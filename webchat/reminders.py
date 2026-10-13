@@ -58,6 +58,69 @@ class ReminderError(ValueError):
     pass
 
 
+class ExtractionNeeded(Exception):
+    """Ask the normal, budgeted reply worker for extraction, never execution."""
+
+
+WEEKDAYS = 'monday tuesday wednesday thursday friday saturday sunday'.split()
+WEEKDAY = '|'.join(WEEKDAYS)
+
+
+def natural_request(text, now):
+    """Normalize only resolved schedule syntax; the consent guard still scans it."""
+    request = reminder_request(text)
+    if not request:
+        return text, None, ''
+    clause = request['clause']
+    clause = re.sub(r'\b(\d+)\s+(mins?|hrs?)\b',
+                    lambda m: m[1] + (' minutes' if m[2].lower().startswith('min') else ' hours'), clause, flags=re.I)
+    assumption = ''
+    clause, count = re.subn(r'\b((?:today|tomorrow) at \d{1,2})(?=\s+to\b|$)', r'\1am', clause, flags=re.I)
+    if count:
+        assumption = 'Assuming AM for the clock time. '
+    weekly = re.fullmatch(r'(every |(?:on )?)(' + WEEKDAY + r')(?:\s+at)?\s+(night|\d{1,2}(?::\d{2})?\s*(?:am|pm)?) to (.+)', clause, re.I)
+    recurrence = None
+    if weekly:
+        clock = weekly[3].lower()
+        if clock == 'night':
+            clock = '8pm'
+            assumption = 'Assuming Sunday night means 8pm. ' if weekly[2].lower() == 'sunday' else 'Assuming night means 8pm. '
+        elif re.fullmatch(r'\d{1,2}', clock):
+            clock += 'am'
+            assumption = 'Assuming AM for the clock time. '
+        local = datetime.fromtimestamp(now, ZONE)
+        date = local.date() + timedelta(days=(WEEKDAYS.index(weekly[2].lower()) - local.weekday()) % 7)
+        if date == local.date():
+            try:
+                instant(f'{date} at {clock}', now)
+            except ReminderError as exc:
+                if 'already passed' not in str(exc):
+                    raise
+                date += timedelta(days=7)
+        clause = f'on {date} at {clock} to {weekly[4]}'
+        if weekly[1].lower() == 'every ':
+            recurrence = dict(day=WEEKDAYS.index(weekly[2].lower()), clock=clock)
+    return ('remind me ' if request['kind'] == 'reminder' else 'set a ' + request['kind'] + ' ') + clause, recurrence, assumption
+
+
+def next_weekday(now, schedule):
+    local = datetime.fromtimestamp(now, ZONE)
+    date = local.date() + timedelta(days=(schedule['day'] - local.weekday()) % 7)
+    try:
+        return instant(f"{date} at {schedule['clock']}", now)
+    except ReminderError as exc:
+        if 'already passed' not in str(exc):
+            raise
+        return instant(f"{date + timedelta(days=7)} at {schedule['clock']}", now)
+
+
+def extraction_prompt(text):
+    return ('Extract a reminder request as JSON only: {"body": string|null, "when": string|null}. '
+            'Copy body and when verbatim from the request. Do not invent dates, event times, '
+            'offsets, or facts. Null for missing fields. This is extraction for a draft, '
+            'never permission to schedule or execute. Request: ' + json.dumps(text))
+
+
 def instant(text, now):
     """Small explicit grammar; never invent a date for an ambiguous request."""
     value = text.strip().casefold()
@@ -198,6 +261,8 @@ def next_morning(now, clock):
 
 
 def repeat_description(row):
+    if row.get('weekly_time'):
+        return ' Repeats every ' + WEEKDAYS[row['weekly_time']['day']].capitalize() + ' at ' + row['weekly_time']['clock'] + ' America/Chicago.'
     if row.get('daily_time'):
         return ' Repeats every morning at ' + row['daily_time'] + ' America/Chicago.'
     return f" Repeats every {row['interval_seconds'] // 60} minutes." if row['interval_seconds'] else ''
@@ -254,7 +319,7 @@ class Reminders:
             raise ReminderError('Reminder storage update is unconfirmed; the change may already be saved. '
                                 'Check “my reminders” before trying again.') from None
 
-    def create(self, cid, request_id, body, due, interval=None, *, daily_time=None, action=None):
+    def create(self, cid, request_id, body, due, interval=None, *, daily_time=None, action=None, weekly_time=None):
         if not 1 <= len(body) <= 1000:
             raise ReminderError('Keep a reminder between 1 and 1,000 characters.')
         identifier = uuid.uuid5(uuid.NAMESPACE_URL, 'webbob-reminder:' + cid + ':' + request_id).hex[:16]
@@ -271,6 +336,8 @@ class Reminders:
                 rows[:] = pending + completed
             row = dict(id=identifier, conversation_id=cid, body=body, due_at=due, interval_seconds=interval,
                        state='pending', created_at=self.clock(), occurrences=0)
+            if weekly_time:
+                row['weekly_time'] = weekly_time
             if daily_time:
                 row['daily_time'] = daily_time
             if action:
@@ -318,7 +385,9 @@ class Reminders:
                     notifications.append(dict(row))
                 row['occurrences'] += 1
                 row['last_fired_at'] = now
-                if row.get('daily_time'):
+                if row.get('weekly_time'):
+                    row['due_at'] = next_weekday(now, row['weekly_time'])
+                elif row.get('daily_time'):
                     row['due_at'] = next_morning(now, row['daily_time'])
                 elif row['interval_seconds']:
                     # One catch-up notice, never a burst after downtime.
@@ -364,17 +433,19 @@ class Reminders:
     def draft_receipt(self, row):
         if row['state'] == 'done':
             return row['receipt']
+        if row['state'] == 'needs_time':
+            return f"Draft reminder: {row['body']} — {row['when']}. Nothing scheduled. {row['question']}"
         if row['state'] != 'draft':
             return ('That reminder draft is ' + row['state'] +
                     '. Check “my reminders” before making a fresh request.')
-        return (f"Nothing was saved to your reminders. Proposed reminder: {row['body']} — "
+        return (row.get("assumption", "") + f"Nothing was saved to your reminders. Proposed reminder: {row['body']} — "
                 f"{stamp(row['due'])}." + repeat_description(dict(
-                    interval_seconds=row['interval'], daily_time=row['daily_time'])) +
+                    interval_seconds=row['interval'], daily_time=row['daily_time'], weekly_time=row.get('weekly_time'))) +
                 (f" Read-only action: {row['action']}." if row['action'] else '') +
                 f" Within one hour reply exactly “yes {row['token']}” to schedule it, "
                 f"or “cancel {row['token']}”.")
 
-    def draft(self, text, cid, request_id, actor, body, due, interval, daily_time, action):
+    def draft(self, text, cid, request_id, actor, body, due, interval, daily_time, action, *, weekly_time=None, assumption=''):
         if not 1 <= len(body) <= 1000:
             raise ReminderError('Keep a reminder between 1 and 1,000 characters.')
         with self.draft_lock() as drafts:
@@ -386,12 +457,12 @@ class Reminders:
             if len(drafts) >= 1000:
                 raise ReminderError('Reminder draft limit reached. Nothing was saved.')
             for old in drafts.values():
-                if old['cid'] == cid and old['state'] == 'draft':
+                if old['cid'] == cid and old['state'] in ('draft', 'needs_time'):
                     old['state'] = 'replaced'
             token = 'wbrem-' + uuid.uuid4().hex
             row = dict(token=token, text=text, cid=cid, request_id=request_id,
                        actor=actor, body=body, due=due, interval=interval,
-                       daily_time=daily_time, action=action, state='draft',
+                       daily_time=daily_time, action=action, weekly_time=weekly_time, assumption=assumption, state='draft',
                        expires=self.clock() + 3600)
             drafts[token] = row
             self.save_drafts(drafts)
@@ -430,7 +501,7 @@ class Reminders:
             row.update(state='unconfirmed', approved_request_id=request_id)
             self.save_drafts(drafts)
             created = self.create(cid, row['request_id'], row['body'], row['due'], row['interval'],
-                                  daily_time=row['daily_time'], action=row['action'])
+                                  daily_time=row['daily_time'], action=row['action'], weekly_time=row.get('weekly_time'))
             row.update(state='done', receipt=self.created_receipt(created))
             self.save_drafts(drafts)
             return row['receipt']
@@ -443,17 +514,59 @@ class Reminders:
                     'Saved holds are checked before each run. No job or message to another person will be sent.')
         return f"Reminder saved: {row['body']} — {stamp(row['due_at'])}.{repeat} ID {row['id']}. It will appear in this chat while Web Bob is running (or when it restarts); macOS alerts require owner opt-in; no text, email or job will be sent."
 
-    def handle(self, text, cid, request_id, *, local_tasks=None, intent_state=None, actor='owner'):
+    def incomplete(self, text, cid, request_id, actor, body, when, question):
+        with self.draft_lock() as drafts:
+            for old in drafts.values():
+                if old['cid'] == cid and old['request_id'] == request_id:
+                    return self.draft_receipt(old)
+                if old['cid'] == cid and old['state'] in ('draft', 'needs_time'):
+                    old['state'] = 'replaced'
+            if len(drafts) >= 1000:
+                raise ReminderError('Reminder draft limit reached. Nothing was saved.')
+            token = 'wbrem-' + uuid.uuid4().hex
+            row = dict(token=token, cid=cid, request_id=request_id, actor=actor, text=text,
+                       body=body, when=when, question=question, state='needs_time')
+            drafts[token] = row
+            self.save_drafts(drafts)
+            return self.draft_receipt(row)
+
+    def extracted(self, output, text, cid, request_id, actor, intent_state):
+        # Model text is untrusted. Only literal spans can become draft operands;
+        # deterministic parsing and the unchanged consent detector still apply.
+        try:
+            scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
+            if scopes:
+                return chat_intent.hold_reply(scopes)
+            value = json.loads(output)
+            body, when = value['body'], value['when']
+            if not isinstance(body, str) or not body.strip() or body not in text:
+                raise ValueError()
+            if when is not None and (not isinstance(when, str) or when not in text):
+                raise ValueError()
+            if approval_requested(text):
+                return 'Nothing was saved. Send a new reminder request when you want it scheduled.'
+            if when:
+                normalized, weekly, assumption = natural_request(f'remind me {when} to {body}', self.clock())
+                parsed = parse(normalized, self.clock())
+                if parsed:
+                    return self.draft(text, cid, request_id, actor, *parsed, None, None,
+                                      weekly_time=weekly, assumption=assumption)
+            return self.incomplete(text, cid, request_id, actor, body, when or 'time needed',
+                                   'What date and time should I use?')
+        except (ValueError, TypeError, KeyError):
+            return 'I need a clear time for your reminder. What date and time should I use?'
+
+    def handle(self, text, cid, request_id, *, local_tasks=None, intent_state=None, actor='owner', allow_model=False):
         try:
             return self._handle(text, cid, request_id, local_tasks=local_tasks,
-                                intent_state=intent_state or chat_intent.new_state(), actor=actor)
+                                intent_state=intent_state or chat_intent.new_state(), actor=actor, allow_model=allow_model)
         except ReminderError as exc:
             return str(exc)
         except (OSError, UnicodeError, json.JSONDecodeError):
             return ('Reminder storage is unavailable; no successful change was verified. '
                     'Check “my reminders” once storage is available before trying again.')
 
-    def _handle(self, text, cid, request_id, *, local_tasks=None, intent_state=None, actor='owner'):
+    def _handle(self, text, cid, request_id, *, local_tasks=None, intent_state=None, actor='owner', allow_model=False):
         control = re.fullmatch(r'(yes|cancel) (wbrem-[0-9a-f]{32})', text.strip())
         if control:
             return self.control(control[1], control[2], cid, request_id, actor, intent_state or chat_intent.new_state(), local_tasks)
@@ -471,9 +584,20 @@ class Reminders:
             return self.cancel(cancel[1])
         if reminder_request(text) or routine_intent(text) or re.match(r'^(?:remind me|set (?:a )?routine|cancel (?:reminder|routine|timer|alarm)|reminder help)\b', command):
             try:
-                parsed = parse(text, self.clock())
+                normalized, weekly, assumption = natural_request(text, self.clock())
+                event = re.fullmatch(r'remind me before (.+?) to (.+)', normalized, re.I)
+                if event and re.fullmatch(r'[\w \'’-]{1,80}', event[1]) and not approval_requested('remind me in 1 minute to ' + event[1] + ' ' + event[2]):
+                    return self.incomplete(text, cid, request_id, actor, event[2], 'before ' + event[1],
+                                           'When is ' + event[1] + '?')
+                parsed = parse(normalized, self.clock())
                 if not parsed:
-                    return ROUTINE_HELP if routine_intent(text) else HELP
+                    body_only = re.fullmatch(r'remind me to (.+)', normalized, re.I)
+                    if body_only:
+                        return self.incomplete(text, cid, request_id, actor, body_only[1], 'time needed',
+                                               'What date and time should I use?')
+                    if reminder_request(text) and allow_model:
+                        raise ExtractionNeeded()
+                    return ROUTINE_HELP if routine_intent(text) else 'What should I remind you about, and when?'
                 body, due, interval = parsed
                 morning = routine_request(text)
                 daily_time = morning_clock(morning['clock']) if morning else None
@@ -488,7 +612,7 @@ class Reminders:
                 scopes = chat_intent.blocked_scopes(intent_state or chat_intent.new_state(), chat_intent.projects(text))
                 if scopes:
                     return chat_intent.hold_reply(scopes)
-                return self.draft(text, cid, request_id, actor, body, due, interval, daily_time, action)
+                return self.draft(text, cid, request_id, actor, body, due, interval, daily_time, action, weekly_time=weekly, assumption=assumption)
             except (UnicodeError, json.JSONDecodeError):
                 raise  # Storage corruption is not a date/time parsing error.
             except ValueError as exc:
