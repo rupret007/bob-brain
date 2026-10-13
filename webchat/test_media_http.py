@@ -11,7 +11,7 @@ from unittest.mock import patch
 import chat_media as media
 import test_webchat as fixtures
 from app import Server
-from test_chat_media import png_fixture, pdf_fixture
+from test_chat_media import png_fixture, pdf_fixture, wav_fixture
 
 
 class MediaHTTPTests(fixtures.Fixture):
@@ -89,6 +89,23 @@ class MediaHTTPTests(fixtures.Fixture):
         self.assertEqual(code, 201)
         # Header rejection occurs before reading an oversize body.
         self.assertEqual(self.upload(b'', 'max.mp4', **{'Content-Length': str(media.MAX_VIDEO_BYTES + 1)})[0], 413)
+
+    def test_json_upload_accepts_audio_above_video_json_envelope(self):
+        """36 MiB WAV is allowed for audio but exceeds the old video-only JSON body cap."""
+        header = wav_fixture(1)
+        size = 36 * 1024 * 1024
+        blob = header + b'\x00' * (size - len(header))
+        self.assertGreater(size, media.MAX_VIDEO_BYTES)
+        self.assertLessEqual(size, media.MAX_AUDIO_BYTES)
+        code, _, body = self.request('POST', '/api/media/upload', {
+            'conversation_id': self.identifier,
+            'filename': 'memo.wav',
+            'data_base64': base64.b64encode(blob).decode(),
+        })
+        self.assertEqual(code, 201)
+        info = json.loads(body)
+        self.assertEqual(info['kind'], 'audio')
+        self.assertEqual(info['bytes'], size)
 
     def test_incomplete_binary_upload_rejected(self):
         body = b'short body'

@@ -140,6 +140,24 @@ async function run(engine, browserType) {
     assert(await page.locator('#new-chat-dialog').isDisabled());
     releaseUpload(); await expectChips(1); await idle();
     await page.locator('.attach-remove').click(); await expectChips(0);
+    if (fs.existsSync(path.join(root, 'memo.wav'))) {
+      await page.locator('#attach-input').setInputFiles(path.join(root, 'memo.wav'));
+      await expectChips(1);
+      await idle();
+      const chipLabel = await page.locator('#attach-preview .attach-file-label').textContent();
+      assert.match(chipLabel, /Voice memo/, 'voice memo chip is labeled honestly before send');
+      await page.locator('#send').click();
+      await expectChips(0);
+      await idle();
+      await page.locator('.message.assistant').last().waitFor();
+      const assistant = await page.locator('.message.assistant').last().textContent();
+      assert.doesNotMatch(assistant, /I heard you say/i, 'assistant must not fabricate memo content');
+      if (/Attachment notes:/.test(assistant)) {
+        assert.match(assistant, /Transcription unavailable|could not be transcribed|no speech detected|timed out/i,
+          'when transcription fails, the UI says so explicitly');
+      }
+      assert.equal(await page.locator('.message.user audio').count(), 1, 'user bubble keeps playable memo attachment');
+    }
     if (fs.existsSync(path.join(root, 'photo.heic'))) {
       await page.locator('#attach-input').setInputFiles(path.join(root, 'photo.heic'));
       await expectChips(1); await idle();
@@ -157,7 +175,7 @@ async function run(engine, browserType) {
     assert.deepEqual(await page.evaluate(() => window.mediaCspFailures), [], 'same-origin previews pass CSP');
     assert.deepEqual(failures, [], 'no page exceptions or external requests');
     if (screenshots) await page.screenshot({ path: path.join(screenshots, `MEDIA-FIXED-0927-${engine}.png`), fullPage: true, animations: 'disabled' });
-    console.log(JSON.stringify({ engine, ok: true, checks: ['photos/videos/files in+out', 'video playback/seek', 'download', 'HEIC preview', 'quick action isolation', 'conversation drafts', 'idempotent retry', 'upload errors and progress', '44px targets', 'CSP', 'reduced and landscape viewport'] }));
+    console.log(JSON.stringify({ engine, ok: true, checks: ['photos/videos/files in+out', 'voice memo upload and honest transcription notice', 'video playback/seek', 'download', 'HEIC preview', 'quick action isolation', 'conversation drafts', 'idempotent retry', 'upload errors and progress', '44px targets', 'CSP', 'reduced and landscape viewport'] }));
   } finally { await browser.close(); }
 }
 (async () => {

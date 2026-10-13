@@ -22,7 +22,13 @@ MAX_ATTACHMENTS_PER_MESSAGE = 6
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_VIDEO_BYTES = 35 * 1024 * 1024
 MAX_FILE_BYTES = 8 * 1024 * 1024
+MAX_AUDIO_BYTES = 50 * 1024 * 1024
 MAX_PROMPT_IMAGE_BYTES = 420_000
+MEMO_TRANSCRIBE_MAX_S = 30
+WHISPER_MODEL = "tiny"
+WHISPER_TRANSCRIBE_TIMEOUT_S = 8
+TRANSCRIPTION_UNAVAILABLE = "Transcription unavailable: cached model missing"
+UNSUPPORTED_AUDIO_MESSAGE = "Unsupported audio format. Accepted: m4a, mp3, wav."
 MAX_VIDEO_FRAMES = 4
 MAX_VIDEO_DURATION_S = 120
 MEDIA_PREP_SECONDS = 20
@@ -30,6 +36,8 @@ PROCESS_SLOTS = threading.BoundedSemaphore(2)
 ALLOWED_IMAGE = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif"}
 ALLOWED_VIDEO = {".mp4", ".mov", ".webm", ".m4v", ".mkv"}
 ALLOWED_FILE = {".pdf", ".txt", ".md", ".csv", ".json", ".log"}
+ALLOWED_AUDIO = {".m4a", ".mp3", ".wav"}
+REJECTED_AUDIO = {".flac", ".ogg", ".aac", ".opus", ".wma", ".aiff", ".aif"}
 ATTACHMENT_TAG = re.compile(r'<bob-webchat-attachment\b[^>]*(?:>|$)', re.I)
 MEDIA_LINK = re.compile(r'!?\[[^\]]*\]\(/api/media/([^\s)]+)\)', re.I)
 
@@ -51,8 +59,12 @@ def classify_suffix(suffix: str) -> str:
         return "image"
     if s in ALLOWED_VIDEO:
         return "video"
+    if s in ALLOWED_AUDIO:
+        return "audio"
     if s in ALLOWED_FILE:
         return "file"
+    if s in REJECTED_AUDIO:
+        raise ValueError(UNSUPPORTED_AUDIO_MESSAGE)
     raise ValueError("Unsupported file type for chat.")
 
 
@@ -63,7 +75,7 @@ def media_limit(filename: str) -> int:
     if not name or name != filename:
         raise ValueError("Invalid attachment filename.")
     kind = classify_suffix(Path(name).suffix)
-    return {"image": MAX_IMAGE_BYTES, "video": MAX_VIDEO_BYTES, "file": MAX_FILE_BYTES}[kind]
+    return {"image": MAX_IMAGE_BYTES, "video": MAX_VIDEO_BYTES, "audio": MAX_AUDIO_BYTES, "file": MAX_FILE_BYTES}[kind]
 
 
 def _check_signature(data: bytes, suffix: str):
@@ -76,8 +88,12 @@ def _check_signature(data: bytes, suffix: str):
         valid = data.startswith((b'GIF87a', b'GIF89a'))
     elif suffix == ".webp":
         valid = len(data) >= 12 and data[:4] == b'RIFF' and data[8:12] == b'WEBP'
-    elif suffix in {".heic", ".heif", ".mp4", ".mov", ".m4v"}:
+    elif suffix in {".heic", ".heif", ".mp4", ".mov", ".m4v", ".m4a"}:
         valid = len(data) >= 8 and data[4:8] in (b'ftyp', b'moov', b'mdat', b'wide')
+    elif suffix == ".mp3":
+        valid = data.startswith(b'ID3') or (len(data) >= 2 and data[0] == 0xFF and (data[1] & 0xE0) == 0xE0)
+    elif suffix == ".wav":
+        valid = len(data) >= 12 and data[:4] == b'RIFF' and data[8:12] == b'WAVE'
     elif suffix in {".mkv", ".webm"}:
         valid = data.startswith(b'\x1aE\xdf\xa3')
     elif suffix == ".pdf":
@@ -143,6 +159,8 @@ def store_media(root: Path, data: bytes, filename: str, *, conversation_id: str,
         path.unlink(missing_ok=True)
         meta_path.unlink(missing_ok=True)
         raise
+    if kind == "audio":
+        meta["duration_s"] = _probe_duration(path, MediaBudget(seconds=5))
     return meta
 
 
@@ -157,8 +175,9 @@ def load_meta(root: Path, media_id: str, *, conversation_id: str) -> dict:
             raise ValueError()
         meta = json.loads(sidecar.read_text())
         suffix = meta["suffix"]
+        allowed = ALLOWED_IMAGE | ALLOWED_VIDEO | ALLOWED_FILE | ALLOWED_AUDIO
         if (not conversation_id or meta["conversation_id"] != conversation_id
-                or meta["media_id"] != media_id or suffix not in ALLOWED_IMAGE | ALLOWED_VIDEO | ALLOWED_FILE
+                or meta["media_id"] != media_id or suffix not in allowed
                 or meta["kind"] != classify_suffix(suffix)):
             raise ValueError()
         path = _upload_dir(root) / (media_id + suffix)
@@ -277,22 +296,84 @@ def extract_video_frames(path: Path, duration: float | None, budget=None) -> lis
     return frames
 
 
-def extract_audio_transcript(path: Path, budget=None) -> str:
-    # Only use the Python Whisper CLI with its matching flags and an already
-    # cached model. Never download model weights on a chat request.
-    whisper = shutil.which("whisper")
-    if not whisper or not (Path.home() / ".cache/whisper/tiny.pt").is_file():
-        return ""
+def _whisper_cached() -> bool:
+    return bool(shutil.which("whisper")) and (Path.home() / ".cache/whisper" / f"{WHISPER_MODEL}.pt").is_file()
+
+
+def _format_duration(seconds: float | None) -> str:
+    if seconds is None or not math.isfinite(seconds) or seconds < 0:
+        return "0:00"
+    whole = int(seconds)
+    return f"{whole // 60}:{whole % 60:02d}"
+
+
+def memo_chip_label(duration_s: float | None = None, *, transcribed: bool = False) -> str:
+    parts = ["Voice memo"]
+    if duration_s is not None and math.isfinite(duration_s) and duration_s > 0:
+        parts.append(_format_duration(duration_s))
+    if transcribed:
+        parts.append("transcribed locally")
+    return " · ".join(parts)
+
+
+def memo_coverage_label(full_duration_s: float | None, transcribed_s: float, truncated: bool) -> str:
+    if truncated and full_duration_s is not None:
+        return (f"Transcribed 0:00–{_format_duration(transcribed_s)} of "
+                f"{_format_duration(full_duration_s)} (truncated)")
+    if transcribed_s > 0:
+        return f"Transcribed 0:00–{_format_duration(transcribed_s)}"
+    return "Transcription coverage not available"
+
+
+def _memo_no_transcription_meta(full_duration: float | None) -> dict:
+    return {"full_duration_s": full_duration, "transcribed_duration_s": 0, "truncated": False,
+            "coverage_label": "Transcription coverage not available"}
+
+
+def _memo_success_transcription_meta(full_duration: float | None) -> dict:
+    if full_duration is not None and math.isfinite(full_duration) and full_duration > 0:
+        transcribed_s = min(MEMO_TRANSCRIBE_MAX_S, full_duration)
+    else:
+        transcribed_s = float(MEMO_TRANSCRIBE_MAX_S)
+    truncated = full_duration is not None and full_duration > MEMO_TRANSCRIBE_MAX_S
+    return {"full_duration_s": full_duration, "transcribed_duration_s": transcribed_s, "truncated": truncated,
+            "coverage_label": memo_coverage_label(full_duration, transcribed_s, truncated)}
+
+
+def transcribe_voice_memo(path: Path, budget=None) -> dict:
+    """Local ffmpeg + cached Whisper only. Never downloads model weights."""
     budget = budget or MediaBudget()
+    full_duration = _probe_duration(path, budget)
+    common = {"source": "local-cache", "model": f"{WHISPER_MODEL}.pt"}
+    if not _whisper_cached():
+        return {**common, **_memo_no_transcription_meta(full_duration),
+                "status": "unavailable", "text": TRANSCRIPTION_UNAVAILABLE}
+    whisper = shutil.which("whisper")
+    timeout = min(WHISPER_TRANSCRIBE_TIMEOUT_S, max(1, budget.deadline - time.monotonic()))
     with tempfile.TemporaryDirectory() as tmp:
         wav = Path(tmp) / "audio.wav"
         try:
-            _run_ffmpeg(["-i", str(path), "-vn", "-ac", "1", "-ar", "16000", "-t", "30", str(wav)], budget)
-            budget.run([whisper, str(wav), "--model", "tiny", "--output_format", "txt", "--output_dir", tmp,
-                        "--language", "en", "--threads", "1", "--fp16", "False"], timeout=8)
-            return (Path(tmp) / "audio.txt").read_text(errors="replace")[:8000].strip()
-        except (ValueError, OSError):
-            return ""
+            _run_ffmpeg(["-i", str(path), "-vn", "-ac", "1", "-ar", "16000",
+                         "-t", str(MEMO_TRANSCRIBE_MAX_S), str(wav)], budget)
+            budget.run([whisper, str(wav), "--model", WHISPER_MODEL, "--output_format", "txt", "--output_dir", tmp,
+                        "--language", "en", "--threads", "1", "--fp16", "False"], timeout=timeout)
+            text = (Path(tmp) / "audio.txt").read_text(errors="replace")[:8000].strip()
+        except ValueError as exc:
+            reason = str(exc).lower()
+            if "timed out" in reason:
+                return {**common, **_memo_no_transcription_meta(full_duration), "status": "timeout",
+                        "text": f"Transcription timed out after {int(timeout)} s. Memo not transcribed."}
+            return {**common, **_memo_no_transcription_meta(full_duration), "status": "failed", "text": ""}
+        except OSError:
+            return {**common, **_memo_no_transcription_meta(full_duration), "status": "failed", "text": ""}
+    if not text:
+        return {**common, **_memo_no_transcription_meta(full_duration), "status": "empty", "text": ""}
+    return {**common, **_memo_success_transcription_meta(full_duration), "status": "ok", "text": text}
+
+
+def extract_audio_transcript(path: Path, budget=None) -> str:
+    result = transcribe_voice_memo(path, budget)
+    return result["text"] if result.get("status") == "ok" else ""
 
 
 def read_text_file(path: Path, limit=MAX_FILE_BYTES, budget=None) -> str:
@@ -364,6 +445,31 @@ def enrich_for_model(root: Path, metas: list[dict], *, redact, cancel=None) -> d
                                        + "\n".join(frame_text) + "\nAudio transcript (first 30s maximum): " + (transcript or "unavailable"))
                     if not transcript:
                         warnings.append(f"{redact(meta['filename'])}: audio transcript unavailable; analysis uses sampled frames only.")
+                elif meta["kind"] == "audio":
+                    memo = transcribe_voice_memo(path, budget)
+                    chip = memo_chip_label(meta.get("duration_s") or memo.get("full_duration_s"),
+                                           transcribed=memo.get("status") == "ok")
+                    transcript = redact(memo.get("text") or "")
+                    text_blocks.append(
+                        f"Voice memo attachment {label} ({chip}).\n"
+                        f"{memo.get('coverage_label') or memo_coverage_label(memo.get('full_duration_s'), memo.get('transcribed_duration_s', 0), memo.get('truncated'))}\n"
+                        f"Transcript: {transcript or '(empty)'}")
+                    if memo.get("status") == "ok":
+                        text_blocks[-1] += f"\nTranscription source={memo.get('source')} model={memo.get('model')} coverage_seconds={memo.get('transcribed_duration_s')}"
+                        if memo.get("truncated"):
+                            coverage = (memo.get("coverage_label")
+                                        or memo_coverage_label(memo.get("full_duration_s"),
+                                                               memo.get("transcribed_duration_s", 0),
+                                                               memo.get("truncated")))
+                            warnings.append(f"{redact(meta['filename'])}: {coverage} (first {int(MEMO_TRANSCRIBE_MAX_S)}s only)")
+                    elif memo.get("status") == "unavailable":
+                        warnings.append(f"{redact(meta['filename'])}: {TRANSCRIPTION_UNAVAILABLE}")
+                    elif memo.get("status") == "timeout":
+                        warnings.append(f"{redact(meta['filename'])}: {memo.get('text')}")
+                    elif memo.get("status") == "empty":
+                        warnings.append(f"{redact(meta['filename'])}: no speech detected in the transcribed portion.")
+                    elif memo.get("status") == "failed":
+                        warnings.append(f"{redact(meta['filename'])}: voice memo could not be transcribed.")
                 else:
                     excerpt = redact(read_text_file(path, budget=budget))[:12000]
                     text_blocks.append(f"File attachment {label} (excerpt):\n{excerpt}")
@@ -447,7 +553,7 @@ def requested_attachment_ids(message: dict) -> list[str]:
                r'(?P<verb>echo|return|attach|re-?attach|send back|send|show)\s+'
                r'(?P<me>me\s+)?(?:(?P<count>all(?: of)?|both)\s+)?'
                r'(?:(?:the|this|these|that|those|my|our|attached|uploaded|original|existing|same)\s+)*'
-               r'(?P<target>images?|photos?|pictures?|videos?|files?|attachments?|uploadselection\d+asset)'
+               r'(?P<target>images?|photos?|pictures?|videos?|audios?|memos?|files?|attachments?|uploadselection\d+asset)'
                r'(?P<suffix>(?:\s+(?:back|again|here|to me|in (?:this|your) (?:chat|reply)|as (?:an? )?attachments?))*)')
     # Every companion clause must be classified. Skipping unknown clauses
     # would turn reported text or an unfamiliar edit verb into permission to
@@ -472,9 +578,9 @@ def requested_attachment_ids(message: dict) -> list[str]:
     # requests a deliverable and must not silently return the original PNG.
     readout = (read_prefix + r'give(?: me)?\s+(?:(?:the|this|these|that|those|its|their|dominant|main|primary)\s+)*'
                r'(?:colou?rs?|tokens?(?:\s+values?)?|values?|dimensions?|sizes?)(?:' + source + r')*')
-    noun_continuation = r'(?:the\s+)?(?:attached\s+|uploaded\s+)?(?:pdf|text file|image|photo|picture|video|document|uploadselection\d+asset)s?'
+    noun_continuation = r'(?:the\s+)?(?:attached\s+|uploaded\s+)?(?:pdf|text file|image|photo|picture|video|audio|memo|document|uploadselection\d+asset)s?'
     def current_sources(clause):
-        for words, kind in ((r'images?|photos?|pictures?', 'image'), (r'videos?', 'video')):
+        for words, kind in ((r'images?|photos?|pictures?', 'image'), (r'videos?', 'video'), (r'audios?|memos?', 'audio')):
             if re.search(r'\b(?:' + words + r')\b', clause) and not any(a.get('kind') == kind for a in owned):
                 return False
         if re.search(r'\bpdfs?\b', clause) and not any(
@@ -498,7 +604,9 @@ def requested_attachment_ids(message: dict) -> list[str]:
         if match['verb'] in ('send', 'show') and not (match['me'] or match['suffix']):
             return []
         target = match['target']
-        kind = 'image' if target.rstrip('s') in ('image', 'photo', 'picture') else 'video' if target.rstrip('s') == 'video' else None
+        kind = ('image' if target.rstrip('s') in ('image', 'photo', 'picture')
+                else 'video' if target.rstrip('s') == 'video'
+                else 'audio' if target.rstrip('s') in ('audio', 'memo') else None)
         options = selectors.get(target, [a for a in owned if kind is None or a.get('kind') == kind])
         plural = target.endswith('s') or match['count'] is not None
         if not options or (match['count'] == 'both' and len(options) != 2) or (not plural and len(options) != 1):
@@ -510,5 +618,8 @@ def requested_attachment_ids(message: dict) -> list[str]:
 def public_attachment(meta: dict) -> dict:
     from urllib.parse import quote
     url = f"/api/media/{meta['media_id']}?conversation_id={quote(meta['conversation_id'], safe='')}"
-    return {"media_id": meta["media_id"], "filename": meta.get("filename") or meta["media_id"],
-            "kind": meta.get("kind", "file"), "url": url, "bytes": meta.get("bytes", 0)}
+    out = {"media_id": meta["media_id"], "filename": meta.get("filename") or meta["media_id"],
+           "kind": meta.get("kind", "file"), "url": url, "bytes": meta.get("bytes", 0)}
+    if meta.get("kind") == "audio":
+        out["memo_label"] = memo_chip_label(meta.get("duration_s"))
+    return out
