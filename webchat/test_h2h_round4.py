@@ -240,7 +240,7 @@ class RoundFourTests(unittest.TestCase):
 
     def test_T37_test_policy_requires_current_commit_evidence(self):
         rules = self.policy('Did the WebJam tests pass?')
-        self.assertIn('no test run has been seen this turn', rules)
+        self.assertIn('state in first person that the result is unverified', rules)
         self.assertIn('whether its commit matches the current commit', rules)
         self.assertIn('Never equate an old passing run with current code passing', rules)
 

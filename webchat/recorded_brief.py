@@ -55,5 +55,5 @@ def reply(root, text):
     if projects:
         return ('The current status isn’t fetched. '
                 'I can check active projects and give you one line each: status, blocker, next step.')
-    return ('I don’t have that decision in my notes yet. Which decision do you mean?' if decision else
-            'I don’t have an update saved yet. Which project or task do you mean?')
+    return ('Which decision do you mean? Share the topic or earlier messages for an accurate recap.' if decision else
+            'Which project or task do you mean? I’d need its current result to confirm whether it’s done.')
