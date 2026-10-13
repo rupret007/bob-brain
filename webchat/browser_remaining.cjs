@@ -68,7 +68,8 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       await page.setViewportSize({width: 390, height: 844});
       await notes.scrollIntoViewIfNeeded();
       await page.screenshot({path: path.join(config.output, engine + '-saved-memory.png'), animations: 'disabled'});
-      const savedDraft = await say('remind me to ' + body + ' in 1 second');
+      // Exercise the draft path; explicit personal intervals save directly.
+      const savedDraft = await say('create a reminder to ' + body + ' in 1 second');
       const savedApproval = savedDraft.messages.at(-1).content.match(/Reply `(yes wbrem-[0-9a-f]{32})`/);
       assert(savedApproval, savedDraft.messages.at(-1).content);
       const beforeSaved = await (await context.request.get(config.url + '/api/reminders')).json();
@@ -81,7 +82,7 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
         hasText: new RegExp('^Reminder: ' + body + ' \\(due [^)]+\\)\\.$')});
       await dueNotice.waitFor({timeout: 8000});
       assert.equal(await dueNotice.count(), 1, 'The live update must be a real due notification');
-      const repeatingDraft = await say('remind me every 1 minute to ' + engine + ' stretch');
+      const repeatingDraft = await say('create a reminder every 1 minute to ' + engine + ' stretch');
       const repeatingApproval = repeatingDraft.messages.at(-1).content.match(/Reply `(yes wbrem-[0-9a-f]{32})`/);
       assert(repeatingApproval, repeatingDraft.messages.at(-1).content);
       const beforeRepeating = await (await context.request.get(config.url + '/api/reminders')).json();

@@ -65,7 +65,8 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       }
       const body = engine + ' cold start reminder ' + Date.now();
       const started = Date.now();
-      const initialDraft = await submit('remind me to ' + body + ' in 1 second');
+      // Exercise the draft path; explicit personal intervals save directly.
+      const initialDraft = await submit('create a reminder to ' + body + ' in 1 second');
       assert.equal(await reminderCount(body), 0, 'A reminder draft must not schedule a notification');
       await submit(confirmation(initialDraft));
       // This is a server-created update, not a composer request that can invoke
@@ -84,7 +85,7 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       // Draft first, then hold the exact confirmation's HTTP acknowledgment.
       // The UI must regain control without replaying the accepted mutation.
       const pendingBody = engine + ' recovery reminder ' + Date.now();
-      const pendingRequest = 'remind me to ' + pendingBody + ' in 10 minutes';
+      const pendingRequest = 'create a reminder to ' + pendingBody + ' in 10 minutes';
       const pendingDraft = await submit(pendingRequest);
       assert.equal(await reminderCount(pendingBody), 0, 'The pending reminder needs separate consent');
       const pendingText = confirmation(pendingDraft);
