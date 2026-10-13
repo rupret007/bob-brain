@@ -71,7 +71,10 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       await submit(confirmation(initialDraft));
       // This is a server-created update, not a composer request that can invoke
       // its own reply polling. The normal chat poll must already be running.
-      await page.locator('.message.assistant').filter({hasText: 'Reminder: ' + body}).waitFor({timeout: 6000});
+      // Wait for the due notice itself. A case-insensitive substring would also
+      // match the earlier 'Draft reminder: ...' message (strict-mode race).
+      await page.locator('.message.assistant .body').filter({
+        hasText: new RegExp('^Reminder: ' + body + ' \\(due ')}).waitFor({timeout: 6000});
       const dueNotice = page.locator('.message.assistant .body').filter({
         hasText: new RegExp('^Reminder: ' + body + ' \\(due [^)]+\\)\\.$')});
       await dueNotice.waitFor({timeout: 6000});
