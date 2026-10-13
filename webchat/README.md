@@ -215,6 +215,13 @@ five-minute execution limit.
 The runner refills available slots every five seconds, routes analysis to Claude
 and API workers before tool workers, and shifts failed or capped work to a
 compatible provider with headroom. Busy pinned lanes retain their queued work.
+An opt-in shared-machine execution lease (`BOB_SHARED_EXECUTION_LEASE=1` or
+`conductor/webchat/execution-lease.json`) can cap concurrent background worker
+jobs at one slot by default. It layers on existing lane locks and queue
+admission, leaves interactive chat outside the cap, and defers extra jobs with a
+recorded capacity reason. Hold and budget rejection still win. The OS flock is
+released when the holding process exits; the lease does not kill work or start
+another scheduler.
 After every package finishes or exhausts retries, a local reducer posts one
 combined answer with attributed results and failures. It preserves disagreements
 and does not spend another provider call to deliver the results. Saved answers

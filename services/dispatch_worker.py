@@ -101,6 +101,8 @@ def execute(identifier, token):
             blocked=generation_budget.task_block(ROOT,row.get('report_contract'))
             if blocked:raise ResultRejected(blocked)
             stack.enter_context(slot(row["worker"]))
+            import execution_lease
+            stack.enter_context(execution_lease.hold(ROOT))
             api_only = row["worker"] in task_queue.API_WORKERS
             kind = task_queue.task_kind(row["kind"], row["prompt"])
             external_research = (api_only and kind == 'research' and not row.get('source_job_id')
@@ -313,12 +315,13 @@ def execute(identifier, token):
             if result:
                 atomic_write(folder / "RESULT.md", answer + "\n")
             return 0 if result else 1
-    except BlockingIOError:
+    except BlockingIOError as exc:
         if owns_task:
             current = task_queue.tasks(ROOT).get(identifier, {})
             started = bool(current.get('execution_started_at'))
+            waiting = str(exc) if str(exc) and 'execution lease' in str(exc).lower() else 'Waiting for the shared worker lane'
             task_queue.transition(ROOT, identifier, token, 'retry' if started else 'busy',
-                                  error='Execution interrupted by an I/O failure' if started else 'Waiting for the shared worker lane')
+                                  error='Execution interrupted by an I/O failure' if started else waiting)
         return 0
     except ResultRejected as exc:
         message = redact(str(exc))[:1500]
