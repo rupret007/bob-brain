@@ -48,7 +48,7 @@ class RoundTwoTests(unittest.TestCase):
 
     def test_oven_delay_clock_and_separate_durable_consent(self):
         reply = self.say('Can you remind me in 20 min to check the oven')['content']
-        self.assertEqual(reply.splitlines()[0], 'Reminder to check the oven in 20 minutes (10:21 PM) — OK to set it?')
+        self.assertEqual(reply.splitlines()[0], 'Reminder to check the oven in 20 minutes — OK to set it?')
         self.assertNotIn('Proposed reminder', reply)
         self.assertIn('Nothing was saved to your reminders yet.', reply)
         self.assertFalse(self.chat.reminders.listing())

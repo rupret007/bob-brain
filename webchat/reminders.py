@@ -446,7 +446,7 @@ class Reminders:
             unit = relative[2].lower().rstrip('s')
             unit = {'min': 'minute', 'hr': 'hour'}.get(unit, unit)
             delay = relative[1] + ' ' + unit + ('s' if int(relative[1]) != 1 else '')
-            when = 'in ' + delay + ' (' + datetime.fromtimestamp(row['due'], ZONE).strftime('%I:%M %p') + ')'
+            when = 'in ' + delay
             lead = f"Reminder to {row['body']} "
         return (row.get("assumption", "") + lead + when + repeat_description(dict(
                     interval_seconds=row['interval'], daily_time=row['daily_time'], weekly_time=row.get('weekly_time'))) +

@@ -72,6 +72,12 @@ def outbound(text):
         return 'email', target, body[0].upper() + body[1:]
     note = re.fullmatch(r'write (?:a )?(?:quick )?thank-you note to (.+?) for (.+)', clean, re.I)
     if note:
+        if re.search(r'\bvenue owner\b', note[1], re.I):
+            return 'note', note[1], ('Hi there,\n\nThanks for ' + note[2] +
+                '. We really appreciate it — getting to share our music at your venue means a lot to us. '
+                'Thank you for making room for live music and giving our band a place to play. '
+                'We’d love to come back for another show whenever the timing works for you.\n\n'
+                'Thanks again,\nJeff')
         return 'note', note[1], ('Hi there,\n\nThanks for ' + note[2] +
                                   '. We really appreciate it and would love to do it again.\n\nThanks again,\nJeff')
     note = re.fullmatch(r'(?:write|draft) (?:a )?(?:quick )?note to (.+?)(?::\s*| saying )(.+)', clean, re.I)

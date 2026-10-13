@@ -325,6 +325,33 @@ def label(chat):
     return str(chat.get("displayName") or chat.get("name") or chat.get("guid") or "Unnamed thread")
 
 
+def recipient_name(query):
+    """Normalize conversational wrappers, never an exact transport identifier."""
+    name = re.sub(r'^the\s+', '', query.strip(), flags=re.I)
+    return re.sub(r'\s+(?:group(?:\s+chat)?|chat|thread)$', '', name, flags=re.I).casefold()
+
+
+def message_body(body, *, natural=False):
+    """Remove trailing instructions to Bob, leaving quoted/literal text alone."""
+    hold = (r"(?:please\s+)?(?:don['’]t send(?: it)?(?: yet| for now)?|"
+            r"do not send(?: it)?(?: yet| for now)?|hold off (?:on )?sending(?: it)?(?: for now)?|"
+            r"(?:just )?(?:keep|save) (?:it|this) as a draft(?: for now)?|"
+            r"show me first|for now)")
+    # Require a clause boundary: 'We need a drummer for now' is message content.
+    pattern = r'(?:\s*[,;.!—–]\s*|\s+(?:but|and)\s+)(?:(?:but|and)\s+)?' + hold + r'[.!\s]*$'
+    cleaned = body.strip()
+    while True:
+        shortened = re.sub(pattern, '', cleaned, flags=re.I).rstrip()
+        if shortened == cleaned:
+            break
+        cleaned = shortened
+    if cleaned and (natural or cleaned != body.strip()) and not cleaned.startswith(('"', '“', "'", '‘')):
+        cleaned = cleaned[0].upper() + cleaned[1:]
+        if cleaned[-1] not in '.!?':
+            cleaned += '.'
+    return cleaned
+
+
 def recipient(chat):
     guid = chat.get("guid")
     people = chat.get("participants")
@@ -415,9 +442,10 @@ class Texting:
             self.instinct.observe(exact)
             if not exact:
                 raise TextingError("No matching thread for that exact thread ID. Nothing was sent.")
-        matches = exact or [c for c in chats if label(c).casefold() == query.casefold() or
+        name = recipient_name(query)
+        matches = exact or [c for c in chats if recipient_name(label(c)) == name or
                            query in [p.get("address") for p in (c.get("participants") or []) if isinstance(p, dict)]]
-        matches = matches or [c for c in chats if query.casefold() in label(c).casefold()]
+        matches = matches or [c for c in chats if name and name in recipient_name(label(c))]
         if not matches:
             raise TextingError("No matching thread in the 200 most recent threads. Try ‘texts’ and use an exact thread ID.")
         if len(matches) != 1:
@@ -561,7 +589,7 @@ class Texting:
         replace = re.fullmatch(r"replace text draft ([0-9a-f]{16}) to (.+?):\s*([\s\S]+)", clean, re.I)
         compose = re.fullmatch(r"(?:draft|write|compose|send) (?:a )?(?:text|reply|sms|message)(?: reply)? to (.+?)(?::\s*| saying )([\s\S]+)", clean, re.I)
         compose = compose or re.fullmatch(r"text (.+?)(?::\s*| that )([\s\S]+)", clean, re.I)
-        compose = compose or re.fullmatch(r"tell (.+?) group chat ([\s\S]+)", clean, re.I)
+        compose = compose or re.fullmatch(r"tell (.+?\s+(?:group(?:\s+chat)?|chat|thread))\s+([\s\S]+)", clean, re.I)
         read = re.fullmatch(r"(read|show|summari[sz]e) (?:the )?(?:recent )?(?:texts?|messages?|imessages?|sms|thread) (?:from |with |in |for )?(.+)", clean, re.I)
         listing = command in ("texts", "list texts", "show texts", "recent texts", "show recent texts", "list recent texts", "summarize recent texts", "summarize texts")
         # Incomplete texting commands only — not colloquial chat like “text me when you're free”.
@@ -606,6 +634,8 @@ class Texting:
                     query, body = replace[2], replace[3]
                 else:
                     query, body = compose[1], compose[2]
+                    body = message_body(body, natural=bool(re.match(r'tell\s', clean, re.I)
+                                                          or ' saying ' in clean.lower()))
                 target = recipient(self.resolve(query.strip()))
                 if redact(json.dumps(target, ensure_ascii=False)) != json.dumps(target, ensure_ascii=False):
                     raise TextingError("The thread details contain sensitive credentials; no draft was prepared.")
@@ -643,7 +673,7 @@ class Texting:
             # choices are untrusted and cannot select this fallback.
             if compose and not replace and re.search(r'not configured|unavailable', content.partition('\n')[0], re.I):
                 from personal_drafts import save_draft
-                content = save_draft(conversation, request_id, 'text', compose[1], compose[2],
+                content = save_draft(conversation, request_id, 'text', compose[1], message_body(compose[2]),
                                      content + ' The draft remains pending until the recipient and transport are verified.')
         answer["content"] = redact(content)
         # Every handled turn is saved once here. Confirmations also persist consumed

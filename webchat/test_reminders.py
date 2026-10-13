@@ -33,8 +33,8 @@ class ReminderTests(unittest.TestCase):
         cases = [
             ("Remind me tomorrow at 9 to call the vet about Biscuit's shots", '09:00 AM'),
             ('Set a reminder every Sunday at 8pm to put the trash out', '08:00 PM'),
-            ('Can you remind me in 20 min to check the oven', '09:20 AM'),
-            ('Could you remind me in 2 hrs to stretch', '11:00 AM'),
+            ('Can you remind me in 20 min to check the oven', 'in 20 minutes'),
+            ('Could you remind me in 2 hrs to stretch', 'in 2 hours'),
         ]
         for index, (ask, expected) in enumerate(cases):
             with self.subTest(ask=ask):
@@ -42,6 +42,11 @@ class ReminderTests(unittest.TestCase):
                 self.assertIn(expected, draft)
                 self.assertIn('yes wbrem-', draft)
                 self.assertFalse(self.store.listing())
+                if index in (2, 3):
+                    self.assertNotRegex(draft, r'\d{1,2}:\d{2}|\b(?:AM|PM)\b')
+                    with self.store.draft_lock() as rows:
+                        row, = [r for r in rows.values() if r['state'] == 'draft' and r['cid'] == 'chat']
+                    self.assertEqual(row['due'], self.now + (1200 if index == 2 else 7200))
         self.assertIn('Assuming AM', self.store.handle(cases[0][0], 'other', 'one'))
         draft = self.store.handle('Set a reminder every Sunday night to put the trash out', 'chat', 'no-clock')
         self.assertIn('What time should I use?', draft)
