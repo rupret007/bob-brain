@@ -217,6 +217,12 @@ class Chat(TaskDispatch):
         self.reconcile_tasks()
 
     def save(self, conversation):
+        messages = conversation.get('messages', [])
+        if messages and messages[-1].get('role') == 'assistant' and messages[-1].get('status') == 'done':
+            from reply_quality import check
+            ask = next((m.get('content', '') for m in reversed(messages) if m.get('role') == 'user'
+                        and m.get('request_id') == messages[-1].get('request_id')), '')
+            messages[-1]['content'] = check(ask, messages[-1].get('content', ''))
         conversation["updated_at"] = time.time()
         if self.ledger_root(conversation['id']) != self.root:
             # Fixture context must remain excluded after its in-memory overlay
@@ -356,7 +362,7 @@ class Chat(TaskDispatch):
             return self.public(value)
 
     def public(self, value):
-        excluded = {"_coordination_outbox", "_coordination_excluded", "_coordination_prepared_batches", "codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job",
+        excluded = {"_personal_action", "_coordination_outbox", "_coordination_excluded", "_coordination_prepared_batches", "codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job",
                     "pending_memory", "pending_memory_id", "pending_memory_removal", "_project_edit", "_project_removal", "_project_intent", "_report_inputs",
                     "_project_handoffs", "_project_returns"}
         # Extensions never see core-private state or mutable conversation objects.
@@ -365,6 +371,7 @@ class Chat(TaskDispatch):
         for message in public.get('messages', []):
             message.pop('_generation', None)
             message.pop('_reply_contract', None)
+            message.pop('_reminder_extraction', None)
         info = self.workers.get(value["id"])
         public["reply_stopping"] = bool(info and info["cancel"].is_set())
         return public
@@ -710,6 +717,10 @@ class Chat(TaskDispatch):
                     if message.get('request_id') == request_id:
                         message['private_memory'] = True
                 return self.intent_reply(conversation, inspect_memory(self.ledger_root(identifier), self.redact), provider='memory')
+            from personal_drafts import handle as personal_draft_turn
+            personal = personal_draft_turn(self, conversation, text, request_id)
+            if personal is not None:
+                return self.intent_reply(conversation, self.redact(personal), provider='drafts')
             # Text intent and confirmations never enter generic job/provider routing.
             def persist_texting(value):
                 for key in ("pending_job", "pending_job_id", "pending_council", "pending_council_id"):
@@ -717,13 +728,27 @@ class Chat(TaskDispatch):
                 self.save(value)
                 self.conversations[identifier] = copy.deepcopy(value)
             if self.texting.handle(conversation, text, actor, request_id, persist_texting, self.redact):
+                if conversation.get('_personal_action', {}).get('request_id') == request_id:
+                    from personal_drafts import replace_pending
+                    replace_pending(self, conversation, keep='personal')
+                    self.save(conversation)
+                if conversation['messages'][-1].get('text_draft_id'):
+                    from personal_drafts import replace_pending
+                    replace_pending(self, conversation, keep='texting')
+                    self.save(conversation)
+                self.conversations[identifier] = copy.deepcopy(conversation)
                 return self.public(conversation)
             calendar = self.calendar.handle(text, identifier, request_id, intent_state)
             if calendar is not None:
+                from personal_drafts import calendar_unavailable
+                calendar = calendar_unavailable(self, conversation, text, request_id, calendar)
+                if 'Calendar draft (not created)' in calendar:
+                    from personal_drafts import replace_pending
+                    replace_pending(self, conversation, keep='calendar')
                 for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
                     conversation.pop(key, None)
                 return self.intent_reply(conversation, self.redact(calendar), provider='calendar')
-            from reminders import ReminderError
+            from reminders import ReminderError, ExtractionNeeded
             import actions_intent
             if (actions_intent.reminder_request(text) or actions_intent.routine_intent(text)
                     or actions_intent.routine_request(text) or re.match(r'^remind me\b', text, re.I)):
@@ -731,9 +756,14 @@ class Chat(TaskDispatch):
                 if scopes:
                     return self.intent_reply(conversation, chat_intent.hold_reply(scopes))
             try:
-                reminder = actions_intent.handle(self.reminders, text, identifier, request_id, local_tasks=self.local_tasks, intent_state=intent_state, actor=actor)
-                if reminder is None:
-                    reminder = self.reminders.handle(text, identifier, request_id, local_tasks=self.local_tasks, intent_state=intent_state, actor=actor)
+                reminder = self.reminders.handle(text, identifier, request_id, local_tasks=self.local_tasks,
+                                                 intent_state=intent_state, actor=actor, allow_model=True)
+            except ExtractionNeeded:
+                conversation['messages'][-1]['_reminder_extraction'] = dict(text=text, actor=actor)
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                self.launch(identifier)
+                return self.public(conversation)
             except ReminderError as exc:
                 reminder = str(exc)
             if reminder is not None:
@@ -752,6 +782,10 @@ class Chat(TaskDispatch):
                 for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
                     conversation.pop(key, None)
                 return self.intent_reply(conversation, self.redact(teammate), provider='teammates')
+            from recorded_brief import reply as recorded_brief
+            brief = recorded_brief(self.ledger_root(identifier), text)
+            if brief is not None:
+                return self.intent_reply(conversation, self.redact(brief), provider='state')
             from reply_authority import correcting_status
             if correcting_status(text, conversation):
                 return self.status_reply(conversation, text)
@@ -796,6 +830,20 @@ class Chat(TaskDispatch):
                 improvement = improvement_turn(self, conversation, text, request_id)
                 if improvement is not None:
                     return improvement
+            from reply_quality import spreadsheet_proposal
+            if spreadsheet_proposal(text):
+                scopes = chat_intent.blocked_scopes(intent_state, chat_intent.projects(text))
+                if scopes:
+                    return self.intent_reply(conversation, chat_intent.hold_reply(scopes))
+                from personal_drafts import replace_pending
+                replace_pending(self, conversation)
+                conversation['pending_job'] = text
+                conversation['pending_job_id'] = request_id
+                columns = text.partition(':')[2].strip().rstrip('.') or 'Please specify the columns.'
+                return self.intent_reply(conversation,
+                    f'Proposed spreadsheet: {columns}\nNo job has started. '
+                    f'Reply “yes, start job proposal {request_id}” after reviewing this draft. '
+                    'OK to create this spreadsheet?')
             from worker_assignment import requested_workers
             assignments = requested_workers(text, conversation)
             if assignments:
@@ -1108,6 +1156,14 @@ class Chat(TaskDispatch):
             project_prompt = next((m['content'] for m in reversed(model_conversation['messages']) if m['role']=='user'), '')
             project_snapshot = project_projection(self.ledger_root(identifier), model_conversation, project_prompt)
             model_conversation['_project_snapshot'] = project_snapshot
+            extraction = conversation['messages'][-1].get('_reminder_extraction')
+            if extraction:
+                from reminders import extraction_prompt
+                model_conversation = copy.deepcopy(model_conversation)
+                for message in reversed(model_conversation['messages']):
+                    if message['role'] == 'user':
+                        message['content'] = extraction_prompt(extraction['text'])
+                        break
             answer = self.providers.reply(model_conversation, cancel, progress)
             with self.lock:
                 value = self.get(identifier)
@@ -1117,6 +1173,13 @@ class Chat(TaskDispatch):
                     return
                 if cancel.is_set():
                     raise Cancelled("Reply stopped.")
+                if extraction:
+                    content = self.reminders.extracted(answer.get('content', ''), extraction['text'], identifier,
+                        reply(value)['request_id'], extraction['actor'], chat_intent.state_for(value))
+                    reply(value).update(content=self.redact(content), status='done', provider='reminders')
+                    self.save(value)
+                    release_worker()
+                    return
                 value["codex_thread_id"] = answer.pop("codex_thread_id", None)
                 value.pop("retry_prompt", None)
                 # Provider metadata cannot mint receipts or dispatcher authority.
