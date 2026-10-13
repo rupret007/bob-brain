@@ -694,6 +694,23 @@ global and project holds. The separate reminder and BlueBubbles text-read paths
 are unchanged; outbound texts still require their existing exact draft approval.
 Tests inject Calendar and messaging clients and never call real services.
 
+### Safari tab (direct, selected public tab only)
+
+Use `read current Safari tab`. Web Bob asks a fixed JXA helper for the selected
+tab’s URL first. The origin must be on an owner-configured public-origin
+allowlist (`https://example.com` lines in `BOB_SAFARI_TAB_ORIGINS` or
+`~/.config/webbob/safari-origins.txt`). Only then does it collect bounded
+visible text, returned with URL and title provenance and labeled untrusted
+source data. Form/input values and login or privileged pages are excluded.
+This does not click, navigate, fill forms, or change the tab.
+
+Safari Automation permission must already be granted in System Settings, and
+Safari’s Develop menu may need **Allow JavaScript from Apple Events**. Web Bob
+never enables those permissions. Missing allowlist, denied automation,
+timeouts, origin mismatches, and oversized output fail closed without a
+successful-read claim. Saved holds are checked before any `osascript` spawn.
+Tests inject a fake helper and never touch the real desktop.
+
 ### Local tasks, web lookups, and morning routines
 
 These commands run directly in the chat process, before coding-job routing:

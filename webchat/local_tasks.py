@@ -399,11 +399,13 @@ class LocalTasks:
                     roots.add(Path(policy['accounting_root']).resolve())
         except (AdmissionDenied, OSError, ValueError, TypeError):
             raise LocalTaskError('Runtime storage protection could not be verified. No local file action ran.') from None
-        # Calendar accepts an operator-configured OAuth file anywhere, including
-        # visible home directories. Recheck it for saved drafts and routines too.
-        credentials = os.environ.get('BOB_GOOGLE_CALENDAR_CREDENTIALS')
-        if credentials:
-            roots.add(Path(credentials).expanduser().resolve())
+        # Calendar OAuth files and the Safari origin allowlist may live in
+        # visible home directories. Recheck them so chat file actions cannot
+        # read or rewrite those owner configuration files.
+        for name in ('BOB_GOOGLE_CALENDAR_CREDENTIALS', 'BOB_SAFARI_TAB_ORIGINS'):
+            configured = os.environ.get(name)
+            if configured:
+                roots.add(Path(configured).expanduser().resolve())
         return roots
 
     @contextmanager
