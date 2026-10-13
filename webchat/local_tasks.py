@@ -29,6 +29,8 @@ from approval_language import approval_requested
 from failover import atomic_text
 
 LIMIT = 64 * 1024
+HEAD_LINES = 20
+HEAD_BYTES = 8192
 OPERATION_TIMEOUT = 5
 LOCK_TIMEOUT = 1
 TIMED_OUT = 'Local action timed out; no successful result was verified. ' + (
@@ -36,7 +38,7 @@ TIMED_OUT = 'Local action timed out; no successful result was verified. ' + (
 HELP = ('Local tasks: read file ~/Documents/notes.txt; list files ~/Documents; '
         'create file ~/Documents/note.txt: hello; write file ~/Documents/note.txt: replacement; '
         'delete file ~/Documents/note.txt. Overwrites and deletes need an exact yes wblocal-… reply. '
-        'Terminal: run terminal: pwd, date, ls PATH, or cat PATH (no shell). '
+        'Terminal: run terminal: pwd, date, ls PATH, cat PATH, head PATH, wc PATH, or df PATH (no shell). '
         'Web: search the web for QUERY, or look up QUERY. '
         'Only visible paths under your home are allowed; credential files, private/configuration trees, symlinks, '
         'hard links and special files are excluded.')
@@ -173,8 +175,9 @@ def parse(text):
             raise LocalTaskError(HELP) from None
         if args == ['pwd'] or args == ['date']:
             return dict(kind=args[0])
-        if len(args) == 2 and args[0] in ('cat', 'ls'):
-            return dict(kind='read' if args[0] == 'cat' else 'list', path=args[1])
+        if len(args) == 2 and args[0] in ('cat', 'ls', 'head', 'wc', 'df'):
+            kinds = {'cat': 'read', 'ls': 'list', 'head': 'head', 'wc': 'wc', 'df': 'df'}
+            return dict(kind=kinds[args[0]], path=args[1])
         raise LocalTaskError('That terminal command is outside the allowlist. ' + HELP)
     match = LIST.fullmatch(text)
     if match:
@@ -253,6 +256,20 @@ class LocalFiles:
         finally:
             os.close(fd)
 
+    def inspect_read(self, parent, name, cap):
+        """Read at most cap bytes from a regular single-link file. Never follows links."""
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise LocalTaskError('Only regular, single-link files are allowed.')
+            data = os.read(fd, cap + 1)
+        except TimeoutError:
+            raise LocalTaskError(TIMED_OUT) from None
+        finally:
+            os.close(fd)
+        return data[:cap], info.st_size, len(data) > cap
+
     @staticmethod
     def snapshot(fd):
         info = os.fstat(fd)
@@ -273,8 +290,24 @@ class LocalFiles:
         if spec['kind'] == 'list':
             with self.directory(parts):
                 return prepared
+        if spec['kind'] == 'df':
+            try:
+                with self.directory(parts):
+                    return prepared
+            except (OSError, LocalTaskError):
+                if not parts:
+                    raise LocalTaskError('Choose a path inside your home directory.') from None
+                with self.directory(parts[:-1]):
+                    return prepared
         if not parts:
             raise LocalTaskError('Choose a file below your home directory.')
+        if spec['kind'] in ('head', 'wc'):
+            with self.directory(parts[:-1]) as parent:
+                try:
+                    self.inspect_read(parent, parts[-1], 1)
+                except TimeoutError:
+                    raise LocalTaskError(TIMED_OUT) from None
+            return prepared
         with self.directory(parts[:-1]) as parent:
             try:
                 with self.file(parent, parts[-1]) as fd:
@@ -309,6 +342,8 @@ class LocalFiles:
                             break
                 suffix = '\nListing truncated to 200 entries.' if len(entries) > 200 else ''
                 return 'Directory listing: ' + spec['path'] + '\n' + '\n'.join(sorted(entries[:200])) + suffix
+        if kind == 'df':
+            return self._disk_free(spec, parts)
         if not parts:
             raise LocalTaskError('Choose a file below your home directory.')
         with self.directory(parts[:-1]) as parent:
@@ -320,6 +355,16 @@ class LocalFiles:
                     os.fsync(target.fileno())
                 os.fsync(parent)
                 return 'File created: ' + spec['path']
+            if kind in ('head', 'wc'):
+                cap = HEAD_BYTES if kind == 'head' else LIMIT
+                try:
+                    data, size, truncated = self.inspect_read(parent, parts[-1], cap)
+                except TimeoutError:
+                    raise LocalTaskError(TIMED_OUT) from None
+                if data and b'\x00' not in data:
+                    safe_read(data)
+                return self._head_receipt(spec['path'], data, truncated) if kind == 'head' else self._wc_receipt(
+                    spec['path'], data, size, truncated)
             with self.file(parent, parts[-1], os.O_RDWR if kind == 'write' else os.O_RDONLY) as fd:
                 snapshot, data = self.snapshot(fd)
                 if kind == 'read':
@@ -347,6 +392,54 @@ class LocalFiles:
                     os.fsync(parent)
                     return 'File deleted: ' + spec['path']
                 raise LocalTaskError('Unsupported local action.')
+
+    def _disk_free(self, spec, parts):
+        with self.directory(parts[:-1] if parts else ()) as parent:
+            if parts:
+                info = os.lstat(parts[-1], dir_fd=parent)
+                if stat.S_ISLNK(info.st_mode) or not (stat.S_ISDIR(info.st_mode) or (
+                        stat.S_ISREG(info.st_mode) and info.st_nlink == 1)):
+                    raise LocalTaskError('Only regular, single-link files or directories are allowed.')
+                fd = parent
+                if stat.S_ISDIR(info.st_mode):
+                    with self.directory(parts) as directory:
+                        vfs = os.fstatvfs(directory)
+                else:
+                    vfs = os.fstatvfs(fd)
+            else:
+                vfs = os.fstatvfs(parent)
+        free = vfs.f_bavail * vfs.f_frsize
+        total = vfs.f_blocks * vfs.f_frsize
+        return (f'Terminal disk free (local filesystem API, no shell):\n'
+                f'path={spec["path"]}\nfree_bytes={free}\ntotal_bytes={total}')
+
+    @staticmethod
+    def _head_receipt(path, data, truncated):
+        heading = (f'Terminal head (local file, at most {HEAD_LINES} lines / {HEAD_BYTES} bytes):\n'
+                   f'path={path}')
+        if not data:
+            return heading + '\nempty=true\ntruncated=false'
+        if b'\x00' in data:
+            return heading + f'\nbinary=true\nbytes_shown={len(data)}\ntruncated={str(truncated).lower()}'
+        text = data.decode('utf-8')
+        lines = text.splitlines()
+        shown = lines[:HEAD_LINES]
+        line_trunc = len(lines) > HEAD_LINES
+        body = '\n'.join(f'{index}: {line}' for index, line in enumerate(shown, 1))
+        return heading + f'\n{body}\ntruncated={str(truncated or line_trunc).lower()}'
+
+    @staticmethod
+    def _wc_receipt(path, data, size, truncated):
+        binary = b'\x00' in data
+        if binary:
+            lines = words = 0
+        else:
+            text = data.decode('utf-8')
+            lines = text.count('\n') + (0 if not text or text.endswith('\n') else 1)
+            words = len(text.split())
+        return (f'Terminal wc (local file, first {LIMIT} bytes):\n'
+                f'path={path}\nlines={lines}\nwords={words}\nbytes={len(data)}\n'
+                f'file_size={size}\ntruncated={str(truncated).lower()}\nbinary={str(binary).lower()}')
 
 
 class LocalTasks:
@@ -449,7 +542,7 @@ class LocalTasks:
         if self.isolated_files and check_path and not SEARCH.fullmatch(text.strip()):
             return self.file_worker('validate_routine', [text], {})
         spec = parse(text)
-        if not spec or spec['kind'] not in ('read', 'list', 'pwd', 'date', 'search'):
+        if not spec or spec['kind'] not in ('read', 'list', 'pwd', 'date', 'search', 'head', 'wc', 'df'):
             raise LocalTaskError('Routines can only read files, list directories, run the fixed read-only terminal commands, '
                                  'or look up the web. For a personal reminder use “every morning remind me to X”. '
                                  'Writes, deletes and sends require a fresh direct request and any required confirmation.')
