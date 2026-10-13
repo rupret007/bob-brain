@@ -638,7 +638,10 @@ class Texting:
                     content = HELP
         except TextingError as exc:
             content = str(exc)
-            if compose and not replace and re.search(r'not configured|unavailable|No matching thread|Several threads match', content, re.I):
+            # Recipient errors must reach the owner unchanged. Only transport
+            # failures can keep a generic draft; thread names in ambiguity
+            # choices are untrusted and cannot select this fallback.
+            if compose and not replace and re.search(r'not configured|unavailable', content.partition('\n')[0], re.I):
                 from personal_drafts import save_draft
                 content = save_draft(conversation, request_id, 'text', compose[1], compose[2],
                                      content + ' The draft remains pending until the recipient and transport are verified.')

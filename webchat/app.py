@@ -220,7 +220,9 @@ class Chat(TaskDispatch):
         messages = conversation.get('messages', [])
         # Texting owns exact delivery/consent wording and recipient-authored text.
         if (messages and messages[-1].get('role') == 'assistant' and messages[-1].get('status') == 'done'
-                and not messages[-1].get('texting')):
+                and not messages[-1].get('texting')
+                and messages[-1].get('provider') not in ('drafts', 'calendar', 'reminders')
+                and not messages[-1].get('artifact')):
             from reply_quality import check
             ask = next((m.get('content', '') for m in reversed(messages) if m.get('role') == 'user'
                         and m.get('request_id') == messages[-1].get('request_id')), '')
@@ -743,7 +745,7 @@ class Chat(TaskDispatch):
             if calendar is not None:
                 from personal_drafts import calendar_unavailable
                 calendar = calendar_unavailable(self, conversation, text, request_id, calendar)
-                if 'Calendar draft (not created)' in calendar:
+                if 'Calendar draft (not created):' in calendar:
                     from personal_drafts import replace_pending
                     replace_pending(self, conversation, keep='calendar')
                 for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
@@ -771,6 +773,12 @@ class Chat(TaskDispatch):
                 for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
                     conversation.pop(key, None)
                 return self.intent_reply(conversation, self.redact(reminder), provider='reminders')
+            from reply_quality import creative_request
+            if creative_request(text) and worker is None:
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                self.launch(identifier)
+                return self.public(conversation)
             local = self.local_tasks.handle(text, identifier, request_id, intent_state)
             if local is not None:
                 for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):

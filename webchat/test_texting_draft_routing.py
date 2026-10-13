@@ -71,9 +71,36 @@ class TextingDraftRoutingTests(unittest.TestCase):
         with patch.object(self.chat, 'save', wraps=self.chat.save) as save:
             answer = self.say('Text Andrea that hello')
         self.assertEqual(save.call_count, 1)
-        self.assertIn('draft remains pending', answer['content'])
+        self.assertIn('pending your OK', answer['content'])
         self.assertEqual(self.disk()['_personal_action']['kind'], 'text')
+        self.assertEqual(self.disk()['_personal_action']['state'], 'draft')
         self.assertEqual(self.disk(), self.chat.conversations[self.cid])
+
+    def test_recipient_resolution_errors_never_become_personal_drafts(self):
+        threads = [dict(guid='iMessage;-;alex-one', displayName='Alex unavailable',
+                        participants=[dict(address='one@example.test')]),
+                   dict(guid='SMS;-;alex-two', displayName='Alex not configured',
+                        participants=[dict(address='two@example.test')]),
+                   dict(guid='iMessage;-;unverified', displayName='Unverified', participants=[])]
+        self.texting.bluebubbles.chats.return_value = threads
+        self.texting.bluebubbles.exact_chat.return_value = []
+        cases = [('Alex', 'Several threads match'), ('Nobody', 'No matching thread'),
+                 ('iMessage;-;missing', 'No matching thread'),
+                 ('Unverified', 'could not verify')]
+        with patch.object(self.texting, 'resolve', Texting.resolve.__get__(self.texting)), \
+                patch.object(self.texting.andrea, 'deliver') as deliver:
+            for target, error in cases:
+                for command in (f'draft reply to {target}: Hello', f'Text {target} that Hello'):
+                    with self.subTest(command=command):
+                        answer = self.say(command)
+                        self.assertIn(error, answer['content'])
+                        self.assertNotIn('text_draft', answer)
+                        saved = self.disk()
+                        self.assertNotIn('_personal_action', saved)
+                        self.assertFalse(saved.get('_texting', {}).get('drafts'))
+            self.texting.andrea.prepare.assert_not_called()
+            deliver.assert_not_called()
+        self.assertFalse(self.providers.calls)
 
     def test_consumed_consent_is_saved_before_delivery_and_bare_yes_keeps_outcome(self):
         for delivered, expected in ((None, 'Delivery remains unconfirmed'), ('sent', SENT_VIA_ANDREA)):

@@ -43,13 +43,15 @@ class RecordedBriefTests(unittest.TestCase):
                 prompt='Fix Web Bob login', projects=['Web Bob'], updated_at=1)) + '\n')
         reply = self.say('Is the thing done yet')
         self.assertIn('Web Bob: work completed', reply)
-        self.assertIn('deployment not established', reply)
+        self.assertIn('I haven’t confirmed deployment', reply)
+        self.assertIn('not a live check', reply)
+        self.assertFalse(self.providers.calls)
 
     def test_decisions_are_quoted_from_ledger_without_new_authorization(self):
         ledger.record_decision(self.root, 'Keep Web Bob deploys on hold.')
         reply = self.say('What did we decide?')
         self.assertIn('Keep Web Bob deploys on hold.', reply)
-        self.assertIn('Recorded decisions', reply)
+        self.assertIn('Here’s what we decided, from the saved notes:', reply)
         self.assertFalse(self.providers.calls)
 
     def test_empty_records_ask_one_question_and_never_guess(self):

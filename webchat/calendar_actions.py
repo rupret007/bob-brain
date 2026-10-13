@@ -270,11 +270,12 @@ class CalendarActions:
         if row['state'] != 'draft':
             return 'That calendar draft was cancelled, replaced, or expired. Nothing created by this request.'
         event = row['event']
-        return (f'Calendar draft (not created): {event["summary"]}. '
+        return (f'Calendar draft (not created): {event["summary"]} — '
                 f'{stamp(datetime.fromisoformat(event["start"]["dateTime"]).timestamp())} to '
                 f'{stamp(datetime.fromisoformat(event["end"]["dateTime"]).timestamp())}. '
-                f'Primary calendar; America/Chicago; no invitations or event alerts. '
-                f'Within one hour reply exactly “yes {row["token"]}” to create, or “cancel {row["token"]}”. OK to add it to your calendar?')
+                f'On your primary calendar, without invitations or alerts.\n'
+                f'To approve this draft, reply exactly “yes {row["token"]}” within an hour, '
+                f'or “cancel {row["token"]}” to cancel. OK to add it to your calendar?')
 
     def control(self, command, token, cid, request_id, intent_state):
         import chat_intent

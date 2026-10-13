@@ -83,8 +83,7 @@ def natural_request(text, now):
     if weekly:
         clock = weekly[3].lower()
         if clock == 'night':
-            clock = '8pm'
-            assumption = 'Assuming Sunday night means 8pm. ' if weekly[2].lower() == 'sunday' else 'Assuming night means 8pm. '
+            return 'remind me ' + clause, None, ''
         elif re.fullmatch(r'\d{1,2}', clock):
             clock += 'am'
             assumption = 'Assuming AM for the clock time. '
@@ -434,16 +433,27 @@ class Reminders:
         if row['state'] == 'done':
             return row['receipt']
         if row['state'] == 'needs_time':
-            return f"Draft reminder: {row['body']} — {row['when']}. Nothing scheduled. {row['question']}"
+            return f"Draft reminder: {row['body']} — {row['when']}. {row['question']}"
         if row['state'] != 'draft':
             return ('That reminder draft is ' + row['state'] +
                     '. Check “my reminders” before making a fresh request.')
-        return (row.get("assumption", "") + f"Nothing was saved to your reminders. Proposed reminder: {row['body']} — "
-                f"{stamp(row['due'])}." + repeat_description(dict(
+        when = stamp(row['due'])
+        lead = f"Reminder: {row['body']} — "
+        request = reminder_request(row['text'])
+        relative = re.search(r'\bin (\d+)\s+(seconds?|minutes?|mins?|hours?|hrs?|days?)\b',
+                             request['clause'], re.I) if request else None
+        if relative and not row['interval'] and not row.get('weekly_time') and not row['daily_time']:
+            unit = relative[2].lower().rstrip('s')
+            unit = {'min': 'minute', 'hr': 'hour'}.get(unit, unit)
+            delay = relative[1] + ' ' + unit + ('s' if int(relative[1]) != 1 else '')
+            when = 'in ' + delay + ' (' + datetime.fromtimestamp(row['due'], ZONE).strftime('%I:%M %p') + ')'
+            lead = f"Reminder to {row['body']} "
+        return (row.get("assumption", "") + lead + when + repeat_description(dict(
                     interval_seconds=row['interval'], daily_time=row['daily_time'], weekly_time=row.get('weekly_time'))) +
                 (f" Read-only action: {row['action']}." if row['action'] else '') +
-                f" Within one hour reply exactly “yes {row['token']}” to schedule it, "
-                f"or “cancel {row['token']}”.")
+                ' — OK to set it?\nNothing was saved to your reminders yet. ' +
+                f"To approve this draft, reply exactly “yes {row['token']}” within an hour, "
+                f"or “cancel {row['token']}” to cancel.")
 
     def draft(self, text, cid, request_id, actor, body, due, interval, daily_time, action, *, weekly_time=None, assumption=''):
         if not 1 <= len(body) <= 1000:
@@ -547,14 +557,31 @@ class Reminders:
                 return 'Nothing was saved. Send a new reminder request when you want it scheduled.'
             if when:
                 normalized, weekly, assumption = natural_request(f'remind me {when} to {body}', self.clock())
+                missing = self.missing_clock(normalized, text, cid, request_id, actor)
+                if missing:
+                    return missing
                 parsed = parse(normalized, self.clock())
                 if parsed:
-                    return self.draft(text, cid, request_id, actor, *parsed, None, None,
+                    morning = routine_request(normalized)
+                    daily_time = morning_clock(morning['clock']) if morning else None
+                    if morning and not morning['clock']:
+                        assumption = 'Assuming morning means 9am America/Chicago. '
+                    return self.draft(text, cid, request_id, actor, *parsed, daily_time, None,
                                       weekly_time=weekly, assumption=assumption)
             return self.incomplete(text, cid, request_id, actor, body, when or 'time needed',
                                    'What date and time should I use?')
         except (ValueError, TypeError, KeyError):
             return 'I need a clear time for your reminder. What date and time should I use?'
+
+    def missing_clock(self, normalized, text, cid, request_id, actor):
+        # Every-morning requests retain the documented 9am default in parse().
+        match = re.fullmatch(r'remind me (every |(?:on )?)(' + WEEKDAY +
+                            r')(?: (morning|afternoon|evening|night))? to (.+)', normalized.rstrip('.?!'), re.I)
+        if not match or approval_requested(text):
+            return None
+        when = match[1] + match[2].capitalize() + (' ' + match[3] if match[3] else '')
+        return self.incomplete(text, cid, request_id, actor, reminder_body(match[4]), when,
+                               'What time should I use?')
 
     def handle(self, text, cid, request_id, *, local_tasks=None, intent_state=None, actor='owner', allow_model=False):
         try:
@@ -572,6 +599,20 @@ class Reminders:
             return self.control(control[1], control[2], cid, request_id, actor, intent_state or chat_intent.new_state(), local_tasks)
         if re.match(r'^(?:yes|cancel)\s+wbrem-', text.strip(), re.I):
             return 'Use the exact confirmation message from the reminder draft. Nothing was saved.'
+        clock = re.fullmatch(r'(?:at )?(' + CLOCK + r')[.! ]*', text.strip(), re.I)
+        if clock:
+            with self.draft_lock() as drafts:
+                waiting = [r for r in drafts.values() if r['cid'] == cid and r['actor'] == actor
+                           and r['state'] == 'needs_time']
+            if len(waiting) == 1:
+                row = waiting[0]
+                schedule = re.fullmatch(r'(every |(?:on )?)(' + WEEKDAY +
+                                       r')(?: (?:morning|afternoon|evening|night))?', row['when'], re.I)
+                when = schedule[1] + schedule[2] if schedule else row['when']
+                if schedule or when == 'every morning':
+                    return self._handle(f"remind me {when} at {clock[1]} to {row['body']}", cid, request_id,
+                                        local_tasks=local_tasks, intent_state=intent_state, actor=actor,
+                                        allow_model=allow_model)
         command = text.strip().casefold().rstrip('.?!')
         if command in ('reminders', 'my reminders', 'list reminders', 'show reminders', 'routines', 'my routines',
                        'timers', 'my timers', 'alarms', 'my alarms'):
@@ -585,6 +626,9 @@ class Reminders:
         if reminder_request(text) or routine_intent(text) or re.match(r'^(?:remind me|set (?:a )?routine|cancel (?:reminder|routine|timer|alarm)|reminder help)\b', command):
             try:
                 normalized, weekly, assumption = natural_request(text, self.clock())
+                missing = self.missing_clock(normalized, text, cid, request_id, actor)
+                if missing:
+                    return missing
                 event = re.fullmatch(r'remind me before (.+?) to (.+)', normalized, re.I)
                 if event and re.fullmatch(r'[\w \'’-]{1,80}', event[1]) and not approval_requested('remind me in 1 minute to ' + event[1] + ' ' + event[2]):
                     return self.incomplete(text, cid, request_id, actor, event[2], 'before ' + event[1],
@@ -594,13 +638,15 @@ class Reminders:
                     body_only = re.fullmatch(r'remind me to (.+)', normalized, re.I)
                     if body_only:
                         return self.incomplete(text, cid, request_id, actor, body_only[1], 'time needed',
-                                               'What date and time should I use?')
+                                               'What date and time should I use? Try “tomorrow at 9am”.')
                     if reminder_request(text) and allow_model:
                         raise ExtractionNeeded()
                     return ROUTINE_HELP if routine_intent(text) else 'What should I remind you about, and when?'
                 body, due, interval = parsed
                 morning = routine_request(text)
                 daily_time = morning_clock(morning['clock']) if morning else None
+                if morning and not morning['clock']:
+                    assumption = 'Assuming morning means 9am America/Chicago. '
                 action = None
                 if (morning and morning['mode'].lower() == 'do' and not morning['remind']
                         and (morning['kind'] or 'routine').lower() == 'routine'):

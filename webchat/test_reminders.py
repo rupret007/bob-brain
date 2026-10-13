@@ -32,7 +32,7 @@ class ReminderTests(unittest.TestCase):
     def test_h2h_natural_requests_are_drafts_with_separate_consent(self):
         cases = [
             ("Remind me tomorrow at 9 to call the vet about Biscuit's shots", '09:00 AM'),
-            ('Set a reminder every Sunday night to put the trash out', '8pm'),
+            ('Set a reminder every Sunday at 8pm to put the trash out', '08:00 PM'),
             ('Can you remind me in 20 min to check the oven', '09:20 AM'),
             ('Could you remind me in 2 hrs to stretch', '11:00 AM'),
         ]
@@ -43,6 +43,15 @@ class ReminderTests(unittest.TestCase):
                 self.assertIn('yes wbrem-', draft)
                 self.assertFalse(self.store.listing())
         self.assertIn('Assuming AM', self.store.handle(cases[0][0], 'other', 'one'))
+        draft = self.store.handle('Set a reminder every Sunday night to put the trash out', 'chat', 'no-clock')
+        self.assertIn('What time should I use?', draft)
+        self.assertNotIn('yes wbrem-', draft)
+        self.assertNotIn('8pm', draft)
+        self.assertFalse(self.store.listing())
+        with self.store.draft_lock() as rows:
+            row, = [r for r in rows.values() if r['cid'] == 'chat' and r['state'] == 'needs_time']
+        self.assertEqual(self.store.handle('yes ' + row['token'], 'chat', 'too-soon'), draft)
+        self.assertFalse(self.store.listing())
 
     def test_event_relative_is_durable_incomplete_draft_with_one_question(self):
         ask = 'remind me before band practice to restring the strat'
@@ -59,7 +68,7 @@ class ReminderTests(unittest.TestCase):
 
     def test_weekly_schedule_preserves_local_time_across_dst(self):
         self.now = datetime(2026, 10, 25, 21, tzinfo=ZONE).timestamp()
-        self.schedule('Set a reminder every Sunday night to put the trash out', 'chat', 'one')
+        self.schedule('Set a reminder every Sunday at 8pm to put the trash out', 'chat', 'one')
         row, = self.store.listing()
         self.assertEqual(row['due_at'], datetime(2026, 11, 1, 20, tzinfo=ZONE).timestamp())
         self.now = row['due_at']
@@ -81,7 +90,8 @@ class ReminderTests(unittest.TestCase):
         ask = 'remind me about stretching tomorrow at 9am'
         reply = self.store.extracted('{"body":"stretching","when":"tomorrow at 9am"}',
                                      ask, 'chat', 'one', 'owner', chat_intent.new_state())
-        self.assertIn('Proposed reminder: stretching', reply)
+        self.assertIn('Reminder: stretching', reply)
+        self.assertIn('OK to set it?', reply)
         self.assertFalse(self.store.listing())
         confirmed = confirm_reply(self, reply, lambda text: self.store.handle(text, 'chat', 'two'))
         self.assertIn('Reminder saved', confirmed)

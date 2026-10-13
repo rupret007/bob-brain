@@ -22,7 +22,7 @@ def pending(chat, conversation, *, include_texting=True, include_work=True):
                     found.append((row.get('body') or row.get('text'), render(row)))
     row = conversation.get('_personal_action')
     if row and row.get('state') == 'draft':
-        found.append((row['body'], 'Your draft is still pending. ' + row['limitation']))
+        found.append((row['body'], 'Your draft is still pending. ' + row.get('question', f"OK to send to {row['target']}?")))
     for key in ('pending_job', 'pending_council'):
         if include_work and conversation.get(key):
             found.append((conversation[key], 'Review the work proposal and use its explicit confirmation.'))
@@ -52,10 +52,10 @@ def replace_pending(chat, conversation, *, keep=None):
 
 
 def save_draft(conversation, request_id, kind, target, body, limitation, *, question=None):
+    question = question or f'OK to send to {target}?'
     conversation['_personal_action'] = dict(request_id=request_id, kind=kind, target=target,
-                                            body=body, limitation=limitation, state='draft')
-    question = question or f'OK to send this to {target}?'
-    return f'Draft for {target}:\n\n{body}\n\n{limitation}\n{question}'
+                                            body=body, limitation=limitation, question=question, state='draft')
+    return f'Here’s a draft for {target}, pending your OK:\n\n{body}\n\n{question}'
 
 
 def outbound(text):
@@ -72,7 +72,8 @@ def outbound(text):
         return 'email', target, body[0].upper() + body[1:]
     note = re.fullmatch(r'write (?:a )?(?:quick )?thank-you note to (.+?) for (.+)', clean, re.I)
     if note:
-        return 'note', note[1], 'Thanks for ' + note[2] + '. We appreciate it! — Jeff'
+        return 'note', note[1], ('Hi there,\n\nThanks for ' + note[2] +
+                                  '. We really appreciate it and would love to do it again.\n\nThanks again,\nJeff')
     note = re.fullmatch(r'(?:write|draft) (?:a )?(?:quick )?note to (.+?)(?::\s*| saying )(.+)', clean, re.I)
     if note:
         return 'note', note[1], note[2]
@@ -113,24 +114,26 @@ def handle(chat, conversation, text, request_id):
         # Dinner supplies an evening context; otherwise a bare hour means AM.
         if re.search(r'\bdinner\b', title, re.I):
             when = re.sub(r'\bat (\d{1,2})$', r'at \1pm', when, flags=re.I)
+        resolved = False
         try:
             normalized, weekly, assumption = natural_request('remind me ' + when + ' to attend', chat.calendar.clock())
             _, due, _ = parse(normalized, chat.calendar.clock())
+            resolved = True
             from calendar_actions import iso
             command = f'create a calendar event "{title}" at {iso(due)}'
             content = chat.calendar.handle(command, conversation['id'], request_id, state)
-            if content and 'Calendar draft (not created)' in content:
+            if content and 'Calendar draft (not created):' in content:
                 return 'Assuming a one-hour event. ' + assumption + content
             body = f'{title} — {stamp(due)}, for one hour (assumed).'
         except (ValueError, TypeError):
             body = f'{title} — {when}. Exact time and duration still need confirmation.'
             content = 'The calendar time needs clarification.'
         return save_draft(conversation, request_id, 'calendar', 'your calendar', body,
-                          content or 'Calendar connection needs setup; this draft remains pending.',
-                          question='OK to keep this calendar draft pending while we resolve the missing details?')
+                          content or '',
+                          question='OK to add it to your calendar?' if resolved else
+                          'What date, time, and duration should I use?')
     kind, target, body = spec
-    limitation = ('Booking transport is not connected; this draft remains pending until price, availability, and destination are verified.'
-                  if kind == 'booking' else 'This channel has no connected send transport; the draft remains pending.')
+    limitation = ''
     return save_draft(conversation, request_id, kind, target, body, limitation,
                       question=f'OK to proceed with this booking once the details are verified?' if kind == 'booking' else None)
 
@@ -145,7 +148,10 @@ def calendar_unavailable(chat, conversation, text, request_id, content):
     except ValueError:
         return content
     replace_pending(chat, conversation)
-    body = f"{event['summary']} — {event['start']['dateTime']} to {event['end']['dateTime']} (America/Chicago)."
-    return save_draft(conversation, request_id, 'calendar', 'your calendar', body,
-                      'Calendar needs authentication; this draft remains pending.',
-                      question='OK to add it to your calendar once the connection is ready?')
+    from datetime import datetime
+    from reminders import stamp
+    start, end = (datetime.fromisoformat(event[k]['dateTime']) for k in ('start', 'end'))
+    body = f"{event['summary']} — {stamp(int(start.timestamp()))} to {end.strftime('%-I:%M %p').lower()}."
+    return save_draft(conversation, request_id, 'calendar', 'your calendar', body, '',
+                      question="I can't reach your calendar right now, so it isn't added yet. "
+                               "OK to add it as soon as I can?")
