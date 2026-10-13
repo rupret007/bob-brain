@@ -532,6 +532,16 @@ class Texting:
         return (delivery_reply(draft) + ' Checked the original message; nothing was resent.'
                 if isinstance(delivered, str) else 'Not sent. Andrea cancelled the unconsumed handoff; nothing was resent.')
 
+    @staticmethod
+    def confirmation_requested(conversation, clean):
+        state = conversation.get("_texting", {})
+        active = state.get("drafts", {}).get(state.get("active"))
+        text_context = active and (active["state"] in ("pending", "editing", "read_only") or
+            len(conversation["messages"]) >= 3 and conversation["messages"][-3].get("texting"))
+        command = clean.casefold().rstrip(".?!")
+        return bool(re.match(r"^yes\s+wbtxt-", clean, re.I) or
+                    (text_context and command in ("yes", "ok", "send it", "send it now", "send now", "go", "do it")))
+
     def handle(self, conversation, text, actor, request_id, persist, redact):
         state = conversation.get("_texting", {})
         active = state.get("drafts", {}).get(state.get("active"))
@@ -543,11 +553,9 @@ class Texting:
         if self.instinct.handle(conversation, clean, actor, request_id, persist, redact):
             return True
         command = clean.casefold().rstrip(".?!")
-        text_context = active and (active["state"] in ("pending", "editing", "read_only") or
-            len(conversation["messages"]) >= 3 and conversation["messages"][-3].get("texting"))
         # Bare approvals are routed here for token guidance only; confirm() still
         # requires the entire message to match the exact yes + token format.
-        confirmation = re.match(r"^yes\s+wbtxt-", clean, re.I) or (text_context and command in ("yes", "ok", "send it", "send it now", "send now", "go", "do it"))
+        confirmation = self.confirmation_requested(conversation, clean)
         edit = re.fullmatch(r"(edit|cancel) text draft ([0-9a-f]{16})", clean, re.I)
         check_delivery = re.fullmatch(r"check text delivery ([0-9a-f]{16})", clean, re.I)
         replace = re.fullmatch(r"replace text draft ([0-9a-f]{16}) to (.+?):\s*([\s\S]+)", clean, re.I)

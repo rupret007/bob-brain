@@ -7,11 +7,11 @@ VAGUE_OK = re.compile(r'(?:yes|ok(?:ay)?|send it(?: now)?|go ahead(?: with that)
                       r'sounds good,? go ahead(?: with that)?|yeah whatever you think,? send it)[.! ]*', re.I)
 
 
-def pending(chat, conversation):
+def pending(chat, conversation, *, include_texting=True, include_work=True):
     """Count actual drafts, including older conversations with multiple stores."""
     found = []
     for row in conversation.get('_texting', {}).get('drafts', {}).values():
-        if row.get('state') == 'pending':
+        if include_texting and row.get('state') == 'pending':
             found.append((row['body'], 'Use the exact “yes ' + row['token'] + '” message from the text draft.'))
     for store, state, render in ((chat.calendar, 'draft', chat.calendar.receipt),
                                   (chat.reminders, 'draft', chat.reminders.draft_receipt)):
@@ -24,7 +24,7 @@ def pending(chat, conversation):
     if row and row.get('state') == 'draft':
         found.append((row['body'], 'Your draft is still pending. ' + row['limitation']))
     for key in ('pending_job', 'pending_council'):
-        if conversation.get(key):
+        if include_work and conversation.get(key):
             found.append((conversation[key], 'Review the work proposal and use its explicit confirmation.'))
     return found
 
@@ -86,6 +86,11 @@ def handle(chat, conversation, text, request_id):
     state = chat_intent.state_for(conversation)
     if VAGUE_OK.fullmatch(text.strip()) and not state.get('holds'):
         try:
+            # Texting owns token guidance and observed delivery outcomes. Stale
+            # work proposals are cleared by that lane, not competing send drafts.
+            if (chat.texting.confirmation_requested(conversation, text.strip())
+                    and not pending(chat, conversation, include_texting=False, include_work=False)):
+                return None
             rows = pending(chat, conversation)
         except (OSError, ValueError, KeyError):
             return 'I could not verify the pending draft. Which action do you want to approve?'

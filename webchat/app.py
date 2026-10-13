@@ -218,7 +218,9 @@ class Chat(TaskDispatch):
 
     def save(self, conversation):
         messages = conversation.get('messages', [])
-        if messages and messages[-1].get('role') == 'assistant' and messages[-1].get('status') == 'done':
+        # Texting owns exact delivery/consent wording and recipient-authored text.
+        if (messages and messages[-1].get('role') == 'assistant' and messages[-1].get('status') == 'done'
+                and not messages[-1].get('texting')):
             from reply_quality import check
             ask = next((m.get('content', '') for m in reversed(messages) if m.get('role') == 'user'
                         and m.get('request_id') == messages[-1].get('request_id')), '')
@@ -723,20 +725,19 @@ class Chat(TaskDispatch):
                 return self.intent_reply(conversation, self.redact(personal), provider='drafts')
             # Text intent and confirmations never enter generic job/provider routing.
             def persist_texting(value):
+                # Replace competing drafts before the texting handler's durable save.
+                # Confirmation still saves consumed consent before its handoff.
+                if value.get('_personal_action', {}).get('request_id') == request_id:
+                    from personal_drafts import replace_pending
+                    replace_pending(self, value, keep='personal')
+                if value['messages'][-1].get('text_draft_id'):
+                    from personal_drafts import replace_pending
+                    replace_pending(self, value, keep='texting')
                 for key in ("pending_job", "pending_job_id", "pending_council", "pending_council_id"):
                     value.pop(key, None)
                 self.save(value)
                 self.conversations[identifier] = copy.deepcopy(value)
             if self.texting.handle(conversation, text, actor, request_id, persist_texting, self.redact):
-                if conversation.get('_personal_action', {}).get('request_id') == request_id:
-                    from personal_drafts import replace_pending
-                    replace_pending(self, conversation, keep='personal')
-                    self.save(conversation)
-                if conversation['messages'][-1].get('text_draft_id'):
-                    from personal_drafts import replace_pending
-                    replace_pending(self, conversation, keep='texting')
-                    self.save(conversation)
-                self.conversations[identifier] = copy.deepcopy(conversation)
                 return self.public(conversation)
             calendar = self.calendar.handle(text, identifier, request_id, intent_state)
             if calendar is not None:
