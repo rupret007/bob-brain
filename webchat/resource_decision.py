@@ -76,6 +76,9 @@ an unrelated topic, then request a return applying that correction. Write criter
 as explicit checks, not claims that a candidate passes. Inspect whether allowance
 and extra-usage settings permit admission; never promise that these checks prevent
 charges. Keep live generation conditional on budget admission and allowance checks.
+A proposed evidence snapshot, save, hold or route is not a completed receipt: do
+not claim one was previously prepared, saved, issued or used unless this turn
+includes that supporting receipt.
 Owner facts from the saved project record are recorded in the saved project record
 (not live-verified); do not present them as live-verified or as something the user
 just said.
@@ -83,6 +86,35 @@ Return JSON only, without fences or trailing commentary.
 '''
 
 FACT_TOKEN = re.compile(r'\[fact:([a-z0-9_.]+)\]')
+# Advice never executes. Completed snapshot/save/hold/route wording is a
+# fabricated receipt unless this turn actually recorded one.
+PREPARED_SNAPSHOT = re.compile(
+    r'\b(?:previously|already|earlier)\s+prepared\s+(?:an?\s+|the\s+|this\s+)?'
+    r'(?:bounded\s+|owner[- ]provided\s+|missing\s+)?(?:evidence\s+)?snapshot\b|'
+    r'\b(?:the|an|this|that)\s+(?:previously\s+|already\s+)?'
+    r'(?:prepared|saved|recorded|stored)\s+(?:bounded\s+)?'
+    r'(?:evidence\s+)?snapshot\b|'
+    r'\b(?:evidence\s+)?snapshot\s+(?:has been|have been|was|were|is already|are already)\s+'
+    r'(?:prepared|saved|recorded|stored|captured)\b|'
+    r"\b(?:I|we)(?:['’]ve|\s+have)?\s+(?:(?:just|already|now|previously)\s+)?"
+    r'(?:prepared|saved|recorded|stored|captured)\b.{0,40}\b(?:evidence\s+)?snapshot\b',
+    re.I)
+SAVE_OR_HOLD_RECEIPT = re.compile(
+    r'\bsave\s+receipt\b|'
+    r'\bhold\s+id(?:s|entifier)?\b|'
+    r"\b(?:I|we)(?:['’]ve|\s+have)?\s+(?:(?:just|already|now)\s+)?"
+    r'(?:issued|filed|recorded|saved|generated)\b.{0,40}\b(?:save\s+)?receipt\b|'
+    r"\b(?:I|we)(?:['’]ve|\s+have)?\s+(?:(?:just|already|now)\s+)?"
+    r'(?:registered|saved|placed|filed|issued)\b.{0,40}\bhold(?:\s+id)?\b',
+    re.I)
+LIVE_ROUTE_CLAIM = re.compile(
+    r"\b(?:I|we)(?:['’]ve|\s+have)?\s+(?:(?:just|already|now)\s+)?"
+    r'(?:routed|switched|sent|handed)\b.{0,50}\b(?:to|onto)\s+'
+    r'(?:codex|claude|cursor|gemini|minimax)\b|'
+    r'\b(?:codex|claude|cursor|gemini|minimax)\s+'
+    r'(?:is|has been)\s+(?:now\s+|currently\s+)?'
+    r'(?:the\s+)?(?:active|selected|signed[- ]in|handling|answering)\b',
+    re.I)
 
 
 def facts(inventory, *, missing=False):
@@ -172,6 +204,10 @@ def safe_reasoning(text, *, context=''):
                 return False
         for match in observed.finditer(clause):
             if not disposition(statement,match.start(),match.end(),match[0]):return False
+        for match in (*PREPARED_SNAPSHOT.finditer(clause), *SAVE_OR_HOLD_RECEIPT.finditer(clause),
+                      *LIVE_ROUTE_CLAIM.finditer(clause)):
+            if not disposition(statement,match.start(),match.end(),match[0]):
+                return False
     return True
 
 
@@ -288,6 +324,11 @@ def feasible_reasoning(text, projection):
                         re.match(r'^\s*(?:(?:active|running)\s+)?(?:(?:for|to)\s+'
                                  r'(?:(?!\b(?:and|but|yet|while|then)\b)[^,;.!?]){1,50}?)?\s*(?:only\s+)?'+condition,suffix,re.I))
                 if not denied and not future:return False
+        if projection.get('unavailable') and (
+                PREPARED_SNAPSHOT.search(clause) or SAVE_OR_HOLD_RECEIPT.search(clause)
+                or LIVE_ROUTE_CLAIM.search(clause)):
+            if not re.search(r"\b(?:not|never|cannot|can't|don't|no)\b",clause,re.I):
+                return False
         if 'keep_current' not in projection.get('allowed_steps',STEPS):
             keep=re.search(r'\b(?:keep|continue|retain|maintain|use|using|run|running)\b'
                            r'[^,!?]{0,50}\b(?:current|qualified|existing)\b[^,!?]{0,30}'

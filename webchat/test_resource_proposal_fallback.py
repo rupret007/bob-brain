@@ -54,7 +54,10 @@ class ResourceProposalFallbackTests(unittest.TestCase):
 
     def test_invalid_steps_do_not_rescue_unsupported_resource_claims(self):
         for claim in ('Codex guarantees zero charges.', 'Codex guarantees equivalent answers.',
-                      'Use Gemini for the next reply.'):
+                      'Use Gemini for the next reply.',
+                      'Continue with the previously prepared evidence snapshot.',
+                      'I saved hold ID H-8841 and issued save receipt SR-12.',
+                      'I routed this to Codex; Codex is now the active route.'):
             with self.subTest(claim=claim):
                 packet = json.loads(SAMPLE['raw_answer'])
                 packet['answer'].append(dict(reasoning=claim))
