@@ -1,0 +1,24 @@
+--- a/conductor/run-webbob-gate.sh
++++ b/conductor/run-webbob-gate.sh
+@@ -32,7 +32,16 @@
+   echo "FAIL: working tree is not clean" >&2
+   exit 1
+ fi
+-if ! git -C "$CODE" diff --quiet "$GATE_BASE" -- release/; then
+-  echo "FAIL: release/ differs from $GATE_BASE; admission refuses any release/ drift" >&2
+-  exit 1
+-fi
++# Line 35 replacement: still fail closed on any unattested release/ drift.
++# The verifier allows ONLY release/andrea-bridge.json, and only its sha/worktree
++# keys, after receipts + Jeff ack. Extra files/keys, writable receipts, env
++# overrides, non-main sha, or a missing ack still exit non-zero (needs_jeff).
++# Do not pass override environment variables. Do not add a skip switch.
++# Pass --andrea-git only as a script-local path to a real Andrea_NanoBot
++# checkout (not an inherited override env). Missing inspect fails closed.
++if ! python3 "$CODE/release/pin_change.py" --root "$ROOT" --code "$CODE" --base "$GATE_BASE" \
++      --andrea-git "$ROOT/workspaces/andrea-webbob-bridge-0018"; then
++  echo "FAIL: release/ vs $GATE_BASE is not an attested Andrea pin change (needs_jeff)" >&2
++  exit 1
++fi
++
+ # Continue with the remaining admission checks unchanged.
