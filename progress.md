@@ -1,0 +1,1 @@
+KAREN_GATE_REQUEST voice_memo_policy recall-field allowlist (transcription_status + parity voice_memos); forbidden-stem checks unchanged for other payloads; regression tests for obfuscated keys and inner-space mutation.
