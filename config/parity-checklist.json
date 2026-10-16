@@ -12,7 +12,7 @@
     "web_research": "Current-information answer cites multiple pages actually fetched",
     "browser_desktop": "Isolated browser/session lease; exact window target; Jeff grants macOS permissions",
     "files_images": "Upload, inspect and return supported artifacts with ownership checks",
-    "voice_memos": "Full bounded phone memo transcription survives restart and later recall",
+    "voice_memos": "Phone memo metadata survives restart; audio and transcripts stay on-device only",
     "widgets_decisions": "Exact action cards reject stale payload approval",
     "message_drafts": "Separate exact approval and honest delivery/uncertain receipt",
     "teammate_messages": "Durable addressed inbox and actual independent receiver acknowledgment"
