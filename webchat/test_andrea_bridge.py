@@ -93,10 +93,11 @@ class AndreaBridgeTests(unittest.TestCase):
         value = draft()
         response = dict(ok=True, draftId='b'*64, digest=Andrea.scope_digest(Andrea.scope(value)),
                         actionId='action-123', challenge='wbtxt-' + 'c'*32, expiresAt=(time.time()+300)*1000)
-        with patch('texting.request_json', return_value=response):
+        health = dict(ok=True, protocol=1, service='andrea-web-bob', connected=True, paused=False, instinctReadOnly=True)
+        with patch('texting.request_json', side_effect=[health, response]):
             self.assertEqual(self.client.prepare(value), response)
         for key, bad in [('digest', '0'*64), ('challenge', 'no'), ('expiresAt', 0), ('expiresAt', float('nan')), ('expiresAt', time.time()*1000+99999999)]:
-            with self.subTest(key=key), patch('texting.request_json', return_value={**response, key: bad}):
+            with self.subTest(key=key), patch('texting.request_json', side_effect=[health, {**response, key: bad}]):
                 self.assertIsNone(self.client.prepare(value))
 
     def test_control_token_cannot_enable_new_owner_surface(self):
