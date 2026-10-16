@@ -16,6 +16,11 @@ CODEX_REPROS_74773F1 = (
     'remind me every 10 minutes to stretch a.f.t.e.r.a.p.p.r.o.v.a.l',
     'remind me to stretch rev\u200biew\u200bfi\u200brst in 10 minutes',
     'remind me to stretch dr\u034faft o\u034fnly in 2 hrs',
+    # codex-solo-consent-ca54b9686a3b.json
+    'remind me every 10 minutes to stretch saving is disallowed',
+    'remind me to stretch saving is barred in 10 mins',
+    'remind me to stretch creation is suspended in 2 hrs',
+    'remind me every 10 minutes to stretch savelater',
 )
 TAILS = ('scheduling prohibited', 'scheduling forbidden', 'prohibited', 'forbidden',
          'not allowed', 'do not schedule', 'blocked until approved', 'vetoed',

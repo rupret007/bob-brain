@@ -43,7 +43,9 @@ _PLAIN_REQUEST = re.compile(r'[A-Za-z0-9 :]+[.!?]?')
 # Joined words ("reviewfirst", "pleaseapprove") still carry these roots.
 _CONTROL_ROOTS = re.compile(r'schedul|approv|consent|confirm|permi|draft|preview|review|proofread|prohibit|forbid|'
                             r'disabl|authori|signoff|beforehand|condition|contingent|hypothetic|simulat|execut|decid|'
-                            r'agree|concur|suppos|provid|unless|greenlight|goahead', re.I)
+                            r'agree|concur|suppos|provid|unless|greenlight|goahead|sav(?:e|ing)|creat|disallow|barred|suspend|later|'
+                            r'nix|veto|embargo|freez|frozen|withh[oe]ld|postpon|deferr|delay|halt|block|forbid|ban(?:ned|s)?\\b|'
+                            r'alert|notif|timer|setting|allow|permit|restrict|prevent|cancel|abort|revok|rescind', re.I)
 _CONTROL_WORDS = re.compile(
     r'(?:schedul|approv|approval|consent|confirm|agree|concur|permi|permission|allow|authori|'
     r'draft|preview|review|proofread|check|verify|sign|signoff|signal|green|light|ok|okay|yes|'
