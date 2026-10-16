@@ -51,6 +51,15 @@ class SpendTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.budget.reserve("unknown", "unconfigured", 1)
 
+    def test_settle_rejects_overrun_and_records_alert(self):
+        self.budget.reserve("call", "model-a", 50)
+        with self.assertRaisesRegex(ValueError, "exceeds reservation"):
+            self.budget.settle("call", 51)
+        self.assertEqual({a["level"] for a in self.budget.alerts() if a["level"] == "overrun"}, {"overrun"})
+        self.budget.settle("call", 40)
+        with self.assertRaises(ValueError):
+            self.budget.settle("call", 30)
+
 
 if __name__ == "__main__":
     unittest.main()

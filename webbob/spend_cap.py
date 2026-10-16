@@ -70,14 +70,21 @@ class SpendCap:
     def settle(self, call_id, actual_cost):
         if type(actual_cost) is not int or not 0 <= actual_cost < 10**12:
             raise ValueError("nonnegative actual cost required")
+        overrun = False
         with self.db() as db:
-            row = db.execute("SELECT model,month,actual FROM spend WHERE id=?", (call_id,)).fetchone()
+            row = db.execute("SELECT model,month,reserved,actual FROM spend WHERE id=?", (call_id,)).fetchone()
             if not row or row[0] not in self.caps:
                 raise ValueError("unknown reservation")
-            if row[2] is not None and row[2] != actual_cost:
+            if row[3] is not None and row[3] != actual_cost:
                 raise ValueError("settled receipt cannot be rewritten")
-            db.execute("UPDATE spend SET actual=? WHERE id=?", (actual_cost, call_id))
-            self._alerts(db, row[0], row[1], self._total(db, row[0], row[1]))
+            if actual_cost > row[2]:
+                db.execute("INSERT OR IGNORE INTO alerts VALUES (?,?,?)", (row[0], row[1], "overrun"))
+                overrun = True
+            else:
+                db.execute("UPDATE spend SET actual=? WHERE id=?", (actual_cost, call_id))
+                self._alerts(db, row[0], row[1], self._total(db, row[0], row[1]))
+        if overrun:
+            raise ValueError("actual cost exceeds reservation")
 
     def alerts(self):
         with self.db() as db:
