@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from failover import atomic_text
 from actions_intent import reminder_request, routine_request, routine_intent
-from approval_language import approval_requested
+from approval_language import approval_requested, leading_approval_request
 import chat_intent
 
 ZONE = ZoneInfo('America/Chicago')
@@ -602,6 +602,8 @@ class Reminders:
                     'Check “my reminders” once storage is available before trying again.')
 
     def _handle(self, text, cid, request_id, *, local_tasks=None, intent_state=None, actor='owner', allow_model=False):
+        if leading_approval_request(text, reminder_request):
+            return 'Nothing was saved. Send a new reminder request when you want it scheduled.'
         control = re.fullmatch(r'(yes|cancel) (wbrem-[0-9a-f]{32})', text.strip())
         if control:
             return self.control(control[1], control[2], cid, request_id, actor, intent_state or chat_intent.new_state(), local_tasks)

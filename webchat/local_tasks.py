@@ -25,7 +25,7 @@ import uuid
 from zoneinfo import ZoneInfo
 
 import chat_intent
-from approval_language import approval_categories
+from approval_language import approval_categories, leading_approval_request
 from failover import atomic_text
 
 LIMIT = 64 * 1024
@@ -494,6 +494,9 @@ class LocalTasks:
 
     def handle(self, text, cid, request_id, intent_state, *, routine=False):
         try:
+            if leading_approval_request(text.strip(), lambda value: (
+                    (match := FILE.fullmatch(value)) and match[1].lower() == 'create')):
+                return 'No file changed. Send a new file request when you want it performed.'
             if self.isolated_files and not SEARCH.fullmatch(text.strip()) and (
                     CONTROL.fullmatch(text.strip()) or FILE.fullmatch(text.strip()) or
                     LIST.fullmatch(text.strip()) or TERMINAL.fullmatch(text.strip())):
