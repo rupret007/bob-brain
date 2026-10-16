@@ -21,12 +21,33 @@ def _words(expression):
     return re.compile(r'\b(?:' + expression + r')\b')
 
 
+# Dots delimit letters within a word; whitespace between single letters may
+# also hide word boundaries. That ambiguity requires ASK even after joining.
+_DOTTED_LETTERS = re.compile(r'\b[a-z](?:\.[a-z])+(?!\w)')
+_SPACED_LETTERS = re.compile(r'\b[a-z](?:[^\S\r\n]+[a-z])+(?!\w)')
+
+
+def _detection_text(text):
+    # Format characters include zero-width spaces/joiners, BOM and soft hyphens.
+    # Remove them before compatibility normalization so they cannot split a
+    # visible consent word. This copy must never become executable content.
+    return unicodedata.normalize('NFKC', ''.join(
+        char for char in text if unicodedata.category(char) != 'Cf'))
+
+
+def _fold_punctuation(text):
+    # Fold apostrophes/hyphens without discarding quoted spans or constraints.
+    return ''.join(' ' if unicodedata.category(char) == 'Pd' or char == '_'
+                   else "'" if char in '\u2018\u2019\u02bc' else char for char in text.casefold())
+
+
+def _join_dotted(text):
+    return _DOTTED_LETTERS.sub(lambda match: match[0].replace('.', ''), text)
+
+
 def _normalize(text):
-    text = unicodedata.normalize('NFKC', text).casefold()
-    # Treat typographic apostrophes, hyphens, line breaks and repeated spaces
-    # alike. Do not discard quoted spans or split away trailing constraints.
-    text = ''.join(' ' if unicodedata.category(char) == 'Pd' or char == '_'
-                   else "'" if char in '\u2018\u2019\u02bc' else char for char in text)
+    text = _join_dotted(_fold_punctuation(_detection_text(text)))
+    text = _SPACED_LETTERS.sub(lambda match: re.sub(r'\s+', '', match[0]), text)
     return re.sub(r'\s+', ' ', text)
 
 
@@ -36,20 +57,21 @@ def _normalize(text):
 _PERSONAL = _words(r'i|i\'\w+|me|my|mine|we|us|our|you|your')
 _SELF_REQUEST = _words(r'i|i\'\w+|we|let\s+(?:me|us)|give\s+(?:me|us)')
 _CONSULT = _words(r'(?:with|to)\s+(?:me|us)|show\w*\s+(?:me|us)')
-_PRIORITY = _words(r'first|before|prior|initially')
+_PRIORITY = _words(r'first|before|beforehand|prior|initially')
 _RESTRICTION = _words(r'only|just|keep|remain\w*|leav\w*|retain\w*|preserv\w*|'
                       r'need\w*|requir\w*|must')
 _OWNERSHIP = _words(r'my|our')
 _PREREQUISITE = _words(r'after|before|until|once|when|upon')
 _CONDITION = _words(
-    r'if|unless|provided|providing|assuming|conditional\w*|contingent\w*|'
+    r'if|unless|provided|providing|assuming|suppose|supposing|should|'
+    r'conditional\w*|contingent\w*|'
     r'depend\w*\s+(?:on|upon)|'
     r'on\s+(?:the\s+)?condition|subject\s+to|'
     r'only\s+(?:after|before|when|once|with|upon)')
 _NEGATION = _words(r'no|not|nothing|never|without|\w+n\'t|undone|un[a-z]+(?:ed|en)')
 # Negative-action predicates carry withholding force even without not/never.
 _INHIBITION = _words(r'avoid\w*|refrain\w*|prevent\w*|suppress\w*|skip\w*|'
-                     r'ceas\w*|halt\w*|omit\w*|abstain\w*|stop\w*')
+                     r'ceas\w*|halt\w*|omit\w*|abstain\w*|stop\w*|disabl\w*')
 _UNCERTAINTY = _words(r'maybe|perhaps|possib\w*|potential\w*|probab\w*|may|might|'
                       r'unsure|uncertain\w*|undecided|tentative\w*')
 
@@ -57,9 +79,10 @@ _UNCERTAINTY = _words(r'maybe|perhaps|possib\w*|potential\w*|probab\w*|may|might
 # a family; adding a new sentence is not necessary for different word order,
 # intervening modifiers, request subjects or objects.
 _CONSENT = _words(
-    r'confirm\w*|approv\w*|permission\w*|consent\w*|agree\w*|'
+    r'confirm\w*|approv\w*|permission\w*|consent\w*|agree\w*|concur\w*|'
     r'authori[sz]\w*|assent\w*|accept\w*|clearance|ok(?:ay)?|green\s+light|go\s+ahead|say\s+so|'
-    r'sign(?:s|ed|ing)?\s+off|thumbs?\s+up|blessing|nod|signal|say\s+(?:go|yes)')
+    r'sign(?:s|ed|ing)?\s*offs?|thumbs?\s+up|blessing|nod|signal|say(?:s|ing)?\s+(?:go|yes)')
+_FOLLOWS = _words(r'follow(?:s|ing)?')
 _WAIT = _words(r'wait\w*|await\w*|hold\w*|paus\w*|defer\w*|pending|postpon\w*')
 _DECISION = _words(r'decid\w*|decision\w*|deliberat\w*|ponder\w*|'
                    r'think\w*|thought\w*|consider\w*|reflect\w*|mull\w*')
@@ -68,7 +91,7 @@ _WHETHER = _words(r'whether')
 _PREVIEW = _words(r'preview\w*')
 _PERCEPTION = _words(r'see|look\w*|check\w*|inspect\w*|examin\w*|peek\w*|view\w*|show\w*')
 _REVIEW = _words(
-    r'review\w*|scrutini\w*|assess\w*|evaluat\w*|vet|vets|vetted|vetting|audit\w*|'
+    r'review\w*|proofread\w*|scrutini\w*|assess\w*|evaluat\w*|vet|vets|vetted|vetting|audit\w*|'
     r'double\s+check\w*')
 _CONSULTATION = _words(r'consult\w*|feedback|opinions?|input')
 _FOR_REVIEW = _words(r'for\s+(?:(?:my|our|a)\s+)?review\w*')
@@ -126,6 +149,10 @@ def _unresolved_structure(text):
         return True
     scheduling = (reminder_request(text) or
                   re.match(r'^(?:remind me|set (?:a )?routine)\b', text))
+    # Clock/ISO colons have numeric operands; other scheduling colons may
+    # introduce a restriction. File-command colons retain their content syntax.
+    if scheduling and re.search(r':(?!\d)', text):
+        return True
     morning = routine_request(text)
     for marker in _ADJUNCT.finditer(text):
         # Bare morning syntax resolves only its header clock, never a time
@@ -144,7 +171,8 @@ def _unresolved_structure(text):
 
 
 def _conditional_approval(text):
-    return bool(_CONDITION.search(text) or _PREREQUISITE.search(text))
+    return bool(_CONDITION.search(text) or _PREREQUISITE.search(text) or
+                (_FOLLOWS.search(text) and _CONSENT.search(text)))
 
 
 def _preview_first(text):
@@ -223,14 +251,24 @@ def approval_categories(text):
     their own routing, holds,
     allowlists and effect protections. This check must never override those gates.
     """
-    normalized = _normalize(text)
-    reasons = {name for name, detector in _DETECTORS.items() if detector(normalized)}
+    original = unicodedata.normalize('NFKC', text)
+    detection_text = _detection_text(text)
+    # Keep the previous lexical evidence as well as the joined interpretation.
+    # A format character might separate words ("if\u200bthe"), and spelling
+    # normalization must not erase an already recognized restriction ("i.s").
+    variants = {_normalize(text), re.sub(r'\s+', ' ', _fold_punctuation(original))}
+    reasons = {name for name, detector in _DETECTORS.items()
+               if any(detector(variant) for variant in variants)}
     # Inspect clause boundaries (including line separators) before whitespace/
     # dash normalization. An unrecognized secondary line must still ASK;
     # flattening it into the body would manufacture authorization. Never strip
     # quoted spans or a putative content suffix from either scan.
-    if (_CLAUSE_BOUNDARY.search(unicodedata.normalize('NFKC', text)) or
-            _unresolved_structure(normalized)):
+    # Spaced letters have ambiguous word boundaries ("i f I a p p r o v e"
+    # could collapse to "ifiapprove"). Do not let joining erase a restriction
+    # just because its resulting word is absent from the semantic vocabulary.
+    if (_CLAUSE_BOUNDARY.search(original) or _CLAUSE_BOUNDARY.search(detection_text) or
+            _SPACED_LETTERS.search(_join_dotted(_fold_punctuation(detection_text))) or
+            any(_unresolved_structure(variant) for variant in variants)):
         reasons.add('unresolved_clause')
     return frozenset(reasons)
 

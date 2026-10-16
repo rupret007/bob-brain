@@ -676,6 +676,11 @@ class Reminders:
                 # requests and model extractions are not fresh authorization.
                 # Parsing above still rejects approval clauses and ambiguity.
                 if action is None and not assumption and PERSONAL_INTERVAL_REQUEST.fullmatch(text.strip()):
+                    # Check both the original request and extracted reminder
+                    # text for either interval grammar. Detection normalization
+                    # must never strip constraints or rewrite the saved body.
+                    if approval_requested(text) or approval_requested(body):
+                        raise ReminderError('Nothing was saved. Send a new reminder request when you want it scheduled.')
                     with self.draft_lock() as drafts:
                         changed = False
                         for old in drafts.values():
