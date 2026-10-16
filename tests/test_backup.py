@@ -34,7 +34,8 @@ class BackupTests(unittest.TestCase):
         for change in [dict(self.config, credentials="FAKE"), dict(self.config, BRAVE_API_KEY="FAKE")]:
             with self.assertRaises(ValueError):
                 snapshot(self.path, self.facts, change)
-        for body in ["password is dummy", "api_key=dummy", "Bearer dummy"]:
+        for body in ["password is dummy", "api_key=dummy", "Bearer dummy", "AKIA0123456789012345",
+                     "xoxb-1234567890-abcdefghij", "+1 312 555 0199", "voice memo transcript sample"]:
             facts = copy.deepcopy(self.facts)
             facts[0]["body"] = body
             with self.assertRaises(ValueError):

@@ -7,8 +7,9 @@ from pathlib import Path
 import re
 import secrets
 
+from webbob.shared_context import ContextError, safe_fact
+
 CONFIG_FIELDS = {"timezone", "release_sha", "model_caps_microdollars", "routines_paused"}
-SECRET = re.compile(r"(?i)(-----BEGIN|\b(?:sk-|ghp_|github_pat_)[a-z0-9_-]{12,}|\b(?:password|credential|bearer|secret|api[_ -]?key|access[_ -]?token)\b)")
 
 
 def canonical(value):
@@ -48,9 +49,13 @@ def validate(facts, config):
             raise ValueError("accepted source and source digest required")
         if type(fact["at"]) not in (int, float) or not math.isfinite(fact["at"]):
             raise ValueError("finite fact timestamp required")
+        try:
+            safe_fact(fact["body"])
+        except ContextError:
+            raise ValueError("backup rejected: sensitive content") from None
     raw = canonical({"facts": facts, "config": config})
-    if len(raw) > 2_000_000 or SECRET.search(raw.decode()):
-        raise ValueError("backup rejected: oversized or sensitive content")
+    if len(raw) > 2_000_000:
+        raise ValueError("backup rejected: oversized content")
     return raw
 
 
