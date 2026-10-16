@@ -91,9 +91,18 @@ def main(argv):
                 wrapper.extend(["--bind", path, path])
     else:
         wrapper.extend(["--dev-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"])
-        for path in deny_write_paths(policy):
-            if os.path.exists(path):
-                wrapper.extend(["--ro-bind", path, path])
+        denied = [path for path in deny_write_paths(policy) if os.path.exists(path)]
+        # Overlayfs (GitHub-hosted Ubuntu) can refuse sibling writes after a
+        # child is remounted read-only. Re-bind each parent read-write first.
+        parents = []
+        for path in denied:
+            parent = os.path.dirname(os.path.abspath(path))
+            if parent and parent != os.sep and os.path.isdir(parent):
+                parents.append(parent)
+        for parent in dict.fromkeys(parents):
+            wrapper.extend(["--bind", parent, parent])
+        for path in denied:
+            wrapper.extend(["--ro-bind", path, path])
     os.execv(bwrap, wrapper + command)
 
 
