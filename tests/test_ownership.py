@@ -154,6 +154,29 @@ class OwnershipTests(unittest.TestCase):
             Executor("andrea", "unknown")
         self.assertEqual(Executor("andrea", ANDREA_RELEASE).gate.owner, "andrea")
 
+    def test_malformed_legacy_records_deny_even_when_expired_or_released(self):
+        valid = dict(repo=self.repo, work_id="legacy", owner="bob", status="RELEASED",
+                     expires=(self.clock - dt.timedelta(hours=1)).isoformat(), files=[])
+        for mutation in [dict(work_id=42), dict(repo=None), dict(files=[None]),
+                         dict(files=["../escape"]), dict(created="bad"),
+                         dict(resources=["browser:hidden"])]:
+            with self.subTest(mutation=mutation):
+                (self.root / "legacy.json").write_text(json.dumps(valid | mutation))
+                with self.assertRaises((gate.GateError, ValueError)):
+                    gate.Gate("webbob").get_owner("browser:unclaimed")
+
+    def test_legacy_write_after_migration_cannot_be_hidden_by_sequence(self):
+        row = self.claim()
+        self.clock += dt.timedelta(seconds=1)
+        (self.root / "legacy.json").write_text(json.dumps(dict(
+            repo=self.repo, work_id="one", owner="bob", status="RUNNING", files=[],
+            created=self.clock.isoformat(), expires=(self.clock + dt.timedelta(hours=1)).isoformat())))
+        with self.assertRaises(gate.GateError):
+            with gate.Gate("webbob").execution(*self.args(row), self.resource):
+                self.fail("legacy takeover admitted publication")
+        with self.assertRaises(gate.GateError):
+            gate.Gate("bob").get_owner("browser:unclaimed")
+
 
 class MCPTests(unittest.IsolatedAsyncioTestCase):
     async def test_real_stdio_protocol_owner_binding_and_fail_closed_error(self):

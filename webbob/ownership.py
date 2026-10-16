@@ -66,14 +66,25 @@ def read_records():
             for key in ("owner", "status", "expires"):
                 if not isinstance(j.get(key), str) or not j[key]:
                     raise ValueError()
-            if not (j.get("work_id") or j.get("task")):
+            identity = j.get("work_id") or j.get("task")
+            if not isinstance(identity, str) or not norm_id(identity):
+                raise ValueError()
+            if not isinstance(j.get("repo"), str) or not re.fullmatch(r"[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+", j["repo"]):
                 raise ValueError()
             expiry = dt.datetime.fromisoformat(j["expires"])
             if expiry.tzinfo is None:
                 raise ValueError()
+            if "created" in j and dt.datetime.fromisoformat(j["created"]).tzinfo is None:
+                raise ValueError()
             if j.get("status").upper() not in DONE | {"RUNNING", "CLAIMED", "ACTIVE"}:
                 raise ValueError()
             if not isinstance(j.get("files", []), list):
+                raise ValueError()
+            for filename in j.get("files", []):
+                if not isinstance(filename, str) or not filename or filename.startswith("/"):
+                    raise ValueError()
+                canonical("repo:" + j["repo"] + "/" + filename)
+            if "sequence" not in j and any(k in j for k in ("resources", "fence", "token_hash")):
                 raise ValueError()
             # New records require explicit ordering; never use filesystem mtime.
             if "sequence" in j:
@@ -99,11 +110,21 @@ def read_records():
 
 
 def latest_by_key(records=None):
+    records = read_records() if records is None else records
+    migrated = {}
+    for j in records:
+        if "sequence" in j:
+            key = (j["repo"].lower(), norm_id(j.get("work_id") or j["task"]))
+            stamp = dt.datetime.fromisoformat(j["created"])
+            migrated[key] = min(migrated.get(key, stamp), stamp)
     best = {}
-    for j in read_records() if records is None else records:
+    for j in records:
         k = ((j.get("repo") or "").lower(), norm_id(j.get("work_id") or j["task"]))
         # Legacy records use their written timestamps, not mutable file metadata.
-        order = (j.get("sequence", 0), j.get("created") or j["expires"])
+        stamp = dt.datetime.fromisoformat(j.get("created") or j["expires"])
+        if "sequence" not in j and k in migrated and stamp >= migrated[k]:
+            raise GateError("legacy writer changed a migrated claim")
+        order = (j.get("sequence", 0), stamp)
         if k in best and order == best[k][0]:
             raise GateError("ambiguous claim history")
         if k not in best or order > best[k][0]:
