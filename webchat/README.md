@@ -611,10 +611,11 @@ creates an interval notification, never an executable job. An interval day is
 and retains bounded completed history; the saved chat keeps delivered notices.
 
 Direct interval requests save immediately only for recognized complete tasks,
-such as `stretch`, `call mom`, `take my pills`, and `drink water`. Unrecognized
-wording, extra clauses, references to reminders or saving, and ambiguous mixed
-letter/digit text produce a draft requiring a separate exact `yes wbrem-…`
-message. Even ordinary tasks outside the supported forms require confirmation.
+such as `stretch`, `call mom`, `call room 204`, `take my pills`, and `drink water`.
+Unrecognized wording, extra clauses, references to reminders or saving, and all
+mixed letter/digit body tokens (including ticket IDs) produce a draft requiring
+a separate exact `yes wbrem-…` message. Even ordinary tasks outside the supported
+forms require confirmation.
 One-shot intervals accept `mins` and `hrs`; recurring abbreviations still draft.
 
 Reminders use Web Bob's existing one-second background loop; they do not start

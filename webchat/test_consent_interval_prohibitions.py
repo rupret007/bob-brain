@@ -174,8 +174,7 @@ class ConsentIntervalProhibitionTests(unittest.TestCase):
 
     def test_unconditional_controls_preserve_direct_save_and_abbreviation_drafts(self):
         for body in ('stretch', 'call mom', 'drink 2 cups water',
-                     'inspect ticket 12345', 'inspect ticket AB123',
-                     'inspect ticket b87cbc78207a5c2c'):
+                     'inspect ticket 12345'):
             for form, template in FORMS.items():
                 for unit, quantity, delay in UNITS:
                     text = template.format(quantity=quantity, unit=unit, body=body)
@@ -188,6 +187,18 @@ class ConsentIntervalProhibitionTests(unittest.TestCase):
                                                     interval=interval)
                         else:
                             self.assert_immediate(text, body, delay, interval)
+
+    def test_mixed_ticket_operands_require_exact_confirmation_without_an_exemption(self):
+        # These formerly asserted immediate saves under the ticket-ID exemption.
+        # The owner-approved mixed-token rule requires ASK for these operands too.
+        for body in ('inspect ticket AB123', 'inspect ticket b87cbc78207a5c2c'):
+            for form, template in FORMS.items():
+                for unit, quantity, delay in UNITS:
+                    text = template.format(quantity=quantity, unit=unit, body=body)
+                    interval = delay if form == 'recurring' else None
+                    with self.subTest(body=body, form=form, unit=unit):
+                        self.assert_exact_draft(text, body=body, delay=delay,
+                                                interval=interval)
 
     def test_exact_confirmation_saves_original_body_once(self):
         for phrase in PROHIBITIONS[:3] + DIGIT_CONTROLS:

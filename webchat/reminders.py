@@ -93,16 +93,10 @@ _TIME_UNITS = frozenset(('second', 'seconds', 'minute', 'minutes', 'min', 'mins'
 _ORDINARY_TASK = re.compile(
     r'(?:stretch(?: gently)?|'
     r'drink (?:[0-9]+ (?:cups?|glass(?:es)?)(?: of)? )?(?:water|tea|coffee|milk|juice)|'
-    r'call (?:mom|dad|mother|father)|'
+    r'call (?:mom|dad|mother|father|room [0-9]+)|'
     r'take (?:(?:(?P<possessive>my)|the|[0-9]+) )?(?:pills?|medicine|medication)|'
     r'take out (?:the )?trash|feed (?:the )?(?:cats?|dogs?)|'
     r'water (?:the )?plants?|move (?:the )?laundry|inspect ticket [0-9]+)', re.I)
-# Mixed letters/digits are unresolved by default, even when they look like hex.
-# Preserve the existing ticket controls only as a complete task with one typed
-# operand: the literal AB prefix plus a number, or a 16-character lowercase ID.
-# No prefix/suffix prose is allowed around that task, and the operand never
-# exempts any part of the body from the independent control/reference checks.
-_TICKET_ID_TASK = re.compile(r'(?i:inspect ticket) (?:AB[0-9]+|[0-9a-f]{16})')
 
 
 def _dictionary_token(word):
@@ -132,13 +126,12 @@ def plain_interval_reminder(text, body):
     if _BODY_SELF_REFERENCE.search(body):
         return False
     task = _ORDINARY_TASK.fullmatch(body)
-    ticket = _TICKET_ID_TASK.fullmatch(body)
-    if not (task or ticket):
+    if not task:
         return False
     words = body.split()
     detection_text = text
     detection_body = body
-    if task and task['possessive']:
+    if task['possessive']:
         # Only this parsed object owns "my" ("take my pills"), not permission
         # for the operation. Resolve that slot in detection copies only. The
         # whole original body must occur verbatim in the direct request.
@@ -147,18 +140,14 @@ def plain_interval_reminder(text, body):
         start, end = task.span('possessive')
         detection_body = body[:start] + 'the' + body[end:]
         detection_text = text.replace(body, detection_body, 1)
-    # An ID-shaped token can still spell a control word (TABOO1, OFF1 LIMITS).
-    # Use the alphabetic interpretation for detection only, never saved content.
-    detection_body = re.sub(r'\b([A-Za-z]+)[0-9]+\b', r'\1', detection_body)
     if (approval_requested(detection_text) or
             approval_requested(detection_body) or _BODY_PREDICATE.search(detection_body)):
         return False
     if any(len(word) == 1 and not word.isdigit() and word.lower() != 'a' for word in words):
         return False
-    # Only a fully parsed ticket task resolves a mixed-token operand. A token
-    # shape on its own (CEA5E123, DEC1DE12, etc.) never grants this exemption.
-    task_words = words[:-1] if ticket else words
-    if not all(_dictionary_token(word) for word in task_words):
+    # Validate every body token. Mixed letters/digits always need exact-token
+    # confirmation, including ticket operands and hex-shaped values.
+    if not all(_dictionary_token(word) for word in words):
         return False
     return not any(_CONTROL_WORDS.fullmatch(word) or _CONTROL_ROOTS.search(word) for word in words)
 
@@ -834,8 +823,8 @@ class Reminders:
                     # text for either interval grammar. Detection normalization
                     # must never strip constraints or rewrite the saved body.
                     if not plain_interval_reminder(text, body):
-                        # Confirm when unsure: recognized words/IDs do not
-                        # waive the independent check for control language.
+                        # Confirm when unsure, including every unresolved
+                        # mixed letter/digit operand.
                         return self.draft(text, cid, request_id, actor, body, due, interval, daily_time, action,
                                           weekly_time=weekly, assumption=assumption)
                     with self.draft_lock() as drafts:

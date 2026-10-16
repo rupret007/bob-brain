@@ -1,4 +1,4 @@
-"""Rev6 interval blockers must create resolved exact-token drafts, never save.
+"""Rev6/rev7 interval blockers create resolved exact-token drafts, never save.
 
 Run the actual Reminders handler with memory persistence adapters and rejected
 notifications. Unknown cancellation vocabulary and isolated mixed tokens test
@@ -43,6 +43,31 @@ REV6_REPROS = (
      'stretch CEA5E123 reminders', 600, None),
     ('remind me to stretch CEA5E123 reminders in 2 hrs',
      'stretch CEA5E123 reminders', 7200, None),
+)
+
+# All seven requests in CONSENT-MIXED-TICKET-EXEMPTION.reproductions from
+# codex-solo-consent-020a5190c7e6.json, with their resolved schedules/content.
+REV7_REPROS = (
+    ('remind me every 10 minutes to inspect ticket cea5e12345678901',
+     'inspect ticket cea5e12345678901', 600, 600),
+    ('remind me to inspect ticket cea5e12345678901 in 10 minutes',
+     'inspect ticket cea5e12345678901', 600, None),
+    ('remind me to inspect ticket cea5e12345678901 in 10 mins',
+     'inspect ticket cea5e12345678901', 600, None),
+    ('remind me to inspect ticket cea5e12345678901 in 2 hrs',
+     'inspect ticket cea5e12345678901', 7200, None),
+    ('remind me to inspect ticket dec1de1234567890 in 10 mins',
+     'inspect ticket dec1de1234567890', 600, None),
+    ('remind me to inspect ticket ce45ece45e123456 in 10 mins',
+     'inspect ticket ce45ece45e123456', 600, None),
+    ('remind me to inspect ticket AB123 in 10 mins',
+     'inspect ticket AB123', 600, None),
+)
+REV7_MIXED_OPERANDS = (
+    'cea5e12345678901', 'dec1de1234567890', 'ce45ece45e123456', 'AB123',
+)
+HELD_OUT_MIXED_OPERANDS = (
+    'ab123', 'x9', '4u', 'B87CBC78207A5C2C', 'b87cbc78207a5c2c', '5T0P',
 )
 
 REV6_NEARBY_PHRASES = (
@@ -164,6 +189,29 @@ class ConsentIntervalFailClosedTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assert_exact_draft(text, body, delay, interval)
 
+    def test_every_rev7_reproduction_verbatim(self):
+        for text, body, delay, interval in REV7_REPROS:
+            with self.subTest(text=text):
+                self.assert_exact_draft(text, body, delay, interval)
+
+    def test_rev7_mixed_ticket_operands_require_exact_confirmation_in_all_forms(self):
+        self.assert_complete_bodies_ask(tuple(
+            'inspect ticket ' + operand for operand in REV7_MIXED_OPERANDS))
+
+    def test_held_out_mixed_ticket_shapes_require_exact_confirmation_in_all_forms(self):
+        self.assert_complete_bodies_ask(tuple(
+            'inspect ticket ' + operand for operand in HELD_OUT_MIXED_OPERANDS))
+
+    def test_numeric_room_task_does_not_admit_mixed_operands(self):
+        self.assert_complete_bodies_ask(tuple(
+            'call room ' + operand
+            for operand in REV7_MIXED_OPERANDS + HELD_OUT_MIXED_OPERANDS))
+
+    def test_rev7_and_held_out_mixed_tokens_require_confirmation_in_every_position(self):
+        operands = REV7_MIXED_OPERANDS + HELD_OUT_MIXED_OPERANDS
+        self.assert_complete_bodies_ask(operands)
+        self.assert_ask_matrix(operands)
+
     def test_rev6_nearby_phrases_all_forms_placements_and_aliases(self):
         self.assert_ask_matrix(REV6_NEARBY_PHRASES)
 
@@ -229,6 +277,7 @@ class ConsentIntervalFailClosedTests(unittest.TestCase):
             ('remind me to take my pills in 30 mins', 'take my pills', 1800, None),
             ('REMIND ME TO TAKE MY PILLS IN 30 MINS', 'TAKE MY PILLS', 1800, None),
             ('remind me every 2 hours to drink water', 'drink water', 7200, 7200),
+            ('remind me to call room 204 in 10 mins', 'call room 204', 600, None),
         ):
             with self.subTest(text=text):
                 self.assert_immediate(text, body, delay, interval)
