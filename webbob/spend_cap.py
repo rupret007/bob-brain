@@ -3,15 +3,70 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 import sqlite3
+from typing import Optional
 from zoneinfo import ZoneInfo
+
+LOW_QUOTA_REMAINING_PCT = 5
+
+# Model ids map to provider labels in ai-capacity rows (substring match, case-insensitive).
+MODEL_PROVIDER_HINTS = {
+    "codex": ("codex",),
+    "claude": ("claude",),
+    "minimax": ("minimax",),
+    "gemini": ("gemini",),
+    "grok": ("grok", "xai"),
+    "xai": ("grok", "xai"),
+    "cursor": ("cursor",),
+}
+
+
+def _model_hint(model: str) -> Optional[str]:
+    lower = model.lower()
+    for hint, needles in MODEL_PROVIDER_HINTS.items():
+        if hint in lower or any(n in lower for n in needles):
+            return hint
+    return None
+
+
+def match_capacity_row(model: str, rows: list) -> Optional[dict]:
+    hint = _model_hint(model)
+    if not hint or not isinstance(rows, list):
+        return None
+    needles = MODEL_PROVIDER_HINTS.get(hint, ())
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        provider = str(row.get("provider") or "").lower()
+        if any(n in provider for n in needles):
+            return row
+    return None
+
+
+def provider_quota_check(model: str, capacity_doc: Optional[dict]) -> dict:
+    """Fail closed when remaining_pct is known and below threshold; unknown is not low."""
+    if not isinstance(capacity_doc, dict):
+        return {"low_quota": False, "unknown_quota": True, "flagged": True, "reason": "no_capacity_snapshot"}
+    row = match_capacity_row(model, capacity_doc.get("rows") or [])
+    if row is None:
+        return {"low_quota": False, "unknown_quota": True, "flagged": True, "reason": "provider_unmatched"}
+    remaining = row.get("remaining_pct")
+    if remaining is None:
+        return {"low_quota": False, "unknown_quota": True, "flagged": True, "reason": "remaining_unknown",
+                "provider": row.get("provider")}
+    if remaining < LOW_QUOTA_REMAINING_PCT:
+        return {"low_quota": True, "unknown_quota": False, "flagged": False, "reason": "provider_quota_low",
+                "provider": row.get("provider"), "remaining_pct": remaining}
+    return {"low_quota": False, "unknown_quota": False, "flagged": False, "reason": "ok",
+            "provider": row.get("provider"), "remaining_pct": remaining}
 
 
 class SpendCap:
-    def __init__(self, path, caps, clock=None):
+    def __init__(self, path, caps, clock=None, capacity_snapshot=None):
         if not caps or any(not isinstance(k, str) or type(v) is not int or not 0 <= v < 10**12 for k, v in caps.items()):
             raise ValueError("explicit model caps in integer microdollars required")
         self.path, self.caps = Path(path), dict(caps)
         self.clock = clock or (lambda: datetime.now(ZoneInfo("America/Chicago")))
+        self._capacity_snapshot = capacity_snapshot
         if not self.path.parent.is_dir() or self.path.is_symlink():
             raise ValueError("budget store unavailable")
         with self.db() as db:
@@ -47,11 +102,22 @@ class SpendCap:
             if total * 100 >= cap * threshold:
                 db.execute("INSERT OR IGNORE INTO alerts VALUES (?,?,?)", (model, month, str(threshold)))
 
+    def capacity_snapshot(self):
+        if callable(self._capacity_snapshot):
+            return self._capacity_snapshot()
+        return self._capacity_snapshot
+
     def reserve(self, call_id, model, maximum_cost):
         if model not in self.caps or not isinstance(call_id, str) or not 1 <= len(call_id) <= 100:
             raise ValueError("known model and stable call ID required")
         if type(maximum_cost) is not int or not 0 < maximum_cost < 10**12:
             raise ValueError("positive worst-case cost in microdollars required")
+        quota = provider_quota_check(model, self.capacity_snapshot())
+        if quota.get("low_quota"):
+            month = self._month()
+            with self.db() as db:
+                db.execute("INSERT OR IGNORE INTO alerts VALUES (?,?,'quota_low')", (model, month))
+            return {"admitted": False, "reason": "provider_quota_low", "quota": quota}
         month = self._month()
         with self.db() as db:
             prior = db.execute("SELECT model,month,reserved,actual FROM spend WHERE id=?", (call_id,)).fetchone()

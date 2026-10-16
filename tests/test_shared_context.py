@@ -324,7 +324,8 @@ class ContextTests(unittest.TestCase):
         from webbob.context_mcp import build_server
         import asyncio
         tools = asyncio.run(build_server(self.path, "bob").list_tools())
-        self.assertEqual({t.name for t in tools}, {"read_context", "propose_fact", "post_message", "read_inbox", "ack_message"})
+        self.assertEqual({t.name for t in tools},
+                         {"read_context", "propose_fact", "post_message", "read_inbox", "ack_message", "read_ai_capacity"})
 
 
 if __name__ == "__main__":

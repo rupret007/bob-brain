@@ -1,11 +1,13 @@
 """Read/propose/inbox surface. Acceptance and effects stay outside model tools."""
 import os
 from mcp.server.fastmcp import FastMCP
+from webbob.ai_capacity import AiCapacity
 from webbob.shared_context import SharedContext
 
 
-def build_server(path, bot):
+def build_server(path, bot, capacity=None):
     store = SharedContext(path, bot)
+    capacity_store = capacity if capacity is not None else AiCapacity()
     server = FastMCP("coord-context")
 
     @server.tool()
@@ -33,6 +35,11 @@ def build_server(path, bot):
         """Acknowledge only this bot's addressed message."""
         store.ack_message(message_id)
         return {"id": message_id, "acked": True}
+
+    @server.tool()
+    def read_ai_capacity() -> dict:
+        """Read-only provider capacity snapshot (usage %, resets). No secrets or keys."""
+        return capacity_store.snapshot()
 
     return server
 

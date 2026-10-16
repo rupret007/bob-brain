@@ -30,6 +30,51 @@ def status_rows(observations, now=None, max_age=120):
     return rows
 
 
+def _pct_label(value):
+    if value is None:
+        return "unknown"
+    if type(value) not in (int, float) or not math.isfinite(value):
+        return "unknown"
+    return f"{value:g}%"
+
+
+def capacity_rows(capacity_doc):
+    capacity_doc = capacity_doc if isinstance(capacity_doc, dict) else {}
+    rows_out = []
+    for row in capacity_doc.get("rows") or []:
+        if not isinstance(row, dict):
+            continue
+        provider = row.get("provider")
+        if not isinstance(provider, str) or not provider:
+            provider = "unknown"
+        rows_out.append({
+            "provider": provider,
+            "used_pct": _pct_label(row.get("used_pct")),
+            "remaining_pct": _pct_label(row.get("remaining_pct")),
+            "reset_ct": row.get("reset_ct") if isinstance(row.get("reset_ct"), str) and row.get("reset_ct") else "unknown",
+            "freshness": row.get("freshness") if isinstance(row.get("freshness"), str) and row.get("freshness") else "unknown",
+            "status": row.get("status") if isinstance(row.get("status"), str) and row.get("status") else "unknown",
+        })
+    return rows_out
+
+
+def render_capacity(capacity_doc):
+    rows = capacity_rows(capacity_doc)
+    stale = bool((capacity_doc or {}).get("snapshot_stale"))
+    note = (capacity_doc or {}).get("snapshot_note") or ""
+    html = ['<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
+            '<title>AI capacity</title><main><h1>AI capacity</h1>',
+            '<p>Provider usage only. Percentages may be unknown when not exposed locally.</p>']
+    if stale:
+        html.append("<p>Snapshot stale: " + escape(note or "refresh unavailable") + "</p>")
+    html += ['<table><thead><tr><th>Provider</th><th>Used</th><th>Remaining</th><th>Reset (CT)</th><th>Fresh</th><th>Status</th></tr></thead><tbody>']
+    for row in rows:
+        values = [row["provider"], row["used_pct"], row["remaining_pct"], row["reset_ct"], row["freshness"], row["status"]]
+        html.append("<tr>" + "".join("<td>" + escape(str(value)) + "</td>" for value in values) + "</tr>")
+    html.append("</tbody></table></main></html>")
+    return "\n".join(html)
+
+
 def render_status(observations, now=None):
     rows = status_rows(observations, now)
     html = ['<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
