@@ -7,15 +7,22 @@ No live gate, bot, queue, publisher, service, or Andrea deployment was modified.
 
 Install `requirements-ownership.txt` into an isolated Python 3.11 environment.
 The trusted launcher sets `CLAIM_GATE_CLAIMS` to the ONE coord claims directory
-and `WEBBOB_BOT_ID` to `bob`, `webbob`, `andrea`, or `karen`, then launches
+and `WEBBOB_BOT_ID` to one of the six accepted identities: `bob`, `grok`,
+`webbob`, `andrea`, `karen`, or `codex`, then launches
 `python -m webbob.ownership_mcp`. This is a local stdio boundary; no HTTP listener
 or model-selectable identity is exposed. The OS launcher is trusted. A process
 with unrestricted same-user filesystem access can bypass this service.
+`grok` and `codex` are supported launcher principals in addition to the four bot
+identities. `CLAIM_GATE_ROOT` may instead select its `coord/claims` subdirectory.
+Paths must be absolute and already provisioned. Missing configuration fails
+closed; there is no home-directory or current-directory fallback.
 
 `claim`, `renew`, `release`, and `get_owner` share the same implementation with
 the CLI. Lease TTLs in the API are seconds (1–14400); CLI `--ttl-min` is minutes.
 Keep the returned token in private job state. Tokens are hashed in claim files
-and omitted from observation. Same branch does not imply same owner. Renewal and
+and omitted from observation. Non-owner observation returns only owner, status,
+expiry, and fence (when present); branch, title, and other job metadata stay
+private to the owning principal. Same branch does not imply same owner. Renewal and
 release require owner, token and current fence; expired renewal is rejected.
 Resource keys are conservative lowercase `repo:owner/name/path`, `pr:owner/name/1`,
 `browser:session`, `outbound:channel/identity`, or `work:owner/name/id`.

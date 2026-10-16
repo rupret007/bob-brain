@@ -10,8 +10,8 @@ import argparse, fcntl, json, os, re, subprocess, sys, time, datetime as dt
 import contextlib, hashlib, secrets
 from pathlib import Path
 
-ROOT = os.environ.get("CLAIM_GATE_ROOT", "/Users/jeffstory/Documents/bob-overnight-inject")
-CLAIMS = os.environ.get("CLAIM_GATE_CLAIMS", os.path.join(ROOT, "coord", "claims"))
+ROOT = os.environ.get("CLAIM_GATE_ROOT")
+CLAIMS = os.environ.get("CLAIM_GATE_CLAIMS") or (os.path.join(ROOT, "coord", "claims") if ROOT else None)
 GH = os.environ.get("CLAIM_GATE_GH", "gh")
 DONE = {"DONE", "RELEASED", "FAILED", "ABANDONED", "HELD"}
 STOP = set("a an the and or of to in on for with from by is are be no not when it its this that into as at after before only one all any new add fix make show keep use".split())
@@ -161,6 +161,8 @@ def pr_matches(p, a, files):
 
 class Lock:
     def __enter__(self):
+        if not CLAIMS or not Path(CLAIMS).is_absolute():
+            raise GateError("configure an absolute CLAIM_GATE_CLAIMS or CLAIM_GATE_ROOT")
         if not Path(CLAIMS).is_dir():
             raise GateError("claim directory unavailable; explicit initialization required")
         self.f = open(os.path.join(CLAIMS, ".claim-gate.lock"), "w")
@@ -298,7 +300,13 @@ class Gate:
             matches = [j for j in live_claims() if any(overlaps(resource, r) for r in resources_for(j))]
             if len(matches) > 1:
                 raise GateError("conflicting ownership")
-            return self._public(matches[0]) if matches else None
+            if not matches:
+                return None
+            row = matches[0]
+            if row["owner"] == self.owner:
+                return self._public(row)
+            # Observers only need routing and lease state, never job metadata.
+            return {key: row[key] for key in ("owner", "status", "expires", "fence") if key in row}
 
     @contextlib.contextmanager
     def execution(self, repo, work_id, token, fence, resource):

@@ -2,6 +2,7 @@ import asyncio
 import datetime as dt
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -33,6 +34,45 @@ class OwnershipTests(unittest.TestCase):
 
     def args(self, row):
         return row["repo"], row["work_id"], row["token"], row["fence"]
+
+    def test_all_six_documented_identities_and_unknown_identity(self):
+        docs = (Path(__file__).resolve().parents[1] / "docs/ownership-gate.md").read_text()
+        for owner in ("bob", "grok", "webbob", "andrea", "karen", "codex"):
+            self.assertIn(f"`{owner}`", docs)
+            row = self.claim(owner, owner, "browser:" + owner)
+            self.assertEqual(row["owner"], owner)
+        with self.assertRaises(gate.GateError):
+            gate.Gate("unknown")
+
+    def test_observer_cannot_read_owner_branch_title_or_job_metadata(self):
+        row = gate.Gate("webbob").claim(self.repo, "private-job", [self.resource],
+                                       branch="draft/private", title="Private job title")
+        owner_view = gate.Gate("webbob").get_owner(self.resource)
+        self.assertEqual(owner_view["branch"], "draft/private")
+        self.assertEqual(owner_view["title"], "Private job title")
+        for owner in ("bob", "grok", "andrea", "karen", "codex"):
+            observed = gate.Gate(owner).get_owner(self.resource)
+            self.assertEqual(observed, {key: row[key] for key in ("owner", "status", "expires", "fence")})
+
+    def test_missing_relative_and_explicit_root_configuration(self):
+        code = """
+from webbob.ownership import Gate, GateError
+try:
+    assert Gate('bob').get_owner('browser:empty') is None
+except GateError:
+    raise SystemExit(3)
+"""
+        env = {k: v for k, v in os.environ.items() if k not in {"CLAIM_GATE_ROOT", "CLAIM_GATE_CLAIMS"}}
+        claims = self.root / "coord" / "claims"
+        claims.mkdir(parents=True)
+        for config, expected in (({}, 3), ({"CLAIM_GATE_ROOT": "relative"}, 3),
+                                 ({"CLAIM_GATE_CLAIMS": "relative"}, 3),
+                                 ({"CLAIM_GATE_ROOT": str(self.root)}, 0),
+                                 ({"CLAIM_GATE_CLAIMS": str(claims)}, 0)):
+            with self.subTest(config=config):
+                result = subprocess.run([sys.executable, "-c", code], env=env | config,
+                                        capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, expected)
 
     def test_simultaneous_four_bots_yield_one_owner_and_unrelated_work_proceeds(self):
         barrier = threading.Barrier(4)
