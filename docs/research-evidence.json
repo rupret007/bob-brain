@@ -1,0 +1,22 @@
+{
+  "sources": [
+    {
+      "url": "https://devguide.python.org/versions/",
+      "sha256": "cf77c49d04e88f575e8c667016267e60bf5a28e4d9ffc71fc29c201a7b722a46",
+      "fetched_at": 1792175831.4396522
+    },
+    {
+      "url": "https://www.python.org/doc/versions/",
+      "sha256": "3360b68b486aecfb7174682dee26f35248d7b49b8ed7581739c9ae72a7ff95bd",
+      "fetched_at": 1792175831.727459
+    },
+    {
+      "url": "https://realpython.com/python-news-october-2026/",
+      "sha256": "8650409c4aa6c267419cb2d105cad17f9026606f1c34f49d4eed9748e52b853a",
+      "fetched_at": 1792175832.4259992
+    }
+  ],
+  "multiple_sources_retrieved": true,
+  "unavailable_count": 2,
+  "query": "Python latest stable release October 2026 official release notes"
+}
