@@ -366,6 +366,9 @@ def parse(text, now, *, for_draft=False, original_text=None):
     match = re.fullmatch(r'(' + WHEN + r')(?:\s+(?:to|for)\s+([\s\S]+)|[.?!]*)', clause, re.I)
     if match:
         body = match[2] or default_body
+        # Owner-approved rule (2026-10-16): only a request that STARTS with
+        # can/could/would you and ends in one attached '?' drops that '?'.
+        # A leading 'please' (e.g. 'Please could you ...?') keeps it.
         # Compatibility with test_supported_clause_orders_and_sensible_body_defaults:
         # an attached '?' after plain words in "Could you ...?" closes the
         # request. Keep spaced operators, repeated punctuation and abbreviations.
@@ -373,7 +376,7 @@ def parse(text, now, *, for_draft=False, original_text=None):
         # original request to keep the draft and direct parser consistent.
         source = text if original_text is None else original_text
         if (body.endswith('?') and _PLAIN_BODY.fullmatch(body[:-1]) and
-                re.match(r'^(?:please\s+)*(?:can|could|would) you\s+', source.strip(), re.I)):
+                re.match(r'^(?:can|could|would) you\s+', source.strip(), re.I)):
             body = body[:-1]
         return reminder_body(body), instant(_when(match[1]), now), None
     return None

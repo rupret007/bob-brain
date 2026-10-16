@@ -403,6 +403,13 @@ class ConsentExactConfirmationTests(unittest.TestCase):
             ('Could you schedule a reminder for 2am to go to bed.', 'go to bed.'),
             ('Could you schedule a reminder for 2am to inspect path ..', 'inspect path ..'),
             ('Could you schedule a reminder for 2am to go to bed??', 'go to bed??'),
+            ('Can you schedule a reminder for 2am to go to bed?', 'go to bed'),
+            ('Would you schedule a reminder for 2am to go to bed?', 'go to bed'),
+            # Owner rule covers only requests that START with can/could/would you.
+            ('Please can you schedule a reminder for 2am to go to bed?', 'go to bed?'),
+            ('Please could you schedule a reminder for 2am to go to bed?', 'go to bed?'),
+            ('Please would you schedule a reminder for 2am to go to bed?', 'go to bed?'),
+            ('please please could you schedule a reminder for 2am to go to bed?', 'go to bed?'),
         ):
             with self.subTest(request=request):
                 self.assert_original_body(request, body, 1791874800, None)
