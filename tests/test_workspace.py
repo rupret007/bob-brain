@@ -48,7 +48,7 @@ class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
         for tool, args in [call.args for call in self.session.call_tool.call_args_list]:
             self.assertEqual(args["user_google_email"], "owner@example.org")
         with self.assertRaises(WorkspaceError):
-            await workspace.read("send_gmail_message", self.email)
+            await workspace.read("draft_gmail_message", self.email)
 
     async def test_recipient_body_and_event_time_edits_invalidate_prior_approval(self):
         for kind, payload, field, value in [("email", self.email, "to", "different@example.org"),
@@ -88,8 +88,8 @@ class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
         receipt = await self.drafts.execute(draft["id"], draft["digest"], proof, self.session, writes_enabled=True)
         self.assertEqual(receipt["state"], "submitted")
         self.assertEqual(self.session.call_tool.call_args.args,
-                         ("send_gmail_message", dict(self.email, user_google_email="owner@example.org",
-                          body_format="plain", include_signature=False, quote_original=False, reply_all=False)))
+                         ("draft_gmail_message", dict(self.email, user_google_email="owner@example.org",
+                          body_format="plain")))
         await self.drafts.execute(draft["id"], draft["digest"], proof, self.session, writes_enabled=True)
         self.assertEqual(self.session.call_tool.await_count, 1)
 
@@ -104,6 +104,16 @@ class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(WorkspaceError):
             await self.drafts.execute(draft["id"], draft["digest"], self.approve(draft), self.session, writes_enabled=True)
         self.session.call_tool.assert_not_awaited()
+
+    def test_gmail_send_tool_and_scope_are_not_exposed(self):
+        config = json.loads((Path(__file__).resolve().parents[1] / "config/workspace.json").read_text())
+        manifest = json.dumps(config)
+        self.assertNotIn("gmail.send", manifest)
+        self.assertNotIn("send_gmail_message", manifest)
+        self.assertIn("gmail.compose", manifest)
+        from webbob.workspace import WRITE_TOOLS
+        self.assertEqual(WRITE_TOOLS["email"], "draft_gmail_message")
+        self.assertNotIn("send_gmail_message", WRITE_TOOLS.values())
 
     async def test_scope_manifest_read_first_and_oauth_pending(self):
         config = json.loads((Path(__file__).resolve().parents[1] / "config/workspace.json").read_text())

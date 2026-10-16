@@ -35,8 +35,8 @@ allow-all default. No raw write tool is exposed through the read facade.
 
 Writes remain disabled. Enabling them later requires separately reviewed scopes
 and tools. Minimum Google API additions for the two planned effects are
-`https://www.googleapis.com/auth/gmail.send` and
-`https://www.googleapis.com/auth/calendar.events`. Upstream's cumulative Gmail
+`https://www.googleapis.com/auth/gmail.compose` (Gmail drafts only; Jeff sends)
+and `https://www.googleapis.com/auth/calendar.events`. Upstream's cumulative Gmail
 permission mode may request broader scopes; do not accept those silently. Review
 the effective grant with Jeff before any write-mode launch.
 

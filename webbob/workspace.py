@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 NEEDS_JEFF = "needs Jeff: OAuth consent + scopes"
 READ_TOOLS = {"search_gmail_messages", "get_gmail_message_content", "get_events", "search_drive_files", "get_drive_file_content"}
-WRITE_TOOLS = {"email": "send_gmail_message", "event": "manage_event"}
+WRITE_TOOLS = {"email": "draft_gmail_message", "event": "manage_event"}
 
 
 class WorkspaceError(ValueError):
@@ -113,7 +113,7 @@ class Drafts:
                 raise WorkspaceError("explicit valid event times and timezone required") from None
             payload = dict(payload, action="create", visibility="private", send_updates="none", attendees=[], add_google_meet=False)
         else:
-            payload = dict(payload, body_format="plain", include_signature=False, quote_original=False, reply_all=False)
+            payload = dict(payload, body_format="plain")
         return dict(payload, user_google_email=self.account)
 
     def _owned(self, db, draft_id):

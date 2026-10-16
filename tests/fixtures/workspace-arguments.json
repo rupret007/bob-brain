@@ -62,15 +62,15 @@
     "full",
     "format"
   ],
-  "send_gmail_message": [
+  "draft_gmail_message": [
     "service",
     "user_google_email",
-    "to",
     "subject",
     "body",
     "body_format",
     "forward_message_id",
     "include_forwarded_attachments",
+    "to",
     "cc",
     "bcc",
     "from_name",
@@ -78,10 +78,7 @@
     "thread_id",
     "in_reply_to",
     "references",
-    "attachments",
-    "include_signature",
-    "quote_original",
-    "reply_all"
+    "attachments"
   ],
   "search_drive_files": [
     "service",
