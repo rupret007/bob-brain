@@ -11,7 +11,7 @@ from dotenv import dotenv_values
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from webbob.research_limits import BRAVE_QUERY_COST_MICRODOLLARS, BRAVE_SPEND_MODEL
+from webbob.research_limits import BRAVE_QUERY_COST_MICRODOLLARS, BRAVE_SPEND_MODEL, research_spend_and_daily_caps
 
 KEY_SOURCE = Path.home() / "Documents/bob-overnight-inject/conductor/keys.env"
 
@@ -22,7 +22,9 @@ class ToolUnavailable(RuntimeError):
 
 class ToolHost:
     def __init__(self, sessions, max_calls=6, seconds=45, max_bytes=48_000, *,
-                 spend_cap=None, daily_cap=None, brave_cost=BRAVE_QUERY_COST_MICRODOLLARS):
+                 spend_cap, daily_cap, brave_cost=BRAVE_QUERY_COST_MICRODOLLARS):
+        if spend_cap is None or daily_cap is None:
+            raise ValueError("spend_cap and daily_cap are required")
         self.sessions = {name: sessions[name] for name in ("brave_web_search", "fetch") if name in sessions}
         self.remaining = max_calls
         self.deadline = time.monotonic() + seconds
@@ -40,14 +42,13 @@ class ToolHost:
         self.remaining -= 1
         reservation_id = None
         if name == "brave_web_search":
-            if self.daily_cap is not None and not self.daily_cap.admit():
+            if not self.daily_cap.admit():
                 raise ToolUnavailable("daily Brave query cap exceeded")
-            if self.spend_cap is not None:
-                self._brave_serial += 1
-                reservation_id = f"brave-{self._brave_serial}-{time.monotonic_ns()}"
-                admission = self.spend_cap.reserve(reservation_id, BRAVE_SPEND_MODEL, self.brave_cost)
-                if not admission.get("admitted"):
-                    raise ToolUnavailable("Brave search blocked by monthly spend cap")
+            self._brave_serial += 1
+            reservation_id = f"brave-{self._brave_serial}-{time.monotonic_ns()}"
+            admission = self.spend_cap.reserve(reservation_id, BRAVE_SPEND_MODEL, self.brave_cost)
+            if not admission.get("admitted"):
+                raise ToolUnavailable("Brave search blocked by monthly spend cap")
         succeeded = False
         try:
             try:
@@ -70,8 +71,9 @@ class ToolHost:
             succeeded = True
             return parsed
         finally:
-            if reservation_id and self.spend_cap is not None:
-                self.spend_cap.settle(reservation_id, self.brave_cost if succeeded else 0)
+            if reservation_id:
+                # Brave may bill even when the MCP call times out or errors.
+                self.spend_cap.settle(reservation_id, self.brave_cost)
 
     async def research(self, query):
         if not isinstance(query, str) or not 1 <= len(query) <= 400:
@@ -133,4 +135,5 @@ async def research_host(brave_entrypoint):
             if name not in advertised:
                 raise ToolUnavailable(name + " not advertised")
             sessions[name] = session
-        yield ToolHost(sessions)
+        spend_cap, daily_cap, brave_cost = research_spend_and_daily_caps()
+        yield ToolHost(sessions, spend_cap=spend_cap, daily_cap=daily_cap, brave_cost=brave_cost)
