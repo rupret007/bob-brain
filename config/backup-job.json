@@ -1,0 +1,11 @@
+{
+  "id": "webbob-nightly-accepted-memory-config",
+  "enabled": false,
+  "schedule": {"hour": 3, "minute": 0, "timezone": "America/Chicago"},
+  "scheduler": "existing single scheduler; APScheduler 3.x cron trigger",
+  "catch_up": "one latest missed nightly occurrence",
+  "occurrence_key": "webbob-backup:YYYY-MM-DD:America/Chicago",
+  "input": "trusted accepted-facts export plus nonsecret configuration projection",
+  "never_include": ["keys.env", ".env", "credentials", "OAuth tokens", "private texts", "raw voice", "conversation consent", "sessions"],
+  "activation_requires": ["private destination", "accepted export adapter", "restore rehearsal", "existing scheduler registration"]
+}
