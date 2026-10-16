@@ -27,6 +27,7 @@ if __name__ == '__main__' and '--root' in sys.argv:
 sys.path[:0] = [str(CODE / d) for d in ('webchat', 'services', 'state', 'reviews', 'release')]
 from release_ownership import serialized
 import activation_journal as journal
+import pin_change
 import qualification_scope
 from texting_deploy_record import atomic_json, atomic_text, require_disk_space, reserve_recovery, release_recovery
 from live_redeploy_check import Client, require
@@ -47,14 +48,20 @@ def andrea_pin():
     return json.loads((CODE / 'release/andrea-bridge.json').read_text())
 
 
-def andrea_gates(root):
+def andrea_gates(root, *, baseline_sha=None):
+    """Read conductor/receipts/andrea-<sha12>/; historical path only for the baseline pin."""
     sha = andrea_pin()['sha']
-    folder = root / 'conductor/reviews' / ('SOLO-0018-andrea-bridge-' + sha[:12])
-    results = [json.loads((folder / (name + '.json')).read_text()) for name in ('major', 'docs', 'build')]
-    for row in results:
-        require(row['sha'] == sha and row['exit'] == 0 and digest(row['log']) == row['log_sha256'],
-                'Andrea exact-tip full checks failed or changed')
-    return dict(sha=sha, results=results)
+    try:
+        if baseline_sha is None:
+            try:
+                baseline_sha = pin_change.baseline_pin()['sha']
+            except pin_change.FailClosed:
+                baseline_sha = None
+        folder, source = pin_change.receipt_dir(root, sha, baseline_sha=baseline_sha)
+        results = pin_change.receipt_guard(folder, sha)
+    except pin_change.FailClosed as exc:
+        require(False, 'Andrea exact-tip full checks failed or changed: ' + exc.reason)
+    return dict(sha=sha, results=results, source=source, folder=str(folder))
 
 
 def bridge_replay(root, cid, draft_id):
