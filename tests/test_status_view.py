@@ -12,6 +12,13 @@ class StatusTests(unittest.TestCase):
         row = status_rows({"webbob": {"state": "down", "observed_at": 100, "pending": 2, "review": "PENDING"}}, now=110)[1]
         self.assertEqual((row["state"], row["pending"], row["review"]), ("down", 2, "PENDING"))
 
+    def test_malformed_observations_render_all_four_unknown_rows(self):
+        for observations in (None, [], {"bob": None}, {"webbob": {"observed_at": 100, "state": [], "review": {}}}):
+            rows = status_rows(observations, now=100)
+            self.assertEqual(len(rows), 4)
+            self.assertTrue(all(row["state"] == "unknown" for row in rows))
+            self.assertTrue(all(row["review"] == "UNKNOWN" for row in rows))
+
     def test_private_fields_invalid_state_and_nonfinite_time_do_not_render(self):
         html = render_status({"bob": {"observed_at": 100, "state": "<script>bad</script>", "credential": "FAKE_PRIVATE",
                                       "inbox": "PRIVATE_BODY"}, "karen": {"observed_at": float("nan"), "state": "up"}}, now=100)

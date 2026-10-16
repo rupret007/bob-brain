@@ -8,13 +8,15 @@ BOTS = {"bob": "Grok Bot", "webbob": "Web Bob", "andrea": "Andrea", "karen": "Ka
 
 def status_rows(observations, now=None, max_age=120):
     now = time.time() if now is None else now
+    observations = observations if isinstance(observations, dict) else {}
     rows = []
     for bot, label in BOTS.items():
         observed = observations.get(bot, {})
+        observed = observed if isinstance(observed, dict) else {}
         at = observed.get("observed_at")
         fresh = type(at) in (int, float) and math.isfinite(at) and 0 <= now - at <= max_age
         state = observed.get("state")
-        if not fresh or state not in {"up", "down", "degraded"}:
+        if not fresh or state not in ("up", "down", "degraded"):
             state = "unknown"
         # Only these scalar facts leave the status boundary. Ignore logs,
         # private inbox bodies, credentials, conversation content and prompts.
@@ -22,7 +24,7 @@ def status_rows(observations, now=None, max_age=120):
         rows.append({"bot": bot, "label": label, "state": state,
                      "age_seconds": round(now - at) if fresh else None,
                      "pending": pending if fresh and type(pending) is int and pending >= 0 else None,
-                     "review": observed.get("review") if fresh and observed.get("review") in {"PASS", "FAIL", "PENDING"} else "UNKNOWN"})
+                     "review": observed.get("review") if fresh and observed.get("review") in ("PASS", "FAIL", "PENDING") else "UNKNOWN"})
     return rows
 
 
