@@ -1,0 +1,25 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install component dependencies
+        run: |
+          for requirements in requirements-*.txt; do
+            python -m pip install -r "$requirements"
+          done
+      - name: Run all unittests
+        run: nice -n 10 python -m unittest discover -s tests -v
