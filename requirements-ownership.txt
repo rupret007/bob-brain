@@ -1,0 +1,2 @@
+# Official MIT MCP SDK. Deliberately use the supported v1 compatibility API.
+mcp==1.30.0
