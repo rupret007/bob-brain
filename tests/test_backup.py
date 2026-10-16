@@ -12,7 +12,8 @@ class BackupTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.path = Path(self.tmp.name) / "2026-10-16.json"
         self.facts = [{"id": "timezone", "revision": 2, "body": "Use Chicago time.", "at": 123,
-                       "provenance": {"kind": "accepted_memory", "uri": "memory/profile.md#L1", "sha256": "b" * 64},
+                       "provenance": {"kind": "accepted_memory", "uri": "memory/profile.md#L1", "sha256": "b" * 64,
+                                      "accepted_by": "grok-bot-profile", "accepted_at": "2026-10-16"},
                        "classification": "accepted_fact", "execution_authority": False}]
         self.config = {"timezone": "America/Chicago", "release_sha": "a" * 40,
                        "model_caps_microdollars": {"model-a": 0}, "routines_paused": True}
@@ -51,6 +52,18 @@ class BackupTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             snapshot(self.path, [], self.config)
         self.assertEqual(self.path.read_bytes(), original)
+
+    def test_provenance_cannot_carry_private_payloads_and_directory_is_private(self):
+        for mutation in ({"raw_message": "Unshared conversation"}, {"uri": "sessions/private.json"},
+                         {"sha256": "missing"}, {"accepted_by": ""}):
+            facts = copy.deepcopy(self.facts)
+            facts[0]["provenance"].update(mutation)
+            with self.assertRaises(ValueError):
+                snapshot(self.path, facts, self.config)
+        self.path.parent.chmod(0o755)
+        with self.assertRaises(ValueError):
+            snapshot(self.path, self.facts, self.config)
+        self.assertEqual(list(self.path.parent.iterdir()), [])
 
 
 if __name__ == "__main__":

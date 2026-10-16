@@ -1,6 +1,7 @@
 """Portable JSON backup of accepted-memory exports and nonsecret config only."""
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -37,8 +38,16 @@ def validate(facts, config):
         if type(fact["revision"]) is not int or fact["revision"] < 1 or not isinstance(fact["body"], str) or len(fact["body"]) > 1200:
             raise ValueError("invalid fact")
         provenance = fact["provenance"]
-        if not isinstance(provenance, dict) or provenance.get("kind") not in {"accepted_memory", "reviewed_fact"}:
+        if (not isinstance(provenance, dict)
+                or set(provenance) != {"kind", "uri", "sha256", "accepted_by", "accepted_at"}
+                or provenance.get("kind") not in {"accepted_memory", "reviewed_fact"}):
             raise ValueError("accepted provenance required")
+        if not all(isinstance(provenance[k], str) and 0 < len(provenance[k]) <= 300 for k in provenance):
+            raise ValueError("bounded provenance fields required")
+        if not provenance["uri"].startswith(("memory/", "user-memory/", "review:")) or not re.fullmatch(r"[a-f0-9]{64}", provenance["sha256"]):
+            raise ValueError("accepted source and source digest required")
+        if type(fact["at"]) not in (int, float) or not math.isfinite(fact["at"]):
+            raise ValueError("finite fact timestamp required")
     raw = canonical({"facts": facts, "config": config})
     if len(raw) > 2_000_000 or SECRET.search(raw.decode()):
         raise ValueError("backup rejected: oversized or sensitive content")
@@ -52,6 +61,9 @@ def snapshot(destination, facts, config):
     path = Path(destination)
     if not path.parent.is_dir() or path.exists() or path.is_symlink():
         raise ValueError("new backup destination in private directory required")
+    directory = path.parent.stat()
+    if path.parent.is_symlink() or directory.st_uid != os.getuid() or directory.st_mode & 0o077:
+        raise ValueError("backup directory must be owner-only")
     temporary = path.with_name(path.name + "." + secrets.token_hex(8) + ".tmp")
     fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     try:
@@ -64,6 +76,11 @@ def snapshot(destination, facts, config):
         os.link(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+    fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
     return {"file": path.name, "sha256": envelope["sha256"], "facts": len(facts)}
 
 
