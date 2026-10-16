@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "release_sha": null,
+  "default_result": "NOT RUN",
+  "capabilities": {
+    "chat_memory": "Reload accepted memory and a conversation after restart",
+    "shared_memory": "Correct through one bot; all four retrieve current provenance; private sources excluded",
+    "routines": "Chicago recurrence survives DST/downtime without duplicate effects",
+    "background_jobs": "Dispatch, observe, recover and deliver a real bounded job",
+    "github_prs": "Draft-only publication under lease; new commit stales Karen verdict",
+    "workspace": "Sourced daily brief, document retrieval and exact approved email/event drafts",
+    "web_research": "Current-information answer cites multiple pages actually fetched",
+    "browser_desktop": "Isolated browser/session lease; exact window target; Jeff grants macOS permissions",
+    "files_images": "Upload, inspect and return supported artifacts with ownership checks",
+    "voice_memos": "Full bounded phone memo transcription survives restart and later recall",
+    "widgets_decisions": "Exact action cards reject stale payload approval",
+    "message_drafts": "Separate exact approval and honest delivery/uncertain receipt",
+    "teammate_messages": "Durable addressed inbox and actual independent receiver acknowledgment"
+  },
+  "recovery": ["restart_recovery", "stale_approval_rejection", "concurrent_ownership", "receiver_acknowledgments"],
+  "required_approvals": ["independent Karen PASS for exact SHA", "Jeff go-live and daily-use acceptance"],
+  "waivers_allowed": false
+}
