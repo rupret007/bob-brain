@@ -32,8 +32,9 @@ class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_oauth_no_network_before_jeff_consent(self):
         workspace = Workspace(self.session, account="owner@example.org")
-        with self.assertRaisesRegex(WorkspaceError, NEEDS_JEFF):
+        with self.assertRaises(WorkspaceError) as caught:
             await workspace.read("search_gmail_messages", {"query": "today"})
+        self.assertEqual(str(caught.exception), NEEDS_JEFF)
         self.session.call_tool.assert_not_awaited()
 
     async def test_read_first_sourced_brief_document_search_and_read(self):
@@ -111,6 +112,24 @@ class WorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(config["scopes"]), {"openid", "https://www.googleapis.com/auth/userinfo.email",
             "https://www.googleapis.com/auth/userinfo.profile", "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/drive.readonly"})
+
+    async def test_event_and_read_payloads_match_pinned_upstream_arguments(self):
+        schemas = json.loads((Path(__file__).parent / "fixtures/workspace-arguments.json").read_text())
+        workspace = Workspace(self.session, account="owner@example.org", consent_verified=True)
+        await workspace.daily_brief(self.event["start_time"], self.event["end_time"])
+        await workspace.locate_document("name contains 'plan'")
+        await workspace.read("get_drive_file_content", {"file_id": "one"})
+        await workspace.read("get_gmail_message_content", {"message_id": "one"})
+        for kind, payload in [("event", self.event), ("email", self.email)]:
+            draft = self.drafts.prepare(kind, payload)
+            receipt = await self.drafts.execute(draft["id"], draft["digest"], self.approve(draft), self.session, writes_enabled=True)
+            self.assertEqual(receipt["state"], "submitted")
+        for call in self.session.call_tool.call_args_list:
+            tool, arguments = call.args
+            self.assertLessEqual(set(arguments), set(schemas[tool]))
+        event = next(call.args[1] for call in self.session.call_tool.call_args_list if call.args[0] == "manage_event")
+        self.assertEqual(event, dict(self.event, action="create", visibility="private", send_updates="none",
+                                     attendees=[], add_google_meet=False, user_google_email="owner@example.org"))
 
 
 if __name__ == "__main__":
