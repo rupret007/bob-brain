@@ -1,7 +1,6 @@
 """Transactional per-model monthly caps, supplementary to existing global caps."""
 from contextlib import contextmanager
 from datetime import datetime
-import math
 from pathlib import Path
 import sqlite3
 from typing import Optional
@@ -63,8 +62,7 @@ def match_capacity_row(model: str, rows: list) -> Optional[dict]:
 def _remaining_trusted(remaining) -> bool:
     if type(remaining) not in (int, float):
         return False
-    if not math.isfinite(remaining):
-        return False
+    # The bounded comparison also rejects NaN and infinities without float coercion.
     return 0 <= remaining <= 100
 
 
@@ -215,7 +213,10 @@ class SpendCap:
             raise ValueError("known model and stable call ID required")
         if type(maximum_cost) is not int or not 0 < maximum_cost < 10**12:
             raise ValueError("positive worst-case cost in microdollars required")
-        quota = provider_quota_check(model, self.capacity_snapshot())
+        snapshot = None
+        if _quota_policy_hint(model) in MEASURED_QUOTA_PROVIDERS:
+            snapshot = self.capacity_snapshot()
+        quota = provider_quota_check(model, snapshot)
         if quota.get("blocks_reserve"):
             month = self._month()
             with self.db() as db:
