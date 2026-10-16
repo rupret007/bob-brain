@@ -47,6 +47,11 @@ def validate(facts, config):
             raise ValueError("bounded provenance fields required")
         if not provenance["uri"].startswith(("memory/", "user-memory/", "review:")) or not re.fullmatch(r"[a-f0-9]{64}", provenance["sha256"]):
             raise ValueError("accepted source and source digest required")
+        for key in ("kind", "uri", "accepted_by", "accepted_at"):
+            try:
+                safe_fact(provenance[key])
+            except ContextError:
+                raise ValueError("backup rejected: sensitive provenance") from None
         if type(fact["at"]) not in (int, float) or not math.isfinite(fact["at"]):
             raise ValueError("finite fact timestamp required")
         try:
