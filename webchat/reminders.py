@@ -216,12 +216,11 @@ def natural_request(text, now):
     # Resolve the same schedule positions as parse() before normalizing units
     # or inferring AM. Body text, including its own numeric abbreviations,
     # must remain verbatim in both the draft and the saved reminder.
-    schedule_clause = clause.rstrip('.?!')
     schedule = (
-        re.fullmatch(r'every (?P<when>' + NATURAL_DURATION + r') to [\s\S]+', schedule_clause, re.I) or
-        re.fullmatch(r'to [\s\S]+?\s+(?P<when>' + NATURAL_WHEN + r')', schedule_clause, re.I) or
-        re.fullmatch(r'(?:for\s+)?(?P<when>' + NATURAL_WHEN + r')(?:\s+(?:to|for)\s+[\s\S]+)?',
-                     schedule_clause, re.I))
+        re.fullmatch(r'every (?P<when>' + NATURAL_DURATION + r') to [\s\S]+', clause, re.I) or
+        re.fullmatch(r'to [\s\S]+?\s+(?P<when>' + NATURAL_WHEN + r')[.?!]*', clause, re.I) or
+        re.fullmatch(r'(?:for\s+)?(?P<when>' + NATURAL_WHEN + r')(?:\s+(?:to|for)\s+[\s\S]+|[.?!]*)',
+                     clause, re.I))
     if schedule:
         start, end = schedule.span('when')
         when = re.sub(r'\b(\d+)\s+(mins?|hrs?)\b',
@@ -324,8 +323,11 @@ def instant(text, now):
     return due
 
 
-def parse(text, now, *, for_draft=False):
-    stripped = text.strip().rstrip('.?!')
+def parse(text, now, *, for_draft=False, original_text=None):
+    # Extract bodies before handling sentence punctuation: a body-final suffix
+    # can be literal data ("path ..", "operator ?", "U.S."). Only schedules
+    # accept disposable trailing punctuation in the grammar below.
+    stripped = text.strip()
     # Constraints anywhere in a recognized request apply before any schedule
     # variant (including recurring reminders) is allowed to create a row.
     # Only the handler's resolved direct-interval draft path opts out of this
@@ -357,13 +359,23 @@ def parse(text, now, *, for_draft=False):
         if not 60 <= interval <= 366 * 86400:
             raise ReminderError('Repeat intervals must be between 1 minute and 366 days.')
         return reminder_body(recurring[3]), now + interval, interval
-    match = re.fullmatch(r'to ([\s\S]+?)\s+(' + WHEN + r')', clause, re.I)
+    match = re.fullmatch(r'to ([\s\S]+?)\s+(' + WHEN + r')[.?!]*', clause, re.I)
     if match:
         return reminder_body(match[1]), instant(_when(match[2]), now), None
     clause = re.sub(r'^for\s+', '', clause, flags=re.I)
-    match = re.fullmatch(r'(' + WHEN + r')(?:\s+(?:to|for)\s+([\s\S]+))?', clause, re.I)
+    match = re.fullmatch(r'(' + WHEN + r')(?:\s+(?:to|for)\s+([\s\S]+)|[.?!]*)', clause, re.I)
     if match:
-        return reminder_body(match[2] or default_body), instant(_when(match[1]), now), None
+        body = match[2] or default_body
+        # Compatibility with test_supported_clause_orders_and_sensible_body_defaults:
+        # an attached '?' after plain words in "Could you ...?" closes the
+        # request. Keep spaced operators, repeated punctuation and abbreviations.
+        # Normalization removes polite prefixes, so the handler supplies the
+        # original request to keep the draft and direct parser consistent.
+        source = text if original_text is None else original_text
+        if (body.endswith('?') and _PLAIN_BODY.fullmatch(body[:-1]) and
+                re.match(r'^(?:please\s+)*(?:can|could|would) you\s+', source.strip(), re.I)):
+            body = body[:-1]
+        return reminder_body(body), instant(_when(match[1]), now), None
     return None
 
 
@@ -387,6 +399,8 @@ def reminder_body(value):
 
 
 def _when(value):
+    # The ISO timestamp branch can consume punctuation as part of its \S+.
+    value = value.rstrip('.?!')
     return 'in ' + value if re.fullmatch(DURATION, value, re.I) else value
 
 
@@ -737,7 +751,7 @@ class Reminders:
     def missing_clock(self, normalized, text, cid, request_id, actor):
         # Every-morning requests retain the documented 9am default in parse().
         match = re.fullmatch(r'remind me (every |(?:on )?)(' + WEEKDAY +
-                            r')(?: (morning|afternoon|evening|night))? to (.+)', normalized.rstrip('.?!'), re.I)
+                            r')(?: (morning|afternoon|evening|night))? to (.+)', normalized, re.I)
         if not match or approval_requested(text):
             return None
         when = match[1] + match[2].capitalize() + (' ' + match[3] if match[3] else '')
@@ -808,7 +822,7 @@ class Reminders:
                                            'I’ll wait for your OK before scheduling.')
                 draft_interval = bool(DIRECT_INTERVAL_REQUEST.fullmatch(text.strip()))
                 try:
-                    parsed = parse(normalized, self.clock(), for_draft=draft_interval)
+                    parsed = parse(normalized, self.clock(), for_draft=draft_interval, original_text=text)
                 except ReminderError:
                     # A constrained interval with invalid/competing times is
                     # not an approvable draft. Keep the existing fresh-request

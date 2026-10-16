@@ -90,6 +90,39 @@ BODY_FORMS = (
     ('Set a timer for 10 minutes to {body}', 600, None),
 )
 
+# Every literal CONSENT-ORIGINAL-BODY reproduction and additional observed
+# variant from codex-solo-consent-9bb4a67a2edd, including the issued tokens.
+PUNCTUATION_BODY_REPROS = (
+    ('remind me every 10 minutes to print the literal string .?!',
+     'print the literal string .?!',
+     'yes wbrem-643e1faf517e425399fc7500a4f301b5', 1791828600, 600),
+    ('Create a reminder for 2am to print the literal string .?!',
+     'print the literal string .?!',
+     'yes wbrem-234e6a3d23f24d0cad3c0103a5ac7ac6', 1791874800, None),
+    ('Set a timer for 10 minutes to print the literal string .?!',
+     'print the literal string .?!',
+     'yes wbrem-841972742644420dbe0521cb4691cf37', 1791828600, None),
+    ('remind me in 10 mins to print the literal string .?!',
+     'print the literal string .?!',
+     'yes wbrem-8ba23d953bd9402d8d278e6afb59443c', 1791828600, None),
+    ('remind me every 10 minutes to inspect path ..',
+     'inspect path ..', None, 1791828600, 600),
+    ('remind me every 10 minutes to review the operator ?',
+     'review the operator ?', None, 1791828600, 600),
+    ('remind me every 10 minutes to check U.S.',
+     'check U.S.', None, 1791828600, 600),
+)
+PUNCTUATION_BODY_FORMS = (
+    ('remind me every 10 minutes to {body}', 600, 600),
+    ('please remind me every 10 mins to {body}', 600, 600),
+    ('remind me in 10 mins to {body}', 600, None),
+    ('remind me for 10 minutes to {body}', 600, None),
+    ('Create a reminder for 2am to {body}', 46800, None),
+    ('Set a timer for 10 minutes to {body}', 600, None),
+    ('remind me to {body} in 10 minutes', 600, None),
+    ('please remind me to {body} in 2 hrs', 7200, None),
+)
+
 
 def nonexact_messages(command, token):
     """Include all report transformations plus exact-format boundary cases."""
@@ -313,6 +346,100 @@ class ConsentExactConfirmationTests(unittest.TestCase):
         for request, body, issued, due, interval in BODY_REPROS:
             with self.subTest(request=request):
                 self.assert_original_body(request, body, due, interval, issued)
+
+    def test_codex_trailing_body_punctuation_reproductions_verbatim(self):
+        for request, body, issued, due, interval in PUNCTUATION_BODY_REPROS:
+            with self.subTest(request=request):
+                self.assert_original_body(request, body, due, interval, issued)
+
+    def test_literal_body_punctuation_survives_all_schedule_placements(self):
+        bodies = ('print the literal string .?!', 'inspect path ..',
+                  'review the operator ?', 'check U.S.',
+                  'print the literal string .', 'print the literal string !',
+                  'stretch.', 'stretch?', 'stretch!', '.?!', '?')
+        for body in bodies:
+            for template, delay, interval in PUNCTUATION_BODY_FORMS:
+                request = template.format(body=body)
+                with self.subTest(request=request):
+                    self.assert_original_body(request, body, EPOCH + delay, interval)
+
+    def test_schedule_final_punctuation_preserves_the_separate_body(self):
+        for suffix in ('.', '?', '!', '..', '.?!'):
+            for template, body, delay in (
+                ('remind me to {body} in 10 minutes{suffix}',
+                 'print the literal string .?!', 600),
+                ('please remind me to {body} in 2 hrs{suffix}',
+                 'inspect path ..', 7200),
+                ('Create a reminder to {body} at 2am{suffix}', 'stretch', 46800),
+                ('Create a reminder to {body} at 2026-10-13T07:00:00Z{suffix}',
+                 'stretch', 46800),
+            ):
+                request = template.format(body=body, suffix=suffix)
+                with self.subTest(request=request):
+                    self.assert_original_body(request, body, EPOCH + delay, None)
+
+    def test_schedule_only_punctuation_keeps_default_reminder_and_timer_bodies(self):
+        for suffix in ('.', '?', '!', '..', '.?!'):
+            for template, body, delay in (
+                ('Create a reminder for 2am{suffix}', 'Reminder', 46800),
+                ('Set a timer for 10 minutes{suffix}', 'Timer', 600),
+                ('Set a timer at 2026-10-13T07:00:00Z{suffix}', 'Timer', 46800),
+            ):
+                request = template.format(suffix=suffix)
+                with self.subTest(request=request):
+                    self.assert_original_body(request, body, EPOCH + delay, None)
+
+    def test_legacy_interrogative_sentence_boundary_matches_draft_and_save(self):
+        # test_actions_intent preserves this existing parser expectation.
+        # Its narrow question-mark exception must be visible before consent.
+        for request, body in (
+            ('Could you schedule a reminder for 2am to go to bed?', 'go to bed'),
+            ('schedule a reminder for 2am to go to bed?', 'go to bed?'),
+            ('Could you schedule a reminder for 2am to review the operator ?',
+             'review the operator ?'),
+            ('Could you schedule a reminder for 2am to check U.S.', 'check U.S.'),
+            ('Could you schedule a reminder for 2am to print the literal string .?!',
+             'print the literal string .?!'),
+            ('Could you schedule a reminder for 2am to go to bed.', 'go to bed.'),
+            ('Could you schedule a reminder for 2am to inspect path ..', 'inspect path ..'),
+            ('Could you schedule a reminder for 2am to go to bed??', 'go to bed??'),
+        ):
+            with self.subTest(request=request):
+                self.assert_original_body(request, body, 1791874800, None)
+
+    def test_weekday_clock_followup_preserves_body_before_exact_confirmation(self):
+        for body in ('print the literal string .?!', 'inspect path ..', 'check U.S.'):
+            request = 'remind me every Monday to ' + body
+            with self.subTest(request=request):
+                self.reset()
+                reply = self.say('reminder', request)
+                self.assert_no_effect()
+                original_token, = self.drafts.rows
+                incomplete = self.drafts.rows[original_token]
+                self.assertEqual((incomplete['body'], incomplete['state']), (body, 'needs_time'))
+                self.assertIn('Draft reminder: ' + body, reply)
+
+                reply = self.say('reminder', 'at 2pm', 'clock-followup')
+                self.assert_no_effect()
+                self.assertEqual(self.drafts.rows[original_token]['state'], 'replaced')
+                token, = [key for key, row in self.drafts.rows.items() if row['state'] == 'draft']
+                row = self.drafts.rows[token]
+                self.assertEqual((row['body'], row['due'], row['interval']),
+                                 (body, EPOCH + 3600, None))
+                self.assertEqual(row['weekly_time'], {'day': 0, 'clock': '2pm'})
+                self.assertIn('Draft reminder: ' + body, reply)
+                self.assertIn('Reply `yes ' + token + '`', reply)
+
+                # The old incomplete draft remains replaced when the later
+                # exact confirmation durably consumes its completed draft.
+                def consumed_with_replaced_draft(rows):
+                    self.assertEqual(sorted(row['state'] for row in self.drafts.rows.values()),
+                                     ['replaced', 'unconfirmed'])
+
+                with patch.object(self.items, 'before_save', consumed_with_replaced_draft):
+                    self.confirm_once('reminder', token)
+                self.assertEqual(self.items.rows[0]['body'], body)
+                self.assertEqual(self.items.rows[0]['weekly_time'], {'day': 0, 'clock': '2pm'})
 
     def test_nonexact_yes_and_cancel_leave_every_request_draft_untouched(self):
         for kind, request in REQUESTS:
