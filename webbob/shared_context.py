@@ -144,11 +144,15 @@ class SharedContext:
     def read_inbox(self, limit=50):
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ContextError("bounded inbox required")
-        visible = {f["id"]: f for f in self.read_context(100)}
         with self.transaction() as db:
             rows = db.execute("""SELECT m.*, e.state, e.receipt FROM messages m
                 LEFT JOIN effects e ON e.message_id=m.id
                 WHERE m.recipient=? AND m.acked=0 ORDER BY m.at,m.id LIMIT ?""", (self.bot, limit)).fetchall()
+            visible = {}
+            for fact_id in {f for row in rows for f in json.loads(row["refs"])}:
+                fact = db.execute("SELECT * FROM facts WHERE id=? ORDER BY revision DESC LIMIT 1", (fact_id,)).fetchone()
+                if fact and not fact["forgotten"] and self.bot in json.loads(fact["audience"]):
+                    visible[fact_id] = self._fact(fact)
         return [{"id": r["id"], "sender": r["sender"], "topic": r["topic"],
                  "facts": [visible[f] for f in json.loads(r["refs"]) if f in visible],
                  "effect_state": r["state"], "receipt": r["receipt"],

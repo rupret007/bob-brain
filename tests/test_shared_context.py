@@ -123,6 +123,20 @@ class ContextTests(unittest.TestCase):
             with self.assertRaises(ContextError):
                 operation()
 
+    def test_inbox_resolves_older_references_and_current_visibility(self):
+        self.accept()
+        self.stores["webbob"].post_message("older", "bob", "context_updated", [self.fact["id"]])
+        for index in range(101):
+            fact = copy.deepcopy(self.fact)
+            fact["id"] = f"newer-{index}"
+            self.accept(fact)
+        self.assertNotIn(self.fact["id"], {f["id"] for f in self.stores["bob"].read_context(100)})
+        self.assertEqual(self.stores["bob"].read_inbox()[0]["facts"][0]["body"], self.fact["body"])
+        changed = copy.deepcopy(self.fact)
+        changed["audience"] = ["webbob"]
+        self.accept(changed, 1)
+        self.assertEqual(self.stores["bob"].read_inbox()[0]["facts"], [])
+
     def test_exact_line_day_one_import_from_both_memory_roots(self):
         root = Path(__file__).resolve().parents[1]
         manifest = json.loads((root / "config/day-one-facts.json").read_text())
