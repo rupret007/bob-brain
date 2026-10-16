@@ -2,6 +2,7 @@
 import re
 import unicodedata
 
+from webbob.parity_gate import CAPABILITIES
 from webbob.shared_context import ContextError, safe_fact
 
 _MEMO_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
@@ -17,13 +18,13 @@ class VoiceMemoPolicyError(ValueError):
 
 
 def _normalize_payload_key(key):
-    """NFKC + casefold; strip Cf/invisible chars and whitespace; map long s to s.
+    """NFKC + casefold; strip Cf/invisible chars and whitespace.
 
     Forbidden stems (FORBIDDEN_PAYLOAD_KEYS) are matched as substrings of the result.
     """
     if not isinstance(key, str):
         key = str(key)
-    normalized = unicodedata.normalize("NFKC", key).replace("\u017f", "s")
+    normalized = unicodedata.normalize("NFKC", key)
     normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Cf")
     normalized = "".join(ch for ch in normalized if not ch.isspace())
     return normalized.casefold()
@@ -48,11 +49,30 @@ def validate_recall_metadata(record):
     return record
 
 
+def _uses_recall_key_allowlist(record):
+    return bool(set(record) & RECALL_FIELDS)
+
+
 def reject_voice_content(value):
     if isinstance(value, dict):
+        recall_allowlist = _uses_recall_key_allowlist(value)
         for key in value:
-            if _payload_key_forbidden(key):
+            if recall_allowlist:
+                if key not in RECALL_FIELDS:
+                    raise VoiceMemoPolicyError("voice recall may store metadata only")
+            elif key not in CAPABILITIES and _payload_key_forbidden(key):
                 raise VoiceMemoPolicyError("voice payload keys forbidden in shared memory")
+        if recall_allowlist and RECALL_FIELDS - set(value):
+            raise VoiceMemoPolicyError("voice recall may store metadata only")
+        if recall_allowlist and set(value) == RECALL_FIELDS:
+            for nested in value.values():
+                if isinstance(nested, str):
+                    try:
+                        safe_fact(nested)
+                    except ContextError:
+                        raise VoiceMemoPolicyError("voice or transcript content forbidden in shared memory") from None
+            validate_recall_metadata(value)
+            return
         for nested in value.values():
             reject_voice_content(nested)
         return
