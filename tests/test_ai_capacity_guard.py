@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import Mock
 
 from webbob.spend_cap import (
     MEASURED_QUOTA_PROVIDERS,
@@ -93,11 +94,26 @@ class ProviderQuotaGuardTests(unittest.TestCase):
         self.assertEqual(check["reason"], "provider_unmatched")
 
     def test_non_finite_remaining_blocks(self):
-        for bad in (float("nan"), float("inf"), -1.0, 101.0):
-            snap = capacity_doc("MiniMax (general)", bad)
-            check = provider_quota_check("minimax-main", snap)
-            self.assertTrue(check["blocks_reserve"])
-            self.assertEqual(check["reason"], "remaining_invalid")
+        for bad in (float("nan"), float("inf"), float("-inf"), -1.0, 101.0, 10**1000):
+            with self.subTest(remaining=bad):
+                snap = capacity_doc("MiniMax (general)", bad)
+                check = provider_quota_check("minimax-main", snap)
+                self.assertTrue(check["blocks_reserve"])
+                self.assertEqual(check["reason"], "remaining_invalid")
+
+    def test_remaining_rejects_non_numeric_values(self):
+        for bad in (True, False, "90", [], {}):
+            with self.subTest(remaining=bad):
+                check = provider_quota_check("codex", capacity_doc("Codex", bad))
+                self.assertTrue(check["blocks_reserve"])
+                self.assertEqual(check["reason"], "remaining_invalid")
+
+    def test_remaining_range_includes_zero_and_one_hundred(self):
+        for remaining, reason, blocked in ((0, "provider_quota_low", True), (100, "ok", False)):
+            with self.subTest(remaining=remaining):
+                check = provider_quota_check("codex", capacity_doc("Codex", remaining))
+                self.assertEqual(check["reason"], reason)
+                self.assertEqual(check["blocks_reserve"], blocked)
 
     def test_unmeasured_list_is_hardcoded_not_env(self):
         snap = capacity_doc("Claude Code", 1.0)
@@ -119,6 +135,46 @@ class ProviderQuotaGuardTests(unittest.TestCase):
         check = provider_quota_check("brave_search", None)
         self.assertFalse(check["blocks_reserve"])
         self.assertEqual(check["reason"], "quota_check_not_applicable")
+
+    def test_non_measured_reservations_skip_snapshot_but_keep_monthly_caps(self):
+        models = ("brave", "brave_search", " ＢＲＡＶＥ ", "claude", "claude-main",
+                  "claude-a", "claude-b", "gemini", "xai", "grok", "cursor")
+        snapshot = Mock(side_effect=AssertionError("unexpected capacity snapshot"))
+        budget = SpendCap(self.path, dict.fromkeys(models, 5), clock=lambda: self.now,
+                          capacity_snapshot=snapshot)
+        for model in models:
+            with self.subTest(model=model):
+                self.assertTrue(budget.reserve(f"first-{model}", model, 3)["admitted"])
+                result = budget.reserve(f"second-{model}", model, 3)
+                self.assertFalse(result["admitted"])
+                self.assertEqual(result["reason"], "monthly_cap")
+        snapshot.assert_not_called()
+
+    def test_unknown_provider_reservation_denied_without_snapshot(self):
+        snapshot = Mock(side_effect=AssertionError("unexpected capacity snapshot"))
+        budget = SpendCap(self.path, {"openai-main": 100}, clock=lambda: self.now,
+                          capacity_snapshot=snapshot)
+        result = budget.reserve("unknown-provider", "openai-main", 1)
+        self.assertFalse(result["admitted"])
+        self.assertEqual(result["reason"], "provider_quota_blocked")
+        self.assertEqual(result["quota"]["reason"], "provider_not_quota_gated")
+        self.assertEqual([alert["level"] for alert in budget.alerts()], ["quota_blocked"])
+        snapshot.assert_not_called()
+
+    def test_measured_reservations_read_current_snapshot_with_normalized_aliases(self):
+        for model, provider in (("codex", "Codex"), ("codex-main", "Codex"),
+                                (" ＣＯＤＥＸ－ＭＡＩＮ ", "Codex"),
+                                ("minimax", "MiniMax"), ("minimax-main", "MiniMax"),
+                                (" MiNiMaX ", "MiniMax")):
+            with self.subTest(model=model):
+                snapshot = Mock(side_effect=[capacity_doc(provider, 5), capacity_doc(provider, 4)])
+                budget = SpendCap(self.path, {model: 100}, clock=lambda: self.now,
+                                  capacity_snapshot=snapshot)
+                self.assertTrue(budget.reserve(f"fresh-{model}", model, 1)["admitted"])
+                result = budget.reserve(f"low-{model}", model, 1)
+                self.assertFalse(result["admitted"])
+                self.assertEqual(result["reason"], "provider_quota_low")
+                self.assertEqual(snapshot.call_count, 2)
 
     def test_unmeasured_still_subject_to_monthly_cap(self):
         snap = capacity_doc("Claude Code", None)

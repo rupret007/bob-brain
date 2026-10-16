@@ -166,7 +166,7 @@ class AiCapacity:
             return None
         try:
             proc = self.runner([str(self.script), "--json"], REFRESH_TIMEOUT)
-        except (OSError, UnicodeDecodeError, subprocess.TimeoutExpired):
+        except (OSError, UnicodeDecodeError, subprocess.TimeoutExpired, RuntimeError):
             return None
         if proc.returncode != 0:
             return None

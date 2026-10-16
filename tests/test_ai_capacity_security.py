@@ -90,6 +90,34 @@ class CapacitySnapshotSecurityTests(unittest.TestCase):
                 self.assertEqual(provider_quota_check("codex", doc)["reason"], "snapshot_stale")
                 self.assertEqual(len(doc["rows"]), int(cached))
 
+    def test_runner_runtime_error_fails_closed_and_obeys_cooldown(self):
+        for cached in (False, True):
+            with self.subTest(cached=cached):
+                if cached:
+                    self.path.write_text(json.dumps(snapshot(generated_ts=1)))
+                runner = Mock(side_effect=RuntimeError("private runner diagnostic"))
+                store = AiCapacity(self.path, self.script, clock=lambda: 2000, runner=runner)
+                doc = store.snapshot()
+                self.assertTrue(doc["snapshot_stale"])
+                self.assertEqual(len(doc["rows"]), int(cached))
+                if cached:
+                    self.assertEqual(doc["rows"][0]["remaining_pct"], 90)
+                self.assertNotIn("private runner diagnostic", json.dumps(doc))
+
+                budget = spend_cap.SpendCap(self.root / "spend.sqlite",
+                                           {"codex": 100, "minimax": 100},
+                                           capacity_snapshot=store.snapshot)
+                for model in ("codex", "minimax"):
+                    result = budget.reserve(f"failed-refresh-{model}", model, 1)
+                    self.assertFalse(result["admitted"])
+                    self.assertEqual(result["reason"], "provider_quota_blocked")
+                    self.assertEqual(result["quota"]["reason"], "snapshot_stale")
+                runner.assert_called_once_with([str(self.script), "--json"], ai_capacity.REFRESH_TIMEOUT)
+                self.assertEqual({alert["model"] for alert in budget.alerts()}, {"codex", "minimax"})
+                self.assertEqual({alert["level"] for alert in budget.alerts()}, {"quota_blocked"})
+                with budget.db() as db:
+                    self.assertEqual(db.execute("SELECT COUNT(*) FROM spend").fetchone()[0], 0)
+
     def test_file_unicode_decode_error_fails_closed(self):
         self.path.write_bytes(b"\xff")
         store = AiCapacity(self.path, self.script, clock=lambda: 2000)
