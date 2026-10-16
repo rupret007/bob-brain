@@ -2,27 +2,23 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import time
 from pathlib import Path
 from typing import Callable, Optional
 
+from webbob.shared_context import ContextError, safe_fact
+
 SCHEMA = "ai-capacity/v1"
-DEFAULT_JSON = Path(
-    os.environ.get(
-        "AI_CAPACITY_JSON",
-        "/Users/jeffstory/Documents/bob-overnight-inject/sync/ai-capacity.json",
-    )
-)
-DEFAULT_SCRIPT = Path(
-    os.environ.get(
-        "AI_CAPACITY_SCRIPT",
-        "/Users/jeffstory/Documents/bob-overnight-inject/bin/ai-capacity.sh",
-    )
-)
+_DEFAULT_SYNC = Path.home() / "Documents" / "bob-overnight-inject" / "sync" / "ai-capacity.json"
+_DEFAULT_SCRIPT = Path.home() / "Documents" / "bob-overnight-inject" / "bin" / "ai-capacity.sh"
+DEFAULT_JSON = Path(os.environ.get("AI_CAPACITY_JSON", str(_DEFAULT_SYNC)))
+DEFAULT_SCRIPT = Path(os.environ.get("AI_CAPACITY_SCRIPT", str(_DEFAULT_SCRIPT)))
 MAX_AGE_SECONDS = 15 * 60
 REFRESH_TIMEOUT = 180
+REFRESH_COOLDOWN_SECONDS = 10 * 60
 
 Runner = Callable[[list[str], float], subprocess.CompletedProcess]
 
@@ -56,7 +52,7 @@ def validate_document(data: object) -> dict:
     if not isinstance(data, dict) or data.get("schema") != SCHEMA:
         raise ValueError("invalid ai-capacity document")
     generated_ts = data.get("generated_ts")
-    if type(generated_ts) not in (int, float) or not (0 < generated_ts < 10**12):
+    if type(generated_ts) not in (int, float) or not math.isfinite(generated_ts) or not (0 < generated_ts < 10**12):
         raise ValueError("invalid generated_ts")
     rows = data.get("rows")
     if not isinstance(rows, list):
@@ -70,7 +66,12 @@ def validate_document(data: object) -> dict:
             raise ValueError("provider required")
         for pct_key in ("used_pct", "remaining_pct"):
             pct = row[pct_key]
-            if pct is not None and (type(pct) not in (int, float) or pct < 0 or pct > 100):
+            if pct is not None and (
+                type(pct) not in (int, float)
+                or not math.isfinite(pct)
+                or pct < 0
+                or pct > 100
+            ):
                 raise ValueError("invalid percent")
         out_rows.append(row)
     return {
@@ -95,6 +96,33 @@ def _read_file(path: Path) -> Optional[dict]:
         return None
 
 
+def _safe_capacity_string(value) -> str:
+    if not isinstance(value, str) or not value:
+        return ""
+    try:
+        safe_fact(value)
+    except ContextError:
+        return ""
+    return value
+
+
+def sanitize_capacity_snapshot(doc: dict) -> dict:
+    """Drop credential-like strings from capacity fields exposed via MCP."""
+    out = dict(doc)
+    out["host"] = _safe_capacity_string(out.get("host"))
+    out["snapshot_note"] = _safe_capacity_string(out.get("snapshot_note"))
+    rows = []
+    for row in doc.get("rows") or []:
+        if not isinstance(row, dict):
+            continue
+        cleaned = dict(row)
+        cleaned["source"] = _safe_capacity_string(cleaned.get("source"))
+        cleaned["note"] = _safe_capacity_string(cleaned.get("note"))
+        rows.append(cleaned)
+    out["rows"] = rows
+    return out
+
+
 def _mark_stale(doc: dict, note: str) -> dict:
     out = dict(doc)
     out["snapshot_stale"] = True
@@ -114,13 +142,16 @@ class AiCapacity:
         clock: Callable[[], float] | None = None,
         runner: Runner | None = None,
         max_age_seconds: float = MAX_AGE_SECONDS,
+        refresh_cooldown_seconds: float = REFRESH_COOLDOWN_SECONDS,
     ):
         self.path = Path(path or DEFAULT_JSON)
         self.script = Path(script or DEFAULT_SCRIPT)
         self.clock = clock or time.time
         self.runner = runner or _default_runner
         self.max_age_seconds = max_age_seconds
+        self.refresh_cooldown_seconds = refresh_cooldown_seconds
         self._cache: Optional[dict] = None
+        self._refresh_blocked_until = 0.0
 
     def _needs_refresh(self, doc: Optional[dict], now: float) -> bool:
         if doc is None:
@@ -128,7 +159,12 @@ class AiCapacity:
         return now - doc["generated_ts"] > self.max_age_seconds
 
     def _refresh(self) -> Optional[dict]:
-        proc = self.runner([str(self.script), "--json"], REFRESH_TIMEOUT)
+        if not self.script.is_file():
+            return None
+        try:
+            proc = self.runner([str(self.script), "--json"], REFRESH_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
         if proc.returncode != 0:
             return None
         try:
@@ -148,14 +184,22 @@ class AiCapacity:
         doc = on_disk or self._cache
         stale_reason = None
         if refresh and self._needs_refresh(doc, now):
-            fresh = self._refresh()
-            if fresh is not None:
-                self._cache = fresh
-                doc = fresh
-            elif doc is not None:
-                stale_reason = "refresh failed; using last snapshot"
+            if now < self._refresh_blocked_until:
+                if doc is not None:
+                    stale_reason = "refresh cooldown; using last snapshot"
+                else:
+                    stale_reason = "no snapshot available"
             else:
-                stale_reason = "no snapshot available"
+                self._refresh_blocked_until = now + self.refresh_cooldown_seconds
+                fresh = self._refresh()
+                if fresh is not None:
+                    self._refresh_blocked_until = 0.0
+                    self._cache = fresh
+                    doc = fresh
+                elif doc is not None:
+                    stale_reason = "refresh failed; using last snapshot"
+                else:
+                    stale_reason = "no snapshot available"
         if doc is None:
             return {
                 "schema": SCHEMA,

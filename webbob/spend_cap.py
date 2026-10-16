@@ -1,12 +1,20 @@
 """Transactional per-model monthly caps, supplementary to existing global caps."""
 from contextlib import contextmanager
 from datetime import datetime
+import math
 from pathlib import Path
 import sqlite3
 from typing import Optional
 from zoneinfo import ZoneInfo
 
 LOW_QUOTA_REMAINING_PCT = 5
+
+# Providers whose remaining_pct is measured by ai-capacity.sh; quota guard applies.
+MEASURED_QUOTA_PROVIDERS = frozenset({"codex", "minimax"})
+
+# Providers the capacity script cannot measure; skip quota guard only (not spend caps).
+# Hardcoded — not configurable via JSON, env, or MCP.
+UNMEASURED_QUOTA_PROVIDERS = frozenset({"claude", "gemini", "xai", "cursor"})
 
 # Model ids map to provider labels in ai-capacity rows (substring match, case-insensitive).
 MODEL_PROVIDER_HINTS = {
@@ -28,6 +36,13 @@ def _model_hint(model: str) -> Optional[str]:
     return None
 
 
+def _quota_policy_hint(model: str) -> Optional[str]:
+    hint = _model_hint(model)
+    if hint == "grok":
+        return "xai"
+    return hint
+
+
 def match_capacity_row(model: str, rows: list) -> Optional[dict]:
     hint = _model_hint(model)
     if not hint or not isinstance(rows, list):
@@ -42,22 +57,106 @@ def match_capacity_row(model: str, rows: list) -> Optional[dict]:
     return None
 
 
+def _remaining_trusted(remaining) -> bool:
+    if type(remaining) not in (int, float):
+        return False
+    if not math.isfinite(remaining):
+        return False
+    return 0 <= remaining <= 100
+
+
 def provider_quota_check(model: str, capacity_doc: Optional[dict]) -> dict:
-    """Fail closed when remaining_pct is known and below threshold; unknown is not low."""
+    """Fail closed for measured providers when quota cannot be trusted; exempt unmeasured."""
+    hint = _quota_policy_hint(model)
+    if hint is None:
+        return {
+            "blocks_reserve": True,
+            "low_quota": False,
+            "unknown_quota": True,
+            "flagged": True,
+            "reason": "unknown_model_provider",
+        }
+    if hint in UNMEASURED_QUOTA_PROVIDERS:
+        return {
+            "blocks_reserve": False,
+            "low_quota": False,
+            "unknown_quota": False,
+            "flagged": False,
+            "reason": "quota_check_exempt",
+            "policy_hint": hint,
+        }
+    if hint not in MEASURED_QUOTA_PROVIDERS:
+        return {
+            "blocks_reserve": True,
+            "low_quota": False,
+            "unknown_quota": True,
+            "flagged": True,
+            "reason": "provider_not_quota_gated",
+        }
     if not isinstance(capacity_doc, dict):
-        return {"low_quota": False, "unknown_quota": True, "flagged": True, "reason": "no_capacity_snapshot"}
+        return {
+            "blocks_reserve": True,
+            "low_quota": False,
+            "unknown_quota": True,
+            "flagged": True,
+            "reason": "no_capacity_snapshot",
+        }
+    if capacity_doc.get("snapshot_stale"):
+        return {
+            "blocks_reserve": True,
+            "low_quota": False,
+            "unknown_quota": True,
+            "flagged": True,
+            "reason": "snapshot_stale",
+        }
     row = match_capacity_row(model, capacity_doc.get("rows") or [])
     if row is None:
-        return {"low_quota": False, "unknown_quota": True, "flagged": True, "reason": "provider_unmatched"}
+        return {
+            "blocks_reserve": True,
+            "low_quota": False,
+            "unknown_quota": True,
+            "flagged": True,
+            "reason": "provider_unmatched",
+        }
     remaining = row.get("remaining_pct")
     if remaining is None:
-        return {"low_quota": False, "unknown_quota": True, "flagged": True, "reason": "remaining_unknown",
-                "provider": row.get("provider")}
+        return {
+            "blocks_reserve": True,
+            "low_quota": False,
+            "unknown_quota": True,
+            "flagged": True,
+            "reason": "remaining_unknown",
+            "provider": row.get("provider"),
+        }
+    if not _remaining_trusted(remaining):
+        return {
+            "blocks_reserve": True,
+            "low_quota": False,
+            "unknown_quota": True,
+            "flagged": True,
+            "reason": "remaining_invalid",
+            "provider": row.get("provider"),
+            "remaining_pct": remaining,
+        }
     if remaining < LOW_QUOTA_REMAINING_PCT:
-        return {"low_quota": True, "unknown_quota": False, "flagged": False, "reason": "provider_quota_low",
-                "provider": row.get("provider"), "remaining_pct": remaining}
-    return {"low_quota": False, "unknown_quota": False, "flagged": False, "reason": "ok",
-            "provider": row.get("provider"), "remaining_pct": remaining}
+        return {
+            "blocks_reserve": True,
+            "low_quota": True,
+            "unknown_quota": False,
+            "flagged": False,
+            "reason": "provider_quota_low",
+            "provider": row.get("provider"),
+            "remaining_pct": remaining,
+        }
+    return {
+        "blocks_reserve": False,
+        "low_quota": False,
+        "unknown_quota": False,
+        "flagged": False,
+        "reason": "ok",
+        "provider": row.get("provider"),
+        "remaining_pct": remaining,
+    }
 
 
 class SpendCap:
@@ -113,11 +212,13 @@ class SpendCap:
         if type(maximum_cost) is not int or not 0 < maximum_cost < 10**12:
             raise ValueError("positive worst-case cost in microdollars required")
         quota = provider_quota_check(model, self.capacity_snapshot())
-        if quota.get("low_quota"):
+        if quota.get("blocks_reserve"):
             month = self._month()
             with self.db() as db:
-                db.execute("INSERT OR IGNORE INTO alerts VALUES (?,?,'quota_low')", (model, month))
-            return {"admitted": False, "reason": "provider_quota_low", "quota": quota}
+                level = "quota_low" if quota.get("low_quota") else "quota_blocked"
+                db.execute("INSERT OR IGNORE INTO alerts VALUES (?,?,?)", (model, month, level))
+            reason = "provider_quota_low" if quota.get("low_quota") else "provider_quota_blocked"
+            return {"admitted": False, "reason": reason, "quota": quota}
         month = self._month()
         with self.db() as db:
             prior = db.execute("SELECT model,month,reserved,actual FROM spend WHERE id=?", (call_id,)).fetchone()

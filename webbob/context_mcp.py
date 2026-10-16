@@ -1,7 +1,7 @@
 """Read/propose/inbox surface. Acceptance and effects stay outside model tools."""
 import os
 from mcp.server.fastmcp import FastMCP
-from webbob.ai_capacity import AiCapacity
+from webbob.ai_capacity import AiCapacity, sanitize_capacity_snapshot
 from webbob.shared_context import SharedContext
 
 
@@ -39,7 +39,7 @@ def build_server(path, bot, capacity=None):
     @server.tool()
     def read_ai_capacity() -> dict:
         """Read-only provider capacity snapshot (usage %, resets). No secrets or keys."""
-        return capacity_store.snapshot()
+        return sanitize_capacity_snapshot(capacity_store.snapshot())
 
     return server
 
