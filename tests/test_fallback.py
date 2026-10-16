@@ -1,5 +1,6 @@
 import unittest
 from webbob.fallback import fallback_notice
+from webbob.fallback_copy import GROK_CONTINUE_MESSAGE
 
 
 class FallbackTests(unittest.TestCase):
@@ -10,6 +11,7 @@ class FallbackTests(unittest.TestCase):
             altered = {**health, name: {"status": "down", "observed_at": 100}}
             notice = fallback_notice(altered, now=100)
             self.assertIn("Grok Bot", notice["message"])
+            self.assertTrue(notice["message"].endswith(GROK_CONTINUE_MESSAGE))
             self.assertFalse(notice["auto_forward"])
 
     def test_missing_stale_future_and_nonfinite_health_are_unknown(self):

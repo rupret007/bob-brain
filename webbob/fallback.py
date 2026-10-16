@@ -2,6 +2,8 @@
 import math
 import time
 
+from webbob.fallback_copy import GROK_CONTINUE_MESSAGE, unavailable_sentence
+
 
 def fallback_notice(health, now=None, freshness=120):
     now = time.time() if now is None else now
@@ -20,8 +22,8 @@ def fallback_notice(health, now=None, freshness=120):
         return None
     reasons = []
     if unavailable:
-        reasons.append(" and ".join(unavailable) + (" are unavailable." if len(unavailable) > 1 else " is unavailable."))
+        reasons.append(unavailable_sentence(unavailable))
     if unknown:
         reasons.append("Could not verify " + " and ".join(unknown) + " availability.")
-    return {"kind": "fallback_notice", "message": " ".join(reasons) + " Continue with Grok Bot if it is available. Your existing work stays here.",
+    return {"kind": "fallback_notice", "message": " ".join(reasons) + " " + GROK_CONTINUE_MESSAGE,
             "action": "open_grok_bot_manually", "auto_forward": False}
