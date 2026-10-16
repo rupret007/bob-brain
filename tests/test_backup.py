@@ -40,6 +40,10 @@ class BackupTests(unittest.TestCase):
             facts[0]["body"] = body
             with self.assertRaises(ValueError):
                 snapshot(self.path, facts, self.config)
+        facts = copy.deepcopy(self.facts)
+        facts[0]["provenance"]["accepted_by"] = "jeff at 312-555-0199"
+        with self.assertRaisesRegex(ValueError, "sensitive provenance"):
+            snapshot(self.path, facts, self.config)
         for kind in ("private_text", "raw_voice", "credentials"):
             facts = copy.deepcopy(self.facts)
             facts[0]["provenance"]["kind"] = kind
