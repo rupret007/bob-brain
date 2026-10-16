@@ -13,7 +13,11 @@ class VoiceMemoPolicyTests(unittest.TestCase):
         with self.assertRaises(VoiceMemoPolicyError):
             validate_recall_metadata({"memo_id": "m", "recorded_at": 1.0, "duration_seconds": 1,
                                         "transcription_status": "stored"})
-        for payload in ("voice transcript: hello", {"transcript": "hello"}, {"audio_base64": "abc"}):
+        with self.assertRaises(VoiceMemoPolicyError):
+            validate_recall_metadata({"memo_id": "call mom at 312-555-0199", "recorded_at": 1.0,
+                                      "duration_seconds": 1, "transcription_status": "on_device_only"})
+        for payload in ("voice transcript: hello", {"transcript": "hello"}, {"audio_base64": "abc"},
+                        {"Transcript": "call mom"}):
             with self.assertRaises(VoiceMemoPolicyError):
                 reject_voice_content(payload)
 

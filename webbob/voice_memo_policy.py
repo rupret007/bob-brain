@@ -1,5 +1,9 @@
 """Voice memos never land in shared memory as audio or transcripts."""
+import re
+
 from webbob.shared_context import ContextError, safe_fact
+
+_MEMO_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
 RECALL_FIELDS = frozenset({"memo_id", "recorded_at", "duration_seconds", "transcription_status"})
 FORBIDDEN_PAYLOAD_KEYS = frozenset(
@@ -16,7 +20,7 @@ def validate_recall_metadata(record):
         raise VoiceMemoPolicyError("voice recall may store metadata only")
     if record["transcription_status"] not in ("unavailable", "on_device_only", "not_requested"):
         raise VoiceMemoPolicyError("shared memory cannot hold transcription text")
-    if not isinstance(record["memo_id"], str) or not 1 <= len(record["memo_id"]) <= 80:
+    if not isinstance(record["memo_id"], str) or not _MEMO_ID.fullmatch(record["memo_id"]):
         raise VoiceMemoPolicyError("invalid memo id")
     if type(record["duration_seconds"]) is not int or not 0 <= record["duration_seconds"] <= 86_400:
         raise VoiceMemoPolicyError("invalid duration")
@@ -27,7 +31,7 @@ def validate_recall_metadata(record):
 
 def reject_voice_content(value):
     if isinstance(value, dict):
-        if FORBIDDEN_PAYLOAD_KEYS.intersection(value):
+        if FORBIDDEN_PAYLOAD_KEYS.intersection({key.lower() for key in value}):
             raise VoiceMemoPolicyError("voice payload keys forbidden in shared memory")
         for nested in value.values():
             reject_voice_content(nested)
