@@ -33,6 +33,37 @@ ROUTINE_HELP = ('Try “every morning do read file ~/Documents/notes.txt”, '
                 'Use “my routines” and “cancel routine ID”. Writes, deletes and sends cannot run unattended.')
 UNITS = {'second': 1, 'minute': 60, 'hour': 3600, 'day': 86400}
 DURATION = r'\d+\s+(?:seconds?|minutes?|hours?|days?)'
+# "Confirm when unsure" (Jeff, 2026-10-15): a direct interval reminder saves
+# immediately only when the whole request is plain ASCII and the reminder body
+# is ASCII letters/digits separated by single spaces, contains no
+# single-letter runs (spelled-out words) and no action/approval/prohibition
+# word. Everything else goes to the exact-token confirmation draft.
+_PLAIN_BODY = re.compile(r'[A-Za-z0-9]+(?: [A-Za-z0-9]+)*')
+_PLAIN_REQUEST = re.compile(r'[A-Za-z0-9 :]+[.!?]?')
+# Joined words ("reviewfirst", "pleaseapprove") still carry these roots.
+_CONTROL_ROOTS = re.compile(r'schedul|approv|consent|confirm|permi|draft|preview|review|proofread|prohibit|forbid|'
+                            r'disabl|authori|signoff|beforehand|condition|contingent|hypothetic|simulat|execut|decid|'
+                            r'agree|concur|suppos|provid|unless|greenlight|goahead', re.I)
+_CONTROL_WORDS = re.compile(
+    r'(?:schedul|approv|approval|consent|confirm|agree|concur|permi|permission|allow|authori|'
+    r'draft|preview|review|proofread|check|verify|sign|signoff|signal|green|light|ok|okay|yes|'
+    r'go|ahead|wait|hold|pause|defer|pend|later|until|unless|after|before|beforehand|first|once|'
+    r'when|if|provid|suppos|should|assum|condition|contingent|depend|only|just|not|no|never|dont|'
+    r'don|stop|halt|cancel|disabl|prohibit|forbid|forbidden|ban|block|deny|denied|refus|reject|veto|'
+    r'avoid|skip|without|test|dry|simulat|pretend|hypothetic|maybe|perhaps|might|may|decid|'
+    r'decision|think|ask|let|show|see|look|act|execut|run|send|text|email|call|follow)\w*', re.I)
+
+
+def plain_interval_reminder(text, body):
+    text = text.strip()
+    if not (text.isascii() and _PLAIN_REQUEST.fullmatch(text) and _PLAIN_BODY.fullmatch(body.strip())):
+        return False
+    words = body.split()
+    if any(len(word) == 1 and word.lower() not in ('a',) for word in words):
+        return False
+    return not any(_CONTROL_WORDS.fullmatch(word) or _CONTROL_ROOTS.search(word) for word in words)
+
+
 PERSONAL_INTERVAL_REQUEST = re.compile(
     r'^(?:please\s+)*remind me (?:to [\s\S]+? in \d+\s+'
     r'(?:seconds?|minutes?|mins?|hours?|hrs?|days?)|'
@@ -681,6 +712,11 @@ class Reminders:
                     # must never strip constraints or rewrite the saved body.
                     if approval_requested(text) or approval_requested(body):
                         raise ReminderError('Nothing was saved. Send a new reminder request when you want it scheduled.')
+                    if not plain_interval_reminder(text, body):
+                        # Confirm when unsure: anything but plain ASCII words
+                        # goes to the separate exact-token confirmation step.
+                        return self.draft(text, cid, request_id, actor, body, due, interval, daily_time, action,
+                                          weekly_time=weekly, assumption=assumption)
                     with self.draft_lock() as drafts:
                         changed = False
                         for old in drafts.values():

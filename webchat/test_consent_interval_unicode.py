@@ -278,7 +278,22 @@ class ConsentIntervalUnicodeTests(unittest.TestCase):
                               'nonbreaking_space', 'fullwidth', 'dotted_letters'):
                 body = TRANSFORMS[transform]('stretch gently')
                 with self.subTest(form=form, transform=transform, body=body):
-                    self.assert_saves_immediately(template.format(body=body), body, interval)
+                    if transform == 'plain':
+                        self.assert_saves_immediately(template.format(body=body), body, interval)
+                        continue
+                    # Confirm when unsure (Jeff 2026-10-15): unusual characters
+                    # never save in the request turn. The exact original body
+                    # must still be what a later exact confirmation saves.
+                    reply = self.say_fresh(template.format(body=body))
+                    self.assertEqual(self.items.writes, [], reply)
+                    token = re.search(r'yes (wbrem-[0-9a-f]{32})', reply)
+                    self.assertIsNotNone(token, reply)
+                    confirm = self.reminders.handle('yes ' + token[1], 'unheld', 'confirm',
+                                                    intent_state=chat_intent.new_state())
+                    self.assertIn('Reminder saved', confirm)
+                    row, = self.items.rows
+                    self.assertEqual((row['body'], row['due_at'], row['interval_seconds']),
+                                     (body, 1791828600, interval))
 
 
 if __name__ == '__main__':
