@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 from webbob.restricted_fetch import FetchDenied, PublicBackend, download, validate_url, MAX_BYTES, fetch_page
 from webbob.research_limits import BRAVE_QUERY_COST_MICRODOLLARS, BRAVE_SPEND_MODEL, DailyQueryCap
 from webbob.spend_cap import SpendCap
-from webbob.tool_host import ToolHost, ToolUnavailable
+from webbob.tool_host import ToolHost, ToolUnavailable, research_host
 
 
 def result(value, error=False):
@@ -113,6 +113,161 @@ class HostTests(unittest.IsolatedAsyncioTestCase):
         await host.call("brave_web_search", {"query": "first"})
         with self.assertRaisesRegex(ToolUnavailable, "daily Brave query cap exceeded"):
             await host.call("brave_web_search", {"query": "second"})
+
+
+class ResearchHostCapTests(unittest.IsolatedAsyncioTestCase):
+    def _factory(self, tmp_dir, *, spend_micro=BRAVE_QUERY_COST_MICRODOLLARS, daily_limit=50):
+        clock = lambda: datetime.fromisoformat("2026-10-16T12:00:00-05:00")
+        spend = SpendCap(Path(tmp_dir) / "spend.sqlite", {BRAVE_SPEND_MODEL: spend_micro}, clock)
+        daily = DailyQueryCap(Path(tmp_dir) / "daily.sqlite", limit=daily_limit, clock=clock)
+        return spend, daily, BRAVE_QUERY_COST_MICRODOLLARS
+
+    def _mcp_session(self, tool_name, *, call_tool=None):
+        tools = SimpleNamespace(tools=[SimpleNamespace(name=tool_name)])
+        return SimpleNamespace(
+            initialize=AsyncMock(),
+            list_tools=AsyncMock(return_value=tools),
+            call_tool=call_tool or AsyncMock(return_value=result({"url": "https://one.example/"})),
+        )
+
+    @asynccontextmanager
+    async def _launch_stack(self, tmp_dir, *, brave_call_tool=None):
+        entry = Path(tmp_dir) / "brave-entry.js"
+        entry.write_text("// stub brave entrypoint\n", encoding="utf-8")
+        queue = ["brave_web_search", "fetch"]
+
+        @asynccontextmanager
+        async def fake_stdio(_params, errlog=None):
+            yield (SimpleNamespace(), SimpleNamespace())
+
+        mcp_session = self._mcp_session
+
+        class SessionFactory:
+            def __init__(self, read, write):
+                self.tool_name = queue.pop(0)
+
+            async def __aenter__(self):
+                if self.tool_name == "brave_web_search":
+                    return mcp_session("brave_web_search", call_tool=brave_call_tool)
+                return mcp_session("fetch")
+
+            async def __aexit__(self, *_args):
+                return False
+
+        with patch("webbob.tool_host.dotenv_values", return_value={"BRAVE_API_KEY": "test-key"}), \
+                patch("webbob.tool_host.stdio_client", fake_stdio), \
+                patch("webbob.tool_host.ClientSession", SessionFactory):
+            yield entry
+
+    async def _open_launch_host(self, tmp_dir, caps, *, brave_call_tool=None, caps_factory=None):
+        async with self._launch_stack(tmp_dir, brave_call_tool=brave_call_tool) as entry:
+            kwargs = {}
+            if caps_factory is not None:
+                kwargs["caps_factory"] = caps_factory
+            with patch("webbob.tool_host.research_spend_and_daily_caps", return_value=caps):
+                async with research_host(str(entry), **kwargs) as host:
+                    yield host
+
+    async def test_research_host_wires_monthly_and_daily_caps_from_factory(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        built = self._factory(tmp.name, spend_micro=BRAVE_QUERY_COST_MICRODOLLARS, daily_limit=1)
+        search = SimpleNamespace(call_tool=AsyncMock(return_value=result({"url": "https://one.example/"})))
+        async with research_host(
+                "unused-entry.js",
+                caps_factory=lambda: built,
+                sessions={"brave_web_search": search},
+        ) as host:
+            self.assertIs(host.spend_cap, built[0])
+            self.assertIs(host.daily_cap, built[1])
+            self.assertEqual(host.brave_cost, built[2])
+            await host.call("brave_web_search", {"query": "first"})
+            with self.assertRaisesRegex(ToolUnavailable, "daily Brave query cap exceeded"):
+                await host.call("brave_web_search", {"query": "second"})
+
+    async def test_research_host_missing_caps_fail_closed(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        daily = self._factory(tmp.name)[1]
+        search = SimpleNamespace(call_tool=AsyncMock(return_value=result({"url": "https://one.example/"})))
+        with self.assertRaisesRegex(ValueError, "spend_cap and daily_cap are required"):
+            async with research_host(
+                    "unused-entry.js",
+                    caps_factory=lambda: (None, daily, BRAVE_QUERY_COST_MICRODOLLARS),
+                    sessions={"brave_web_search": search},
+            ):
+                pass
+
+    async def test_research_host_zero_monthly_cap_blocks_brave(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        built = self._factory(tmp.name, spend_micro=0, daily_limit=50)
+        search = SimpleNamespace(call_tool=AsyncMock(return_value=result({"url": "https://one.example/"})))
+        async with research_host(
+                "unused-entry.js",
+                caps_factory=lambda: built,
+                sessions={"brave_web_search": search},
+        ) as host:
+            with self.assertRaisesRegex(ToolUnavailable, "monthly spend cap"):
+                await host.call("brave_web_search", {"query": "x"})
+
+    async def test_research_host_brave_timeout_settles_full_cost(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        built = self._factory(tmp.name, spend_micro=BRAVE_QUERY_COST_MICRODOLLARS)
+
+        async def hang(*_args, **_kwargs):
+            await asyncio.sleep(10)
+
+        search = SimpleNamespace(call_tool=AsyncMock(side_effect=hang))
+        real_wait_for = asyncio.wait_for
+
+        async def short_wait_for(coro, timeout=None):
+            return await real_wait_for(coro, timeout=0.001)
+
+        with patch("webbob.tool_host.asyncio.wait_for", side_effect=short_wait_for):
+            async with research_host(
+                    "unused-entry.js",
+                    caps_factory=lambda: built,
+                    sessions={"brave_web_search": search},
+            ) as host:
+                with self.assertRaisesRegex(ToolUnavailable, "^brave_web_search unavailable$"):
+                    await host.call("brave_web_search", {"query": "x"})
+                with self.assertRaisesRegex(ToolUnavailable, "monthly spend cap"):
+                    await host.call("brave_web_search", {"query": "y"})
+
+    async def test_research_host_launch_path_wires_monthly_spend_cap(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        built = self._factory(tmp.name, spend_micro=BRAVE_QUERY_COST_MICRODOLLARS, daily_limit=50)
+        async for host in self._open_launch_host(tmp.name, built):
+            self.assertIs(host.spend_cap, built[0])
+            self.assertEqual(host.daily_cap.limit, 50)
+            await host.call("brave_web_search", {"query": "first"})
+            with self.assertRaisesRegex(ToolUnavailable, "monthly spend cap"):
+                await host.call("brave_web_search", {"query": "second"})
+
+    async def test_research_host_launch_path_wires_daily_query_cap(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        built = self._factory(tmp.name, spend_micro=BRAVE_QUERY_COST_MICRODOLLARS * 10, daily_limit=1)
+        async for host in self._open_launch_host(tmp.name, built):
+            self.assertIs(host.daily_cap, built[1])
+            self.assertEqual(host.daily_cap.limit, 1)
+            await host.call("brave_web_search", {"query": "first"})
+            with self.assertRaisesRegex(ToolUnavailable, "daily Brave query cap exceeded"):
+                await host.call("brave_web_search", {"query": "second"})
+
+    async def test_research_host_launch_path_uses_default_caps_factory(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        built = self._factory(tmp.name, spend_micro=BRAVE_QUERY_COST_MICRODOLLARS, daily_limit=1)
+        async for host in self._open_launch_host(tmp.name, built, caps_factory=None):
+            self.assertIs(host.spend_cap, built[0])
+            self.assertIs(host.daily_cap, built[1])
+            await host.call("brave_web_search", {"query": "first"})
+            with self.assertRaisesRegex(ToolUnavailable, "daily Brave query cap exceeded"):
+                await host.call("brave_web_search", {"query": "second"})
 
 
 class FetchTests(unittest.IsolatedAsyncioTestCase):
