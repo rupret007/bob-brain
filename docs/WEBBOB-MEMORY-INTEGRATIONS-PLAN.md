@@ -266,7 +266,8 @@ not”) that still requires confirm.
 
 ### 4.5 Gate for Phase 1
 
-New preregistered questions (exposed + holdout), examples:
+Local regression fixtures (simple recall and FAQ checks are not new scored
+judge items; see Section 9):
 
 - “What bands do I play in?” → Rad Dad live, Stalemate catalog; not inventing
   a fourth live band; cite saved owner-core.
@@ -276,6 +277,13 @@ New preregistered questions (exposed + holdout), examples:
 - “Correction: Trailer Swift is live now” without confirm → not updated.
 - Capability: “how does your memory work?” still matches `capabilities.py`
   (must mention confirm + local file, not device-only).
+
+New preregistered memory questions (exposed + holdout) must be at least as
+hard as the existing set. Use multi-turn confirmation, correction, and
+removal scenarios: distinguish proposed from saved facts, cite the current
+saved source, reject superseded facts, and fail closed when the store is
+unavailable. Require matching memory receipts; simple identity recall or
+FAQ restatements must not increase the scored set.
 
 Existing T-tasks (drafts, holds, calendar phrasing, bio honesty) must not
 drop vs `cf83a9a`. Risk: stuffing identity into every prompt can make T-tasks
@@ -580,8 +588,8 @@ draft, stacked on `draft/webbob-h2h-r10`, not live.
 
 Phase mapping:
 
-- **P1** adds memory questions; watch bio/roster invention (T-tasks,
-  `recorded_brief`).
+- **P1** adds memory confirmation/provenance questions from Section 4.5;
+  watch bio/roster invention (T-tasks, `recorded_brief`).
 - **P2–P3** add GitHub/Vault questions; watch steal of review/merge phrasing.
 - **P4** adds unreachable/incoherent items; watch false positives on drafts.
 - **P5** is regression-only: texting/calendar/git refusal.
@@ -607,8 +615,10 @@ Ship this before a Grok-parity program.
 5. **Tests:** fixture catalog (tiny JSON with 3 originals / 1 cover);
    timeout; 401; unallowlisted; mutation; hold; natural phrasing; inspect
    memory still model-free.
-6. **Evals:** append songs + can’t-reach + identity questions to exposed
-   and holdout; run the 9-sample gate; compare to `cf83a9a`.
+6. **Evals:** append songs + can’t-reach + memory confirmation/provenance
+   questions from Section 4.5 to exposed and holdout. Keep simple identity
+   recall and FAQ checks in local regression fixtures; run the 9-sample
+   gate and compare to `cf83a9a`.
 
 Out of S1: Gmail, Drive, issues inbox, LLM planner, auto-import of Grok
 memory, any send path.
