@@ -238,3 +238,19 @@ def approval_categories(text):
 def approval_requested(text):
     """Compatibility boundary for parsers: any category requires clarification."""
     return bool(approval_categories(text))
+
+
+def leading_approval_request(text, recognize):
+    """Recognize a prefixed action only to ask; never strip it for execution.
+
+    Anchored action grammars do not accept "Draft only: create ...". Keep
+    those requests in their handler instead of falling through to other work.
+    Already recognized requests retain their existing whole-request checks.
+    """
+    if recognize(text):
+        return False
+    for word in re.finditer(r'\b\w', text):
+        start = word.start()
+        if start and recognize(text[start:]) and approval_requested(text[:start]):
+            return True
+    return False
