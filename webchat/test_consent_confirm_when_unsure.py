@@ -21,6 +21,14 @@ CODEX_REPROS_74773F1 = (
     'remind me to stretch saving is barred in 10 mins',
     'remind me to stretch creation is suspended in 2 hrs',
     'remind me every 10 minutes to stretch savelater',
+    # codex-solo-consent-5ce1c247b51b.json run-together repros
+    'remind me to stretch ownernotready in 10 minutes',
+    'remind me every 10 minutes to stretch ownernotready',
+    'remind me to stretch ownernotready in 10 mins',
+    'remind me to stretch ownernotready in 2 hrs',
+    'remind me every 10 minutes to stretch ownerbanned',
+    'remind me to stretch mustawaitme in 10 mins',
+    'remind me to stretch savelater in 10 minutes',
 )
 TAILS = ('scheduling prohibited', 'scheduling forbidden', 'prohibited', 'forbidden',
          'not allowed', 'do not schedule', 'blocked until approved', 'vetoed',
@@ -50,6 +58,17 @@ class ConfirmWhenUnsureTests(_base_module.ConsentIntervalUnicodeTests):
         self.assert_saves_immediately('remind me to stretch in 10 minutes', 'stretch', None)
         self.assert_saves_immediately('remind me every 10 minutes to stretch', 'stretch', 600)
         self.assert_saves_immediately('Remind me to drink water in 10 mins', 'drink water', None)
+
+    def test_dictionary_and_inflections_stay_instant(self):
+        self.assert_saves_immediately('remind me to take out the trash in 10 minutes', 'take out the trash', None)
+        self.assert_saves_immediately('remind me to feed the cats in 10 minutes', 'feed the cats', None)
+
+    def test_wordlist_is_pinned_in_repo(self):
+        import reminders
+        self.assertTrue(str(reminders._WORDLIST_PATH).endswith('webchat/data/scowl-en-50.txt'))
+        self.assertGreater(len(reminders._DICTIONARY), 50000)
+        for word in ('ownernotready', 'ownerbanned', 'mustawaitme', 'savelater'):
+            self.assertFalse(reminders._dictionary_token(word), word)
 
     def test_two_hour_reminder_stays_instant(self):
         reply = self.say_fresh('remind me to stretch in 2 hrs')

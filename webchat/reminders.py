@@ -56,12 +56,46 @@ _CONTROL_WORDS = re.compile(
     r'decision|think|ask|let|show|see|look|act|execut|run|send|text|email|call|follow)\w*', re.I)
 
 
+_WORDLIST_PATH = Path(__file__).resolve().parent / 'data' / 'scowl-en-50.txt'
+
+
+def _load_words():
+    # Pinned in-repo SCOWL list (see data/README-wordlist.md). A missing or
+    # unreadable list fails closed: no reminder saves instantly.
+    try:
+        return frozenset(_WORDLIST_PATH.read_text(encoding='ascii').split())
+    except (OSError, UnicodeError):
+        return frozenset()
+
+
+_DICTIONARY = _load_words()
+_TIME_UNITS = frozenset(('second', 'seconds', 'minute', 'minutes', 'min', 'mins',
+                         'hour', 'hours', 'hr', 'hrs', 'day', 'days'))
+
+
+def _dictionary_token(word):
+    word = word.lower()
+    if any(char.isdigit() for char in word) or word in _TIME_UNITS:
+        return True  # numbers, IDs and time units
+    if word in _DICTIONARY:
+        return True
+    for suffix in ('es', 's', 'ed', 'ing', 'd'):
+        stem = word[:-len(suffix)]
+        if word.endswith(suffix) and len(stem) >= 3 and (
+                stem in _DICTIONARY or stem + 'e' in _DICTIONARY or
+                (len(stem) > 3 and stem[-1] == stem[-2] and stem[:-1] in _DICTIONARY)):
+            return True
+    return False
+
+
 def plain_interval_reminder(text, body):
     text = text.strip()
     if not (text.isascii() and _PLAIN_REQUEST.fullmatch(text) and _PLAIN_BODY.fullmatch(body.strip())):
         return False
     words = body.split()
     if any(len(word) == 1 and word.lower() not in ('a',) for word in words):
+        return False
+    if not all(_dictionary_token(word) for word in words):
         return False
     return not any(_CONTROL_WORDS.fullmatch(word) or _CONTROL_ROOTS.search(word) for word in words)
 
