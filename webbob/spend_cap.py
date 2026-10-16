@@ -25,6 +25,7 @@ MODEL_PROVIDER_HINTS = {
     "grok": ("grok", "xai"),
     "xai": ("grok", "xai"),
     "cursor": ("cursor",),
+    "openai": ("openai",),
 }
 
 
@@ -70,11 +71,11 @@ def provider_quota_check(model: str, capacity_doc: Optional[dict]) -> dict:
     hint = _quota_policy_hint(model)
     if hint is None:
         return {
-            "blocks_reserve": True,
+            "blocks_reserve": False,
             "low_quota": False,
-            "unknown_quota": True,
-            "flagged": True,
-            "reason": "unknown_model_provider",
+            "unknown_quota": False,
+            "flagged": False,
+            "reason": "quota_check_not_applicable",
         }
     if hint in UNMEASURED_QUOTA_PROVIDERS:
         return {

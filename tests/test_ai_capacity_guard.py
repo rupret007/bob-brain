@@ -113,7 +113,12 @@ class ProviderQuotaGuardTests(unittest.TestCase):
     def test_default_deny_unknown_provider_name(self):
         check = provider_quota_check("openai-main", capacity_doc("Codex", 90.0))
         self.assertTrue(check["blocks_reserve"])
-        self.assertEqual(check["reason"], "unknown_model_provider")
+        self.assertEqual(check["reason"], "provider_not_quota_gated")
+
+    def test_non_ai_spend_model_skips_quota_guard(self):
+        check = provider_quota_check("brave_search", None)
+        self.assertFalse(check["blocks_reserve"])
+        self.assertEqual(check["reason"], "quota_check_not_applicable")
 
     def test_unmeasured_still_subject_to_monthly_cap(self):
         snap = capacity_doc("Claude Code", None)
