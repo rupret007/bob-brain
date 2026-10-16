@@ -1,5 +1,6 @@
 """Voice memos never land in shared memory as audio or transcripts."""
 import re
+import unicodedata
 
 from webbob.shared_context import ContextError, safe_fact
 
@@ -13,6 +14,24 @@ FORBIDDEN_PAYLOAD_KEYS = frozenset(
 
 class VoiceMemoPolicyError(ValueError):
     pass
+
+
+def _normalize_payload_key(key):
+    """NFKC + casefold; strip Cf/invisible chars and whitespace; map long s to s.
+
+    Forbidden stems (FORBIDDEN_PAYLOAD_KEYS) are matched as substrings of the result.
+    """
+    if not isinstance(key, str):
+        key = str(key)
+    normalized = unicodedata.normalize("NFKC", key).replace("\u017f", "s")
+    normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Cf")
+    normalized = "".join(ch for ch in normalized if not ch.isspace())
+    return normalized.casefold()
+
+
+def _payload_key_forbidden(key):
+    norm = _normalize_payload_key(key)
+    return any(stem in norm for stem in FORBIDDEN_PAYLOAD_KEYS)
 
 
 def validate_recall_metadata(record):
@@ -31,8 +50,9 @@ def validate_recall_metadata(record):
 
 def reject_voice_content(value):
     if isinstance(value, dict):
-        if FORBIDDEN_PAYLOAD_KEYS.intersection({key.lower() for key in value}):
-            raise VoiceMemoPolicyError("voice payload keys forbidden in shared memory")
+        for key in value:
+            if _payload_key_forbidden(key):
+                raise VoiceMemoPolicyError("voice payload keys forbidden in shared memory")
         for nested in value.values():
             reject_voice_content(nested)
         return
