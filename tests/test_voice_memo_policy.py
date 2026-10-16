@@ -69,6 +69,36 @@ class VoiceMemoPolicyTests(unittest.TestCase):
                  "transcription_status": "on_device_only"}
             )
 
+    def test_reject_voice_content_rejects_partial_recall_metadata(self):
+        for payload in (
+            {"memo_id": "buy milk at the store"},
+            {"transcription_status": "complete"},
+            {"memo_id": "m", "transcription_status": "complete"},
+        ):
+            with self.assertRaises(VoiceMemoPolicyError):
+                reject_voice_content(payload)
+
+    def test_reject_voice_content_rejects_extra_recall_key_even_when_all_values_safe_strings(self):
+        payload = {
+            "memo_id": "memo-1",
+            "recorded_at": "1",
+            "duration_seconds": "30",
+            "transcription_status": "on_device_only",
+            "note": "meeting",
+        }
+        with self.assertRaises(VoiceMemoPolicyError):
+            reject_voice_content(payload)
+
+    def test_reject_voice_content_runs_recall_metadata_validation(self):
+        payload = {
+            "memo_id": "memo-1",
+            "recorded_at": 1.0,
+            "duration_seconds": 30,
+            "transcription_status": "stored",
+        }
+        with self.assertRaises(VoiceMemoPolicyError):
+            reject_voice_content(payload)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -62,6 +62,8 @@ def reject_voice_content(value):
                     raise VoiceMemoPolicyError("voice recall may store metadata only")
             elif key not in CAPABILITIES and _payload_key_forbidden(key):
                 raise VoiceMemoPolicyError("voice payload keys forbidden in shared memory")
+        if recall_allowlist and RECALL_FIELDS - set(value):
+            raise VoiceMemoPolicyError("voice recall may store metadata only")
         if recall_allowlist and set(value) == RECALL_FIELDS:
             for nested in value.values():
                 if isinstance(nested, str):
