@@ -224,10 +224,13 @@ class ContextTests(unittest.TestCase):
                      'LGTM ship the email'):
             self.assert_body_denied(body)
 
-    def test_plain_text_files_allowed_and_short_base64_secrets_rejected(self):
+    def test_plain_text_files_allowed(self):
         fact = copy.deepcopy(self.fact)
         fact['body'] = 'Store configs as plain text files in the repo.'
         self.accept(fact)
+        self.assertEqual(len(self.stores['bob'].read_context()), 1)
+
+    def test_short_base64_secrets_rejected(self):
         secret = base64.b64encode(b'api_key=supersecret').decode()
         self.assert_body_denied('fixture ' + secret)
 
