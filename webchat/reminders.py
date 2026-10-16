@@ -118,6 +118,14 @@ def _dictionary_token(word):
     return False
 
 
+# DISABLED (Jeff, 2026-10-16, option 2): every direct "remind me" request,
+# in all forms, goes to the exact-token confirmation draft. No instant save.
+# plain_interval_reminder and the word-list gate are retained only as dead
+# code behind this flag; do not re-enable without owner approval and a fresh
+# Codex consent review.
+INSTANT_INTERVAL_SAVE = False
+
+
 def plain_interval_reminder(text, body):
     text = text.strip()
     body = body.strip()
@@ -818,7 +826,7 @@ class Reminders:
                 # requests and model extractions are not fresh authorization.
                 # Resolved interval constraints can be parsed for a draft;
                 # permission is checked separately before any immediate save.
-                if action is None and not assumption and PERSONAL_INTERVAL_REQUEST.fullmatch(text.strip()):
+                if INSTANT_INTERVAL_SAVE and action is None and not assumption and PERSONAL_INTERVAL_REQUEST.fullmatch(text.strip()):
                     # Check both the original request and extracted reminder
                     # text for either interval grammar. Detection normalization
                     # must never strip constraints or rewrite the saved body.

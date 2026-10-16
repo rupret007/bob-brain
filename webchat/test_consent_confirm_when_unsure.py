@@ -54,14 +54,14 @@ class ConfirmWhenUnsureTests(_base_module.ConsentIntervalUnicodeTests):
                 with self.subTest(text=text):
                     self.assert_asks_without_saving(text)
 
-    def test_simple_reminders_stay_instant(self):
-        self.assert_saves_immediately('remind me to stretch in 10 minutes', 'stretch', None)
-        self.assert_saves_immediately('remind me every 10 minutes to stretch', 'stretch', 600)
-        self.assert_saves_immediately('Remind me to drink water in 10 mins', 'drink water', None)
+    def test_simple_reminders_save_after_confirmation(self):
+        self.assert_saves_after_confirmation('remind me to stretch in 10 minutes', 'stretch', None)
+        self.assert_saves_after_confirmation('remind me every 10 minutes to stretch', 'stretch', 600)
+        self.assert_saves_after_confirmation('Remind me to drink water in 10 mins', 'drink water', None)
 
-    def test_dictionary_and_inflections_stay_instant(self):
-        self.assert_saves_immediately('remind me to take out the trash in 10 minutes', 'take out the trash', None)
-        self.assert_saves_immediately('remind me to feed the cats in 10 minutes', 'feed the cats', None)
+    def test_dictionary_and_inflections_save_after_confirmation(self):
+        self.assert_saves_after_confirmation('remind me to take out the trash in 10 minutes', 'take out the trash', None)
+        self.assert_saves_after_confirmation('remind me to feed the cats in 10 minutes', 'feed the cats', None)
 
     def test_wordlist_is_pinned_in_repo(self):
         import reminders
@@ -70,9 +70,9 @@ class ConfirmWhenUnsureTests(_base_module.ConsentIntervalUnicodeTests):
         for word in ('ownernotready', 'ownerbanned', 'mustawaitme', 'savelater'):
             self.assertFalse(reminders._dictionary_token(word), word)
 
-    def test_two_hour_reminder_stays_instant(self):
-        reply = self.say_fresh('remind me to stretch in 2 hrs')
-        self.assertIn('Reminder saved', reply)
+    def test_two_hour_reminder_saves_after_confirmation(self):
+        self.assert_saves_after_confirmation('remind me to stretch in 2 hrs', 'stretch', None,
+                                             delay=7200)
         self.assertEqual(len(self.items.rows), 1)
 
 

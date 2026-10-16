@@ -127,16 +127,25 @@ class ConsentIntervalProhibitionTests(unittest.TestCase):
                              (self.now + delay, interval))
         return token[1]
 
-    def assert_immediate(self, text, body, delay, interval):
-        reply = self.say_fresh(text)
+    def assert_saves_after_confirmation(self, text, body, delay, interval):
+        due_at = self.now + delay
+        token = self.assert_exact_draft(text, body=body, delay=delay,
+                                       interval=interval)
+        self.now += 1
+        reply = self.reminders.handle(
+            'yes ' + token, 'unheld', 'later-confirmation',
+            intent_state=chat_intent.new_state())
         self.assertIsInstance(reply, str)
         self.assertIn('Reminder saved', reply)
         self.assertEqual(len(self.items.writes), 1, reply)
         row, = self.items.rows
         self.assertEqual((row['body'], row['due_at'], row['interval_seconds'], row['state']),
-                         (body, self.now + delay, interval, 'pending'))
-        self.assertEqual(self.drafts.rows, {})
-        self.assertEqual(self.drafts.writes, [])
+                         (body, due_at, interval, 'pending'))
+        self.assertEqual(set(self.drafts.rows), {token})
+        self.assertEqual(self.drafts.rows[token]['state'], 'done')
+        self.assertEqual([write[token]['state'] for write in self.drafts.writes],
+                         ['draft', 'unconfirmed', 'done'])
+        self.notifications.assert_not_called()
 
     def assert_control_matrix(self, phrases):
         for phrase in phrases:
@@ -172,7 +181,7 @@ class ConsentIntervalProhibitionTests(unittest.TestCase):
                 with self.subTest(text=text):
                     self.assert_exact_draft(text)
 
-    def test_unconditional_controls_preserve_direct_save_and_abbreviation_drafts(self):
+    def test_unconditional_controls_save_after_confirmation_with_abbreviations(self):
         for body in ('stretch', 'call mom', 'drink 2 cups water',
                      'inspect ticket 12345'):
             for form, template in FORMS.items():
@@ -180,13 +189,7 @@ class ConsentIntervalProhibitionTests(unittest.TestCase):
                     text = template.format(quantity=quantity, unit=unit, body=body)
                     interval = delay if form == 'recurring' else None
                     with self.subTest(body=body, form=form, unit=unit):
-                        # Recurring abbreviations have always required a draft;
-                        # a consent fix must preserve that existing boundary.
-                        if form == 'recurring' and unit != 'minutes':
-                            self.assert_exact_draft(text, body=body, delay=delay,
-                                                    interval=interval)
-                        else:
-                            self.assert_immediate(text, body, delay, interval)
+                        self.assert_saves_after_confirmation(text, body, delay, interval)
 
     def test_mixed_ticket_operands_require_exact_confirmation_without_an_exemption(self):
         # These formerly asserted immediate saves under the ticket-ID exemption.

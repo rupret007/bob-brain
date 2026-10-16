@@ -188,16 +188,39 @@ class ConsentIntervalUnicodeTests(unittest.TestCase):
         self.assertRegex(reply, r'Send a new reminder request|'
                                 r'Reply `yes wbrem-[0-9a-f]{32}`')
 
-    def assert_saves_immediately(self, text, body, interval):
+    def assert_saves_after_confirmation(self, text, body, interval, delay=600):
+        drafted_at = self.now
         reply = self.say_fresh(text)
         self.assertIsInstance(reply, str)
-        self.assertIn('Reminder saved', reply)
+        self.assertEqual(self.items.writes, [], reply)
+        self.assertEqual(self.items.rows, [], reply)
+        self.assertEqual(self.reminders.listing(), [], reply)
+        self.assertNotIn('Reminder saved', reply)
         self.assertIn(body, reply)
+        token = re.search(r'yes (wbrem-[0-9a-f]{32})', reply)
+        self.assertIsNotNone(token, reply)
+        self.assertEqual(set(self.drafts.rows), {token[1]})
+        draft = self.drafts.rows[token[1]]
+        self.assertEqual((draft['body'], draft['due'], draft['interval'], draft['state']),
+                         (body, drafted_at + delay, interval, 'draft'))
+        # Confirmation consumes the draft's schedule, even after time passes.
+        self.now += 30
+        try:
+            confirmed = self.reminders.handle('yes ' + token[1], 'unheld', 'confirm',
+                                              intent_state=chat_intent.new_state())
+        finally:
+            self.now = drafted_at
+        self.assertIsInstance(confirmed, str)
+        self.assertIn('Reminder saved', confirmed)
+        self.assertIn(body, confirmed)
+        self.notifications.assert_not_called()
         self.assertEqual(len(self.items.writes), 1)
         row, = self.items.rows
         self.assertEqual((row['body'], row['due_at'], row['interval_seconds'], row['state']),
-                         (body, 1791828600, interval, 'pending'))
-        self.assertEqual(self.drafts.rows, {})
+                         (body, drafted_at + delay, interval, 'pending'))
+        self.assertEqual(set(self.drafts.rows), {token[1]})
+        self.assertEqual(self.drafts.rows[token[1]]['state'], 'done')
+        self.assertEqual(self.drafts.rows[token[1]]['receipt'], confirmed)
 
     def test_codex_repros_verbatim(self):
         for text in CODEX_REPROS:
@@ -263,10 +286,10 @@ class ConsentIntervalUnicodeTests(unittest.TestCase):
                     self.assert_asks_without_saving(template.format(
                         body='stretch' + colon + ' the next move belongs to someone else'))
 
-    def test_plain_direct_interval_forms_still_save_immediately(self):
+    def test_plain_direct_interval_forms_save_after_confirmation(self):
         for form, (template, interval) in FORMS.items():
             with self.subTest(form=form):
-                self.assert_saves_immediately(template.format(body='stretch'), 'stretch', interval)
+                self.assert_saves_after_confirmation(template.format(body='stretch'), 'stretch', interval)
 
     def test_detection_normalization_preserves_saved_body(self):
         # Only the detector may normalize these strings. Their exact original
@@ -278,22 +301,7 @@ class ConsentIntervalUnicodeTests(unittest.TestCase):
                               'nonbreaking_space', 'fullwidth', 'dotted_letters'):
                 body = TRANSFORMS[transform]('stretch gently')
                 with self.subTest(form=form, transform=transform, body=body):
-                    if transform == 'plain':
-                        self.assert_saves_immediately(template.format(body=body), body, interval)
-                        continue
-                    # Confirm when unsure (Jeff 2026-10-15): unusual characters
-                    # never save in the request turn. The exact original body
-                    # must still be what a later exact confirmation saves.
-                    reply = self.say_fresh(template.format(body=body))
-                    self.assertEqual(self.items.writes, [], reply)
-                    token = re.search(r'yes (wbrem-[0-9a-f]{32})', reply)
-                    self.assertIsNotNone(token, reply)
-                    confirm = self.reminders.handle('yes ' + token[1], 'unheld', 'confirm',
-                                                    intent_state=chat_intent.new_state())
-                    self.assertIn('Reminder saved', confirm)
-                    row, = self.items.rows
-                    self.assertEqual((row['body'], row['due_at'], row['interval_seconds']),
-                                     (body, 1791828600, interval))
+                    self.assert_saves_after_confirmation(template.format(body=body), body, interval)
 
 
 if __name__ == '__main__':

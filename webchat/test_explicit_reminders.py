@@ -106,22 +106,50 @@ class ExplicitReminderTests(unittest.TestCase):
             ('Please remind me to water the plants in 1 hour', 'water the plants', 3600),
             ('Remind me to stretch in 2 hrs', 'stretch', 7200),
         ):
-            with self.subTest(message=message):
+            # Isolate persistence so every request must start without saved rows.
+            with self.subTest(message=message), patch.object(
+                    self.chat, 'reminders', Reminders(self.root / str(delay))):
                 now = time.time()
                 answer = self.say(message)
                 self.assertEqual(answer['provider'], 'reminders')
+                self.assertEqual(self.chat.reminders.listing(), [])
+                self.assertNotIn('Reminder saved', answer['content'])
+                self.assertRegex(answer['content'], r'Reply `yes wbrem-[0-9a-f]{32}`')
+                # Confirmation is later, but the schedule starts at the draft turn.
+                with patch.object(self.chat.reminders, 'clock', return_value=now + 30):
+                    answer = confirm_reply(self, answer, self.say)
+                self.assertEqual(answer['provider'], 'reminders')
                 self.assertIn('Reminder saved', answer['content'])
+                self.assertEqual(len(self.chat.reminders.listing()), 1)
                 row, = [r for r in self.chat.reminders.listing() if r['body'] == body]
+                self.assertEqual((row['body'], row['interval_seconds'], row['state']),
+                                 (body, None, 'pending'))
                 self.assertAlmostEqual(row['due_at'] - now, delay, delta=2)
         self.providers.reply.assert_not_called()
 
     def test_explicit_request_replaces_older_confirmation_authority(self):
         draft = self.say('Could you remind me in 1 hour to water the plants')
+        self.assertNotIn('Reminder saved', draft['content'])
+        self.assertRegex(draft['content'], r'Reply `yes wbrem-[0-9a-f]{32}`')
         confirmation = re.search(r'yes wbrem-[0-9a-f]{32}', draft['content'])[0]
         self.assertFalse(self.chat.reminders.listing())
-        self.assertIn('Reminder saved', self.say('remind me to water the plants in 2 hours')['content'])
+        now = time.time()
+        replacement = self.say('remind me to water the plants in 2 hours')
+        self.assertEqual(replacement['provider'], 'reminders')
+        self.assertEqual(self.chat.reminders.listing(), [])
+        self.assertNotIn('Reminder saved', replacement['content'])
+        self.assertRegex(replacement['content'], r'Reply `yes wbrem-[0-9a-f]{32}`')
+        self.assertIn('replaced', self.say(confirmation)['content'])
+        self.assertEqual(self.chat.reminders.listing(), [])
+        with patch.object(self.chat.reminders, 'clock', return_value=now + 30):
+            saved = confirm_reply(self, replacement, self.say)
+        self.assertIn('Reminder saved', saved['content'])
         self.assertIn('replaced', self.say(confirmation)['content'])
         self.assertEqual(len(self.chat.reminders.listing()), 1)
+        row, = self.chat.reminders.listing()
+        self.assertEqual((row['body'], row['interval_seconds'], row['state']),
+                         ('water the plants', None, 'pending'))
+        self.assertAlmostEqual(row['due_at'] - now, 7200, delta=2)
         self.providers.reply.assert_not_called()
 
     def test_explicit_request_still_honors_constraints_and_saved_holds(self):

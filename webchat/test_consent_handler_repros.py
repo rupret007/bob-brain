@@ -183,11 +183,22 @@ class ConsentHandlerRepros(unittest.TestCase):
                          ('stretch', self.now + 600, 'pending'))
         self.assertEqual(len(self.items.writes), 1)
 
-    def test_explicit_interval_can_save_in_the_request_turn(self):
+    def test_explicit_interval_saves_after_confirmation(self):
+        drafted_at = self.now
         reply = self.say('reminder', 'remind me to stretch in 10 minutes')
+        self.assertEqual(self.items.rows, [], reply)
+        self.assertEqual(self.items.writes, [], reply)
+        self.assertNotIn('Reminder saved', reply)
+        self.assertRegex(reply, r'Reply `yes wbrem-[0-9a-f]{32}`')
+        token, = self.drafts.rows
+        self.assertIn('Reply `yes ' + token + '`', reply)
+        self.now += 30
+        reply = self.say('reminder', 'yes ' + token, 'confirmation')
         self.assertIn('Reminder saved', reply)
         row, = self.items.rows
-        self.assertEqual((row['body'], row['due_at']), ('stretch', self.now + 600))
+        self.assertEqual((row['body'], row['due_at']), ('stretch', drafted_at + 600))
+        self.assertEqual((row['interval_seconds'], row['state']), (None, 'pending'))
+        self.assertEqual(len(self.items.writes), 1)
 
     def test_plain_file_requires_separate_exact_confirmation(self):
         reply = self.say('file', 'Create file ~/Documents/proposal.txt: hello')
