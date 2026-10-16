@@ -108,32 +108,38 @@ class ToolHost:
 
 
 @asynccontextmanager
-async def research_host(brave_entrypoint):
+async def research_host(brave_entrypoint, *, caps_factory=None, sessions=None, host_options=None):
     """Trusted local configuration, never command/path arguments from a model.
 
     Load the existing key source at runtime into the Brave subprocess environment.
     No credential files, shell arguments, logs, or persisted copies are produced.
     """
-    key = dotenv_values(KEY_SOURCE, interpolate=False).get("BRAVE_API_KEY")
-    if not key:
-        raise ToolUnavailable("Brave unavailable: BRAVE_API_KEY not configured")
-    entry = Path(brave_entrypoint).resolve(strict=True)
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
-    brave_env = dict(env, BRAVE_API_KEY=key, BRAVE_MCP_TRANSPORT="stdio")
-    async with AsyncExitStack() as stack:
-        # Upstream server diagnostics are deliberately not persisted. Errors are
-        # surfaced as bounded availability states, never credential-bearing text.
-        sink = stack.enter_context(open(os.devnull, "w"))
-        sessions = {}
-        for name, params in [
-            ("brave_web_search", StdioServerParameters(command="node", args=[str(entry), "--transport", "stdio"], env=brave_env)),
-            ("fetch", StdioServerParameters(command=sys.executable, args=["-m", "webbob.restricted_fetch"], env=env))]:
-            read, write = await stack.enter_async_context(stdio_client(params, errlog=sink))
-            session = await stack.enter_async_context(ClientSession(read, write))
-            await asyncio.wait_for(session.initialize(), 10)
-            advertised = {tool.name for tool in (await asyncio.wait_for(session.list_tools(), 10)).tools}
-            if name not in advertised:
-                raise ToolUnavailable(name + " not advertised")
-            sessions[name] = session
-        spend_cap, daily_cap, brave_cost = research_spend_and_daily_caps()
-        yield ToolHost(sessions, spend_cap=spend_cap, daily_cap=daily_cap, brave_cost=brave_cost)
+    factory = caps_factory or research_spend_and_daily_caps
+    opts = dict(host_options or ())
+    if sessions is None:
+        key = dotenv_values(KEY_SOURCE, interpolate=False).get("BRAVE_API_KEY")
+        if not key:
+            raise ToolUnavailable("Brave unavailable: BRAVE_API_KEY not configured")
+        entry = Path(brave_entrypoint).resolve(strict=True)
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+        brave_env = dict(env, BRAVE_API_KEY=key, BRAVE_MCP_TRANSPORT="stdio")
+        async with AsyncExitStack() as stack:
+            # Upstream server diagnostics are deliberately not persisted. Errors are
+            # surfaced as bounded availability states, never credential-bearing text.
+            sink = stack.enter_context(open(os.devnull, "w"))
+            sessions = {}
+            for name, params in [
+                ("brave_web_search", StdioServerParameters(command="node", args=[str(entry), "--transport", "stdio"], env=brave_env)),
+                ("fetch", StdioServerParameters(command=sys.executable, args=["-m", "webbob.restricted_fetch"], env=env))]:
+                read, write = await stack.enter_async_context(stdio_client(params, errlog=sink))
+                session = await stack.enter_async_context(ClientSession(read, write))
+                await asyncio.wait_for(session.initialize(), 10)
+                advertised = {tool.name for tool in (await asyncio.wait_for(session.list_tools(), 10)).tools}
+                if name not in advertised:
+                    raise ToolUnavailable(name + " not advertised")
+                sessions[name] = session
+            spend_cap, daily_cap, brave_cost = factory()
+            yield ToolHost(sessions, spend_cap=spend_cap, daily_cap=daily_cap, brave_cost=brave_cost, **opts)
+    else:
+        spend_cap, daily_cap, brave_cost = factory()
+        yield ToolHost(sessions, spend_cap=spend_cap, daily_cap=daily_cap, brave_cost=brave_cost, **opts)
