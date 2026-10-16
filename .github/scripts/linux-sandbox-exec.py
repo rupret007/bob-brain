@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Linux helper that honors the sandbox-exec argv this repository already emits.
 
-macOS CI uses /usr/bin/sandbox-exec. Ubuntu CI installs this file at that path
-and uses bubblewrap so write-deny / allow-list policies are actually enforced.
+macOS CI uses /usr/bin/sandbox-exec. Ubuntu 24.04 GitHub runners block
+unprivileged user namespaces, so bubblewrap cannot set up a uid map.
+Deny-list policies are enforced by clearing write bits on the denied
+paths for the duration of the command, then restoring them. That still
+rejects writes to conductor/core paths while sibling git work stays
+possible. Allow-list policies keep using bubblewrap when it works.
 """
 from __future__ import annotations
 
@@ -10,6 +14,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 
 
@@ -70,40 +75,71 @@ def deny_write_paths(policy):
     return paths
 
 
+def walk_existing(paths):
+    items = []
+    for path in paths:
+        path = os.path.abspath(path)
+        if not os.path.exists(path):
+            continue
+        items.append(path)
+        if os.path.isdir(path):
+            for root, dirs, files in os.walk(path):
+                items.extend(os.path.join(root, name) for name in dirs + files)
+    return items
+
+
+def clear_write_bits(paths):
+    saved = []
+    for item in walk_existing(paths):
+        mode = os.stat(item).st_mode
+        saved.append((item, mode))
+        os.chmod(item, mode & ~0o222)
+    return saved
+
+
+def restore_modes(saved):
+    for item, mode in reversed(saved):
+        try:
+            os.chmod(item, mode)
+        except FileNotFoundError:
+            continue
+
+
+def run_bwrap(policy, command):
+    bwrap = shutil.which("bwrap")
+    if not bwrap:
+        return None
+    wrapper = [bwrap, "--die-with-parent"]
+    if "(deny network*)" in policy:
+        wrapper.append("--unshare-net")
+    wrapper.extend(["--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"])
+    for path in allow_write_paths(policy):
+        if path == "/dev/null":
+            continue
+        if os.path.exists(path):
+            wrapper.extend(["--bind", path, path])
+    try:
+        return subprocess.call(wrapper + command)
+    except OSError:
+        return None
+
+
 def main(argv):
     policy, bindings, command = parse_argv(argv)
     if not command:
         sys.exit("sandbox-exec: missing command")
     policy = expand(policy, bindings)
-    bwrap = shutil.which("bwrap")
-    if not bwrap:
-        sys.exit("sandbox-exec: bubblewrap is required")
-
-    wrapper = [bwrap, "--die-with-parent"]
-    if "(deny network*)" in policy:
-        wrapper.append("--unshare-net")
     if re.search(r"\(deny file-write\*\)", policy):
-        wrapper.extend(["--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"])
-        for path in allow_write_paths(policy):
-            if path == "/dev/null":
-                continue
-            if os.path.exists(path):
-                wrapper.extend(["--bind", path, path])
-    else:
-        wrapper.extend(["--dev-bind", "/", "/", "--proc", "/proc", "--dev", "/dev"])
-        denied = [path for path in deny_write_paths(policy) if os.path.exists(path)]
-        # Overlayfs (GitHub-hosted Ubuntu) can refuse sibling writes after a
-        # child is remounted read-only. Re-bind each parent read-write first.
-        parents = []
-        for path in denied:
-            parent = os.path.dirname(os.path.abspath(path))
-            if parent and parent != os.sep and os.path.isdir(parent):
-                parents.append(parent)
-        for parent in dict.fromkeys(parents):
-            wrapper.extend(["--bind", parent, parent])
-        for path in denied:
-            wrapper.extend(["--ro-bind", path, path])
-    os.execv(bwrap, wrapper + command)
+        status = run_bwrap(policy, command)
+        if status is not None:
+            raise SystemExit(status)
+        sys.exit("sandbox-exec: allow-list policy requires bubblewrap")
+
+    saved = clear_write_bits(deny_write_paths(policy))
+    try:
+        raise SystemExit(subprocess.call(command))
+    finally:
+        restore_modes(saved)
 
 
 if __name__ == "__main__":
