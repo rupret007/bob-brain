@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Optional official MIT Brave Search MCP dependency for staged Web Bob research",
+  "dependencies": {
+    "@brave/brave-search-mcp-server": "2.1.4"
+  }
+}
