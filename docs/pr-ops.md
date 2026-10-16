@@ -29,8 +29,10 @@ method, even after both checks pass. No approval is inferred from this PR.
 Draft publication requires a current protected ownership context, fresh remote
 branch SHA and exact publication approval, then creates only a draft against
 main and verifies remote draft state/SHA. A failed/lost response returns
-uncertain. The existing draft publisher must reconcile that state before any
-retry; use its durable job receipt rather than calling this helper repeatedly.
+uncertain. A required private SQLite receipt store records uncertainty before
+transport. Restart and repeated calls return that receipt without another
+create; changed payloads on the same branch require reconciliation. The existing
+draft publisher must reconcile through remote reads before any manual recovery.
 No force push, rebase, issue mutation or merge operation is introduced.
 
 Tests cover stale commits, forged/old QA receipts, scope/evidence binding, latest

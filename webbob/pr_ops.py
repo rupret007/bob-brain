@@ -99,6 +99,8 @@ class ReviewGate:
             request = json.loads(row["payload"])
             if any(payload[k] != request[k] for k in ("repo", "pr", "sha", "scope", "evidence")):
                 raise GateDenied("verdict does not match exact review scope")
+            if any(json.loads(r[0]) == payload for r in db.execute("SELECT payload FROM verdicts WHERE request_id=?", (payload["request_id"],))):
+                return  # Replaying an old signed PASS must not supersede a FAIL.
             db.execute("INSERT INTO verdicts(request_id,payload) VALUES (?,?)", (payload["request_id"], json.dumps(payload)))
 
     def merge_readiness(self, repo, pr, current_sha, request_id, standing_approval):
@@ -122,11 +124,35 @@ class ReviewGate:
 
 
 class DraftPublisher:
-    def __init__(self, session, *, ownership, verify_publish, read_branch_sha, read_pr):
+    def __init__(self, session, *, ownership, verify_publish, read_branch_sha, read_pr, receipt_path):
         if not all(callable(f) for f in (ownership, verify_publish, read_branch_sha, read_pr)):
             raise GateDenied("publication authorization and fresh remote reads required")
         self.session, self.ownership, self.verify = session, ownership, verify_publish
         self.read_branch_sha, self.read_pr = read_branch_sha, read_pr
+        self.receipt_path = Path(receipt_path)
+        if not self.receipt_path.parent.is_dir() or self.receipt_path.is_symlink():
+            raise GateDenied("private publication receipt store required")
+        with sqlite3.connect(self.receipt_path) as db:
+            db.execute("CREATE TABLE IF NOT EXISTS publications(branch TEXT PRIMARY KEY, digest TEXT, receipt TEXT)")
+        self.receipt_path.chmod(0o600)
+
+    def _reserve(self, key, payload_digest, approval, sha):
+        with sqlite3.connect(self.receipt_path, timeout=5) as db:
+            db.execute("BEGIN IMMEDIATE")
+            prior = db.execute("SELECT digest,receipt FROM publications WHERE branch=?", (key,)).fetchone()
+            if prior:
+                if prior[0] != payload_digest:
+                    raise GateDenied("existing publication requires reconciliation before changed payload")
+                return json.loads(prior[1])
+            if self.verify(payload_digest, approval) is not True:
+                raise GateDenied("current exact publication approval required")
+            db.execute("INSERT INTO publications VALUES (?,?,?)", (key, payload_digest, json.dumps({"state": "uncertain", "sha": sha})))
+        return None
+
+    def _complete(self, key, receipt):
+        with sqlite3.connect(self.receipt_path) as db:
+            db.execute("UPDATE publications SET receipt=? WHERE branch=?", (json.dumps(receipt), key))
+        return receipt
 
     async def publish(self, repo, branch, sha, title, body, approval):
         owner, name = repo.split("/", 1)
@@ -137,8 +163,10 @@ class DraftPublisher:
         with self.ownership("repo:" + repo + "/refs/heads/" + branch):
             if await self.read_branch_sha(repo, branch) != sha:
                 raise GateDenied("remote branch changed")
-            if self.verify(digest(payload), approval) is not True:
-                raise GateDenied("current exact publication approval required")
+            key = repo.lower() + ":" + branch
+            prior = self._reserve(key, digest(payload), approval, sha)
+            if prior is not None:
+                return prior
             # No update/merge/undraft method exists. Do not retry this call after
             # a lost response; existing draft publisher reconciliation must run.
             try:
@@ -152,4 +180,4 @@ class DraftPublisher:
                 return {"state": "uncertain", "sha": sha}
             if pr.get("head_sha") != sha or pr.get("draft") is not True or pr.get("state") != "open":
                 return {"state": "uncertain", "sha": sha}
-            return {"state": "draft", "sha": sha, "number": pr["number"], "url": pr["url"]}
+            return self._complete(key, {"state": "draft", "sha": sha, "number": pr["number"], "url": pr["url"]})

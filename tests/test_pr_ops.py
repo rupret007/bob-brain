@@ -69,6 +69,7 @@ class GateTests(unittest.IsolatedAsyncioTestCase):
     async def test_publication_current_ownership_approval_and_remote_sha(self):
         calls = AsyncMock(return_value=SimpleNamespace(isError=False))
         publisher = DraftPublisher(SimpleNamespace(call_tool=calls), ownership=lambda _: nullcontext(),
+            receipt_path=Path(self.temp.name) / "publications.sqlite",
             verify_publish=lambda d, p: p == "approved", read_branch_sha=AsyncMock(return_value=self.sha),
             read_pr=AsyncMock(return_value={"head_sha": self.sha, "draft": True, "state": "open", "number": 7, "url": "https://github.com/a/b/pull/7"}))
         with self.assertRaises(GateDenied):
@@ -91,6 +92,28 @@ class GateTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(calls.call_args.args[1]["draft"])
         self.assertFalse(hasattr(publisher, "merge"))
         self.assertFalse(hasattr(publisher, "undraft"))
+
+    async def test_replayed_signed_pass_cannot_supersede_later_fail(self):
+        old = self.verdict()
+        self.signed["old-pass"] = digest(old)
+        self.verdict("FAIL")
+        self.gate.record_verdict(old, "old-pass")
+        self.assertFalse(self.readiness()["eligible_for_jeff_merge"])
+
+    async def test_lost_publication_response_survives_restart_without_duplicate(self):
+        calls = AsyncMock(side_effect=TimeoutError("lost response"))
+        kwargs = dict(ownership=lambda _: nullcontext(), verify_publish=lambda d, p: p == "approved",
+                      receipt_path=Path(self.temp.name) / "publications.sqlite",
+                      read_branch_sha=AsyncMock(return_value=self.sha), read_pr=AsyncMock())
+        publisher = DraftPublisher(SimpleNamespace(call_tool=calls), **kwargs)
+        first = await publisher.publish("a/b", "draft/test", self.sha, "Title", "Body", "approved")
+        self.assertEqual(first["state"], "uncertain")
+        restarted = DraftPublisher(SimpleNamespace(call_tool=calls), **kwargs)
+        second = await restarted.publish("a/b", "draft/test", self.sha, "Title", "Body", "approved")
+        self.assertEqual(second, first)
+        with self.assertRaises(GateDenied):
+            await restarted.publish("a/b", "draft/test", self.sha, "Changed title", "Body", "approved")
+        self.assertEqual(calls.await_count, 1)
 
 
 if __name__ == "__main__":
