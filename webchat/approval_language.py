@@ -133,7 +133,7 @@ _ADJUNCT = _words(r'as|in|for|with|by|past|under|on|at')
 # can be resolved here: a word such as "second" may mean a second opinion.
 _TIME_OPERAND = re.compile(
     r'\s+(?:'
-    r'\d+\s+(?:seconds?|minutes?|hours?|days?)|'
+    r'\d+\s+(?:seconds?|minutes?|mins?|hours?|hrs?|days?)|'
     r'\d{4} \d{2} \d{2}|today|tomorrow|'
     r'\d{1,2}(?::\d{2}\s*(?:am|pm)?|\s*(?:am|pm))'
     r')\b')
