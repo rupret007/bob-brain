@@ -1,12 +1,17 @@
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime
 import json
 import socket
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
 from webbob.restricted_fetch import FetchDenied, PublicBackend, download, validate_url, MAX_BYTES, fetch_page
+from webbob.research_limits import BRAVE_QUERY_COST_MICRODOLLARS, BRAVE_SPEND_MODEL, DailyQueryCap
+from webbob.spend_cap import SpendCap
 from webbob.tool_host import ToolHost, ToolUnavailable
 
 
@@ -59,6 +64,28 @@ class HostTests(unittest.IsolatedAsyncioTestCase):
         session.call_tool = AsyncMock(return_value=result({"private": "diagnostic"}, error=True))
         with self.assertRaisesRegex(ToolUnavailable, "reported a tool error"):
             await ToolHost({"fetch": session}).call("fetch", {})
+
+    async def test_brave_search_reserves_and_settles_spend_cap(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        clock = lambda: datetime.fromisoformat("2026-10-16T12:00:00-05:00")
+        spend = SpendCap(Path(tmp.name) / "spend.sqlite", {BRAVE_SPEND_MODEL: BRAVE_QUERY_COST_MICRODOLLARS}, clock)
+        search = SimpleNamespace(call_tool=AsyncMock(return_value=result({"url": "https://one.example/"})))
+        host = ToolHost({"brave_web_search": search}, spend_cap=spend)
+        await host.call("brave_web_search", {"query": "x"})
+        with self.assertRaisesRegex(ToolUnavailable, "monthly spend cap"):
+            await host.call("brave_web_search", {"query": "y"})
+
+    async def test_daily_brave_query_cap_blocks_fail_closed(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        clock = lambda: datetime.fromisoformat("2026-10-16T12:00:00-05:00")
+        daily = DailyQueryCap(Path(tmp.name) / "daily.sqlite", limit=1, clock=clock)
+        search = SimpleNamespace(call_tool=AsyncMock(return_value=result({"url": "https://one.example/"})))
+        host = ToolHost({"brave_web_search": search}, daily_cap=daily)
+        await host.call("brave_web_search", {"query": "first"})
+        with self.assertRaisesRegex(ToolUnavailable, "daily Brave query cap exceeded"):
+            await host.call("brave_web_search", {"query": "second"})
 
 
 class FetchTests(unittest.IsolatedAsyncioTestCase):

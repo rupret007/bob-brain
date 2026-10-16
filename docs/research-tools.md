@@ -21,6 +21,15 @@ as an argument. It is not copied into another file, printed, logged or committed
 The fetch child receives no credentials. Backend stderr is discarded and tool
 exceptions expose availability states, not backend diagnostics.
 
+Brave Search is a paid API (public list price about **$0.005 per query**, or
+$5 per 1,000 queries). Each `brave_web_search` call reserves that worst-case
+cost through `webbob.spend_cap.SpendCap` (model `brave_search`, see
+`config/research-billing.json`) before the MCP call and settles afterward.
+A separate hard **daily query cap** (default 50/day, America/Chicago) in
+`webbob.research_limits.DailyQueryCap` rejects additional queries fail-closed.
+Jeff must confirm the Brave account stays on **$0 prepay with a provider usage
+limit** before live search is enabled.
+
 `ToolHost.research(query)` calls Brave, fetches up to five results until three
 pages succeed, and returns only successful fetched pages as sources. Each source
 has its final URL, requested URL, fetch time and content hash. Missing keys,

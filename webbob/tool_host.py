@@ -11,6 +11,8 @@ from dotenv import dotenv_values
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from webbob.research_limits import BRAVE_QUERY_COST_MICRODOLLARS, BRAVE_SPEND_MODEL
+
 KEY_SOURCE = Path.home() / "Documents/bob-overnight-inject/conductor/keys.env"
 
 
@@ -19,11 +21,16 @@ class ToolUnavailable(RuntimeError):
 
 
 class ToolHost:
-    def __init__(self, sessions, max_calls=6, seconds=45, max_bytes=48_000):
+    def __init__(self, sessions, max_calls=6, seconds=45, max_bytes=48_000, *,
+                 spend_cap=None, daily_cap=None, brave_cost=BRAVE_QUERY_COST_MICRODOLLARS):
         self.sessions = {name: sessions[name] for name in ("brave_web_search", "fetch") if name in sessions}
         self.remaining = max_calls
         self.deadline = time.monotonic() + seconds
         self.bytes_left = max_bytes
+        self.spend_cap = spend_cap
+        self.daily_cap = daily_cap
+        self.brave_cost = brave_cost
+        self._brave_serial = 0
 
     async def call(self, name, arguments):
         if name not in self.sessions:
@@ -31,23 +38,40 @@ class ToolHost:
         if self.remaining <= 0 or time.monotonic() >= self.deadline:
             raise ToolUnavailable("research call/deadline budget exhausted")
         self.remaining -= 1
+        reservation_id = None
+        if name == "brave_web_search":
+            if self.daily_cap is not None and not self.daily_cap.admit():
+                raise ToolUnavailable("daily Brave query cap exceeded")
+            if self.spend_cap is not None:
+                self._brave_serial += 1
+                reservation_id = f"brave-{self._brave_serial}-{time.monotonic_ns()}"
+                admission = self.spend_cap.reserve(reservation_id, BRAVE_SPEND_MODEL, self.brave_cost)
+                if not admission.get("admitted"):
+                    raise ToolUnavailable("Brave search blocked by monthly spend cap")
+        succeeded = False
         try:
-            result = await asyncio.wait_for(self.sessions[name].call_tool(name, arguments),
-                                            timeout=min(25, self.deadline - time.monotonic()))
-        except Exception:
-            # Never propagate backend exception bodies, which may carry secrets.
-            raise ToolUnavailable(name + " unavailable") from None
-        if result.isError:
-            raise ToolUnavailable(name + " reported a tool error")
-        texts = [block.text for block in result.content if block.type == "text"]
-        size = sum(len(value.encode()) for value in texts)
-        if size > self.bytes_left:
-            raise ToolUnavailable("research output budget exceeded")
-        self.bytes_left -= size
-        try:
-            return [json.loads(value) for value in texts]
-        except (TypeError, ValueError):
-            raise ToolUnavailable("invalid structured tool result") from None
+            try:
+                result = await asyncio.wait_for(self.sessions[name].call_tool(name, arguments),
+                                                timeout=min(25, self.deadline - time.monotonic()))
+            except Exception:
+                # Never propagate backend exception bodies, which may carry secrets.
+                raise ToolUnavailable(name + " unavailable") from None
+            if result.isError:
+                raise ToolUnavailable(name + " reported a tool error")
+            texts = [block.text for block in result.content if block.type == "text"]
+            size = sum(len(value.encode()) for value in texts)
+            if size > self.bytes_left:
+                raise ToolUnavailable("research output budget exceeded")
+            self.bytes_left -= size
+            try:
+                parsed = [json.loads(value) for value in texts]
+            except (TypeError, ValueError):
+                raise ToolUnavailable("invalid structured tool result") from None
+            succeeded = True
+            return parsed
+        finally:
+            if reservation_id and self.spend_cap is not None:
+                self.spend_cap.settle(reservation_id, self.brave_cost if succeeded else 0)
 
     async def research(self, query):
         if not isinstance(query, str) or not 1 <= len(query) <= 400:
