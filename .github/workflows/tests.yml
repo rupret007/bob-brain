@@ -1,0 +1,100 @@
+name: tests
+
+on:
+  pull_request:
+    branches:
+      - main
+      - draft/webbob-h2h-r10
+  push:
+    branches:
+      - main
+      - draft/webbob-h2h-r10
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: python-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install local media tools
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg tesseract-ocr poppler-utils bubblewrap screen
+            sudo mkdir -p /private/tmp
+            sudo chmod 1777 /private/tmp
+            sudo install -m 0755 .github/scripts/linux-sandbox-exec.py /usr/bin/sandbox-exec
+          else
+            brew install ffmpeg tesseract poppler
+            command -v screen >/dev/null || brew install screen
+          fi
+
+      - name: Install Playwright for the existing UI browser proof
+        run: |
+          prefix="${RUNNER_TEMP}/playwright"
+          npm install --prefix "$prefix" --no-fund --no-audit playwright
+          npx --prefix "$prefix" playwright install --with-deps chromium webkit
+          echo "BOB_PLAYWRIGHT_MODULE=${prefix}/node_modules/playwright" >> "$GITHUB_ENV"
+
+      - name: Discover and run Python unittest suites
+        run: |
+          set -u
+          export TMPDIR=/private/tmp
+          mkdir -p "$TMPDIR"
+          BOB_ROOT="$(mktemp -d "${TMPDIR%/}/bob-ci-XXXXXX")"
+          export BOB_ROOT
+          unset PYTHONPATH NODE_PATH BOB_ANDREA_WEBBOB_CONFIG ANDREA_WEBBOB_CONFIG_PATH
+          for var in $(compgen -e); do
+            case "$var" in
+              *KEY*|*TOKEN*|*SECRET*|*PASSWORD*|*key*|*token*|*secret*|*password*)
+                unset "$var"
+                ;;
+            esac
+          done
+
+          dirs=()
+          for required in webchat services release reviews; do
+            test -d "$required"
+            dirs+=("$required")
+          done
+          for entry in */; do
+            name="${entry%/}"
+            case " ${dirs[*]} " in
+              *" $name "*) continue ;;
+            esac
+            if ls "$name"/test_*.py >/dev/null 2>&1; then
+              dirs+=("$name")
+            fi
+          done
+          echo "Discovered unittest directories: ${dirs[*]}"
+
+          failed=0
+          for dir in "${dirs[@]}"; do
+            echo "::group::python3 -m unittest discover -s ${dir} -p test_*.py"
+            if ! python3 -m unittest discover -s "$dir" -p 'test_*.py' -v; then
+              echo "::error::Suite failed: ${dir}"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
