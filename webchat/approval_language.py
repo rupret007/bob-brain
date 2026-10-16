@@ -70,8 +70,22 @@ _CONDITION = _words(
     r'only\s+(?:after|before|when|once|with|upon)')
 _NEGATION = _words(r'no|not|nothing|never|without|\w+n\'t|undone|un[a-z]+(?:ed|en)')
 # Negative-action predicates carry withholding force even without not/never.
+# Dictionary words are not evidence of unconditional consent. These families
+# also apply inside apparent content: their authorization scope is unresolved.
 _INHIBITION = _words(r'avoid\w*|refrain\w*|prevent\w*|suppress\w*|skip\w*|'
-                     r'ceas\w*|halt\w*|omit\w*|abstain\w*|stop\w*|disabl\w*')
+                     r'ceas\w*|halt\w*|omit\w*|abstain\w*|stop\w*|disabl\w*|'
+                     r'prohibit\w*|forbid\w*|forbade|interdict\w*|proscrib\w*|'
+                     r'taboo\w*|tabu(?:s|ed|ing)?|verboten|ban(?:s|ned|ning)?|bar(?:s|red|ring)?|'
+                     r'disallow\w*|den(?:y|ies|ied|ying|ial)\w*|refus\w*|reject\w*|'
+                     r'veto\w*|embargo\w*|restrict\w*|suspend\w*|withh[oe]ld\w*|'
+                     r'revok\w*|rescind\w*|cancel\w*|abort\w*|block\w*|'
+                     r'freez\w*|frozen|blacklist\w*|outlaw\w*|impermissib\w*|'
+                     r'inadmissib\w*|illicit\w*|illegal\w*|moratori\w*|'
+                     r'shelv\w*|desist\w*|forbear\w*|eschew\w*|shun\w*|'
+                     r'preclud\w*|inhibit\w*|quash\w*|squelch\w*|repress\w*|'
+                     r'resist\w*|withdraw\w*|abandon\w*|discard\w*|scrap\w*|scrub\w*|'
+                     r'tabl(?:e|es|ed|ing)|'
+                     r'off\s+limits?|out\s+of\s+bounds|hands\s+off')
 _UNCERTAINTY = _words(r'maybe|perhaps|possib\w*|potential\w*|probab\w*|may|might|'
                       r'unsure|uncertain\w*|undecided|tentative\w*')
 

@@ -36,15 +36,21 @@ DURATION = r'\d+\s+(?:seconds?|minutes?|hours?|days?)'
 # "Confirm when unsure" (Jeff, 2026-10-15): a direct interval reminder saves
 # immediately only when the whole request is plain ASCII and the reminder body
 # is ASCII letters/digits separated by single spaces, contains no
-# single-letter runs (spelled-out words) and no action/approval/prohibition
+# single-letter runs (spelled-out words) and no unresolved control/prohibition
 # word. Everything else goes to the exact-token confirmation draft.
 _PLAIN_BODY = re.compile(r'[A-Za-z0-9]+(?: [A-Za-z0-9]+)*')
 _PLAIN_REQUEST = re.compile(r'[A-Za-z0-9 :]+[.!?]?')
+# A property/state clause may qualify permission even if every word is known
+# and its predicate is absent from our prohibition vocabulary.
+_BODY_PREDICATE = re.compile(r'\b(?:is|are|was|were|be|been|being)\b', re.I)
+# References to persistence inside content leave its authorization unresolved,
+# regardless of whether we recognize the accompanying predicate.
+_BODY_PERSISTENCE = re.compile(r'\b(?:stor(?:age|e|es|ed|ing)|persist\w*|retention)\b', re.I)
 # Joined words ("reviewfirst", "pleaseapprove") still carry these roots.
 _CONTROL_ROOTS = re.compile(r'schedul|approv|consent|confirm|permi|draft|preview|review|proofread|prohibit|forbid|'
                             r'disabl|authori|signoff|beforehand|condition|contingent|hypothetic|simulat|execut|decid|'
                             r'agree|concur|suppos|provid|unless|greenlight|goahead|sav(?:e|ing)|creat|disallow|barred|suspend|later|'
-                            r'nix|veto|embargo|freez|frozen|withh[oe]ld|postpon|deferr|delay|halt|block|forbid|ban(?:ned|s)?\\b|'
+                            r'nix|veto|embargo|freez|frozen|withh[oe]ld|postpon|deferr|delay|halt|block|forbid|ban(?:ned|s)?\b|'
                             r'alert|notif|timer|setting|allow|permit|restrict|prevent|cancel|abort|revok|rescind', re.I)
 _CONTROL_WORDS = re.compile(
     r'(?:schedul|approv|approval|consent|confirm|agree|concur|permi|permission|allow|authori|'
@@ -53,7 +59,7 @@ _CONTROL_WORDS = re.compile(
     r'when|if|provid|suppos|should|assum|condition|contingent|depend|only|just|not|no|never|dont|'
     r'don|stop|halt|cancel|disabl|prohibit|forbid|forbidden|ban|block|deny|denied|refus|reject|veto|'
     r'avoid|skip|without|test|dry|simulat|pretend|hypothetic|maybe|perhaps|might|may|decid|'
-    r'decision|think|ask|let|show|see|look|act|execut|run|send|text|email|call|follow)\w*', re.I)
+    r'decision|think|ask|let|show|see|look|act|execut|run|send|text|email|follow)\w*', re.I)
 
 
 _WORDLIST_PATH = Path(__file__).resolve().parent / 'data' / 'scowl-en-50.txt'
@@ -71,12 +77,19 @@ def _load_words():
 _DICTIONARY = _load_words()
 _TIME_UNITS = frozenset(('second', 'seconds', 'minute', 'minutes', 'min', 'mins',
                          'hour', 'hours', 'hr', 'hrs', 'day', 'days'))
+# Admit recognizable operand shapes, not arbitrary words containing a digit.
+# Unknown/mixed spellings still work through exact-token confirmation. In
+# particular, neither a numeric suffix nor leetspeak can grant authorization.
+_PLAIN_ID = re.compile(r'(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{16}|[0-9a-fA-F]{32}|[A-Z]{2,5}[0-9]+)')
 
 
 def _dictionary_token(word):
+    if word.isascii() and (word.isdigit() or
+                          (any(char.isdigit() for char in word) and _PLAIN_ID.fullmatch(word))):
+        return True
     word = word.lower()
-    if any(char.isdigit() for char in word) or word in _TIME_UNITS:
-        return True  # numbers, IDs and time units
+    if word in _TIME_UNITS:
+        return True
     if word in _DICTIONARY:
         return True
     for suffix in ('es', 's', 'ed', 'ing', 'd'):
@@ -93,7 +106,14 @@ def plain_interval_reminder(text, body):
     if not (text.isascii() and _PLAIN_REQUEST.fullmatch(text) and _PLAIN_BODY.fullmatch(body.strip())):
         return False
     words = body.split()
-    if any(len(word) == 1 and word.lower() not in ('a',) for word in words):
+    # An ID-shaped token can still spell a control word (TABOO1, OFF1 LIMITS).
+    # Use the alphabetic interpretation for detection only, never saved content.
+    detection_body = re.sub(r'\b([A-Za-z]+)[0-9]+\b', r'\1', body)
+    if (approval_requested(text) or approval_requested(body) or
+            approval_requested(detection_body) or _BODY_PREDICATE.search(detection_body) or
+            _BODY_PERSISTENCE.search(detection_body)):
+        return False
+    if any(len(word) == 1 and not word.isdigit() and word.lower() != 'a' for word in words):
         return False
     if not all(_dictionary_token(word) for word in words):
         return False
@@ -104,6 +124,12 @@ PERSONAL_INTERVAL_REQUEST = re.compile(
     r'^(?:please\s+)*remind me (?:to [\s\S]+? in \d+\s+'
     r'(?:seconds?|minutes?|mins?|hours?|hrs?|days?)|'
     r'every \d+\s+(?:minutes?|hours?|days?) to [\s\S]+?)[.!?]*$', re.I)
+# The same resolved schedules can be drafted even with control language in
+# their body. Recurring aliases remain draft-only, as before this consent fix.
+DIRECT_INTERVAL_REQUEST = re.compile(
+    r'^(?:please\s+)*remind me (?:to [\s\S]+? in \d+\s+'
+    r'(?:seconds?|minutes?|mins?|hours?|hrs?|days?)|'
+    r'every \d+\s+(?:minutes?|mins?|hours?|hrs?|days?) to [\s\S]+?)[.!?]*$', re.I)
 CLOCK = r'\d{1,2}(?::\d{2}\s*(?:am|pm)?|\s*(?:am|pm))'
 WHEN = (r'(?:(?:in\s+)?' + DURATION + r'|(?:on\s+)?(?:\d{4}-\d{2}-\d{2}|today|tomorrow)'
         r'(?:\s+at)?\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?|'
@@ -243,11 +269,13 @@ def instant(text, now):
     return due
 
 
-def parse(text, now):
+def parse(text, now, *, for_draft=False):
     stripped = text.strip().rstrip('.?!')
     # Constraints anywhere in a recognized request apply before any schedule
     # variant (including recurring reminders) is allowed to create a row.
-    if approval_requested(text):
+    # Only the handler's resolved direct-interval draft path opts out of this
+    # refusal. Parsing for a draft never grants permission to create a row.
+    if not for_draft and approval_requested(text):
         raise ReminderError('Nothing was saved. Send a new reminder request when you want it scheduled.')
     if TIMEZONE.search(stripped):
         raise ReminderError('The reminder timezone needs clarification. Nothing was saved. '
@@ -523,8 +551,14 @@ class Reminders:
         preview = (row.get("assumption", "") + lead + when + repeat_description(dict(
                     interval_seconds=row['interval'], daily_time=row['daily_time'], weekly_time=row.get('weekly_time'))) +
                 (f" Read-only action: {row['action']}." if row['action'] else '')).rstrip('.')
+        # A constrained direct interval now offers confirmation instead of a
+        # refusal. Retain its explicit no-save notice without changing ordinary
+        # reminder drafts or their existing concise approval wording.
+        constrained_interval = (DIRECT_INTERVAL_REQUEST.fullmatch(row['text'].strip()) and
+                                approval_requested(row['text']))
         return (preview +
                 (". OK to set it? It isn't running yet—use a phone or oven timer if you need it counting now." if relative else '.') +
+                (' Nothing was saved to your reminders.' if constrained_interval else '') +
                 f"\nReply `yes {row['token']}` to set.")
 
     def draft(self, text, cid, request_id, actor, body, due, interval, daily_time, action, *, weekly_time=None, assumption=''):
@@ -715,7 +749,16 @@ class Reminders:
                     return self.incomplete(text, cid, request_id, actor, event[2], 'before ' + event[1],
                                            'When is ' + event[1] + '? I suggest an hour before; '
                                            'I’ll wait for your OK before scheduling.')
-                parsed = parse(normalized, self.clock())
+                draft_interval = bool(DIRECT_INTERVAL_REQUEST.fullmatch(text.strip()))
+                try:
+                    parsed = parse(normalized, self.clock(), for_draft=draft_interval)
+                except ReminderError:
+                    # A constrained interval with invalid/competing times is
+                    # not an approvable draft. Keep the existing fresh-request
+                    # refusal rather than guessing which schedule to confirm.
+                    if draft_interval and approval_requested(normalized):
+                        raise ReminderError('Nothing was saved. Send a new reminder request when you want it scheduled.') from None
+                    raise
                 if not parsed:
                     body_only = re.fullmatch(r'remind me to (.+)', normalized, re.I)
                     if body_only:
@@ -741,16 +784,15 @@ class Reminders:
                 # A complete, explicit request to remind the speaker authorizes
                 # this local reminder. Inspect the original wording: normalized
                 # requests and model extractions are not fresh authorization.
-                # Parsing above still rejects approval clauses and ambiguity.
+                # Resolved interval constraints can be parsed for a draft;
+                # permission is checked separately before any immediate save.
                 if action is None and not assumption and PERSONAL_INTERVAL_REQUEST.fullmatch(text.strip()):
                     # Check both the original request and extracted reminder
                     # text for either interval grammar. Detection normalization
                     # must never strip constraints or rewrite the saved body.
-                    if approval_requested(text) or approval_requested(body):
-                        raise ReminderError('Nothing was saved. Send a new reminder request when you want it scheduled.')
                     if not plain_interval_reminder(text, body):
-                        # Confirm when unsure: anything but plain ASCII words
-                        # goes to the separate exact-token confirmation step.
+                        # Confirm when unsure: recognized words/IDs do not
+                        # waive the independent check for control language.
                         return self.draft(text, cid, request_id, actor, body, due, interval, daily_time, action,
                                           weekly_time=weekly, assumption=assumption)
                     with self.draft_lock() as drafts:

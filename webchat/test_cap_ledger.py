@@ -462,11 +462,31 @@ class CapabilityLedgerTests(unittest.TestCase):
                     reminders = Reminders(folder, clock=self.clock)
                     with patch.object(reminders, 'save', wraps=reminders.save) as save, \
                             patch.object(reminders, 'create', wraps=reminders.create) as create:
-                        self.assertEqual(reminders.handle(command, 'chat', command), refusal)
+                        reply = reminders.handle(command, 'chat', command)
+                        if prefix == 'remind me every 2 hours to stretch' and constraint != 'wait until tomorrow':
+                            with reminders.draft_lock() as drafts:
+                                self.assertEqual(len(drafts), 1)
+                                draft, = drafts.values()
+                                self.assertRegex(draft['token'], r'^wbrem-[0-9a-f]{32}$')
+                                self.assertEqual(set(drafts), {draft['token']})
+                                self.assertEqual(
+                                    (draft['state'], draft['body'], draft['text'],
+                                     draft['due'], draft['interval']),
+                                    ('draft', 'stretch, ' + constraint, command,
+                                     self.clock() + 7200, 7200))
+                                self.assertEqual(
+                                    reply,
+                                    'Draft reminder: stretch, ' + constraint +
+                                    ' — Oct 10, 2026 at 03:47 AM CDT Repeats every 120 minutes.'
+                                    ' Nothing was saved to your reminders.\n'
+                                    f"Reply `yes {draft['token']}` to set.")
+                        else:
+                            self.assertEqual(reply, refusal)
                         save.assert_not_called()
                         create.assert_not_called()
-                    with self.assertRaisesRegex(ReminderError, 'Nothing was saved'):
+                    with self.assertRaises(ReminderError) as raised:
                         parse(command, self.clock())
+                    self.assertEqual(str(raised.exception), refusal)
                     self.assertEqual(Reminders(folder, clock=self.clock).listing(), [])
 
     def test_ledger_B2_plain_reminder_still_schedules(self):
@@ -598,7 +618,14 @@ class CapabilityLedgerTests(unittest.TestCase):
 
     def test_ledger_F22_qualification_allpass_false_despite_scoped_pass(self):
         import hashlib
-        from release import qualification_scope as scope
+        import importlib.util
+
+        # Discovery also runs from webchat/, where the repository root is not
+        # on sys.path. Load this checkout's qualification policy explicitly.
+        source = Path(__file__).resolve().parents[1] / 'release/qualification_scope.py'
+        spec = importlib.util.spec_from_file_location('ledger_qualification_scope', source)
+        scope = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(scope)
 
         def evidence(name, value):
             path = self.root / name
