@@ -64,7 +64,7 @@ def safe_fact(body):
         if credential.search(decoded.decode("utf-8", errors="ignore")):
             raise ContextError("credential-like content forbidden")
     if not re.search(r"(?i)\bplain\s+text(?:\s+(?:files?|format|document|mode))?\b", language):
-        if re.search(r"(?i)\b(?:sms|imessage|texts\b|texted|texting|"
+        if re.search(r"(?i)\b(?:sms|imessage|texts\b|texted|texting|text from|"
                      r"message[ _-]*(?:body|content|transcript))\b|"
                      r"\btext[ _-]*(?:body|content|message|transcript)\b", language):
             raise ContextError("text/SMS content forbidden")

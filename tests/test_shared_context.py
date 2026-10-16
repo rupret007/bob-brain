@@ -228,7 +228,7 @@ class ContextTests(unittest.TestCase):
         fact = copy.deepcopy(self.fact)
         fact['body'] = 'Store configs as plain text files in the repo.'
         self.accept(fact)
-        secret = base64.b64encode(b'password=not-a-real-secret').decode()
+        secret = base64.b64encode(b'api_key=supersecret').decode()
         self.assert_body_denied('fixture ' + secret)
 
     def test_unicode_disguised_denied_content_rejected(self):
