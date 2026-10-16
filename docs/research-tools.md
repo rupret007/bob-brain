@@ -3,7 +3,8 @@
 Pinned reuse: official MIT Brave Search MCP 2.1.4, official MIT MCP Python SDK
 1.30.0 compatibility API, reference fetch server 2026.10.10 (upstream mixed
 MIT/Apache contributions), and httpcore. The fetch package supplies extraction
-and its public-IP classification; a narrow socket adapter supplies DNS pinning,
+dependencies (readabilipy in pure-Python mode and markdownify) and public-IP
+classification; a narrow socket adapter supplies DNS pinning,
 HTTPS-only access, redirect validation, response bounds and robots checks.
 Source: https://github.com/brave/brave-search-mcp-server and
 https://github.com/modelcontextprotocol/servers/tree/main/src/fetch.
@@ -38,9 +39,9 @@ The HTTP connection backend validates ALL DNS answers, then gives a numeric
 public address to httpcore's socket connector. TLS checks the original hostname.
 No proxy environment, cookies, credentials, non-HTTPS schemes, custom ports,
 compressed responses or Unix sockets are accepted. Every redirect goes through
-the same URL and connection restrictions. Robot restrictions are checked for
-the requested origin; crossing-origin redirects need an additional robots check
-before general unattended deployment.
+the same URL and connection restrictions. Robot restrictions are checked before
+every page request, including redirected paths and crossing-origin redirects;
+rules are retrieved separately for each origin and cached for that fetch only.
 
 ## Verification
 
@@ -57,4 +58,8 @@ timestamps and outcome; exit 1 means acceptance is not established.
 Runtime provider/API routing is absent from origin/main. Wire this host into
 the chosen provider's structured tool/results boundary before claiming normal
 Web Bob chat integration. No runtime, key source, launchd or live service is
-changed by this PR. Live research acceptance is pending until that probe passes.
+changed by this PR. The live probe retrieved three pages for a current Python
+release query; URL/hash/timestamp evidence is in `research-evidence.json`.
+Two other search results were unavailable and were excluded from citations.
+The parser uses explicit pure-Python mode to avoid upstream's automatic npm
+installation during fetch. Normal-chat runtime adoption remains pending.

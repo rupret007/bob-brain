@@ -13,7 +13,9 @@ from urllib.robotparser import RobotFileParser
 
 import httpcore
 from mcp.server.fastmcp import FastMCP
-from mcp_server_fetch.server import _is_public_address, extract_content_from_html
+from mcp_server_fetch.server import _is_public_address
+from readabilipy.simple_json import simple_json_from_html_string
+import markdownify
 
 MAX_BYTES = 256_000
 USER_AGENT = "WebBobResearch/1.0"
@@ -57,9 +59,11 @@ class PublicBackend(httpcore.AsyncNetworkBackend):
         await asyncio.sleep(seconds)
 
 
-async def download(url, pool):
+async def download(url, pool, authorize=None):
     for hop in range(4):
         parsed = validate_url(url)
+        if authorize is not None:
+            await authorize(url)
         async with pool.stream("GET", url, headers={"User-Agent": USER_AGENT, "Accept-Encoding": "identity"},
                                extensions={"timeout": {"connect": 5, "read": 5, "write": 5, "pool": 5}}) as response:
             headers = {k.lower(): v for k, v in response.headers}
@@ -86,20 +90,27 @@ async def fetch_page(url):
     parsed = validate_url(url)
     async with asyncio.timeout(20):
         async with httpcore.AsyncConnectionPool(network_backend=PublicBackend(), max_connections=1) as pool:
-            status, _, _, body = await download("https://" + parsed.netloc + "/robots.txt", pool)
-            if status in (401, 403) or status >= 500:
-                raise FetchDenied("robots access unavailable")
-            if status < 400:
-                robots = RobotFileParser()
-                robots.parse(body.decode("utf-8", "replace").splitlines())
-                if not robots.can_fetch(USER_AGENT, url):
+            rules = {}
+            async def authorize(target):
+                origin = "https://" + validate_url(target).netloc
+                if origin not in rules:
+                    status, _, _, body = await download(origin + "/robots.txt", pool)
+                    if status not in (200, 404, 410):
+                        raise FetchDenied("robots access unavailable")
+                    robots = RobotFileParser()
+                    robots.parse(body.decode("utf-8", "replace").splitlines() if status == 200 else [])
+                    rules[origin] = robots
+                if not rules[origin].can_fetch(USER_AGENT, target):
                     raise FetchDenied("robots disallows fetch")
-            status, final_url, content_type, body = await download(url, pool)
+            status, final_url, content_type, body = await download(url, pool, authorize)
             if status != 200:
                 raise FetchDenied("page unavailable (HTTP %s)" % status)
     text = body.decode("utf-8", "replace")
     if "html" in content_type:
-        text = extract_content_from_html(text)
+        # Reuse the reference server's extraction dependencies in explicit pure
+        # Python mode; the Node mode can run npm install during a page fetch.
+        content = simple_json_from_html_string(text, use_readability=False)["content"]
+        text = markdownify.markdownify(content or "", heading_style=markdownify.ATX)
     if not text.strip() or text.startswith("<error>"):
         raise FetchDenied("page extraction unavailable")
     return {"url": final_url, "requested_url": url, "text": text[:8000],
