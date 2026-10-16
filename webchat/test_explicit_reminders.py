@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 import uuid
 
 from app import Chat
+from consent_fixture import confirm_reply
 from reminders import Reminders
 from task_dispatch import task_queue
 from texting_fixture import OfflineProviders
@@ -42,8 +43,17 @@ class ExplicitReminderTests(unittest.TestCase):
         request_id = str(uuid.uuid4())
         answer = self.say(message, request_id)
         self.assertEqual(answer['provider'], 'reminders')
-        self.assertIn('Reminder saved', answer['content'])
+        # This synthetic replay body refers to reminders and includes an
+        # unparsed hex token. It must confirm before the lifecycle can start.
+        self.assertFalse(self.chat.reminders.listing())
+        self.assertNotIn('Reminder saved', answer['content'])
         self.assertEqual(self.say(message, request_id), answer)
+        confirmation_id = str(uuid.uuid4())
+        confirmation = re.search(r'yes wbrem-[0-9a-f]{32}', answer['content'])[0]
+        answer = confirm_reply(self, answer, lambda text: self.say(text, confirmation_id))
+        self.assertEqual(answer['provider'], 'reminders')
+        self.assertIn('Reminder saved', answer['content'])
+        self.assertEqual(self.say(confirmation, confirmation_id), answer)
         row, = self.chat.reminders.listing()
         self.assertEqual(row['body'], body)
         self.assertEqual(row['state'], 'pending')
@@ -74,6 +84,10 @@ class ExplicitReminderTests(unittest.TestCase):
     def test_release_recurring_followup_saves_and_cancels_durably(self):
         body = 'Web Bob local reminder replay ' + uuid.uuid4().hex[:8] + ' recurring'
         answer = self.say('remind me every 1 minute to ' + body)
+        self.assertEqual(answer['provider'], 'reminders')
+        self.assertFalse(self.chat.reminders.listing())
+        self.assertNotIn('Reminder saved', answer['content'])
+        answer = confirm_reply(self, answer, self.say)
         self.assertEqual(answer['provider'], 'reminders')
         self.assertIn('Reminder saved', answer['content'])
         identifier = re.search(r'ID ([0-9a-f]{16})', answer['content'])[1]

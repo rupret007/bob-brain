@@ -20,7 +20,8 @@ ZONE = ZoneInfo('America/Chicago')
 HELP = ('Try “remind me to check the oven in 10 minutes”, “remind me to call Sam on 2026-10-01 at 14:00”, '
         '“remind me every 2 hours to stretch”, “my reminders”, or “cancel reminder ID”. '
         'You can also say “create a reminder for 2am to go to bed” or “set a timer for 10 minutes”. '
-        'Explicit “remind me to … in …” and “remind me every …” interval requests save personal reminders directly. '
+        'Recognized plain tasks in explicit “remind me to … in …” and “remind me every …” interval requests save directly. '
+        'Unclear wording or references to reminders, saving or permission require confirmation. '
         'Other valid requests produce a draft; confirm its exact token in a separate message to schedule it. '
         'Times use America/Chicago; a clock time without a date means its next occurrence. '
         'Reminders appear here and in Jobs while Web Bob is running; overdue reminders arrive when it returns. '
@@ -36,16 +37,23 @@ DURATION = r'\d+\s+(?:seconds?|minutes?|hours?|days?)'
 # "Confirm when unsure" (Jeff, 2026-10-15): a direct interval reminder saves
 # immediately only when the whole request is plain ASCII and the reminder body
 # is ASCII letters/digits separated by single spaces, contains no
-# single-letter runs (spelled-out words) and no unresolved control/prohibition
-# word. Everything else goes to the exact-token confirmation draft.
+# single-letter runs (spelled-out words), self-references or unresolved
+# operands/control language. Dictionary membership alone is not authorization.
+# Everything else goes to the exact-token confirmation draft.
 _PLAIN_BODY = re.compile(r'[A-Za-z0-9]+(?: [A-Za-z0-9]+)*')
 _PLAIN_REQUEST = re.compile(r'[A-Za-z0-9 :]+[.!?]?')
 # A property/state clause may qualify permission even if every word is known
 # and its predicate is absent from our prohibition vocabulary.
 _BODY_PREDICATE = re.compile(r'\b(?:is|are|was|were|be|been|being)\b', re.I)
-# References to persistence inside content leave its authorization unresolved,
-# regardless of whether we recognize the accompanying predicate.
-_BODY_PERSISTENCE = re.compile(r'\b(?:stor(?:age|e|es|ed|ing)|persist\w*|retention)\b', re.I)
+# A body referring to this operation cannot establish its own permission.
+# Reject the reference regardless of its verb/predicate (including unfamiliar
+# cancellation verbs). Pronouns may refer to this request too; without a
+# resolved referent, even an otherwise ordinary task needs confirmation.
+_BODY_SELF_REFERENCE = re.compile(
+    r'\b(?:remind\w*|sav(?:e\w*|ing\w*)|stor(?:age|e|es|ed|ing)|persist\w*|retention|'
+    r'schedul\w*|alert\w*|notif\w*|timers?|alarms?|'
+    r'approv\w*|consent\w*|permi\w*|authori\w*|confirm\w*|'
+    r'this|that|these|those|it|its|them)\b', re.I)
 # Joined words ("reviewfirst", "pleaseapprove") still carry these roots.
 _CONTROL_ROOTS = re.compile(r'schedul|approv|consent|confirm|permi|draft|preview|review|proofread|prohibit|forbid|'
                             r'disabl|authori|signoff|beforehand|condition|contingent|hypothetic|simulat|execut|decid|'
@@ -77,16 +85,31 @@ def _load_words():
 _DICTIONARY = _load_words()
 _TIME_UNITS = frozenset(('second', 'seconds', 'minute', 'minutes', 'min', 'mins',
                          'hour', 'hours', 'hr', 'hrs', 'day', 'days'))
-# Admit recognizable operand shapes, not arbitrary words containing a digit.
-# Unknown/mixed spellings still work through exact-token confirmation. In
-# particular, neither a numeric suffix nor leetspeak can grant authorization.
-_PLAIN_ID = re.compile(r'(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{16}|[0-9a-fA-F]{32}|[A-Z]{2,5}[0-9]+)')
+# Positive admission, not just an absence of known prohibitions. Consume the
+# entire task, including its object/modifier, so an unfamiliar cancellation
+# predicate cannot hitchhike before, inside or after ordinary reminder content.
+# This intentionally small grammar leaves unsupported ordinary tasks available
+# through exact-token drafts; extending it requires a resolved task structure.
+_ORDINARY_TASK = re.compile(
+    r'(?:stretch(?: gently)?|'
+    r'drink (?:[0-9]+ (?:cups?|glass(?:es)?)(?: of)? )?(?:water|tea|coffee|milk|juice)|'
+    r'call (?:mom|dad|mother|father)|'
+    r'take (?:(?:(?P<possessive>my)|the|[0-9]+) )?(?:pills?|medicine|medication)|'
+    r'take out (?:the )?trash|feed (?:the )?(?:cats?|dogs?)|'
+    r'water (?:the )?plants?|move (?:the )?laundry|inspect ticket [0-9]+)', re.I)
+# Mixed letters/digits are unresolved by default, even when they look like hex.
+# Preserve the existing ticket controls only as a complete task with one typed
+# operand: the literal AB prefix plus a number, or a 16-character lowercase ID.
+# No prefix/suffix prose is allowed around that task, and the operand never
+# exempts any part of the body from the independent control/reference checks.
+_TICKET_ID_TASK = re.compile(r'(?i:inspect ticket) (?:AB[0-9]+|[0-9a-f]{16})')
 
 
 def _dictionary_token(word):
-    if word.isascii() and (word.isdigit() or
-                          (any(char.isdigit() for char in word) and _PLAIN_ID.fullmatch(word))):
+    if word.isascii() and word.isdigit():
         return True
+    if not (word.isascii() and word.isalpha()):
+        return False
     word = word.lower()
     if word in _TIME_UNITS:
         return True
@@ -103,19 +126,39 @@ def _dictionary_token(word):
 
 def plain_interval_reminder(text, body):
     text = text.strip()
-    if not (text.isascii() and _PLAIN_REQUEST.fullmatch(text) and _PLAIN_BODY.fullmatch(body.strip())):
+    body = body.strip()
+    if not (text.isascii() and _PLAIN_REQUEST.fullmatch(text) and _PLAIN_BODY.fullmatch(body)):
+        return False
+    if _BODY_SELF_REFERENCE.search(body):
+        return False
+    task = _ORDINARY_TASK.fullmatch(body)
+    ticket = _TICKET_ID_TASK.fullmatch(body)
+    if not (task or ticket):
         return False
     words = body.split()
+    detection_text = text
+    detection_body = body
+    if task and task['possessive']:
+        # Only this parsed object owns "my" ("take my pills"), not permission
+        # for the operation. Resolve that slot in detection copies only. The
+        # whole original body must occur verbatim in the direct request.
+        if body not in text:
+            return False
+        start, end = task.span('possessive')
+        detection_body = body[:start] + 'the' + body[end:]
+        detection_text = text.replace(body, detection_body, 1)
     # An ID-shaped token can still spell a control word (TABOO1, OFF1 LIMITS).
     # Use the alphabetic interpretation for detection only, never saved content.
-    detection_body = re.sub(r'\b([A-Za-z]+)[0-9]+\b', r'\1', body)
-    if (approval_requested(text) or approval_requested(body) or
-            approval_requested(detection_body) or _BODY_PREDICATE.search(detection_body) or
-            _BODY_PERSISTENCE.search(detection_body)):
+    detection_body = re.sub(r'\b([A-Za-z]+)[0-9]+\b', r'\1', detection_body)
+    if (approval_requested(detection_text) or
+            approval_requested(detection_body) or _BODY_PREDICATE.search(detection_body)):
         return False
     if any(len(word) == 1 and not word.isdigit() and word.lower() != 'a' for word in words):
         return False
-    if not all(_dictionary_token(word) for word in words):
+    # Only a fully parsed ticket task resolves a mixed-token operand. A token
+    # shape on its own (CEA5E123, DEC1DE12, etc.) never grants this exemption.
+    task_words = words[:-1] if ticket else words
+    if not all(_dictionary_token(word) for word in task_words):
         return False
     return not any(_CONTROL_WORDS.fullmatch(word) or _CONTROL_ROOTS.search(word) for word in words)
 
