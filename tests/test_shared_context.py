@@ -230,9 +230,63 @@ class ContextTests(unittest.TestCase):
         self.accept(fact)
         self.assertEqual(len(self.stores['bob'].read_context()), 1)
 
+    def test_plain_text_does_not_exempt_private_messages(self):
+        for private in ('SMS body: See you soon', 'iMessage: See you soon',
+                        'Text from Jeff: See you soon', 'Jeff texted: See you soon',
+                        'Message content: See you soon', 'text_body=See you soon'):
+            for body in (private + '. Store as plain text.',
+                         'Use plain text files. ' + private):
+                with self.subTest(body=body):
+                    self.assert_body_denied(body)
+        for label in ('body', 'content', 'message', 'messages', 'transcript', 'from Jeff'):
+            with self.subTest(label=label):
+                self.assert_body_denied('Plain text ' + label + ': See you soon')
+
+    def test_standalone_text_labels_rejected(self):
+        for body in ('Text: See you soon', "Jeff's text: See you soon",
+                     'Text: See you soon. Use plain text files.'):
+            with self.subTest(body=body):
+                self.assert_body_denied(body)
+
+    def test_plain_text_format_facts_preserve_original_body(self):
+        for index, body in enumerate(('Store configs as plain text.',
+                                     'Use the plain text format.',
+                                     'Use PLAIN-TEXT files.',
+                                     'Use plain\ntext mode.')):
+            with self.subTest(body=body):
+                fact = copy.deepcopy(self.fact)
+                fact['id'] = 'format-' + str(index)
+                fact['body'] = body
+                self.assertEqual(self.stores['bob'].propose_fact(fact)['candidate']['body'], body)
+                self.accept(fact)
+                stored = {row['id']: row['body'] for row in self.stores['bob'].read_context()}
+                self.assertEqual(stored[fact['id']], body)
+
     def test_short_base64_secrets_rejected(self):
         secret = base64.b64encode(b'api_key=supersecret').decode()
         self.assert_body_denied('fixture ' + secret)
+
+    def test_base64_credentials_below_24_characters_rejected(self):
+        for fixture in (b'secret=x', b'password=fake', b'api_key=fixture??'):
+            encoded = base64.b64encode(fixture).decode()
+            with self.subTest(encoded_length=len(encoded)):
+                self.assert_body_denied('fixture ' + encoded)
+
+    def test_base64_credentials_normalized_after_decoding(self):
+        for fixture in ('api_\u200bkey=supersecret', 'ａｐｉ＿ｋｅｙ＝fixture'):
+            with self.subTest(fixture=fixture):
+                encoded = base64.b64encode(fixture.encode()).decode()
+                self.assert_body_denied('fixture ' + encoded)
+
+    def test_benign_and_invalid_base64_remain_accepted(self):
+        for index, encoded in enumerate((base64.b64encode(b'Use Chicago time.').decode(),
+                                         'abcde', 'abcde===')):
+            with self.subTest(encoded=encoded):
+                fact = copy.deepcopy(self.fact)
+                fact['id'] = 'encoding-' + str(index)
+                fact['body'] = 'fixture ' + encoded
+                self.accept(fact)
+        self.assertEqual(len(self.stores['bob'].read_context()), 3)
 
     def test_unicode_disguised_denied_content_rejected(self):
         self.assert_body_denied('Jeff app\u200broved send')

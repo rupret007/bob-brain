@@ -42,13 +42,17 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _normalize_fact_text(value):
+    value = unicodedata.normalize("NFKC", value)
+    return "".join(c for c in value if unicodedata.category(c) != "Cf")
+
+
 def safe_fact(body):
     if not isinstance(body, str) or not 1 <= len(body) <= 1200:
         raise ContextError("fact length must be 1..1200")
     # Enforce exclusions even for mislabeled accepted facts. Normalize common
     # Unicode disguises before checking, while preserving approved stored text.
-    value = unicodedata.normalize("NFKC", body)
-    value = "".join(c for c in value if unicodedata.category(c) != "Cf")
+    value = _normalize_fact_text(body)
     language = re.sub(r"[_-]+", " ", value)
     credential = re.compile(r"(?i)(-----BEGIN .*PRIVATE KEY|\b(?:sk-|ghp_|github_pat_)[a-z0-9_-]{12,}|"
                             r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bxox[bpars]-[a-z0-9-]+|"
@@ -56,18 +60,23 @@ def safe_fact(body):
                             r"\bbearer\s*[:=]?\s+\S+)")
     if credential.search(value):
         raise ContextError("credential-like content forbidden")
-    for token in re.findall(r"[A-Za-z0-9+/]{24,79}={0,2}", value):
+    # Inspect complete tokens, including short padded credentials. The fact
+    # length limit bounds decoding work without leaving gaps at token lengths.
+    for token in re.findall(r"[A-Za-z0-9+/]+={0,2}", value):
         try:
             decoded = base64.b64decode(token, validate=True)
         except (binascii.Error, ValueError):
             continue
-        if credential.search(decoded.decode("utf-8", errors="ignore")):
+        if credential.search(_normalize_fact_text(decoded.decode("utf-8", errors="ignore"))):
             raise ContextError("credential-like content forbidden")
-    if not re.search(r"(?i)\bplain\s+text(?:\s+(?:files?|format|document|mode))?\b", language):
-        if re.search(r"(?i)\b(?:sms|imessage|texts\b|texted|texting|text from|"
-                     r"message[ _-]*(?:body|content|transcript))\b|"
-                     r"\btext[ _-]*(?:body|content|message|transcript)\b", language):
-            raise ContextError("text/SMS content forbidden")
+    # Exempt only the benign format phrase, never other message markers in the
+    # same fact or explicit labels such as "plain text message".
+    text_language = re.sub(r"(?i)\bplain\s+text\b(?!\s+(?:body|content|messages?|transcript|from)\b)",
+                           "", language)
+    if re.search(r"(?i)\b(?:sms|imessage|texts?|texted|texting|"
+                 r"message[ _-]*(?:body|content|transcript))\b|"
+                 r"\btext[ _-]*(?:body|content|message|transcript)\b", text_language):
+        raise ContextError("text/SMS content forbidden")
     if re.search(r"(?<!\w)(?:\+?\d[\s().-]*){10,15}(?!\w)|\b\d{3}[ .-]\d{4}\b", value):
         raise ContextError("phone numbers forbidden")
     if re.search(r"(?i)data\s*:\s*audio\s*/|\baudio\s*[/=:]|"
