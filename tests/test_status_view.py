@@ -1,4 +1,5 @@
 import unittest
+from webbob.fallback_copy import GROK_STATUS_FOOTER
 from webbob.status_view import render_status, status_rows
 
 
@@ -26,6 +27,10 @@ class StatusTests(unittest.TestCase):
             self.assertNotIn(value, html)
         self.assertIn("Karen", html)
         self.assertIn("unknown", html)
+
+    def test_status_footer_matches_shared_fallback_copy(self):
+        html = render_status({}, now=100)
+        self.assertIn(GROK_STATUS_FOOTER, html)
 
 
 if __name__ == "__main__":

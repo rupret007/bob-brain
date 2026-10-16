@@ -3,6 +3,8 @@ from html import escape
 import math
 import time
 
+from webbob.fallback_copy import GROK_STATUS_FOOTER
+
 BOTS = {"bob": "Grok Bot", "webbob": "Web Bob", "andrea": "Andrea", "karen": "Karen"}
 
 
@@ -37,5 +39,5 @@ def render_status(observations, now=None):
         values = [row["label"], row["state"], str(row["age_seconds"]) + " s" if row["age_seconds"] is not None else "unknown",
                   str(row["pending"]) if row["pending"] is not None else "unknown", row["review"]]
         html.append("<tr>" + "".join("<td>" + escape(value) + "</td>" for value in values) + "</tr>")
-    html.append('</tbody></table><p>Web Bob or Mini unavailable? Continue with Grok Bot if available. No work is forwarded automatically.</p></main></html>')
+    html.append(f"</tbody></table><p>{escape(GROK_STATUS_FOOTER)}</p></main></html>")
     return "\n".join(html)
