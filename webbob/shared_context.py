@@ -4,14 +4,19 @@ SQLite supplies transactions. Existing memory remains authoritative at import;
 this service never imports conversations or grants execution permission.
 """
 from contextlib import contextmanager
+import copy
+from dataclasses import dataclass
+import datetime as dt
 import hashlib
 import json
 from pathlib import Path
 import re
 import sqlite3
 import time
+import unicodedata
 
 BOTS = {"bob", "webbob", "andrea", "karen"}
+INBOX_CAP = 1000  # Pending notifications per recipient, across all senders.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS facts (
  id TEXT, revision INTEGER, body TEXT, provenance TEXT NOT NULL,
@@ -20,6 +25,7 @@ CREATE TABLE IF NOT EXISTS facts (
 CREATE TABLE IF NOT EXISTS messages (
  id TEXT PRIMARY KEY, sender TEXT NOT NULL, recipient TEXT NOT NULL,
  topic TEXT NOT NULL, refs TEXT NOT NULL, at REAL NOT NULL, acked INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS messages_pending ON messages(recipient, acked);
 CREATE TABLE IF NOT EXISTS effects (
  message_id TEXT PRIMARY KEY, state TEXT NOT NULL, receipt TEXT,
  FOREIGN KEY(message_id) REFERENCES messages(id));
@@ -37,10 +43,33 @@ def digest(value):
 def safe_fact(body):
     if not isinstance(body, str) or not 1 <= len(body) <= 1200:
         raise ContextError("fact length must be 1..1200")
-    # Defense in depth; the trusted acceptance boundary supplies classification.
+    # Enforce exclusions even for mislabeled accepted facts. Normalize common
+    # Unicode disguises before checking, while preserving approved stored text.
+    value = unicodedata.normalize("NFKC", body)
+    value = "".join(c for c in value if unicodedata.category(c) != "Cf")
+    language = re.sub(r"[_-]+", " ", value)
     if re.search(r"(?i)(-----BEGIN .*PRIVATE KEY|\b(?:sk-|ghp_|github_pat_)[a-z0-9_-]{12,}|"
-                 r"(?:api[_ -]?key|password|secret|bearer|access[_ -]?token)\s*[:=]\s*\S+)", body):
+                 r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bxox[bpars]-[a-z0-9-]+|"
+                 r"(?:api[_ -]?key|password|secret|bearer|access[_ -]?token)\s*[:=]\s*\S+|"
+                 r"\bbearer\s*[:=]?\s+\S+)", value):
         raise ContextError("credential-like content forbidden")
+    if re.search(r"(?i)\b(?:sms|imessage|texts?|texted|texting|"
+                 r"message[ _-]*(?:body|content|transcript))\b|"
+                 r"\btext[ _-]*(?:body|content|message|transcript)\b", language):
+        raise ContextError("text/SMS content forbidden")
+    if re.search(r"(?<!\w)(?:\+?\d[\s().-]*){10,15}(?!\w)|\b\d{3}[ .-]\d{4}\b", value):
+        raise ContextError("phone numbers forbidden")
+    if re.search(r"(?i)data\s*:\s*audio\s*/|\baudio\s*[/=:]|"
+                 r"\b(?:raw[ _-]*(?:audio|voice)|(?:audio|voice)[ _-]*(?:blob|data|base64|bytes|recording|note|memo|transcript))\b|"
+                 r"(?:^|\s)(?:RIFF|OggS|fLaC|ID3)|\b(?:UklGR|T2dnUw|ZkxhQw|SUQz)[a-z0-9+/=]*|"
+                 r"[a-z0-9+/]{80,}={0,2}", value):
+        raise ContextError("raw audio content forbidden")
+    # Acceptance of a fact is never an approval to send. Conservatively deny
+    # approval/action language in either order, including across line breaks.
+    if (re.search(r"(?i)\b(?:approv\w*|authoriz\w*|authoris\w*|consent\w*|permission|"
+                  r"go[ -]?ahead|green[ -]?light|okay|ok|yes|confirm\w*|permit\w*|allow\w*)\b", language)
+            and re.search(r"(?i)\b(?:send\w*|sent|deliver\w*|outbound|publish\w*|post\w*|email\w*)\b", language)):
+        raise ContextError("send approval assertions forbidden")
     return body
 
 
@@ -65,6 +94,10 @@ def validate_fact(fact):
         raise ContextError("source identity and acceptance required")
     if not source["uri"].startswith(("memory/", "user-memory/", "review:")):
         raise ContextError("unreviewed source")
+    # Provenance is also persisted/shared; it cannot smuggle excluded payloads.
+    safe_fact(fact["id"])
+    for key in ("uri", "accepted_by", "accepted_at"):
+        safe_fact(source[key])
 
 
 class SharedContext:
@@ -125,6 +158,7 @@ class SharedContext:
             raise ContextError("invalid message address or topic")
         if not re.fullmatch(r"[a-zA-Z0-9_.:-]{1,100}", message_id) or not 1 <= len(fact_ids) <= 20:
             raise ContextError("invalid message identity or references")
+        safe_fact(message_id)
         refs = json.dumps(sorted(set(fact_ids)))
         with self.transaction() as db:
             for fact_id in fact_ids:
@@ -137,6 +171,9 @@ class SharedContext:
                 if tuple(prior[k] for k in ("sender", "recipient", "topic", "refs")) != identity:
                     raise ContextError("message id reused with different content")
                 return message_id
+            pending = db.execute("SELECT COUNT(*) FROM messages WHERE recipient=? AND acked=0", (recipient,)).fetchone()[0]
+            if pending >= INBOX_CAP:
+                raise ContextError("recipient inbox is full; acknowledge pending messages first")
             db.execute("INSERT INTO messages(id,sender,recipient,topic,refs,at) VALUES (?,?,?,?,?,?)",
                        (message_id, *identity, time.time()))
         return message_id
@@ -188,6 +225,7 @@ class SharedContext:
     def complete_effect(self, message_id, receipt_id):
         if not re.fullmatch(r"[a-zA-Z0-9_.:/-]{1,200}", receipt_id):
             raise ContextError("receipt identifier only; no raw effect payload")
+        safe_fact(receipt_id)
         with self.transaction() as db:
             self._message(db, message_id)
             row = db.execute("SELECT * FROM effects WHERE message_id=?", (message_id,)).fetchone()
@@ -196,22 +234,51 @@ class SharedContext:
             db.execute("UPDATE effects SET state='complete',receipt=? WHERE message_id=?", (receipt_id, message_id))
 
 
+@dataclass(frozen=True)
+class VerifiedAcceptance:
+    """Trusted verifier result, derived from an authenticated approval receipt.
+
+    This object is not a caller-provided receipt and is never an MCP argument.
+    """
+    accepted_by: str
+    accepted_at: str
+
+
 class AcceptedWriter:
     """Host-only ingress. NEVER expose this object as a bot/model MCP tool.
 
     verify_acceptance must check a current, exact-payload receipt from the existing
-    memory approval service. No default accept-all implementation is supplied.
+    memory approval service and return VerifiedAcceptance from that receipt.
+    Boolean success is insufficient: provenance requires the verified principal
+    and acceptance time. No default accept-all implementation is supplied.
     """
     def __init__(self, store, verify_acceptance):
         if not callable(verify_acceptance):
             raise ContextError("trusted acceptance verifier required")
         self.store, self.verify = store, verify_acceptance
 
+    def _acceptance(self, payload, receipt):
+        accepted = self.verify(digest(payload), receipt)
+        if not isinstance(accepted, VerifiedAcceptance):
+            raise ContextError("missing or stale acceptance")
+        for value in (accepted.accepted_by, accepted.accepted_at):
+            if not isinstance(value, str) or not value.strip() or len(value) > 300:
+                raise ContextError("verified acceptance identity and time required")
+            safe_fact(value)
+        try:
+            dt.datetime.fromisoformat(accepted.accepted_at)
+        except ValueError:
+            raise ContextError("invalid verified acceptance time") from None
+        return accepted
+
     def put(self, fact, expected_revision, receipt):
+        # Snapshot before verification so mutations cannot change approved data.
+        fact = copy.deepcopy(fact)
         validate_fact(fact)
         payload = {"operation": "put", "fact": fact, "expected_revision": expected_revision}
-        if self.verify(digest(payload), receipt) is not True:
-            raise ContextError("missing or stale acceptance")
+        accepted = self._acceptance(payload, receipt)
+        fact["provenance"]["accepted_by"] = accepted.accepted_by
+        fact["provenance"]["accepted_at"] = accepted.accepted_at
         with self.store.transaction() as db:
             row = db.execute("SELECT MAX(revision) FROM facts WHERE id=?", (fact["id"],)).fetchone()
             revision = row[0] or 0
@@ -225,8 +292,7 @@ class AcceptedWriter:
 
     def forget(self, fact_id, expected_revision, receipt):
         payload = {"operation": "forget", "id": fact_id, "expected_revision": expected_revision}
-        if self.verify(digest(payload), receipt) is not True:
-            raise ContextError("missing or stale acceptance")
+        self._acceptance(payload, receipt)
         with self.store.transaction() as db:
             row = db.execute("SELECT * FROM facts WHERE id=? ORDER BY revision DESC LIMIT 1", (fact_id,)).fetchone()
             if not row or row["revision"] != expected_revision:
@@ -237,18 +303,26 @@ class AcceptedWriter:
                        (fact_id, expected_revision + 1, row["provenance"], row["audience"], time.time()))
 
 
-def import_day_one(store, repo_root, manifest):
-    """Reviewed exact-line allowlist. Never scan or copy whole memory documents."""
+def import_day_one(store, repo_root, manifest, *, verify_acceptance=None):
+    """Exact-line allowlist plus independent receipts; never approve our writes.
+
+    Each manifest item needs a receipt reference checked by the host's verifier.
+    The checked-in manifest is a selection of candidates, not an approval.
+    """
+    writer = AcceptedWriter(store, verify_acceptance)
     root = Path(repo_root).resolve()
     imported = []
     for item in manifest:
         relative = Path(item["path"])
-        if relative.parts[0] not in {"memory", "user-memory"} or relative.name != "profile.md":
+        if not relative.parts or relative.parts[0] not in {"memory", "user-memory"} or relative.name != "profile.md":
             raise ContextError("only selected profile facts may be imported")
         path = root / relative
         if not path.resolve().is_relative_to(root) or path.is_symlink():
             raise ContextError("unsafe import path")
-        line = path.read_text().splitlines()[item["line"] - 1]
+        lines = path.read_text().splitlines()
+        if type(item["line"]) is not int or not 1 <= item["line"] <= len(lines):
+            raise ContextError("import line must be within the source document")
+        line = lines[item["line"] - 1]
         if hashlib.sha256(line.encode()).hexdigest() != item["line_sha256"]:
             raise ContextError("source changed; review import again")
         match = re.fullmatch(r"- \((\d{4}-\d{2}-\d{2})\) (.+)", line)
@@ -258,14 +332,11 @@ def import_day_one(store, repo_root, manifest):
                 "audience": sorted(BOTS), "provenance": {"kind": "accepted_memory",
                 "uri": item["path"] + "#L" + str(item["line"]), "sha256": item["line_sha256"],
                 "accepted_by": "grok-bot-profile", "accepted_at": match[1]}}
-        # The reviewed manifest is host-owned input, never a model tool argument.
-        expected = digest({"operation": "put", "fact": fact, "expected_revision": 0})
-        writer = AcceptedWriter(store, lambda payload, receipt: payload == expected and receipt == expected)
         with store.transaction() as db:
             prior = db.execute("SELECT * FROM facts WHERE id=? ORDER BY revision DESC LIMIT 1", (fact["id"],)).fetchone()
         if prior:
             # Corrections/tombstones are authoritative; import never revives them.
             continue
-        writer.put(fact, 0, expected)
+        writer.put(fact, 0, item.get("receipt"))
         imported.append(fact["id"])
     return imported
