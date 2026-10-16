@@ -4,6 +4,8 @@ SQLite supplies transactions. Existing memory remains authoritative at import;
 this service never imports conversations or grants execution permission.
 """
 from contextlib import contextmanager
+import base64
+import binascii
 import copy
 from dataclasses import dataclass
 import datetime as dt
@@ -48,15 +50,24 @@ def safe_fact(body):
     value = unicodedata.normalize("NFKC", body)
     value = "".join(c for c in value if unicodedata.category(c) != "Cf")
     language = re.sub(r"[_-]+", " ", value)
-    if re.search(r"(?i)(-----BEGIN .*PRIVATE KEY|\b(?:sk-|ghp_|github_pat_)[a-z0-9_-]{12,}|"
-                 r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bxox[bpars]-[a-z0-9-]+|"
-                 r"(?:api[_ -]?key|password|secret|bearer|access[_ -]?token)\s*[:=]\s*\S+|"
-                 r"\bbearer\s*[:=]?\s+\S+)", value):
+    credential = re.compile(r"(?i)(-----BEGIN .*PRIVATE KEY|\b(?:sk-|ghp_|github_pat_)[a-z0-9_-]{12,}|"
+                            r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bxox[bpars]-[a-z0-9-]+|"
+                            r"(?:api[_ -]?key|password|secret|bearer|access[_ -]?token)\s*[:=]\s*\S+|"
+                            r"\bbearer\s*[:=]?\s+\S+)")
+    if credential.search(value):
         raise ContextError("credential-like content forbidden")
-    if re.search(r"(?i)\b(?:sms|imessage|texts?|texted|texting|"
-                 r"message[ _-]*(?:body|content|transcript))\b|"
-                 r"\btext[ _-]*(?:body|content|message|transcript)\b", language):
-        raise ContextError("text/SMS content forbidden")
+    for token in re.findall(r"[A-Za-z0-9+/]{24,79}={0,2}", value):
+        try:
+            decoded = base64.b64decode(token, validate=True)
+        except (binascii.Error, ValueError):
+            continue
+        if credential.search(decoded.decode("utf-8", errors="ignore")):
+            raise ContextError("credential-like content forbidden")
+    if not re.search(r"(?i)\bplain\s+text(?:\s+(?:files?|format|document|mode))?\b", language):
+        if re.search(r"(?i)\b(?:sms|imessage|texts\b|texted|texting|"
+                     r"message[ _-]*(?:body|content|transcript))\b|"
+                     r"\btext[ _-]*(?:body|content|message|transcript)\b", language):
+            raise ContextError("text/SMS content forbidden")
     if re.search(r"(?<!\w)(?:\+?\d[\s().-]*){10,15}(?!\w)|\b\d{3}[ .-]\d{4}\b", value):
         raise ContextError("phone numbers forbidden")
     if re.search(r"(?i)data\s*:\s*audio\s*/|\baudio\s*[/=:]|"
@@ -66,9 +77,16 @@ def safe_fact(body):
         raise ContextError("raw audio content forbidden")
     # Acceptance of a fact is never an approval to send. Conservatively deny
     # approval/action language in either order, including across line breaks.
-    if (re.search(r"(?i)\b(?:approv\w*|authoriz\w*|authoris\w*|consent\w*|permission|"
-                  r"go[ -]?ahead|green[ -]?light|okay|ok|yes|confirm\w*|permit\w*|allow\w*)\b", language)
-            and re.search(r"(?i)\b(?:send\w*|sent|deliver\w*|outbound|publish\w*|post\w*|email\w*)\b", language)):
+    send_action = re.compile(r"(?i)\b(?:send\w*|sent|deliver\w*|outbound|publish\w*|post\w*|"
+                             r"email\w*|message\w*|ship\w*)\b")
+    send_approval = re.compile(r"(?i)\b(?:approv\w*|authoriz\w*|authoris\w*|consent\w*|permission|"
+                                 r"go[ -]?ahead|green[ -]?light|okay|ok|yes|confirm\w*|permit\w*|allow\w*|"
+                                 r"lgtm|jeff said)\b")
+    if send_approval.search(language) and send_action.search(language):
+        raise ContextError("send approval assertions forbidden")
+    if re.search(r"(?i)\b(?:send|message)\s+it\s+to\s+the\s+band\b", language):
+        raise ContextError("send approval assertions forbidden")
+    if re.search(r"(?i)\bgo\s+ahead\s+and\s+message\b", language):
         raise ContextError("send approval assertions forbidden")
     return body
 
