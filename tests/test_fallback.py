@@ -18,6 +18,13 @@ class FallbackTests(unittest.TestCase):
             self.assertIn("Could not verify", notice["message"])
             self.assertNotIn("is unavailable", notice["message"])
 
+    def test_malformed_health_still_shows_unknown_fallback(self):
+        for health in (None, [], {"webbob": None}, {"mini": {"observed_at": 100, "status": []}}):
+            notice = fallback_notice(health, now=100)
+            self.assertIn("Could not verify", notice["message"])
+            self.assertIn("Grok Bot", notice["message"])
+            self.assertFalse(notice["auto_forward"])
+
 
 if __name__ == "__main__":
     unittest.main()
