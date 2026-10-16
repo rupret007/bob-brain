@@ -614,6 +614,9 @@ class Chat(TaskDispatch):
             raise RequestError(400, 'Choose one provider for provider-only mode.')
         if not isinstance(text, str):
             raise RequestError(400, "Write a message between 1 and 6,000 characters.")
+        # Consent handlers must see the submitted message exactly, including
+        # padding that ordinary chat input otherwise trims away.
+        raw_text = text
         text = text.strip()
         raw_attachments = attachments if attachments is not None else []
         try:
@@ -769,7 +772,7 @@ class Chat(TaskDispatch):
                 if scopes:
                     return self.intent_reply(conversation, chat_intent.hold_reply(scopes))
             try:
-                reminder = self.reminders.handle(text, identifier, request_id, local_tasks=self.local_tasks,
+                reminder = self.reminders.handle(raw_text, identifier, request_id, local_tasks=self.local_tasks,
                                                  intent_state=intent_state, actor=actor, allow_model=True)
             except ExtractionNeeded:
                 conversation['messages'][-1]['_reminder_extraction'] = dict(text=text, actor=actor)
@@ -789,7 +792,7 @@ class Chat(TaskDispatch):
                 self.conversations[identifier] = conversation
                 self.launch(identifier)
                 return self.public(conversation)
-            local = self.local_tasks.handle(text, identifier, request_id, intent_state)
+            local = self.local_tasks.handle(raw_text, identifier, request_id, intent_state)
             if local is not None:
                 for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
                     conversation.pop(key, None)

@@ -47,7 +47,7 @@ FILE = re.compile(r'^' + PREFIX + r'(read|create|write|delete)\s+(?:a\s+)?(?:loc
 LIST = re.compile(r'^' + PREFIX + r'list\s+files(?:\s+in)?(?:\s+([\s\S]*))?$', re.I)
 TERMINAL = re.compile(r'^' + PREFIX + r'(?:run\s+(?:in\s+)?(?:the\s+)?terminal|terminal)\s*:\s*([\s\S]*)$', re.I)
 SEARCH = re.compile(r'^' + PREFIX + r'(?:search\s+(?:the\s+)?web(?:\s+for)?|look\s+up)\b\s*([\s\S]*)$', re.I)
-CONTROL = re.compile(r'^(yes|cancel)\s+(wblocal-[0-9a-f]{32})$', re.I)
+CONTROL = re.compile(r'(yes|cancel) (wblocal-[0-9a-f]{32})', re.ASCII)
 SECRET_PATH = re.compile(
     r'(?:^|[._ -])(?:credentials?|secrets?|passwords?|tokens?|private[ _-]?keys?|'
     r'id_(?:rsa|dsa|ecdsa|ed25519)|env)(?:$|[._ -])|\.(?:pem|key|p12|pfx|keystore)$', re.I)
@@ -498,14 +498,16 @@ class LocalTasks:
                     (match := FILE.fullmatch(value)) and match[1].lower() == 'create')):
                 return 'No file changed. Send a new file request when you want it performed.'
             if self.isolated_files and not SEARCH.fullmatch(text.strip()) and (
-                    CONTROL.fullmatch(text.strip()) or FILE.fullmatch(text.strip()) or
+                    CONTROL.fullmatch(text) or FILE.fullmatch(text.strip()) or
                     LIST.fullmatch(text.strip()) or TERMINAL.fullmatch(text.strip())):
                 return self.file_worker('handle', [text, cid, request_id, intent_state], dict(routine=routine))
-            control = CONTROL.fullmatch(text.strip())
+            # Consent is the complete issued ASCII message, without trimming
+            # padding, substituting whitespace, or folding case.
+            control = CONTROL.fullmatch(text)
             if control:
                 if routine:
                     raise LocalTaskError('Routine confirmations are not permitted.')
-                return self.control(control[1].lower(), control[2].lower(), cid, request_id, intent_state)
+                return self.control(control[1], control[2], cid, request_id, intent_state)
             if re.match(r'^(?:yes|cancel)\s+wblocal-', text.strip(), re.I):
                 return 'Use the exact confirmation message from the local draft. No action ran.'
             if text.strip().lower() == 'local tasks help':

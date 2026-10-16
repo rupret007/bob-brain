@@ -777,8 +777,8 @@ if ($("login-form")) {
   });
   $("composer").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const message = $("message").value.trim();
-    if (!chatReady || (!message && !pendingAttachments.length) || busy || sending || uploading) return;
+    const message = $("message").value;
+    if (!chatReady || (!message.trim() && !pendingAttachments.length) || busy || sending || uploading) return;
     const provider = $("provider-choice").value;
     const attachIds = pendingAttachments.map((row) => row.media_id);
     if (!draftRequest || draftRequest.message !== message || draftRequest.conversation_id !== current || draftRequest.provider !== provider
@@ -789,7 +789,7 @@ if ($("login-form")) {
     const submitted = draftRequest;
     try {
       const conversation = await api("/api/messages", submitted);
-      if (submitted.conversation_id === current && submitted.message === $("message").value.trim()) {
+      if (submitted.conversation_id === current && submitted.message === $("message").value) {
         $("message").value = "";
         $("message").style.height = "auto";
       }

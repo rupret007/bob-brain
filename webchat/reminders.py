@@ -174,6 +174,8 @@ CLOCK = r'\d{1,2}(?::\d{2}\s*(?:am|pm)?|\s*(?:am|pm))'
 WHEN = (r'(?:(?:in\s+)?' + DURATION + r'|(?:on\s+)?(?:\d{4}-\d{2}-\d{2}|today|tomorrow)'
         r'(?:\s+at)?\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?|'
         r'(?:at\s+)?\d{4}-\d{2}-\d{2}t\S+|(?:at\s+)?' + CLOCK + r')')
+NATURAL_DURATION = r'\d+\s+(?:seconds?|minutes?|mins?|hours?|hrs?|days?)'
+NATURAL_WHEN = WHEN.replace(DURATION, NATURAL_DURATION)
 TIMEZONE = re.compile(r'\b(?:UTC|GMT|[ECMP][SD]T|'
                       r'(?:America|Europe|Asia|Africa|Australia|Pacific|Atlantic|Indian|Etc)/[\w/+-]+|'
                       r'(?:eastern|central|mountain|pacific)\s+(?:(?:standard|daylight)\s+)?time)\b', re.I)
@@ -210,12 +212,25 @@ def natural_request(text, now):
     if not request:
         return text, None, ''
     clause = request['clause']
-    clause = re.sub(r'\b(\d+)\s+(mins?|hrs?)\b',
-                    lambda m: m[1] + (' minutes' if m[2].lower().startswith('min') else ' hours'), clause, flags=re.I)
     assumption = ''
-    clause, count = re.subn(r'\b((?:today|tomorrow) at \d{1,2})(?=\s+to\b|$)', r'\1am', clause, flags=re.I)
-    if count:
-        assumption = 'Assuming AM for the clock time. '
+    # Resolve the same schedule positions as parse() before normalizing units
+    # or inferring AM. Body text, including its own numeric abbreviations,
+    # must remain verbatim in both the draft and the saved reminder.
+    schedule_clause = clause.rstrip('.?!')
+    schedule = (
+        re.fullmatch(r'every (?P<when>' + NATURAL_DURATION + r') to [\s\S]+', schedule_clause, re.I) or
+        re.fullmatch(r'to [\s\S]+?\s+(?P<when>' + NATURAL_WHEN + r')', schedule_clause, re.I) or
+        re.fullmatch(r'(?:for\s+)?(?P<when>' + NATURAL_WHEN + r')(?:\s+(?:to|for)\s+[\s\S]+)?',
+                     schedule_clause, re.I))
+    if schedule:
+        start, end = schedule.span('when')
+        when = re.sub(r'\b(\d+)\s+(mins?|hrs?)\b',
+                      lambda m: m[1] + (' minutes' if m[2].lower().startswith('min') else ' hours'),
+                      schedule['when'], flags=re.I)
+        when, count = re.subn(r'\b((?:today|tomorrow) at \d{1,2})$', r'\1am', when, flags=re.I)
+        if count:
+            assumption = 'Assuming AM for the clock time. '
+        clause = clause[:start] + when + clause[end:]
     weekly = re.fullmatch(r'(every |(?:on )?)(' + WEEKDAY + r')(?:\s+at)?\s+(night|\d{1,2}(?::\d{2})?\s*(?:am|pm)?) to (.+)', clause, re.I)
     recurrence = None
     if weekly:
@@ -359,7 +374,7 @@ def reminder_body(value):
              r'aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)')
     # Recognize quantity phrases conservatively without guessing their value
     # (e.g. "two", "twenty-one", "a couple of"). Ask for one explicit schedule.
-    relative = r'in\s+(?:[\w-]+\s+)+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)'
+    relative = r'in\s+(?:[\w-]+\s+)+(?:seconds?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)'
     if re.search(r'\b(?:today|tomorrow|tonight|yesterday|noon|midnight|'
                  r'monday|tuesday|wednesday|thursday|friday|saturday|sunday|'
                  r'next\s+(?:week|month|year)|every\s+\w+|\d{4}-\d{2}-\d{2}|'
@@ -745,10 +760,12 @@ class Reminders:
     def _handle(self, text, cid, request_id, *, local_tasks=None, intent_state=None, actor='owner', allow_model=False):
         if leading_approval_request(text, reminder_request):
             return 'Nothing was saved. Send a new reminder request when you want it scheduled.'
-        control = re.fullmatch(r'(yes|cancel) (wbrem-[0-9a-f]{32})', text.strip())
+        control = re.fullmatch(r'(yes|cancel) (wbrem-[0-9a-f]{32})', text, re.ASCII)
         if control:
             return self.control(control[1], control[2], cid, request_id, actor, intent_state or chat_intent.new_state(), local_tasks)
-        if re.match(r'^(?:yes|cancel)\s+wbrem-', text.strip(), re.I):
+        # Broad recognition only rejects malformed controls, keeping them out
+        # of downstream routing. Only the raw ASCII fullmatch can authorize.
+        if re.match(r'^\s*(?:yes|cancel)\s+wbrem-', text, re.I):
             return 'Use the exact confirmation message from the reminder draft. Nothing was saved.'
         clock = re.fullmatch(r'(?:at )?(' + CLOCK + r')[.! ]*', text.strip(), re.I)
         if clock:
