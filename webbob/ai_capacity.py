@@ -12,15 +12,18 @@ from typing import Callable, Optional
 from webbob.shared_context import ContextError, safe_fact
 
 SCHEMA = "ai-capacity/v1"
-_DEFAULT_SYNC = Path.home() / "Documents" / "bob-overnight-inject" / "sync" / "ai-capacity.json"
-_DEFAULT_SCRIPT = Path.home() / "Documents" / "bob-overnight-inject" / "bin" / "ai-capacity.sh"
-DEFAULT_JSON = Path(os.environ.get("AI_CAPACITY_JSON", str(_DEFAULT_SYNC)))
-DEFAULT_SCRIPT = Path(os.environ.get("AI_CAPACITY_SCRIPT", str(_DEFAULT_SCRIPT)))
 MAX_AGE_SECONDS = 15 * 60
 REFRESH_TIMEOUT = 180
 REFRESH_COOLDOWN_SECONDS = 10 * 60
 
 Runner = Callable[[list[str], float], subprocess.CompletedProcess]
+
+
+def _default_path(env_name: str, relative: str) -> Path:
+    configured = os.environ.get(env_name)
+    if configured:
+        return Path(configured)
+    return Path.home() / "Documents" / "bob-overnight-inject" / relative
 
 
 def _default_runner(argv: list[str], timeout: float) -> subprocess.CompletedProcess:
@@ -88,7 +91,7 @@ def validate_document(data: object) -> dict:
 def _read_file(path: Path) -> Optional[dict]:
     try:
         raw = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     try:
         return validate_document(raw)
@@ -144,8 +147,8 @@ class AiCapacity:
         max_age_seconds: float = MAX_AGE_SECONDS,
         refresh_cooldown_seconds: float = REFRESH_COOLDOWN_SECONDS,
     ):
-        self.path = Path(path or DEFAULT_JSON)
-        self.script = Path(script or DEFAULT_SCRIPT)
+        self.path = Path(path) if path is not None else _default_path("AI_CAPACITY_JSON", "sync/ai-capacity.json")
+        self.script = Path(script) if script is not None else _default_path("AI_CAPACITY_SCRIPT", "bin/ai-capacity.sh")
         self.clock = clock or time.time
         self.runner = runner or _default_runner
         self.max_age_seconds = max_age_seconds
@@ -163,7 +166,7 @@ class AiCapacity:
             return None
         try:
             proc = self.runner([str(self.script), "--json"], REFRESH_TIMEOUT)
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, UnicodeDecodeError, subprocess.TimeoutExpired):
             return None
         if proc.returncode != 0:
             return None

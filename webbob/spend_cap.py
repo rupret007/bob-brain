@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 import sqlite3
 from typing import Optional
+import unicodedata
 from zoneinfo import ZoneInfo
 
 LOW_QUOTA_REMAINING_PCT = 5
@@ -16,44 +17,45 @@ MEASURED_QUOTA_PROVIDERS = frozenset({"codex", "minimax"})
 # Hardcoded — not configurable via JSON, env, or MCP.
 UNMEASURED_QUOTA_PROVIDERS = frozenset({"claude", "gemini", "xai", "cursor"})
 
-# Model ids map to provider labels in ai-capacity rows (substring match, case-insensitive).
-MODEL_PROVIDER_HINTS = {
-    "codex": ("codex",),
-    "claude": ("claude",),
-    "minimax": ("minimax",),
-    "gemini": ("gemini",),
-    "grok": ("grok", "xai"),
-    "xai": ("grok", "xai"),
-    "cursor": ("cursor",),
-    "openai": ("openai",),
+# Only these non-AI services bypass the quota policy. Unknown names fail closed.
+NON_AI_PROVIDERS = frozenset({"brave", "brave_search"})
+
+# Exact legacy model IDs; arbitrary suffixes or combinations are never aliases.
+MODEL_PROVIDER_ALIASES = {
+    "codex-main": "codex",
+    "minimax-main": "minimax",
+    "claude-main": "claude",
+    "claude-a": "claude",
+    "claude-b": "claude",
+    "grok": "xai",
+}
+
+# Exact display labels emitted by the capacity script, separate from model IDs.
+CAPACITY_PROVIDER_ALIASES = {
+    "codex (chatgpt)": "codex",
+    "codex (chatgpt, weekly)": "codex",
+    "minimax (general)": "minimax",
 }
 
 
-def _model_hint(model: str) -> Optional[str]:
-    lower = model.lower()
-    for hint, needles in MODEL_PROVIDER_HINTS.items():
-        if hint in lower or any(n in lower for n in needles):
-            return hint
-    return None
+def _normalize_provider(name: str) -> str:
+    return unicodedata.normalize("NFKC", name).casefold().strip()
 
 
-def _quota_policy_hint(model: str) -> Optional[str]:
-    hint = _model_hint(model)
-    if hint == "grok":
-        return "xai"
-    return hint
+def _quota_policy_hint(model: str) -> str:
+    name = _normalize_provider(model)
+    return MODEL_PROVIDER_ALIASES.get(name, name)
 
 
 def match_capacity_row(model: str, rows: list) -> Optional[dict]:
-    hint = _model_hint(model)
+    hint = _quota_policy_hint(model)
     if not hint or not isinstance(rows, list):
         return None
-    needles = MODEL_PROVIDER_HINTS.get(hint, ())
     for row in rows:
         if not isinstance(row, dict):
             continue
-        provider = str(row.get("provider") or "").lower()
-        if any(n in provider for n in needles):
+        provider = _normalize_provider(str(row.get("provider") or ""))
+        if CAPACITY_PROVIDER_ALIASES.get(provider, provider) == hint:
             return row
     return None
 
@@ -69,24 +71,25 @@ def _remaining_trusted(remaining) -> bool:
 def provider_quota_check(model: str, capacity_doc: Optional[dict]) -> dict:
     """Fail closed for measured providers when quota cannot be trusted; exempt unmeasured."""
     hint = _quota_policy_hint(model)
-    if hint is None:
-        return {
-            "blocks_reserve": False,
-            "low_quota": False,
-            "unknown_quota": False,
-            "flagged": False,
-            "reason": "quota_check_not_applicable",
-        }
-    if hint in UNMEASURED_QUOTA_PROVIDERS:
-        return {
-            "blocks_reserve": False,
-            "low_quota": False,
-            "unknown_quota": False,
-            "flagged": False,
-            "reason": "quota_check_exempt",
-            "policy_hint": hint,
-        }
+    # Measured policy wins even if a name is accidentally added to an exemption.
     if hint not in MEASURED_QUOTA_PROVIDERS:
+        if hint in NON_AI_PROVIDERS:
+            return {
+                "blocks_reserve": False,
+                "low_quota": False,
+                "unknown_quota": False,
+                "flagged": False,
+                "reason": "quota_check_not_applicable",
+            }
+        if hint in UNMEASURED_QUOTA_PROVIDERS:
+            return {
+                "blocks_reserve": False,
+                "low_quota": False,
+                "unknown_quota": False,
+                "flagged": False,
+                "reason": "quota_check_exempt",
+                "policy_hint": hint,
+            }
         return {
             "blocks_reserve": True,
             "low_quota": False,

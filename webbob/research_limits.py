@@ -7,6 +7,7 @@ import sqlite3
 from zoneinfo import ZoneInfo
 
 from webbob.spend_cap import SpendCap
+from webbob.ai_capacity import AiCapacity
 
 DEFAULT_BRAVE_DAILY_QUERY_CAP = 50
 BRAVE_QUERY_COST_MICRODOLLARS = 5000  # Brave Search API public list price ~$5 / 1k queries.
@@ -86,6 +87,7 @@ def research_spend_and_daily_caps():
     billing = _billing()
     daily_limit, cost, monthly = billing
     _RESEARCH_CAP_STORE.mkdir(parents=True, exist_ok=True)
-    spend = SpendCap(_RESEARCH_CAP_STORE / "spend.sqlite", {BRAVE_SPEND_MODEL: monthly})
+    spend = SpendCap(_RESEARCH_CAP_STORE / "spend.sqlite", {BRAVE_SPEND_MODEL: monthly},
+                     capacity_snapshot=AiCapacity().snapshot)
     daily = DailyQueryCap(_RESEARCH_CAP_STORE / "daily.sqlite", limit=daily_limit)
     return spend, daily, cost
