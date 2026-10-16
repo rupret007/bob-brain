@@ -3,7 +3,7 @@ import re
 
 CAPABILITIES = ("chat_memory", "shared_memory", "routines", "background_jobs", "github_prs",
                 "workspace", "web_research", "browser_desktop", "files_images", "voice_memos",
-                "widgets_decisions", "message_drafts", "teammate_messages")
+                "widgets_decisions", "message_drafts", "teammate_messages", "ai_capacity")
 RECOVERY = ("restart_recovery", "stale_approval_rejection", "concurrent_ownership", "receiver_acknowledgments")
 
 

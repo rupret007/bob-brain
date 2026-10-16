@@ -1,7 +1,7 @@
 # Feature parity is a go-live hard gate
 
 `ParityGate.require` must succeed in the trusted release executor immediately
-before activation. It requires current verified receipts for all thirteen report
+before activation. It requires current verified receipts for all fourteen report
 capabilities plus restart recovery, stale-approval rejection, simultaneous
 ownership and actual receiver acknowledgments. Every receipt is bound to the
 exact build SHA. Missing, NOT RUN, partial, waived, stale and forged evidence all

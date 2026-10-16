@@ -15,7 +15,8 @@
     "voice_memos": "Phone memo metadata survives restart; audio and transcripts stay on-device only",
     "widgets_decisions": "Exact action cards reject stale payload approval",
     "message_drafts": "Separate exact approval and honest delivery/uncertain receipt",
-    "teammate_messages": "Durable addressed inbox and actual independent receiver acknowledgment"
+    "teammate_messages": "Durable addressed inbox and actual independent receiver acknowledgment",
+    "ai_capacity": "AI capacity view (Codex/Claude/MiniMax/Gemini usage + low-quota guard)"
   },
   "recovery": ["restart_recovery", "stale_approval_rejection", "concurrent_ownership", "receiver_acknowledgments"],
   "required_approvals": ["independent Karen PASS for exact SHA", "Jeff go-live and daily-use acceptance"],

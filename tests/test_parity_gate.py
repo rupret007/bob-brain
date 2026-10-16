@@ -10,9 +10,9 @@ class ParityTests(unittest.TestCase):
                                lambda sha, receipt: sha == self.sha and receipt == "jeff-accept")
         self.evidence = {name: {"sha": self.sha, "result": "PASS", "receipt": "observed:" + name} for name in (*CAPABILITIES, *RECOVERY)}
 
-    def test_all_thirteen_capabilities_and_four_recovery_checks_mandatory(self):
-        self.assertEqual(len(CAPABILITIES), 13)
-        self.assertEqual(self.gate.require(self.sha, self.evidence, "karen-pass", "jeff-accept")["checks"], 17)
+    def test_all_fourteen_capabilities_and_four_recovery_checks_mandatory(self):
+        self.assertEqual(len(CAPABILITIES), 14)
+        self.assertEqual(self.gate.require(self.sha, self.evidence, "karen-pass", "jeff-accept")["checks"], 18)
         for name in self.evidence:
             incomplete = dict(self.evidence)
             incomplete.pop(name)
