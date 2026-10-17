@@ -19,7 +19,8 @@ class MorningCalendarRoutine:
         self.path = Path(path)
         self.clock = clock or (lambda: datetime.now(CHICAGO))
         self.morning = morning
-        if not self.path.parent.is_dir() or self.path.is_symlink():
+        self._reject_symlink_path()
+        if not self.path.parent.is_dir():
             raise MorningCalendarError("morning calendar routine unavailable")
         with self.db() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS morning_calendar_routine (
@@ -29,8 +30,13 @@ class MorningCalendarRoutine:
                 db.execute("INSERT INTO morning_calendar_routine VALUES ('active', NULL)")
         self.path.chmod(0o600)
 
+    def _reject_symlink_path(self):
+        if self.path.is_symlink() or self.path.parent.is_symlink():
+            raise MorningCalendarError("morning calendar routine unavailable")
+
     @contextmanager
     def db(self):
+        self._reject_symlink_path()
         conn = sqlite3.connect(self.path, timeout=5)
         conn.row_factory = sqlite3.Row
         try:

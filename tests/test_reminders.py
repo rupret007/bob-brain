@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from pathlib import Path
+import os
 import tempfile
 import unittest
 from zoneinfo import ZoneInfo
@@ -84,6 +85,41 @@ class ReminderStoreTests(unittest.TestCase):
         self.now = due
         self.store = ReminderStore(self.path, clock=self.clock)
         self.assertEqual(self.store.collect_due(), [])
+
+    def test_symlinked_store_path_rejected_for_read_and_write(self):
+        real = Path(self.tmp.name) / "real-reminders.sqlite"
+        link = Path(self.tmp.name) / "reminders-link.sqlite"
+        ReminderStore(real, clock=self.clock).create(
+            "seed", datetime(2026, 3, 7, 18, 0, tzinfo=CHICAGO))
+        os.symlink(real, link)
+        with self.assertRaises(ReminderError):
+            ReminderStore(link, clock=self.clock)
+        self.store.create("local", datetime(2026, 3, 7, 19, 0, tzinfo=CHICAGO))
+        backing = Path(self.tmp.name) / "backing.sqlite"
+        self.path.rename(backing)
+        os.symlink(backing, self.path)
+        with self.assertRaises(ReminderError):
+            self.store.list()
+
+    def test_store_file_mode_is_private(self):
+        self.store.create("Private", datetime(2026, 3, 7, 18, 0, tzinfo=CHICAGO))
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
+
+    def test_naive_clock_rejected(self):
+        naive_clock = lambda: datetime(2026, 3, 7, 12, 0)
+        store = ReminderStore(self.path, clock=naive_clock)
+        due = datetime(2026, 3, 7, 12, 0, tzinfo=CHICAGO)
+        store.create("Needs tz clock", due)
+        with self.assertRaisesRegex(ReminderError, "timezone-aware clock"):
+            store.collect_due()
+
+    def test_naive_due_interpreted_as_chicago_wall_clock(self):
+        naive_due = datetime(2026, 3, 7, 18, 0)
+        created = self.store.create("Wall clock", naive_due)
+        self.assertEqual(created["due_chicago"], "2026-03-07T18:00:00-06:00")
+        explicit = self.store.create(
+            "Explicit", datetime(2026, 3, 7, 18, 0, tzinfo=CHICAGO))
+        self.assertEqual(explicit["due_chicago"], created["due_chicago"])
 
 
 if __name__ == "__main__":

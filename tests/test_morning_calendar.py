@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from pathlib import Path
+import os
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -113,6 +114,12 @@ class MorningCalendarRoutineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result["calendar"])
         self.session.call_tool.assert_not_awaited()
 
+    async def test_naive_clock_rejected(self):
+        naive_clock = lambda: datetime(2026, 3, 7, 7, 0)
+        routine = MorningCalendarRoutine(self.path, clock=naive_clock)
+        with self.assertRaisesRegex(MorningCalendarError, "timezone-aware clock"):
+            await routine.run_due(self.workspace)
+
 
 class MorningCalendarRoutineStoreTests(unittest.TestCase):
     def setUp(self):
@@ -124,6 +131,24 @@ class MorningCalendarRoutineStoreTests(unittest.TestCase):
         bad = Path(self.tmp.name) / "missing" / "morning.sqlite"
         with self.assertRaises(MorningCalendarError):
             MorningCalendarRoutine(bad)
+
+    def test_symlinked_store_path_rejected_for_read_and_write(self):
+        real = Path(self.tmp.name) / "real-morning.sqlite"
+        link = Path(self.tmp.name) / "morning-link.sqlite"
+        MorningCalendarRoutine(real, clock=lambda: datetime(2026, 3, 7, 7, 0, tzinfo=CHICAGO))
+        os.symlink(real, link)
+        with self.assertRaises(MorningCalendarError):
+            MorningCalendarRoutine(link, clock=lambda: datetime(2026, 3, 7, 7, 0, tzinfo=CHICAGO))
+        routine = MorningCalendarRoutine(self.path, clock=lambda: datetime(2026, 3, 7, 7, 0, tzinfo=CHICAGO))
+        backing = Path(self.tmp.name) / "backing-morning.sqlite"
+        self.path.rename(backing)
+        os.symlink(backing, self.path)
+        with self.assertRaises(MorningCalendarError):
+            routine.cancel()
+
+    def test_store_file_mode_is_private(self):
+        MorningCalendarRoutine(self.path, clock=lambda: datetime(2026, 3, 7, 7, 0, tzinfo=CHICAGO))
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
 
 
 if __name__ == "__main__":
