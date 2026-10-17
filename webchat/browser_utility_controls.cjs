@@ -30,7 +30,10 @@ async function until(page, predicate) {
         }}});
         Object.defineProperty(window, 'speechSynthesis', {configurable:true, value:{
           getVoices:() => [{name:'English fixture',lang:'en-US'}],
-          cancel:() => utility.cancelled++, speak:utter => utility.spoken.push(utter),
+          cancel:() => utility.cancelled++, speak:utter => {
+            utility.spoken.push(utter);
+            utter.onstart?.();
+          },
         }});
         window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
         window.SpeechRecognition = class {
@@ -90,21 +93,32 @@ async function until(page, predicate) {
       await page.locator('#notice').filter({hasText:'Could not start voice input'}).waitFor();
       await page.evaluate(() => { utility.failStart = false; });
       await page.locator('#mic').click();
+      await page.setViewportSize({width:390,height:844});
+      await page.locator('.message.assistant .body').click({button:'right'});
+      await page.locator('.msg-menu [data-act="speak"]').click();
+      await until(page, () => utility.spoken.length === 1);
+      await until(page, async () => !(await page.locator('#reply-playback').getAttribute('hidden')));
+      assert.equal(await page.locator('#reply-playback-state').textContent(), 'Speaking');
+      assert.match(await page.locator('#reply-playback-cap').textContent(), /4,000/);
+      assert.equal(await page.locator('#reply-playback-stop').isVisible(), true);
+      await page.locator('#reply-playback-stop').click();
+      await until(page, async () => await page.locator('#reply-playback').getAttribute('hidden') !== null);
+      assert.ok(await page.evaluate(() => utility.cancelled >= 1));
       await page.setViewportSize({width:900,height:844}); // Composer read-aloud is a desktop control.
       await page.locator('#speak').click();
-      await until(page, () => utility.spoken.length === 1);
+      await until(page, () => utility.spoken.length === 2);
       assert.equal(await page.locator('#mic').getAttribute('aria-pressed'), 'false');
       assert.equal(await page.locator('#speak').getAttribute('aria-pressed'), 'true');
-      assert.equal(await page.evaluate(() => utility.spoken[0].text), 'Useful reply.');
+      assert.equal(await page.evaluate(() => utility.spoken[1].text), 'Useful reply.');
       await page.locator('#speak').click();
       assert.equal(await page.locator('#speak').getAttribute('aria-pressed'), 'false');
       await page.locator('#speak').click();
-      await until(page, () => utility.spoken.length === 2);
+      await until(page, () => utility.spoken.length === 3);
       await page.evaluate(() => utility.spoken.at(-1).onend());
       assert.equal(await page.locator('#speak').getAttribute('aria-pressed'), 'false');
       await page.locator('.message.assistant .body').click({button:'right'});
       await page.locator('.msg-menu [data-act="speak"]').click();
-      await until(page, () => utility.spoken.length === 3);
+      await until(page, () => utility.spoken.length === 4);
       await page.evaluate(() => { delete window.SpeechRecognition; delete window.webkitSpeechRecognition; });
       await page.locator('#mic').click();
       await page.locator('#notice').filter({hasText:'Keyboard dictation always works'}).waitFor();

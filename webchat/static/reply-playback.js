@@ -81,9 +81,13 @@ const ReplyPlayback = (() => {
       return utterToken !== token;
     }
 
-    function teardownPlayback() {
-      clearNoStartTimer();
+    function cancelActiveSpeech() {
       if (speech() && (state === "preparing" || state === "speaking")) speech().cancel();
+    }
+
+    function invalidatePlayback() {
+      clearNoStartTimer();
+      token += 1;
     }
 
     function resetToIdle() {
@@ -97,8 +101,8 @@ const ReplyPlayback = (() => {
 
     function stop() {
       if (state === "idle") return;
-      teardownPlayback();
-      token += 1;
+      invalidatePlayback();
+      cancelActiveSpeech();
       const meta = active;
       active = null;
       lastSource = null;
@@ -110,17 +114,19 @@ const ReplyPlayback = (() => {
 
     function onConversationChange() {
       if (state === "idle") return;
-      teardownPlayback();
-      token += 1;
+      invalidatePlayback();
+      cancelActiveSpeech();
       active = null;
+      lastSource = null;
       state = "idle";
       emit({ reason: "conversation_change" });
     }
 
     function onLogout() {
-      teardownPlayback();
-      token += 1;
+      invalidatePlayback();
+      cancelActiveSpeech();
       active = null;
+      lastSource = null;
       state = "idle";
       emit({ reason: "logout" });
     }
@@ -132,7 +138,8 @@ const ReplyPlayback = (() => {
         source = "message",
         enforceQuietHours = false,
       } = request || {};
-      if (!deps.hasSpeech?.()) {
+      const utteranceCtor = UtteranceCtor();
+      if (!deps.hasSpeech?.() || !utteranceCtor) {
         state = "failed";
         active = {
           messageId,
@@ -154,8 +161,8 @@ const ReplyPlayback = (() => {
       const built = buildUtteranceText(rawText, deps.speechText || ((value) => value));
       if (built.empty) return { ok: false, reason: "empty" };
       lastSource = source;
-      teardownPlayback();
-      token += 1;
+      invalidatePlayback();
+      cancelActiveSpeech();
       const utterToken = token;
       active = {
         messageId,
@@ -210,6 +217,7 @@ const ReplyPlayback = (() => {
       };
       noStartTimer = deps.setTimeout?.(() => {
         if (isStale(utterToken) || state !== "preparing") return;
+        token += 1;
         speech()?.cancel?.();
         const meta = active;
         active = {
@@ -260,31 +268,44 @@ const ReplyPlayback = (() => {
     const stopBtn = getEl("reply-playback-stop");
     if (!panel || !stateEl || !messageEl || !capEl || !stopBtn) return;
     stopBtn.addEventListener("click", () => controller.stop());
+    let postFailureIdleView = null;
     controller.onView = (view) => {
       const busy = view.state === "preparing" || view.state === "speaking";
-      panel.hidden = !busy && view.state !== "failed";
+      const speakBtn = getEl("speak");
+      if (speakBtn) {
+        const latestBusy = view.source === "latest" && busy;
+        speakBtn.classList.toggle("mic-active", latestBusy);
+        speakBtn.setAttribute("aria-pressed", String(latestBusy));
+      }
       if (view.state === "idle") {
-        panel.hidden = true;
         stopBtn.hidden = true;
+        if (postFailureIdleView) {
+          const failedView = postFailureIdleView;
+          postFailureIdleView = null;
+          panel.hidden = false;
+          panel.dataset.state = "failed";
+          stateEl.textContent = stateLabel("failed");
+          const idPart = failedView.messageId ? `Message ${failedView.messageId}` : "Selected message";
+          const previewPart = failedView.preview ? ` — ${failedView.preview}` : "";
+          messageEl.textContent = `${idPart}${previewPart}`;
+          capEl.textContent = failedView.capNotice || "";
+          if (failedView.fallback) onFallbackNotice?.(failedView.fallback);
+          return;
+        }
+        panel.hidden = true;
         return;
       }
+      if (view.state === "failed") postFailureIdleView = view;
+      else postFailureIdleView = null;
+      panel.hidden = !busy && view.state !== "failed";
       panel.dataset.state = view.state;
       stateEl.textContent = stateLabel(view.state);
       const idPart = view.messageId ? `Message ${view.messageId}` : "Selected message";
       const previewPart = view.preview ? ` — ${view.preview}` : "";
       messageEl.textContent = busy || view.state === "failed" ? `${idPart}${previewPart}` : "";
       capEl.textContent = view.capNotice || (busy ? capNotice(false) : "");
-      stopBtn.hidden = view.state !== "speaking";
+      stopBtn.hidden = !busy;
       if (view.fallback) onFallbackNotice?.(view.fallback);
-      const speakBtn = getEl("speak");
-      if (speakBtn && view.source === "latest") {
-        const speaking = view.state === "speaking" || view.state === "preparing";
-        speakBtn.classList.toggle("mic-active", speaking);
-        speakBtn.setAttribute("aria-pressed", String(speaking));
-      } else if (speakBtn && (view.state === "idle" || view.state === "stopped" || view.state === "failed")) {
-        speakBtn.classList.remove("mic-active");
-        speakBtn.setAttribute("aria-pressed", "false");
-      }
     };
   }
 

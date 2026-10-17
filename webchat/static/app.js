@@ -1060,7 +1060,7 @@ if ($("login-form")) {
   const replyPlayback = window.ReplyPlayback?.createController({
     speechSynthesis: typeof speechSynthesis !== "undefined" ? speechSynthesis : null,
     SpeechSynthesisUtterance: typeof SpeechSynthesisUtterance !== "undefined" ? SpeechSynthesisUtterance : null,
-    hasSpeech: () => "speechSynthesis" in window,
+    hasSpeech: () => "speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined",
     speechText,
     ensureSpeechVoices,
     isQuietHours: isQuietHoursCt,
@@ -1152,6 +1152,7 @@ if ($("login-form")) {
         enforceQuietHours: true,
       });
       if (result.reason === "quiet_hours" && result.message) $("notice").textContent = result.message;
+      else if (result.reason === "empty") $("notice").textContent = "Nothing to read in this message.";
     } catch (error) { $("notice").textContent = error.message; }
   });
   $("stop").addEventListener("click", async () => {

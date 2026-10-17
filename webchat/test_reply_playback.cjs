@@ -166,3 +166,87 @@ test("no network or paid side effects in module", () => {
   assert.doesNotMatch(source, /\bfetch\s*\(/);
   assert.doesNotMatch(source, /api_call|openai|gemini/i);
 });
+
+test("stop ignores synchronous cancel error events", async () => {
+  const { controller, speech, views } = makeController();
+  await controller.start({ rawText: "cancel sync", messageId: "m-sync" });
+  speech.spoken[0]._fire("start");
+  const synthesis = speech.synthesis;
+  const utter = speech.spoken[0];
+  synthesis.cancel = function syncCancel() {
+    speech.cancelled.push(1);
+    utter.onerror?.({ error: "canceled" });
+  };
+  controller.stop();
+  assert.equal(views.some((v) => v.state === "failed"), false);
+  assert.equal(controller.getSnapshot().state, "idle");
+});
+
+test("missing SpeechSynthesisUtterance is unsupported", async () => {
+  const { controller, speech } = makeController({
+    hasSpeech: () => true,
+    SpeechSynthesisUtterance: null,
+  });
+  const result = await controller.start({ rawText: "Hi", messageId: "m0" });
+  assert.equal(result.reason, "unsupported");
+  assert.equal(speech.spoken.length, 0);
+});
+
+function makeMountUiDom() {
+  const nodes = new Map();
+  for (const id of ["reply-playback", "reply-playback-state", "reply-playback-message", "reply-playback-cap", "reply-playback-stop", "speak"]) {
+    const el = {
+      id,
+      hidden: id === "reply-playback",
+      classList: { classes: new Set(), toggle(name, on) { if (on) this.classes.add(name); else this.classes.delete(name); }, remove(name) { this.classes.delete(name); } },
+      dataset: {},
+      textContent: "",
+      attributes: new Map(),
+      setAttribute(name, value) { this.attributes.set(name, value); },
+      getAttribute(name) { return this.attributes.get(name); },
+      addEventListener() {},
+    };
+    nodes.set(id, el);
+  }
+  return {
+    getEl: (id) => nodes.get(id),
+    panel: () => nodes.get("reply-playback"),
+    speak: () => nodes.get("speak"),
+    stop: () => nodes.get("reply-playback-stop"),
+  };
+}
+
+test("mountUi renders preparing, speaking, failed, stop button, and resets #speak on conversation change, logout, and source switch", async () => {
+  const ReplyPlayback = loadReplyPlayback();
+  const { controller, speech } = makeController();
+  const dom = makeMountUiDom();
+  const fallbacks = [];
+  ReplyPlayback.mountUi({ getEl: dom.getEl, controller, onFallbackNotice: (msg) => fallbacks.push(msg) });
+  await controller.start({ rawText: "Hello", messageId: "m1", source: "latest" });
+  assert.equal(dom.panel().hidden, false);
+  assert.equal(dom.panel().dataset.state, "preparing");
+  assert.equal(dom.stop().hidden, false, "stop visible while preparing");
+  assert.equal(dom.speak().getAttribute("aria-pressed"), "true");
+  speech.spoken[0]._fire("start");
+  assert.equal(dom.panel().dataset.state, "speaking");
+  assert.equal(dom.stop().hidden, false);
+  await controller.start({ rawText: "Other", messageId: "m2", source: "message" });
+  assert.equal(dom.speak().getAttribute("aria-pressed"), "false", "speak clears when message playback supersedes latest");
+  speech.spoken.at(-1)._fire("start");
+  assert.equal(dom.speak().getAttribute("aria-pressed"), "false");
+  speech.spoken.at(-1)._fire("end");
+  await controller.start({ rawText: "Latest again", messageId: "m3", source: "latest" });
+  speech.spoken.at(-1)._fire("start");
+  controller.onConversationChange();
+  assert.equal(dom.speak().getAttribute("aria-pressed"), "false");
+  assert.equal(dom.panel().hidden, true);
+  await controller.start({ rawText: "Logout case", messageId: "m4", source: "latest" });
+  speech.spoken.at(-1)._fire("start");
+  controller.onLogout();
+  assert.equal(dom.speak().getAttribute("aria-pressed"), "false");
+  await controller.start({ rawText: "fail", messageId: "m5", source: "message" });
+  speech.spoken.at(-1)._fire("error");
+  assert.equal(dom.panel().hidden, false, "failed panel stays visible after synchronous idle reset");
+  assert.equal(dom.panel().dataset.state, "failed");
+  assert.ok(fallbacks.length >= 1);
+});
