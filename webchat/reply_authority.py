@@ -1,4 +1,5 @@
 """Server-owned operational statements; model prose cannot acknowledge effects."""
+import copy
 import re
 import time
 
@@ -609,7 +610,7 @@ def operational_reply(root, provider, text="", *, observation=None, redact=lambd
     started = time.time()
     snap = redact_snapshot(build_live_status_snapshot(root, now=started), redact)
     if recovery_hold_state is not None:
-        snap["recovery_hold_state"] = recovery_hold_state
+        snap["recovery_hold_state"] = redact_snapshot(copy.deepcopy(recovery_hold_state), redact)
     elif recovery_hold_active:
         snap["recovery_hold_active"] = True
     finished = time.time()

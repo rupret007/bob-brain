@@ -11,7 +11,7 @@ import recovery_wording
 from chat_intent import apply_turn, blocked_scopes, new_state
 from live_status_snapshot import _queue_jobs
 from recovery_wording import format_recovery_message, recovery_messages
-from reply_authority import enforce, format_operational_reply, operational_reply
+from reply_authority import correcting_status, enforce, format_operational_reply, operational_reply
 from status_observation import snapshot_digest
 
 
@@ -342,6 +342,83 @@ class RecoveryWordingTests(unittest.TestCase):
         answer = format_operational_reply(snap)
         self.assertIn("Current outcome is unknown", answer)
         self.assertNotIn("Failure is recorded", answer)
+
+    def test_subsequent_intent_turn_does_not_mutate_saved_status_observation_or_digest(self):
+        state = new_state()
+        apply_turn(state, "hold Web Bob", "fixture-hold")
+        state["holds"]["Web Bob"]["reason"] = "secret-hold-token"
+        conversation = {"intent_state": state, "messages": [], "id": "conv-1"}
+        observation = {}
+        snap = snapshot(job(project="Web Bob"))
+        with patch("reply_authority.state_for", return_value=state), \
+                patch("reply_authority.build_live_status_snapshot", return_value=snap):
+            first_answer = enforce(Path("/unused"), "status", {"content": "restarted", "provider": "server"},
+                                   conversation, observation=observation,
+                                   redact=lambda value: "[redacted]" if value == "secret-hold-token" else value)
+        saved_snap = copy.deepcopy(observation["snapshot"])
+        saved_digest = observation["snapshot_sha256"]
+        saved_reply = format_operational_reply(observation["snapshot"], "server", "status")
+        state["holds"]["Web Bob"]["reason"] = "mutated-after-capture"
+        apply_turn(state, "prioritize WebJam", "fixture-prioritize")
+        conversation["messages"] = [
+            dict(role="user", content="status", request_id="req-1"),
+            dict(role="assistant", id="msg-1", request_id="req-1", content=first_answer,
+                 status_observation=dict(observation, message_id="msg-1", request_id="req-1",
+                                         conversation_id="conv-1")),
+        ]
+        self.assertEqual(observation["snapshot"], saved_snap)
+        self.assertEqual(snapshot_digest(observation["snapshot"]), saved_digest)
+        self.assertEqual(format_operational_reply(observation["snapshot"], "server", "status"), saved_reply)
+        self.assertTrue(correcting_status("This needs to be way better", conversation))
+        self.assertEqual(observation["snapshot"]["recovery_hold_state"]["holds"]["Web Bob"]["reason"],
+                         "[redacted]")
+
+    def test_harvested_job_with_matching_lane_result_path_keeps_open_saved_result_step(self):
+        harvested = job("harvested", recovery="deliverables persisted")
+        lane_row = dict(lane(), job_id="job-p23", state="finished", last_activity_at=NOW)
+        snap = snapshot()
+        snap["queue_jobs"]["done"] = [harvested]
+        snap["bob_lanes"] = {"finished_recent": [lane_row]}
+        note = recovery_messages(snap)[0]
+        self.assertIn("Open the saved result `conductor/reviews/P23-result.md`", note)
+        self.assertNotIn("Inspect status for this job to locate the saved result", note)
+
+    def test_stale_or_unavailable_paused_row_does_not_claim_observed_pause_remains_recorded(self):
+        stale = dict(job(), state="paused", updated_at=NOW - 86401)
+        answer = format_recovery_message(stale, captured_at=CAPTURED)
+        self.assertIn("Current outcome is unknown", answer)
+        self.assertNotIn("The observed pause remains recorded", answer)
+        self.assert_observational(answer)
+
+    def test_failed_or_blocked_lane_with_result_path_does_not_hide_failure(self):
+        for stage, phrase in (("failed", "Failure is recorded"), ("blocked", "A block is recorded")):
+            row = dict(lane(), state=stage)
+            answer = format_recovery_message(row, captured_at=CAPTURED)
+            self.assertIn(phrase, answer)
+            self.assertNotIn("Open the saved result", answer)
+            self.assert_observational(answer)
+
+    def test_failed_bucket_row_with_non_harvested_stage_is_included_in_recovery_messages(self):
+        records = {"job-p23": dict(job_id="job-p23", state="succeeded", status="failed",
+                                   updated_at=NOW, _journal="conductor/jobs.jsonl")}
+        snap = snapshot()
+        snap["queue_jobs"] = _queue_jobs(records, set())
+        notes = recovery_messages(snap)
+        self.assertEqual(len(notes), 1)
+        self.assertIn("Failure is recorded", notes[0])
+
+    def test_row_hold_active_canonicalizes_multi_project_and_case_variants(self):
+        state = new_state()
+        apply_turn(state, "hold Web Bob", "fixture-hold-webbob")
+        snap = snapshot(job(project="web bob"))
+        snap["recovery_hold_state"] = state
+        self.assertIn("The saved hold remains in place", recovery_messages(snap)[0])
+        state = new_state()
+        apply_turn(state, "hold all work", "fixture-hold-all")
+        apply_turn(state, "go Web Bob and WebJam", "fixture-release")
+        snap = snapshot(job(project="Web Bob, WebJam"))
+        snap["recovery_hold_state"] = state
+        self.assertNotIn("The saved hold remains in place", recovery_messages(snap)[0])
 
     def test_multiple_jobs_are_bounded_and_same_job_is_not_repeated(self):
         snap = snapshot(job())

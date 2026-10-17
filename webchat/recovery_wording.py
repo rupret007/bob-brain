@@ -9,7 +9,7 @@ import math
 import re
 from datetime import datetime
 
-from chat_intent import blocked_scopes
+from chat_intent import blocked_scopes, project_targets, projects
 
 
 MAX_AGE_SECONDS = 24 * 60 * 60
@@ -85,7 +85,15 @@ def _row_hold_active(state, row):
         return False
     project = row.get("project")
     if isinstance(project, str) and project:
-        return bool(blocked_scopes(state, [project]))
+        names = projects(project)
+        if not names:
+            names = project_targets(project, state or {})
+        if not names:
+            if ", " in project:
+                names = [part.strip() for part in project.split(", ") if part.strip()]
+            else:
+                names = [project]
+        return bool(blocked_scopes(state, names))
     if "all" in holds:
         return True
     return False
@@ -121,7 +129,7 @@ def format_recovery_message(row, *, captured_at, available=True, hold_active=Fal
     prefix = f"{identity}; recorded stage: {stage}"
     prefix += f" (source: {source}). " if source else ". "
     fresh = _evidence_age(row, captured_at, available) is not None
-    path = _result_path(row.get("result_path")) if lane else None
+    path = _result_path(row.get("result_path"))
     marker = row.get("recovery")
     recorded_result = _qualifies_result_marker(row)
     next_step = "Inspect status for this job." if job_id else "Inspect status."
@@ -131,19 +139,19 @@ def format_recovery_message(row, *, captured_at, available=True, hold_active=Fal
         explanation = "Deferred while waiting for lane/worktree capacity. Start time is unknown."
     elif stage == "queued":
         explanation = "Waiting in the queue; the reason and start time are unknown."
+    elif stage == "failed" or row.get("bucket") == "failed":
+        explanation = "Failure is recorded; no result evidence is included in this snapshot. Whether a result exists is unknown."
+    elif stage == "blocked":
+        explanation = "A block is recorded; the cause and result are unknown."
     elif path or recorded_result:
         explanation = "A saved result is recorded; completeness and chat delivery are unconfirmed."
         if path:
             next_step = f"Open the saved result `{path}`."
         else:
             next_step = "Inspect status for this job to locate the saved result."
-    elif stage == "failed" or row.get("bucket") == "failed":
-        explanation = "Failure is recorded; no result evidence is included in this snapshot. Whether a result exists is unknown."
-    elif stage == "blocked":
-        explanation = "A block is recorded; the cause and result are unknown."
     else:
         explanation = "The outcome and chat delivery are unknown."
-    if hold_active is True or stage == "paused":
+    if hold_active is True or (stage == "paused" and fresh):
         explanation += " The saved hold remains in place." if hold_active is True else " The observed pause remains recorded."
         next_step = "Inspect status for this job." if job_id else "Inspect status."
     return prefix + explanation + " Next step: " + next_step
@@ -156,7 +164,7 @@ def recovery_messages(snapshot):
     rows = [row for bucket in ("failed", "queued", "done", "claimed")
             for row in queue.get(bucket, []) if isinstance(row, dict)
             and (row.get("state") in ("failed", "blocked")
-                 or row.get("bucket") == "failed" and row.get("state") == "harvested"
+                 or row.get("bucket") == "failed"
                  or row.get("state") == "queued" and row.get("recovery") == "waiting for lane/worktree lease"
                  or _qualifies_result_marker(row))]
     bob = snapshot.get("bob_lanes") or {}
@@ -172,6 +180,18 @@ def recovery_messages(snapshot):
     # Rank across buckets and lanes before deduplication and the note limit.
     # Freshest evidence wins; stable ties retain the existing snapshot order.
     rows.sort(key=priority)
+    lane_paths = {}
+    for row in rows:
+        if row.get("source") != "lane_collector":
+            continue
+        job_id = _identifier(row.get("job_id"))
+        path = _result_path(row.get("result_path"))
+        if job_id and path:
+            lane_paths[job_id] = path
+    if lane_paths:
+        rows = [dict(row, result_path=lane_paths[_identifier(row.get("job_id"))])
+                if _identifier(row.get("job_id")) in lane_paths and not _result_path(row.get("result_path"))
+                else row for row in rows]
     hold_state = snapshot.get("recovery_hold_state")
     legacy_hold = snapshot.get("recovery_hold_active") is True
     notes, seen = [], set()
