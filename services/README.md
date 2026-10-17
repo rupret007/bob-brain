@@ -62,7 +62,10 @@ uncertain calls. Raw usage settles reservations even for rejected/truncated mode
 answers; missing/failed responses retain their reservation. CLI token usage and
 reported costs are recorded; unknown subscription charges remain unknown. The
 compat/ directory contains installed legacy wrapper copies; asks/tip reviews use
-the same metered transport. MiniMax-M2.7 and Gemini 2.5 Flash are the priced models.
+the same metered transport. Jobs use MiniMax-M2.7 and Gemini 2.5 Pro; chat and
+short Gemini critiques retain Flash. Pro reservations use the higher context
+tier, settle using actual input/output/thinking tokens, and conservatively count
+Google Search grounding against the shared cap.
 
 Rates were checked against [MiniMax pricing](https://platform.minimax.io/subscribe/token-plan?tab=api-enterprise)
 and [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing). Codex launch
@@ -81,11 +84,29 @@ message before acknowledging delivery, so restarts and failed writes do not lose
 or duplicate answers. `webchat/live_dispatch_proof.py` exercises the authenticated
 chat API with real workers; `reviews/WEBBOB-DISPATCH-0927.md` records live evidence.
 
-Gemini and MiniMax receive answer-only task instructions and supplied evidence;
-they do not get a worktree, branch, or filesystem instructions. Explicit file
-inspection uses Codex/Cursor with read tools, and file changes require a writing
-CLI. Selecting an API worker for such a task returns a capability explanation
-before queueing. Explicit max-mode packages use the same capability check.
+Gemini and MiniMax are report-producing job workers, alongside the CLI workers.
+Gemini uses `gemini-2.5-pro` for repository audits, planning and research;
+research enables `google_search`. MiniMax uses `MiniMax-M2.7` at
+`https://api.minimax.io/v1/text/chatcompletion_v2` for reviews, test-case drafts
+and eval grading. Credentials come from `conductor/keys.env`, travel in headers
+through private curl configuration files, and never appear in argv or logs.
+
+The runner supplies bounded tracked repository contents with a manifest, file
+hashes and explicit omitted/truncated paths. Linked files, credentials, sessions
+and generated reports are excluded. An assignment supporting ongoing work reads
+the original job's checkout when available. API workers have no command or write
+tools: the server saves accepted reports and fenced proposed patches under
+`conductor/reviews/api-workers/`. They never deploy, push, apply patches or resolve
+conflicts. Grok/xAI is rejected. Ordinary unassigned inspection still routes to
+Codex/Cursor; selecting an API worker produces a repository report. Actual edits
+and external file reads require a compatible tool worker.
+
+Natural reminders such as “remember you can use Gemini and MiniMax for the ongoing
+jobs” save one scoped job per requested worker, linked to ongoing queue/legacy
+work or an identifiable live CLI task. The reply names each task, worker and
+durable ID. Holds, maintenance, unavailable lanes and missing work produce an
+honest explanation. Saved intents and deterministic IDs make restart/replay
+idempotent. Status includes the actual API model and task once execution begins.
 
 A worker answer must pass result acceptance before `succeeded` is recorded.
 Empty answers, blockers, refusals and missing required exact text fail directly.

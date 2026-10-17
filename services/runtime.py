@@ -18,14 +18,19 @@ from command import run
 from state import CONDUCTOR, ROOT, alert, append_event, atomic_write, job_event, jobs, journal_rows, lock, log, read_json, stamp, write_json
 
 INTERVALS = {"job-runner": 60, "reviewer": 300, "dashboard-updater": 300, "watchdog": 180}
+SOLO_DISABLED = frozenset(("job-runner", "reviewer"))
+
+
+def service_enabled(name):
+    return name not in SOLO_DISABLED or not (CONDUCTOR / "SOLO-WORKER").exists()
 SERVICES = CONDUCTOR / "services"
 HEARTBEATS = CONDUCTOR / "heartbeats"
 
 
-def screen_sessions():
-    result = run(["screen", "-ls"], capture_output=True, text=True, timeout=15)
+def screen_sessions(*, timeout=15):
+    result = run(["screen", "-ls"], capture_output=True, text=True, timeout=timeout)
     text = result.stdout + result.stderr
-    if not ("Sockets in" in text or "No Sockets found" in text):
+    if not (re.search(r"(?m)^\s*\d+ Sockets? in ", text) or "No Sockets found" in text):
         raise RuntimeError("screen inventory unavailable; refusing to guess")
     return {m.group(2): m.group(1) + "." + m.group(2)
             for m in re.finditer(r"(?m)^\s*(\d+)\.([\w.-]+)\s*\((?:Detached|Attached)\)", text)}
@@ -77,7 +82,12 @@ def stop_service_process(name):
 
 
 def start_screen(name):
-    """screen can return zero before its child exec fails on macOS. Verify it."""
+    """Wait for bootstrap and the lifetime lock after one screen launch.
+
+    Bootstrap validates the pinned service tree before taking the lock. Its
+    subprocess checks can exceed six seconds even for a healthy installation.
+    A screen alone is never proof of readiness; time out without relaunching.
+    """
     config = CONDUCTOR / "screenrc" / name
     screen_log = ROOT / "logs" / (name + "-screen.log")
     atomic_write(config, "logfile " + json.dumps(str(screen_log)) + "\nlogfile flush 1\nlog on\n")
@@ -85,10 +95,22 @@ def start_screen(name):
                              "/bin/bash", str(SERVICES / (name + ".sh"))], capture_output=True, timeout=15, detach=True)
     if result.returncode:
         return False
-    for _ in range(30):
-        time.sleep(0.2)
-        if "svc-" + name in screen_sessions() and service_lock_held(name):
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            sessions = screen_sessions(timeout=min(15, remaining))
+        except subprocess.TimeoutExpired:
+            return False
+        if time.monotonic() >= deadline:
+            break
+        if "svc-" + name in sessions and service_lock_held(name):
             return True
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(0.2, remaining))
     return False
 
 
@@ -101,7 +123,7 @@ def ensure_services(check_stale=False, self_name=None):
         now = time.time()
         failed = []
         for name, interval in INTERVALS.items():
-            if name == self_name:
+            if name == self_name or not service_enabled(name):
                 continue
             session = "svc-" + name
             entry = state.setdefault(name, {})
@@ -209,6 +231,12 @@ def schedule_pass():
 
 
 def runner_cycle():
+    if not service_enabled("job-runner"):
+        return
+    # Keep the enabled loop healthy during validation, without starting chat or
+    # legacy project work. Existence is deliberately fail-closed on torn intent.
+    if (CONDUCTOR / 'locks/webbob-activation.json').exists():
+        return
     from web_dispatch import tick as dispatch_tick
     dispatch_tick()
     # Chat work is polled every five seconds; the project scheduler keeps its
@@ -227,6 +255,8 @@ def runner_cycle():
 
 
 def reviewer_cycle():
+    if not service_enabled("reviewer"):
+        return
     from api import critique
     candidates = [r for r in jobs().values() if r["state"] == "harvested" and r.get("result_path")]
     # Newest unreviewed result first on migration; one result per cycle bounds cost/time.
@@ -471,7 +501,7 @@ def main():
         ensure_services(check_stale="--watchdog-guard" in sys.argv)
         time.sleep(1)
         takeover()
-        missing = [n for n in INTERVALS if "svc-" + n not in screen_sessions()]
+        missing = [n for n in INTERVALS if service_enabled(n) and "svc-" + n not in screen_sessions()]
         if missing:
             raise RuntimeError("screens missing after start: " + ", ".join(missing))
     elif command == "status":

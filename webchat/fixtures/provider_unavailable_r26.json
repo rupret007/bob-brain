@@ -1,0 +1,18 @@
+{
+  "source": "WEBBOB-GOAL-1006d-r26-exposed-sample-recovery-1.json; provider_unavailable turn 2",
+  "messages": [
+    {
+      "content": "Suppose Grok is unavailable and Gemini says the prepaid balance is depleted. We still have ChatGPT Pro, Cursor and Claude subscriptions. What should Web Bob do? Treat this as a scenario.",
+      "role": "user"
+    },
+    {
+      "content": "Your stated planning conditions: Gemini says the prepaid balance is depleted.\n\nIn the supplied scenario, Gemini, Grok are unavailable. Preserve the quality standard, but do not depend on an unavailable route for generation. Prepare evidence and qualify an available candidate before switching; no alternative is qualified by subscription ownership alone.\n\nAn existing subscription avoids purchasing another plan; it does not establish that another model invocation has no incremental charge. Extra-usage settings and remaining allowance are unverified until observed. Prepare evidence and inspect settings before admitting a comparison.\n\nWeb Bob’s configured route registry (not live-verified) lists Codex and Cursor conversation adapters that use supplied context, and separate scoped executors for assigned local file or coding work. This is what is configured, not a claim that either route is signed in, available, or working. Tool limits apply to the named adapter, not the whole resource. Voice and images require their own supported operation. Signing in does not make routes interchangeable or authorize file work.\n\nPrepare a comparison:\n1. Supply the missing evidence snapshot containing the relevant project facts and constraints.\n2. Define the initial task for the candidate model using a bounded prompt.\n3. Issue a correction to the candidate's initial output to test adaptability.\n4. Introduce an unrelated topic to evaluate context switching.\n5. Request a return applying that correction to the original task.\n\nCriteria to check:\n- Check delivered usefulness to confirm the response directly answers the prompt without unverified claims.\n- Check constraint retention to verify established constraints persist across the topic diversion and correction.\n- Check evidence quality to ensure reasoning distinguishes observed records from conjectures.",
+      "role": "assistant"
+    },
+    {
+      "content": "Use resources we already pay for, but don't assume they have unlimited usage.",
+      "role": "user"
+    }
+  ],
+  "raw_answer": "{\"answer\":[{\"fact\":\"subscription_scope\"},{\"fact\":\"capacity_and_pacing\"},{\"reasoning\":\"To honor that constraint, the immediate next step is to inspect the account billing settings and allowance meters for Codex under ChatGPT Pro to verify available capacity and check whether pay-as-you-go overages are enabled. Inspecting these controls does not guarantee that generation is entirely charge-free, so live qualification testing must remain explicitly gated on budget admission and confirmed allowance. If Codex passes that check, test it against the previously defined multi-turn sequence before switching; if its allowance is ambiguous, apply the same pre-check to Claude or Cursor.\"}],\"resource\":null,\"steps\":[\"inspect_allowance\",\"qualify_chat\"]}\n"
+}

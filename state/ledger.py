@@ -19,6 +19,7 @@ STATE_FILE = "STATE.json"
 NOW_FILE = "NOW.md"
 INBOX_FILE = "INBOX.md"
 CATCHUP_FILE = "BOB-CATCHUP.md"
+COORDINATION_FILE = "BOB-COORDINATION.md"
 LAST_SEEN = Path("conductor/handback/.bob-last-seen")
 MAX_CATCHUP_LINES = 25
 STALL_SECONDS = 600
@@ -155,10 +156,19 @@ def save_state(root: Path, state: dict) -> None:
     _atomic_write(_folder(root) / STATE_FILE, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
 
 
-def _mutate(root: Path, fn, *, inbox: bool = False, now_line: str | None = None, catchup: bool = True):
+def _strict_state(root: Path) -> dict:
+    path = root / STATE_DIR / STATE_FILE
+    state = json.loads(path.read_text()) if path.exists() else default_state()
+    if not _validate_state(state):
+        raise OSError('Coordination state is unavailable; no acknowledgment was changed.')
+    return state
+
+
+def _mutate(root: Path, fn, *, inbox: bool = False, now_line: str | None = None, catchup: bool = True,
+            strict: bool = False):
     handle = _state_lock(root)
     try:
-        state = load_state(root)
+        state = _strict_state(root) if strict else load_state(root)
         result = fn(state)
         save_state(root, state)
         if inbox:
@@ -330,40 +340,31 @@ def _write_catchup_body(root: Path, state: dict) -> None:
         progress.insert(0, f"Now: {now_line}")
     for commit in _commits_since(root, since):
         done.append(f"Commit {commit}")
-    ack = int(state.get("bob_events_ack_seq") or 0)
+    ack = int(state.get("bob_coordination_ack_seq") or 0)
     event_lines: list[str] = []
     try:
         import alignment_events  # noqa: WPS433
 
-        collected = alignment_events.collect_events_since(root, since_seq=ack, page_size=40, max_pages=6)
-        pending_events = collected["events"]
-        overflow = collected.get("truncated") or len(pending_events) > 20
-        if collected.get("truncated"):
-            state["catchup_events_has_more"] = True
-        else:
-            state.pop("catchup_events_has_more", None)
+        page = alignment_events.catchup_page(root, since_seq=ack)
+        pending_events = page['events']
+        state['coordination_events_has_more'] = page['has_more']
+        state['coordination_receipt'] = {key:page[key] for key in ('since_seq', 'through_seq', 'receipt_sha256')}
+        state['last_coordination_event_seq'] = page['through_seq']
+        if page['history_gap']:
+            blockers.insert(0, 'Older coordination history is unavailable; retained records are shown. No missing work is inferred.')
         for ev in pending_events:
             kind = ev.get("kind") or "note"
-            if kind not in ("chat-turn", "handback-turn", "inbox", "decision", "tick", "blocker"):
-                continue
             event_lines.append(
                 f"Event {ev.get('seq')}: {kind} — {(ev.get('summary') or '')[:100]}"
             )
-        if overflow:
-            if collected.get("truncated"):
-                blockers.insert(0, "More alignment events remain — Bob should read catch-up again after ack.")
-            elif len(pending_events) > 20:
-                blockers.insert(0, f"+{len(pending_events) - 20} more alignment events since ack seq {ack}")
+        if page['has_more']:
+            blockers.insert(0, 'More work records remain; read the next page after acknowledging this batch.')
     except (ImportError, OSError):
         pending_events = []
-    delivered_seq = ack
-    if event_lines:
-        done.extend(event_lines[:12])
-        for ev in pending_events[:12]:
-            if (ev.get("kind") or "") in ("chat-turn", "handback-turn", "inbox", "decision", "tick", "blocker"):
-                delivered_seq = max(delivered_seq, int(ev.get("seq") or 0))
-        state["last_catchup_event_seq"] = delivered_seq
-    elif not ack:
+        state.pop('coordination_receipt', None)
+        state['last_coordination_event_seq'] = ack
+        blockers.insert(0, 'Coordination records could not be read; no unseen events can be acknowledged.')
+    if not event_lines and not ack:
         for turn in reversed(state.get("webchat_turns") or []):
             done.append(f"Web Bob ({turn.get('provider')}): {turn.get('ask', '')[:100]}")
     for path in sorted((root / "conductor/reviews").glob("WEBCHAT-READY-R*-RESULT.md"),
@@ -381,9 +382,15 @@ def _write_catchup_body(root: Path, state: dict) -> None:
         unique.append(row)
     if not unique:
         unique.append("No changes since Bob last read — Web Bob and ledger are in sync.")
-    for row in unique[:MAX_CATCHUP_LINES]:
+    # Reserve space for every event in the receipt, even with a long blocker
+    # list. Status summaries are not an acknowledgment of omitted work records.
+    for row in unique[:MAX_CATCHUP_LINES - len(event_lines)] + event_lines:
         lines.append(f"- {row}")
-    _atomic_write(_folder(root) / CATCHUP_FILE, "\n".join(lines) + "\n")
+    lines += ['', 'Use the receipt from bob_sync.py read to acknowledge an exact batch. '
+              'Reading this summary alone changes no acknowledgment and authorizes no work.']
+    body = "\n".join(lines) + "\n"
+    _atomic_write(_folder(root) / COORDINATION_FILE, body)
+    _atomic_write(_folder(root) / CATCHUP_FILE, body)
 
 
 def write_catchup(root: Path) -> None:
@@ -391,28 +398,45 @@ def write_catchup(root: Path) -> None:
     _mutate(root, lambda _state: None, catchup=True)
 
 
-def ack_events_for_bob(root: Path, *, seq: int | None = None) -> int:
-    """Bob read catch-up: advance event ack cursor and touch .bob-last-seen."""
-    try:
-        import alignment_events  # noqa: WPS433
-    except ImportError:
-        alignment_events = None
-    if seq is not None:
-        target = int(seq)
-    else:
-        st = load_state(root)
-        target = int(st.get("last_catchup_event_seq") or 0)
-        if alignment_events and target <= 0:
-            target = alignment_events.latest_seq(root)
+def bob_catchup(root: Path, *, limit: int = 12) -> dict:
+    """Read an exact oldest-first page without marking it consumed."""
+    import alignment_events
+    state = _strict_state(root)
+    return alignment_events.catchup_page(root, since_seq=int(state.get('bob_coordination_ack_seq') or 0), limit=limit)
+
+
+def ack_events_for_bob(root: Path, *, receipt: dict | None = None, seq: int | None = None) -> int:
+    """Acknowledge exactly a previously read page; never imply task execution.
+
+    Legacy unbound/default ACKs are deliberately refused. A regenerated digest
+    or a newest-event cursor is not evidence that Bob read that content.
+    """
+    import alignment_events
+    if not isinstance(receipt, dict) or seq is not None:
+        raise ValueError('Read a catch-up page and provide its exact receipt.')
+    start, target = receipt.get('since_seq'), receipt.get('through_seq')
+    events = receipt.get('events')
+    if (type(start) is not int or type(target) is not int or start < 0 or target < start
+            or not isinstance(events, list) or len(events) > 80):
+        raise ValueError('Invalid catch-up receipt.')
 
     def _apply(state: dict) -> int:
-        state["bob_events_ack_seq"] = max(int(state.get("bob_events_ack_seq") or 0), target)
-        seen = root / LAST_SEEN
-        seen.parent.mkdir(parents=True, exist_ok=True)
-        seen.write_text(f"{_now_ct()}\n")
-        return state["bob_events_ack_seq"]
+        ack = int(state.get('bob_coordination_ack_seq') or 0)
+        if start > ack:
+            raise ValueError('A preceding catch-up batch has not been acknowledged.')
+        expected = alignment_events.catchup_page(root, since_seq=start, limit=max(1, len(events)))
+        if (expected['journal_id'] != receipt.get('journal_id') or expected['events'] != events or expected['through_seq'] != target or
+                expected['receipt_sha256'] != receipt.get('receipt_sha256')):
+            raise ValueError('Catch-up receipt does not match the retained work records.')
+        state["bob_coordination_ack_seq"] = max(ack, target)
+        if target >= ack:
+            state['bob_coordination_last_receipt'] = dict(since_seq=start, through_seq=target,
+                                             receipt_sha256=receipt['receipt_sha256'], acknowledged_at=_now_ct())
+        return state["bob_coordination_ack_seq"]
 
-    return _mutate(root, _apply, catchup=True)
+    # The legacy last-seen timestamp covers different publishers and history.
+    # Consuming one v2 page must not advance that unrelated watermark.
+    return _mutate(root, _apply, catchup=True, strict=True)
 
 
 def sync_from_live_ops(root: Path, live_ops: dict, *, head_sha: str | None = None,

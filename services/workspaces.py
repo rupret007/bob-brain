@@ -75,8 +75,9 @@ done
 
 
 def sandbox_command(argv, workspace, read_only=False):
-    """macOS denies core writes even to same-user jobs using --force/bypass."""
-    if os.uname().sysname != "Darwin":
+    """Deny core writes even to same-user jobs using --force/bypass."""
+    sandbox = Path("/usr/bin/sandbox-exec")
+    if not sandbox.is_file():
         raise RuntimeError("the configured core write boundary requires macOS sandbox-exec")
     denied = [Path(__file__).resolve().parents[1], CONDUCTOR, ROOT / "bin", ROOT / "next-prompts", ROOT / "BOB-HANDOFF.md"]
     if read_only:
@@ -88,4 +89,4 @@ def sandbox_command(argv, workspace, read_only=False):
     filters = " ".join("(subpath " + json.dumps(str(p.resolve())) + ")" for p in denied)
     policy = '(version 1) (allow default) (deny file-write* ' + filters + ')'
     policy += ' (deny file-read-data (literal ' + json.dumps(str(CONDUCTOR / "keys.env")) + '))'
-    return ["/usr/bin/sandbox-exec", "-p", policy, *argv]
+    return [str(sandbox), "-p", policy, *argv]

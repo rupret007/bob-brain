@@ -4,6 +4,7 @@ import re
 import uuid
 
 import task_queue
+from api_tasks import normalize_kind
 
 MAX_MODE = re.compile(r"\b(?:max[- ]mode|go\s+(?:to\s+)?the\s+max|go\s+all\s+out)\b", re.I)
 SUBTASK = re.compile(r"^\s*(?:[-*]|\d+[.)])?\s*\[([\w-]+)\]\s*(.+?)(?=^\s*(?:[-*]|\d+[.)])?\s*\[[\w-]+\]|\Z)", re.M | re.S)
@@ -54,6 +55,7 @@ def plan(root, prompt, kind):
         worker = package["worker"]
         package["kind"] = "local" if worker == "mini" else "coding" if kind == "coding" and worker in ("codex", "cursor") else "analysis"
         package["kind"] = task_queue.task_kind(package["kind"], package["prompt"])
+        package["kind"] = normalize_kind(worker, package["kind"], package["prompt"])
         task_queue.validate_worker(worker, package["kind"])
         package["prompt"] += "\n\nComplete only your assigned subtask. Do not start other workers. Distinguish observed evidence from assumptions."
     return goal, packages
@@ -63,24 +65,34 @@ def group_id(conversation_id, request_id):
     return "max-" + uuid.uuid5(uuid.NAMESPACE_URL, conversation_id + ":" + request_id).hex
 
 
-def enqueue(root, conversation_id, intent):
+def enqueue(root, conversation_id, intent, *, permission_file=None):
+    from chat_intent import projects
     identifier = group_id(conversation_id, intent["request_id"])
     return [task_queue.enqueue(root, conversation_id, intent["request_id"] + ":" + str(index),
                                package["prompt"], worker=package["worker"], kind=package["kind"],
                                group_id=identifier, group_size=len(intent["subtasks"]), group_index=index,
-                               group_goal=intent["goal"], title=package["title"])
+                               group_goal=intent["goal"], title=package["title"], publish_project=package.get("publish_project"),
+                               draft_pr=package.get("draft_pr", False), source_job_id=package.get("source_job_id"),
+                               permission_file=permission_file,
+                               project_scopes=projects(package['prompt'].rsplit('Your independent subtask:', 1)[-1]))
             for index, package in enumerate(intent["subtasks"])]
 
 
-def merge_text(rows):
+def merge_text(rows, label="Max mode"):
     """Lossless local reducer: preserves evidence, disagreements and failures.
 
     No extra provider is required to deliver already completed work after an
     outage. A group is committed as one assistant message by the chat outbox.
     """
     ordered = sorted(rows, key=lambda row: row["group_index"])
+    if all(row["status"] == "succeeded" and row.get("publication") for row in ordered):
+        from worker_activity import WORKER_NAMES
+        return "\n".join(
+            WORKER_NAMES.get(row["worker"], row["worker"] or "The worker") + " pushed " + row["title"] +
+            "'s draft at [" + row["publication"]["sha"][:7] + "](" + row["publication"]["url"] + ")."
+            for row in ordered)
     succeeded = sum(row["status"] == "succeeded" for row in ordered)
-    parts = ["Max mode completed: " + str(succeeded) + "/" + str(len(rows)) + " subtasks succeeded."]
+    parts = [label + " completed: " + str(succeeded) + "/" + str(len(rows)) + " subtasks succeeded."]
     for row in ordered:
         label = row["title"] + " (" + str(row["worker"] or row["requested_worker"]) + ")"
         body = row.get("result", "") if row["status"] == "succeeded" else "Failed: " + row.get("error", "No result")

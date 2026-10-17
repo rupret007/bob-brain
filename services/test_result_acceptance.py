@@ -1,13 +1,116 @@
 """Task-aware acceptance: deterministic failures and strict semantic verdicts."""
 import json
+from pathlib import Path
 import unittest
 from unittest.mock import Mock
 
-from result_acceptance import ResultRejected, accept, check_answer
+from result_acceptance import ResultRejected, accept, check_answer, check_coding_answer
 from dispatch_worker import task_queue
 
 
 class AcceptanceTests(unittest.TestCase):
+    def completion_fixture(self):
+        return json.loads(Path(__file__).with_name("fixtures").joinpath("texting_jobcompletion_1035.json").read_text())
+
+    def test_1035_exploratory_answer_cannot_win_a_positive_vote(self):
+        fixture = self.completion_fixture()
+        review = Mock(return_value='{"accepted": true, "reason": "Has architecture findings"}')
+        for kind in (None, "test-writing", "analysis", "coding"):
+            with self.subTest(kind=kind), self.assertRaisesRegex(ResultRejected, "Missing concrete regression"):
+                accept(fixture["prompt"], fixture["answer"], review, kind=kind)
+        review.assert_not_called()
+
+    def test_1107_exact_rejected_drafts_cannot_win_a_positive_vote(self):
+        fixture = json.loads(Path(__file__).with_name("fixtures").joinpath("texting_jobcompletion_1107.json").read_text())
+        review = Mock(return_value='{"accepted": true, "reason": "Has test-shaped content"}')
+        with self.assertRaisesRegex(ResultRejected, "Missing concrete regression"):
+            accept(fixture["prompt"], fixture["answer"], review, kind=fixture["kind"])
+        review.assert_not_called()
+
+    def test_concrete_drafts_and_conditional_unblock_plan_reach_semantic_review(self):
+        fixture = self.completion_fixture()
+        review = Mock(return_value='{"accepted": true, "reason": "Delivers bounded test drafts and a conditional fix plan"}')
+        self.assertTrue(accept(fixture["prompt"], fixture["complete_answer"], review)["accepted"])
+        self.assertIn("exploratory-only answers", review.call_args.args[0])
+        self.assertIn("Tie it to the named ongoing task", review.call_args.args[0])
+
+    def test_drafts_without_resolution_plan_and_empty_case_labels_fail_closed(self):
+        fixture = self.completion_fixture()
+        with self.assertRaisesRegex(ResultRejected, "Missing actionable unblock plan"):
+            check_answer(fixture["prompt"], fixture["complete_answer"].split("Unblock plan:")[0])
+        for fields in ("Target:\nSetup:\nAction:\nExpected:\n", "Target: TBD\nSetup: ...\nAction: TODO\nExpected: none\n"):
+            with self.subTest(fields=fields), self.assertRaisesRegex(ResultRejected, "Missing concrete regression"):
+                check_answer("Draft regression tests", "Regression test: queue\n" + fields)
+
+    def test_executable_test_draft_is_supported_but_copied_implementation_is_not(self):
+        check_answer("Draft test cases", "Unexecuted draft for tests/test_queue.py:\n```python\ndef test_enqueue():\n    job = {'id': 'one'}\n    assert enqueue(job) == job\n```")
+        with self.assertRaisesRegex(ResultRejected, "Missing concrete regression"):
+            check_answer("Draft test cases", "```python\ndef enqueue(job):\n    return job\n```")
+
+    def test_formatted_but_irrelevant_drafts_still_require_semantic_acceptance(self):
+        fixture = self.completion_fixture()
+        review = Mock(return_value='{"accepted": false, "reason": "Drafts do not address the requested behavior"}')
+        with self.assertRaisesRegex(ResultRejected, "did not complete the task"):
+            accept(fixture["prompt"], fixture["complete_answer"], review)
+        self.assertEqual(review.call_count, 1)
+
+    def test_report_reviewer_checks_assertions_against_the_workers_snapshot(self):
+        fixture = self.completion_fixture()
+        evidence = "FILE queue.py\ndef enqueue(job):\n    return job\n"
+        review = Mock(return_value='{"accepted": false, "reason": "The proposed assertion contradicts the supplied implementation"}')
+        with self.assertRaisesRegex(ResultRejected, "contradicts"):
+            accept(fixture["prompt"], fixture["complete_answer"], review, report_evidence=evidence)
+        prompt = review.call_args.args[0]
+        self.assertEqual(json.loads(prompt.split("\n\n", 1)[1])["report_evidence"], evidence)
+        self.assertIn("Reject tests whose expected result contradicts", prompt)
+
+    def test_peer_audit_of_named_unblock_also_requires_resolution_steps(self):
+        with self.assertRaisesRegex(ResultRejected, "Missing actionable unblock plan"):
+            check_answer("Whole-repo audit and implementation plan for Web Bob unblock 1035", "The queue has three states.", kind="audit")
+        check_answer("Summarize supplied architecture", "The queue has three states.", kind="analysis")
+
+    def test_quoted_limitation_cannot_hide_following_deliverables_or_pending_verification(self):
+        fixture = self.completion_fixture()
+        check_answer(fixture["prompt"], "> Original assignment unavailable.\n\n" + fixture["complete_answer"])
+        with self.assertRaisesRegex(ResultRejected, "verification is incomplete"):
+            check_coding_answer("> Previous baseline passed.\n\nFixed and committed. API tests not run.")
+
+    def test_0810_captured_incomplete_verification_cannot_be_overridden(self):
+        fixture = json.loads(Path(__file__).with_name("fixtures").joinpath("texting_verification_0810.json").read_text())
+        review = Mock(return_value='{"accepted": true, "reason": "Claims pass"}')
+        with self.assertRaisesRegex(ResultRejected, "verification is incomplete"):
+            accept(fixture["prompt"], fixture["answer"], review, coding_evidence={"sha": fixture["claimed_sha"]})
+        review.assert_not_called()
+
+    def test_coding_promises_and_pending_tests_are_not_completion(self):
+        for answer in ("Fixed and committed. Tests pending.", "Will run API tests next. Status: Pass.",
+                       "Shared tests pass, API tests not run.", "Committed. Verification is incomplete."):
+            with self.subTest(answer=answer), self.assertRaises(ResultRejected):
+                check_coding_answer(answer)
+        check_coding_answer("Fixed and committed abc1234. pnpm test: 343 passed, exit 0; pnpm build: exit 0.")
+
+    def test_coding_reviewer_gets_change_scope_and_fresh_check_evidence(self):
+        review = Mock(return_value='{"accepted": true, "reason": "The fix and required tests completed."}')
+        evidence = dict(sha="abc1234", changed_paths=["apps/api/src/module.ts"],
+                        validation=dict(all_pass=True, checks=[dict(command=["pnpm", "test"], exit=0)]))
+        result = accept("Fix the API", "API fixed. pnpm test: 343 pass, exit 0; commit abc1234.",
+                        review, coding_evidence=evidence)
+        self.assertTrue(result["accepted"])
+        instructions = review.call_args.args[0]
+        self.assertIn("Shared tests, prepare smoke, stale runs, or plans alone", instructions)
+        self.assertEqual(json.loads(instructions.split("\n\n", 1)[1])["coding_evidence"], evidence)
+
+    def test_malformed_cursor_review_retries_validation_once_without_accepting_prose(self):
+        review = Mock(side_effect=["Checking the changes.\nThe result satisfies the task.",
+                                   '{"accepted": true, "reason": "The requested fix was committed and tested."}'])
+        self.assertTrue(accept("Fix report job visibility", "Fixed and tested visibility; committed the change.", review)["accepted"])
+        self.assertEqual(review.call_count, 2)
+        self.assertIn("Do not use tools", review.call_args.args[0])
+        review = Mock(return_value='{"accepted": false, "reason": "Missing the requested fix"}')
+        with self.assertRaisesRegex(ResultRejected, "did not complete"):
+            accept("Fix visibility", "I plan to fix it", review)
+        self.assertEqual(review.call_count, 1)
+
     def test_refusals_empty_answers_and_real_blockers_never_reach_reviewer(self):
         for answer in ("", "   ", "BLOCKER: missing evidence", "**BLOCKER:** Cannot proceed",
                        "I cannot access the Git worktree.\nVerification phrase: marker",

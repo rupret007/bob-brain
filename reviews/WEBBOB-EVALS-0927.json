@@ -1,0 +1,150 @@
+{
+  "total": 24,
+  "passed": 24,
+  "score": 10.0,
+  "web_bob_vs_bob": "beat",
+  "cases": [
+    {
+      "name": "dispatch natural work",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "worker allowlist",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "status routing",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "handback skips cheap status",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "parse start job",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "parse confirm job",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "parse council",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "council yes",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "queue job alias",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "run job alias",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "inbox parse",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "music coach hook",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "music coach chords",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "music lyrics tip",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "handback pickup open ask",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "handback pickup sha",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "catchup lists chat or event",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "bob ack advances",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "ack shrinks unread events",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "status what's running",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "quick status phrase",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "anything i need",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "job confirm not council",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "song projects dir",
+      "pass": true,
+      "detail": ""
+    }
+  ],
+  "strict_status_checks": [
+    {
+      "prompt": "what's running?",
+      "pass": true
+    },
+    {
+      "prompt": "quick status",
+      "pass": true
+    },
+    {
+      "prompt": "anything I need to do?",
+      "pass": true
+    }
+  ],
+  "scope": "Offline bob_parity_eval.run_eval with a seeded synthetic status ledger in an isolated worktree-local root; no live services or models",
+  "executed_at": "2026-09-27T23:51:22.541471+00:00",
+  "source_sha256": {
+    "webchat/bob_parity_eval.py": "502faef3420d6d4dfdafd36cf308b266f2ac37f173ce360784301934e6bfc7f2",
+    "state/ledger.py": "f77a76fa2d552de7cc38c4d7b25f66084ab67eebc0be5414cd157f9ccd84d54a",
+    "state/task_queue.py": "9a0292309bdc7f12c0b83a0476e7fcaefbe13037275f2171885eff22ccc59f6f",
+    "webchat/task_dispatch.py": "bfbf16f9146d66c131ae23ec8310b1ce5c3094694c997330d26689b89b25dbf7"
+  }
+}

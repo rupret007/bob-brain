@@ -15,25 +15,23 @@ if ($("login-form")) {
     finally { button.disabled = false; }
   });
 } else {
-  let csrf = "", current = "", busy = false, sending = false, revision = "", polling = false, draftRequest = null, pollFailures = 0;
+  let csrf = "", current = "", busy = false, replyStopping = false, sending = false, revision = "", polling = false, draftRequest = null, pollFailures = 0;
+  let pendingAttachments = [];
+  let uploading = false, quickRequest = null;
+  const composerDrafts = new Map();
+  let chatReady = false, connecting = false, authRedirecting = false, connectFailures = 0, connectAfter = 0;
+  const MEDIA_LIMITS = { image: 12 * 1024 * 1024, video: 35 * 1024 * 1024, file: 8 * 1024 * 1024 };
+  const MAX_PENDING_ATTACHMENTS = 6;
   let lastQuietHoursActive = null, lastQuietHoursFetchedAt = 0, lastBootstrapCommand = "";
-  const providers = { codex: "Codex", cursor: "Cursor", gemini: "Gemini", minimax: "MiniMax", claude: "Claude" };
+  const providers = { voice: "Bob voice", codex: "Codex", cursor: "Cursor", gemini: "Gemini", minimax: "MiniMax", claude: "Claude", texting: "Texts · private" };
   function escapeHtml(text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  }
-  function minimaxCapUsd(spend) {
-    const cap = spend?.cap_usd;
-    return cap === undefined || cap === null ? 59 : cap;
   }
   function isQuietHoursCt() {
     try {
       const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", hour: "numeric", hour12: false }).formatToParts(new Date());
       const hour = Number(parts.find((p) => p.type === "hour")?.value ?? 12);
-      const local = hour >= 23 || hour < 7;
-      if (lastQuietHoursFetchedAt && Date.now() - lastQuietHoursFetchedAt < 120000 && lastQuietHoursActive === true) {
-        return true;
-      }
-      return local;
+      return hour >= 23 || hour < 7;
     } catch (_) {
       return true;
     }
@@ -44,41 +42,258 @@ if ($("login-form")) {
       .replace(/[#>*_-]/g, " ").replace(/\s+/g, " ").trim();
   }
   function renderMarkdown(text) {
-    let html = escapeHtml(text);
-    html = html.replace(/```([\s\S]*?)```/g, (_, code) => {
-      const inner = code.trim();
-      return `<pre class="code-block" tabindex="0"><button type="button" class="copy-code" aria-label="Copy code">Copy</button><code>${inner}</code></pre>`;
-    });
-    html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-    html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" rel="noopener noreferrer" target="_blank">$1</a>');
-    html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    html = html.replace(/^### (.+)$/gm, "<h4 class=\"md-h\">$1</h4>");
-    html = html.replace(/^## (.+)$/gm, "<h3 class=\"md-h\">$1</h3>");
-    html = html.replace(/(?:^|\n)(\d+\. .+(?:\n\d+\. .+)*)/g, (block) => {
-      const items = block.trim().split("\n").map((line) => `<li>${line.replace(/^\d+\.\s+/, "")}</li>`).join("");
-      return `<ol>${items}</ol>`;
-    });
-    html = html.replace(/(?:^|\n)([-*] .+(?:\n[-*] .+)*)/g, (block) => {
-      const items = block.trim().split("\n").map((line) => `<li>${line.replace(/^[-*]\s+/, "")}</li>`).join("");
-      return `<ul>${items}</ul>`;
-    });
-    html = html.replace(/\n/g, "<br>");
-    return html;
+    // Keep fenced code out of prose formatting: <br> loses newlines when
+    // copied as textContent, and inline Markdown must remain literal code.
+    return text.split(/(```[\s\S]*?```)/g).map((part, index) => {
+      if (index % 2) {
+        let code = part.slice(3, -3);
+        const firstLine = code.indexOf("\n");
+        if (firstLine >= 0) code = code.slice(firstLine + 1).replace(/\r?\n$/, "");
+        return `<pre class="code-block" tabindex="0"><button type="button" class="copy-code" aria-label="Copy code">Copy</button><code>${escapeHtml(code)}</code></pre>`;
+      }
+      let html = escapeHtml(part);
+      html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+      html = html.replace(/\[([^\]\n]+)\]\(\/api\/jobs\/result\?id=(webchat-[a-f0-9]{32})\)/g,
+        '<button type="button" class="job-result-link" data-job-id="$2">$1</button>');
+      html = html.replace(/!\[([^\]]*)\]\((\/api\/captures\/[0-9a-f]+)\)/g,
+        '<img class="chat-capture" src="$2" alt="$1" loading="lazy" />');
+      html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" rel="noopener noreferrer" target="_blank">$1</a>');
+      html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      html = html.replace(/^### (.+)$/gm, "<h4 class=\"md-h\">$1</h4>");
+      html = html.replace(/^## (.+)$/gm, "<h3 class=\"md-h\">$1</h3>");
+      html = html.replace(/(?:^|\n)(\d+\. .+(?:\n\d+\. .+)*)/g, (block) => {
+        const items = block.trim().split("\n").map((line) => `<li>${line.replace(/^\d+\.\s+/, "")}</li>`).join("");
+        return `<ol>${items}</ol>`;
+      });
+      html = html.replace(/(?:^|\n)([-*] .+(?:\n[-*] .+)*)/g, (block) => {
+        const items = block.trim().split("\n").map((line) => `<li>${line.replace(/^[-*]\s+/, "")}</li>`).join("");
+        return `<ul>${items}</ul>`;
+      });
+      html = html.replace(/\n/g, "<br>");
+      return html;
+    }).join("");
   }
   const stored = (key) => { try { return localStorage.getItem(key); } catch (_) { return null; } };
   const remember = (key, value) => { try { localStorage.setItem(key, value); } catch (_) {} };
-  async function api(path, data) {
-    const response = await fetch(path, { credentials: "same-origin", cache: "no-store",
-      ...(data === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: JSON.stringify(data) }) });
-    if (response.status === 401) { location.assign("/login"); throw new Error("Please log in."); }
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "Request failed.");
-    return result;
+  async function api(path, data, signal) {
+    const requestSignal = signal || AbortSignal.timeout(data === undefined ? 15000 : 45000);
+    try {
+      const response = await fetch(path, { credentials: "same-origin", cache: "no-store", signal: requestSignal,
+        keepalive: path === "/api/voice/end" || path === "/api/voice/transcript",
+        ...(data === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: JSON.stringify(data) }) });
+      if (response.status === 401) { authRedirecting = true; location.assign("/login"); throw new Error("Please log in."); }
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Request failed.");
+      return result;
+    } catch (error) {
+      // A timed-out mutation may already have reached the server. Keep the
+      // composer request identity and never replay it automatically.
+      if (data !== undefined && requestSignal.aborted && requestSignal.reason?.name === "TimeoutError") {
+        throw new Error("Request timed out. Check the result before retrying; it may still finish.");
+      }
+      throw error;
+    }
+  }
+  let jobResultRequest = null, jobResultRetry = null, jobResultOrigin = null;
+  function cancelJobResult() {
+    if (jobResultRequest) clearTimeout(jobResultRequest.timeout);
+    jobResultRequest?.controller.abort();
+    jobResultRequest = jobResultRetry = null;
+    $("report-body").setAttribute("aria-busy", "false");
+    $("retry-report").hidden = true;
+  }
+  async function showJobResult(url, project = "Job result", task = "", opener = document.activeElement) {
+    cancelJobResult();
+    if (!$("report").open) jobResultOrigin = { opener, url };
+    const request = { url, project, task, controller: new AbortController() };
+    jobResultRequest = request;
+    $("report-title").textContent = project;
+    $("report-date").textContent = task;
+    $("report-body").textContent = "";
+    $("report-body").setAttribute("aria-busy", "true");
+    $("report-status").textContent = "Loading result…";
+    if (!$("report").open) $("report").showModal();
+    // Supplying a cancellable signal must preserve api()'s normal read bound.
+    request.timeout = setTimeout(() => request.controller.abort(), 15000);
+    try {
+      const result = await api(url, undefined, request.controller.signal);
+      if (jobResultRequest !== request || !$("report").open) return;
+      if (request.controller.signal.aborted) throw new Error("Result read timed out");
+      $("report-title").textContent = result.project || project;
+      $("report-date").textContent = result.task || task;
+      $("report-body").textContent = result.text;
+      $("report-status").textContent = "";
+    } catch (_) {
+      if (jobResultRequest !== request || !$("report").open) return;
+      $("report-status").textContent = "This result could not be loaded. Try again.";
+      jobResultRetry = request;
+      $("retry-report").hidden = false;
+    } finally {
+      clearTimeout(request.timeout);
+      if (jobResultRequest === request) {
+        jobResultRequest = null;
+        $("report-body").setAttribute("aria-busy", "false");
+      }
+    }
+  }
+  $("retry-report").addEventListener("click", () => {
+    if (jobResultRetry) return showJobResult(jobResultRetry.url, jobResultRetry.project, jobResultRetry.task);
+  });
+  $("close-report").addEventListener("click", () => { cancelJobResult(); $("report").close(); });
+  $("report").addEventListener("cancel", cancelJobResult);
+  // A queued close event from an earlier dismissal can arrive after reopening.
+  $("report").addEventListener("close", () => {
+    if ($("report").open) return;
+    cancelJobResult();
+    const origin = jobResultOrigin;
+    jobResultOrigin = null;
+    // Polling can replace the Jobs button while its report is open.
+    const opener = origin?.opener?.isConnected && origin.opener.getClientRects().length ? origin.opener
+      : [...document.querySelectorAll('[data-result-url], [data-job-id]')].find(node =>
+        node.getClientRects().length &&
+        (node.dataset.resultUrl || '/api/jobs/result?id=' + node.dataset.jobId) === origin?.url);
+    opener?.focus();
+  });
+  function mediaKindFromFile(file) {
+    const extension = file.name.split(".").pop().toLowerCase();
+    if (["jpg", "jpeg", "png", "gif", "webp", "heic", "heif"].includes(extension)) return "image";
+    if (["mp4", "mov", "webm", "m4v", "mkv"].includes(extension)) return "video";
+    if (["pdf", "txt", "md", "csv", "json", "log"].includes(extension)) return "file";
+    return null;
+  }
+  function switchConversation(id) {
+    if (current) composerDrafts.set(current, { attachments: pendingAttachments, message: $("message").value, request: draftRequest });
+    current = id;
+    const draft = composerDrafts.get(id);
+    pendingAttachments = draft?.attachments || [];
+    $("message").value = draft?.message || "";
+    draftRequest = draft?.request || null;
+    revision = ""; busy = false; replyStopping = false;
+    renderAttachmentStrip(); composerState();
+    remember("bob.conversation", id);
+  }
+  function uploadMedia(file, conversationId) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/media/upload");
+      xhr.timeout = 120000;
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      xhr.setRequestHeader("X-CSRF-Token", csrf);
+      xhr.setRequestHeader("X-Filename", encodeURIComponent(file.name));
+      xhr.setRequestHeader("X-Conversation-Id", conversationId);
+      xhr.upload.onprogress = (event) => {
+        $("notice").textContent = `Uploading ${file.name}${event.lengthComputable ? ` — ${Math.round(event.loaded * 100 / event.total)}%` : "…"}`;
+      };
+      xhr.onload = () => {
+        if (xhr.status === 401) { location.assign("/login"); reject(new Error("Please log in.")); return; }
+        try {
+          const result = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300) resolve(result);
+          else reject(new Error(result.error || "Upload failed. Please retry."));
+        } catch (_) { reject(new Error("Upload failed. Please retry.")); }
+      };
+      xhr.onerror = xhr.ontimeout = xhr.onabort = () => reject(new Error(`Could not upload ${file.name}. Please retry.`));
+      xhr.send(file);
+    });
+  }
+  function mediaLimitForKind(kind) {
+    return MEDIA_LIMITS[kind] || MEDIA_LIMITS.file;
+  }
+  function renderAttachmentStrip() {
+    const host = $("attach-preview");
+    if (!host) return;
+    host.replaceChildren();
+    if (!pendingAttachments.length) {
+      host.hidden = true;
+      return;
+    }
+    host.hidden = false;
+    for (const item of pendingAttachments) {
+      const chip = document.createElement("div");
+      chip.className = "attach-chip";
+      if (item.kind === "image") {
+        const img = document.createElement("img");
+        img.src = item.url + "&preview=1";
+        img.alt = item.filename || "Image preview";
+        chip.append(img);
+      } else if (item.kind === "video") {
+        const label = document.createElement("div");
+        label.className = "attach-file-label";
+        label.textContent = "Video";
+        chip.append(label);
+      } else {
+        const label = document.createElement("div");
+        label.className = "attach-file-label";
+        label.textContent = item.filename || "File";
+        chip.append(label);
+      }
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "attach-remove quiet";
+      remove.setAttribute("aria-label", "Remove attachment");
+      remove.textContent = "×";
+      remove.disabled = sending;
+      remove.addEventListener("click", () => {
+        pendingAttachments = pendingAttachments.filter((row) => row.media_id !== item.media_id);
+        renderAttachmentStrip();
+        composerState();
+      });
+      chip.append(remove);
+      host.append(chip);
+    }
+  }
+  function appendMessageAttachments(parent, attachments) {
+    if (!attachments?.length) return;
+    const wrap = document.createElement("div");
+    wrap.className = "message-attachments";
+    for (const att of attachments) {
+      const url = att.url || `/api/media/${att.media_id}?conversation_id=${current}`;
+      const item = document.createElement("div");
+      item.className = "message-attachment";
+      if (att.kind === "image") {
+        const img = document.createElement("img");
+        img.src = url + "&preview=1";
+        img.alt = att.filename || "Image";
+        img.loading = "lazy";
+        img.addEventListener("error", () => { img.hidden = true; });
+        const open = document.createElement("a");
+        open.href = url; open.target = "_blank"; open.rel = "noopener noreferrer";
+        open.append(img); item.append(open);
+      } else if (att.kind === "video") {
+        const video = document.createElement("video");
+        video.src = url;
+        video.controls = true;
+        video.preload = "metadata";
+        video.playsInline = true;
+        video.addEventListener("error", () => {
+          const fallback = document.createElement("p");
+          fallback.textContent = "Video preview unavailable in this browser. Download the original below.";
+          video.replaceWith(fallback);
+        });
+        item.append(video);
+      }
+      const link = document.createElement("a");
+      link.href = url + "&download=1";
+      link.className = "attach-download";
+      link.textContent = att.filename || "Download file";
+      link.download = att.filename || "";
+      item.append(link); wrap.append(item);
+    }
+    parent.append(wrap);
   }
   function composerState() {
-    $("send").disabled = busy || sending || !current;
-    $("stop").hidden = !busy;
-    $("message").disabled = !current;
+    const hasText = Boolean($("message").value.trim());
+    const hasAttach = pendingAttachments.length > 0;
+    $("send").disabled = !chatReady || busy || sending || uploading || !current || (!hasText && !hasAttach);
+    $("stop").hidden = !busy || replyStopping;
+    $("message").disabled = !chatReady || !current;
+    const attachBtn = $("attach-plus");
+    if (attachBtn) attachBtn.disabled = !chatReady || !current || busy || sending || uploading;
+    $("conversations").disabled = !chatReady || sending || uploading;
+    $("new-chat").disabled = !chatReady || sending || uploading;
+    $("conversations-dialog").disabled = !chatReady || sending || uploading;
+    $("new-chat-dialog").disabled = !chatReady || sending || uploading;
+    document.querySelectorAll(".attach-remove").forEach((button) => { button.disabled = sending; });
     const dot = $("status-dot");
     if (dot) dot.classList.toggle("busy", busy || sending);
   }
@@ -89,25 +304,25 @@ if ($("login-form")) {
     stop: "stop current job (draft only)",
   };
   async function submitChatText(text, { confirmStop = false, confirmMessage } = {}) {
-    if (!text || !current) return;
+    if (!chatReady || !text || !current) return;
     if (confirmStop && !window.confirm(confirmMessage || "Stop this job?")) return;
-    if ((busy || sending) && !confirmStop) {
+    if (uploading || ((busy || sending) && !confirmStop)) {
       $("notice").textContent = "Wait for the current reply to finish, then try again.";
       setBottomTab("chat");
       return;
     }
     setBottomTab("chat");
     const provider = $("provider-choice").value;
-    if (!draftRequest || draftRequest.message !== text || draftRequest.conversation_id !== current) {
-      draftRequest = { conversation_id: current, message: text, provider, request_id: crypto.randomUUID() };
+    if (!quickRequest || quickRequest.message !== text || quickRequest.conversation_id !== current || quickRequest.provider !== provider) {
+      quickRequest = { conversation_id: current, message: text, provider, request_id: crypto.randomUUID(), attachments: [] };
     }
-    const payload = draftRequest;
+    const payload = quickRequest;
     sending = true;
     composerState();
     $("notice").textContent = "";
     try {
       const conversation = await api("/api/messages", payload);
-      if (payload === draftRequest) draftRequest = null;
+      if (payload === quickRequest) quickRequest = null;
       render(conversation);
       await refreshList();
     } catch (error) {
@@ -128,22 +343,8 @@ if ($("login-form")) {
     }
     submitChatText(text, { confirmStop: key === "stop" });
   });
-  let activeBottomTab = "chat";
-  let songSnapshot = "";
-  function songFieldsText() {
-    return ["song-title", "song-lyrics", "song-chords", "song-notes"]
-      .map((id) => $(id)?.value || "").join("\x1e");
-  }
-  function markSongClean() { songSnapshot = songFieldsText(); }
-  async function confirmLeaveSongEdits() {
-    if (songFieldsText() === songSnapshot) return true;
-    return window.confirm("You have unsaved song edits. Continue without saving?");
-  }
   function setBottomTab(name) {
-    if (activeBottomTab === "song" && name !== "song" && songFieldsText() !== songSnapshot) {
-      if (!window.confirm("You have unsaved song edits. Leave this tab anyway?")) return false;
-    }
-    activeBottomTab = name;
+    if (!["chat", "ops", "lanes", "settings"].includes(name)) name = "chat";
     for (const btn of document.querySelectorAll(".bottom-tab")) {
       const on = btn.dataset.bottom === name;
       btn.classList.toggle("active", on);
@@ -154,16 +355,19 @@ if ($("login-form")) {
       view.hidden = !on;
       view.classList.toggle("active", on);
     }
+    document.title = `Bob · ${{chat: "Chat", ops: "Jobs", lanes: "Models", settings: "Settings"}[name]}`;
+    if (name === "ops") refreshJobs();
+    if (["lanes", "settings"].includes(name) && Date.now() - overviewFetchedAt > 8000) refreshOverview();
     return true;
   }
   for (const btn of document.querySelectorAll(".bottom-tab")) {
     btn.addEventListener("click", () => setBottomTab(btn.dataset.bottom));
   }
-  $("open-chats")?.addEventListener("click", () => {
+  $("open-chats").addEventListener("click", () => {
     syncConversationDialog();
-    $("chats-dialog")?.showModal();
+    $("chats-dialog").showModal();
   });
-  $("close-chats")?.addEventListener("click", () => $("chats-dialog")?.close());
+  $("close-chats").addEventListener("click", () => $("chats-dialog").close());
   function syncConversationDialog() {
     const main = $("conversations");
     const dialog = $("conversations-dialog");
@@ -179,50 +383,50 @@ if ($("login-form")) {
   $("conversations-dialog")?.addEventListener("change", async () => {
     $("conversations").value = $("conversations-dialog").value;
     $("conversations").dispatchEvent(new Event("change"));
-    $("chats-dialog")?.close();
+    $("chats-dialog").close();
   });
-  $("new-chat-dialog")?.addEventListener("click", () => { $("new-chat")?.click(); $("chats-dialog")?.close(); });
-  const chipActions = {
-    status: "status",
-    round: "start a job: Web Bob ready round (draft only, no merge)",
-    council: "run council on: score Web Bob mobile UX after bottom tab bar",
-    song: "",
-  };
-  $("quick-chips")?.addEventListener("click", (event) => {
-    const chip = event.target.closest("[data-chip]");
-    if (!chip) return;
-    const key = chip.dataset.chip;
-    if (key === "song") {
-      setBottomTab("song");
-      $("song-title")?.focus();
-      return;
+  $("new-chat-dialog")?.addEventListener("click", () => { $("new-chat").click(); $("chats-dialog").close(); });
+  $("quick-chips").addEventListener("click", (event) => {
+    const key = event.target.closest("[data-chip]")?.dataset.chip;
+    if (key === "status") setBottomTab("ops");
+    if (key === "texts") {
+      setBottomTab("chat");
+      submitChatText("texts");
     }
-    const text = chipActions[key];
-    if (!text) return;
+  });
+  $("provider-choice").addEventListener("change", () => remember("bob.provider", $("provider-choice").value));
+  $("manage-memory")?.addEventListener("click", () => {
     setBottomTab("chat");
-    if (key === "round" || key === "council" || key === "status") {
-      submitChatText(text);
-      return;
-    }
-    const field = $("message");
-    field.value = text;
-    field.focus();
-    field.dispatchEvent(new Event("input"));
+    submitChatText("manage saved memories");
   });
+  $("show-memory")?.addEventListener("click", () => {
+    setBottomTab("chat");
+    submitChatText("show my saved memories");
+  });
+  $("project-context")?.addEventListener("click", () => {
+    setBottomTab("chat");
+    submitChatText("show saved project context");
+  });
+  const messageText = new WeakMap();
   function render(conversation) {
     if (conversation.id !== current) return;
     const nextRevision = JSON.stringify(conversation);
-    busy = conversation.messages.some((message) => ["running", "queued", "waiting"].includes(message.status));
+    const wasStopping = replyStopping;
+    replyStopping = Boolean(conversation.reply_stopping);
+    busy = replyStopping || conversation.messages.some((message) => ["running", "queued", "waiting"].includes(message.status));
     composerState();
     if (nextRevision === revision) return;
     revision = nextRevision;
     const last = conversation.messages.at(-1);
-    if (last?.status === "error" && last.role === "assistant") {
-      $("notice").textContent = last.content || "Reply failed. Edit your message and send again.";
+    if (replyStopping && !sending) {
+      $("notice").textContent = "Stopping the reply. You can keep writing; Send will return when it finishes.";
     } else if (last?.status === "cancelled" && last.role === "assistant" && !sending) {
       $("notice").textContent = "Reply stopped. Send again when ready.";
+    } else if (wasStopping && !sending) {
+      $("notice").textContent = "The previous reply has finished stopping. You can send again.";
     }
     const panel = $("messages"), nearBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 100;
+    const openDetails = new Set([...panel.querySelectorAll("details[open]")].map((detail) => detail.dataset.detailKey));
     const fragment = document.createDocumentFragment();
     if (!conversation.messages.length) {
       const welcome = document.createElement("div"); welcome.className = "welcome";
@@ -234,15 +438,58 @@ if ($("login-form")) {
       const pending = ["queued", "running"].includes(message.status);
       const article = document.createElement("article");
       article.className = `message ${message.role} ${pending ? "pending" : ""} ${message.status === "error" ? "error" : ""}`;
+      if (message.texting) article.classList.add("texting");
+      if (message.private_memory) article.classList.add("private-memory");
       if (message.role === "user") article.setAttribute("aria-label", "You");
-      else article.setAttribute("aria-label", message.provider ? `Assistant, ${providers[message.provider]}` : "Assistant");
+      else article.setAttribute("aria-label", message.provider ? `Assistant, ${providers[message.provider] || "Bob"}` : "Assistant");
       const body = document.createElement("div"); body.className = "body";
-      if (pending) body.textContent = message.provider ? `Thinking via ${providers[message.provider]}…` : "One moment…";
-      else if (message.role === "assistant") body.innerHTML = renderMarkdown(message.content || "");
-      else body.textContent = message.content;
+      if (pending) body.textContent = providers[message.provider] ? `${providers[message.provider]} is replying…` : "One moment…";
+      else if (message.role === "assistant" && !message.texting && !message.private_memory) {
+        if (message.artifact?.accepted && message.artifact?.kind === "writing") {
+          const label = document.createElement("div");
+          label.className = "artifact-label";
+          label.textContent = "Draft";
+          body.append(label);
+          const content = document.createElement("div");
+          content.innerHTML = renderMarkdown(message.artifact.text || message.content || "");
+          body.append(content);
+          if (message.artifact.commentary) {
+            const note = document.createElement("p");
+            note.className = "artifact-commentary";
+            note.textContent = message.artifact.commentary;
+            body.append(note);
+          }
+        } else body.innerHTML = renderMarkdown(message.content || "");
+      }
+      else body.textContent = message.private_memory && message.memory_action_label || message.content;
       article.append(body);
+      if (message.private_memory && Array.isArray(message.project_facts)) {
+        for (const fact of message.project_facts) {
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.textContent = `Review removal: ${fact.kind}`;
+          remove.addEventListener("click", () => submitChatText(
+            `forget project fact ${fact.project_id} ${fact.id} at revision ${fact.revision}`));
+          article.append(remove);
+        }
+      }
+      if (message.private_memory && Array.isArray(message.memory_notes)) {
+        for (const note of message.memory_notes) {
+          const card = document.createElement("div"); card.className = "action-card memory-note";
+          const content = document.createElement("div"); content.textContent = note.text;
+          const review = document.createElement("button"); review.type = "button";
+          review.textContent = "Review removal";
+          review.addEventListener("click", () => submitChatText(`remove saved note ${note.id}`));
+          card.append(content, review); article.append(card);
+        }
+      }
+      appendMessageAttachments(article, message.attachments);
+      const messageTools = document.createElement("div");
+      messageTools.className = "message-tools";
+      if (message.text_draft) article.append(textDraftCard(message.text_draft));
       {
-        const raw = (message.content || "").trim();
+        const raw = (message.private_memory && message.memory_action_label || message.content || "").trim();
+        messageText.set(article, raw);
         const copyBtn = document.createElement("button");
         copyBtn.type = "button";
         copyBtn.className = "msg-copy quiet";
@@ -260,26 +507,64 @@ if ($("login-form")) {
             }
           });
         }
-        article.append(copyBtn);
+        if (!pending) messageTools.append(copyBtn);
       }
-      if (message.role === "assistant" && message.provider && !pending) {
+      if (message.role === "assistant" && providers[message.provider] && !pending) {
         const hint = document.createElement("div");
         hint.className = "provider-hint";
-        hint.textContent = providers[message.provider];
-        article.append(hint);
+        hint.textContent = (providers[message.provider] || message.provider) + (message.voice_interrupted ? " · interrupted (may include unplayed words)" : "");
+        messageTools.append(hint);
+      }
+      article.append(messageTools);
+      if (message.handoff_receipt?.handoff_id) {
+        const handoff = message.handoff_receipt;
+        const query = new URLSearchParams({conversation_id: current, handoff_id: handoff.handoff_id});
+        const tools = document.createElement('div'); tools.className = 'action-card-actions';
+        const download = document.createElement('a'); download.className = 'job-result-link';
+        download.href = '/api/project-handoffs/export?' + query;
+        download.textContent = 'Download handoff'; download.download = 'webbob-handoff.json';
+        tools.append(download);
+        if (handoff.state === 'returned_unverified') {
+          const returned = document.createElement('a'); returned.className = 'job-result-link';
+          returned.href = '/api/project-handoffs/return?' + query;
+          returned.textContent = 'Download returned review'; returned.download = 'webbob-review.json';
+          tools.append(returned);
+        } else {
+          const picker = document.createElement('input'); picker.type = 'file'; picker.accept = '.json,application/json';
+          picker.hidden = true;
+          const importButton = document.createElement('button'); importButton.type = 'button';
+          importButton.textContent = 'Import returned review';
+          importButton.addEventListener('click', () => picker.click());
+          picker.addEventListener('change', async () => {
+            const file = picker.files?.[0]; if (!file) return;
+            const conversationId = query.get('conversation_id');
+            importButton.disabled = true;
+            try {
+              if (file.size > 170000) throw new Error('The returned review is too large.');
+              const artifact = JSON.parse(await file.text());
+              if (artifact.handoff_id !== handoff.handoff_id) throw new Error('This return belongs to another handoff.');
+              await api('/api/project-handoffs/import', {conversation_id: conversationId, artifact});
+              if (current === conversationId) render(await api('/api/conversations/' + conversationId));
+              $('notice').textContent = 'Review imported. The claimed author remains unverified.';
+            } catch (error) { $('notice').textContent = error.message || 'The returned review could not be imported.'; }
+            finally { importButton.disabled = false; picker.value = ''; }
+          });
+          tools.append(importButton, picker);
+        }
+        article.append(tools);
       }
       if (message.status === "waiting" && message.retry_at) {
         const retry = document.createElement("div"); retry.className = "attempt";
         retry.textContent = `Queued · retry after ${new Date(message.retry_at * 1000).toLocaleTimeString()}`;
         article.append(retry);
       }
-      if (message.action_card) {
+      if (message.action_card?.state === "confirm") {
         const card = document.createElement("div"); card.className = "action-card";
         const title = document.createElement("div"); title.className = "action-card-title";
         title.textContent = message.action_card.reason || "Action";
         card.append(title);
-        const suffix = message.action_card.state === "queued" ? "Queued for scheduler"
-          : message.action_card.state === "confirm" ? "Tap approve to continue (draft only)"
+        const suffix = message.action_card.state === "queued" ? "Waiting to start"
+          : message.action_card.state === "confirm" ? "Review and approve to start"
           : message.action_card.state === "refused" ? "Blocked by safety rules"
           : "No action executed";
         const hint = document.createElement("div"); hint.className = "action-card-hint"; hint.textContent = suffix;
@@ -287,23 +572,22 @@ if ($("login-form")) {
         if (message.action_card.state === "confirm" && message.action_card.executable) {
           const actions = document.createElement("div"); actions.className = "action-card-actions";
           const council = /council/i.test(message.action_card.reason || "");
+          const removal = message.action_card.kind === "memory-remove";
+          const projectRemoval = message.action_card.kind === "project-forget";
+          const memory = message.action_card.kind === "memory" || /^memory:/i.test(message.action_card.reason || "");
           const proposalId = message.action_card.proposal_id || message.action_card.id || "";
           const approve = document.createElement("button");
           approve.type = "button"; approve.className = "action-approve";
-          approve.textContent = council ? "Yes, run council" : "Yes, start job";
+          approve.textContent = projectRemoval ? "Forget this fact" : removal ? "Remove this note" : memory ? "Save memory" : council ? "Start review" : "Start job";
           approve.addEventListener("click", () => {
             const suffix = proposalId ? ` proposal ${proposalId}` : "";
-            $("message").value = council ? `yes, run council${suffix}` : `yes, start job${suffix}`;
-            $("message").dispatchEvent(new Event("input"));
-            $("composer").requestSubmit();
+            submitChatText(projectRemoval ? `yes, forget project fact${suffix}` : removal ? `yes, remove saved note${suffix}` : memory ? `yes, save memory${suffix}` : council ? `yes, run council${suffix}` : `yes, start job${suffix}`);
           });
           const deny = document.createElement("button");
           deny.type = "button"; deny.className = "action-deny";
-          deny.textContent = council ? "Dismiss" : "Not now";
+          deny.textContent = projectRemoval ? "Keep fact" : removal ? "Keep note" : memory ? "Dismiss" : council ? "Dismiss" : "Not now";
           deny.addEventListener("click", () => {
-            $("message").value = council ? "never mind council" : "never mind";
-            $("message").dispatchEvent(new Event("input"));
-            $("composer").requestSubmit();
+            submitChatText(removal || memory ? "never mind memory" : council ? "never mind council" : "never mind");
           });
           actions.append(approve, deny);
           card.append(actions);
@@ -311,14 +595,99 @@ if ($("login-form")) {
         article.append(card);
       }
       if (message.attempts?.length) {
-        const detail = document.createElement("div"); detail.className = "attempt";
-        detail.textContent = message.attempts.map((a) => a.message || `${providers[a.provider]}: ${a.error}${a.skipped ? " (cooldown or busy)" : ""}`).join(" · ");
+        const rows = [...new Set(message.attempts.map((attempt) => {
+          const name = providers[attempt.provider];
+          return name ? `${name}: ${modelReason(attempt.kind || attempt.error)}` : "Another model could not reply.";
+        }))];
+        const detail = document.createElement("details");
+        detail.className = "reply-details";
+        detail.dataset.detailKey = message.request_id || message.id || String(fragment.childElementCount);
+        detail.open = openDetails.has(detail.dataset.detailKey);
+        detail.append(element("summary", "Reply details"));
+        rows.forEach((text) => detail.append(element("p", text, "muted")));
         article.append(detail);
       }
       fragment.append(article);
     }
     panel.replaceChildren(fragment);
     if (nearBottom || sending) panel.scrollTop = panel.scrollHeight;
+  }
+  function textDraftCard(draft) {
+    const card = document.createElement("section");
+    card.className = "text-draft-card";
+    card.dataset.draftId = draft.id;
+    card.dataset.state = draft.state;
+    card.setAttribute("aria-label", "Text draft");
+    const title = document.createElement("h3");
+    title.textContent = "Text draft · " + ({ pending: "not sent", editing: "editing", expired: "confirmation expired",
+      superseded: "replaced", cancelled: "cancelled", confirmed_not_sent: "confirmed here, not sent",
+      read_only: "read-only · never sent", submitted: "submitted · delivery unconfirmed", sent: "sent · delivery unconfirmed",
+      delivered: "delivered", delivery_failed: "delivery failed", delivery_unconfirmed: "delivery unconfirmed" }[draft.state] || "not sent");
+    const recipient = document.createElement("p");
+    recipient.className = "text-recipient";
+    recipient.textContent = `To: ${draft.recipient.name}\n${draft.recipient.addresses.join(", ")}\nThread: ${draft.recipient.guid}`;
+    const body = document.createElement("pre");
+    body.className = "text-draft-body"; body.textContent = draft.body;
+    card.append(title, recipient, body);
+    if (draft.state === "editing") {
+      const form = document.createElement("form");
+      const toLabel = document.createElement("label");
+      toLabel.textContent = "Recipient or exact thread ID";
+      const to = document.createElement("input");
+      to.value = draft.recipient.guid; to.required = true; to.maxLength = 500;
+      toLabel.append(to);
+      const bodyLabel = document.createElement("label"); bodyLabel.textContent = "Text body";
+      const field = document.createElement("textarea");
+      field.value = draft.body; field.required = true; field.maxLength = 4000; field.rows = 4;
+      bodyLabel.append(field);
+      const review = document.createElement("button"); review.type = "submit"; review.textContent = "Review new draft";
+      form.append(toLabel, bodyLabel, review);
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        submitChatText(`replace text draft ${draft.id} to ${to.value}: ${field.value}`);
+      });
+      card.append(form);
+    }
+    if (draft.confirm_message) {
+      const hint = document.createElement("p");
+      hint.textContent = `To confirm this exact draft, send separately in chat by ${new Date(draft.expires_at * 1000).toLocaleTimeString()}:`;
+      const code = document.createElement("code"); code.className = "text-confirmation"; code.textContent = draft.confirm_message;
+      const prepare = document.createElement("button"); prepare.type = "button"; prepare.textContent = "Put confirmation in chat";
+      prepare.addEventListener("click", () => {
+        $("message").value = draft.confirm_message;
+        $("message").dispatchEvent(new Event("input")); $("message").focus();
+      });
+      card.append(hint, code, prepare);
+    }
+    if (["pending", "expired", "confirmed_not_sent", "read_only"].includes(draft.state)) {
+      const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "Edit draft";
+      // Clear consent on the server before exposing editable fields, including in other tabs.
+      edit.addEventListener("click", () => submitChatText(`edit text draft ${draft.id}`));
+      const cancel = document.createElement("button"); cancel.type = "button"; cancel.textContent = "Cancel draft";
+      cancel.addEventListener("click", () => submitChatText(`cancel text draft ${draft.id}`));
+      card.append(edit, cancel);
+    }
+    const status = document.createElement("p"); status.className = "text-delivery-status";
+    if (draft.check_delivery_message && !draft.read_only && ["submitted", "sent", "delivered", "delivery_failed", "delivery_unconfirmed"].includes(draft.state)) {
+      const check = document.createElement("button"); check.type = "button"; check.textContent = "Check delivery";
+      check.addEventListener("click", () => submitChatText(draft.check_delivery_message));
+      card.append(check);
+    }
+    status.textContent = draft.read_only || draft.state === "read_only"
+      ? "Instinct is read-only. This draft cannot be sent from Web Bob."
+      : draft.state === "delivery_failed"
+      ? "Messages reports a delivery failure. No automatic resend. A new send needs a fresh draft and confirmation."
+      : draft.state === "delivered"
+      ? "Messages reports this text delivered."
+      : draft.state === "submitted" || draft.state === "sent"
+      ? "Submitted through Andrea. Delivery is not confirmed; Check delivery refreshes the original message without resending."
+      : draft.state === "delivery_unconfirmed"
+        ? "Delivery is unconfirmed. Check delivery to look for Andrea’s receipt without resending."
+        : draft.state === "confirmed_not_sent"
+          ? "Not sent. Andrea could not accept this delivery; this confirmation cannot be reused."
+          : "Nothing has been sent until you confirm with the exact yes + token in chat.";
+    card.append(status);
+    return card;
   }
   async function refreshList() {
     const data = await api("/api/conversations");
@@ -343,25 +712,19 @@ if ($("login-form")) {
     throw new Error("Reply timed out — check chat.");
   }
   async function poll() {
-    if (!current || polling) return;
+    if (!chatReady || authRedirecting || !current || polling) return;
     polling = true;
     try {
       render(await api(`/api/conversations/${current}`));
-      pollFailures = 0;
-      $("connection").textContent = "On the mini";
-      const dot = $("status-dot");
-      if (dot) {
-        dot.classList.remove("warn");
-        dot.setAttribute("aria-label", "Connected");
-      }
-      $("offline-banner")?.setAttribute("hidden", "");
+      connectionRestored();
       if (!busy && $("notice").textContent === "Stopping this reply…") $("notice").textContent = "";
     } catch (error) {
       pollFailures += 1;
       const offline = pollFailures >= 3;
-      $("connection").textContent = offline ? "Offline — check the mini" : "Reconnecting…";
+      $("connection").textContent = offline ? "Cannot reach Bob" : "Reconnecting…";
       const dot = $("status-dot");
       if (dot) {
+        dot.classList.remove("connected");
         if (pollFailures >= 2) dot.classList.add("warn");
         dot.setAttribute("aria-label", offline ? "Offline" : "Reconnecting");
       }
@@ -374,8 +737,7 @@ if ($("login-form")) {
     const article = event.target.closest(".message");
     if (!article || article.classList.contains("pending")) return;
     event.preventDefault();
-    const body = article.querySelector(".body");
-    const text = body?.innerText?.trim();
+    const text = messageText.get(article);
     if (!text) return;
     const menu = document.createElement("div");
     menu.className = "msg-menu";
@@ -399,6 +761,11 @@ if ($("login-form")) {
     setTimeout(() => document.addEventListener("click", close, true), 0);
   });
   $("messages")?.addEventListener("click", async (event) => {
+    const result = event.target.closest(".job-result-link[data-job-id]");
+    if (result) {
+      await showJobResult("/api/jobs/result?id=" + result.dataset.jobId, "Job result", "", result);
+      return;
+    }
     const btn = event.target.closest(".copy-code");
     if (!btn) return;
     const code = btn.parentElement?.querySelector("code")?.textContent || "";
@@ -410,28 +777,68 @@ if ($("login-form")) {
   });
   $("composer").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const message = $("message").value.trim();
-    if (!message || busy || sending) return;
+    const message = $("message").value;
+    if (!chatReady || (!message.trim() && !pendingAttachments.length) || busy || sending || uploading) return;
     const provider = $("provider-choice").value;
-    if (!draftRequest || draftRequest.message !== message || draftRequest.conversation_id !== current || draftRequest.provider !== provider) {
-      draftRequest = { conversation_id: current, message, provider, request_id: crypto.randomUUID() };
+    const attachIds = pendingAttachments.map((row) => row.media_id);
+    if (!draftRequest || draftRequest.message !== message || draftRequest.conversation_id !== current || draftRequest.provider !== provider
+        || JSON.stringify(draftRequest.attachments || []) !== JSON.stringify(attachIds)) {
+      draftRequest = { conversation_id: current, message, provider, request_id: crypto.randomUUID(), attachments: attachIds };
     }
     sending = true; composerState(); $("notice").textContent = "";
+    const submitted = draftRequest;
     try {
-      const conversation = await api("/api/messages", draftRequest);
-      const submitted = draftRequest;
-      if (submitted.conversation_id === current && submitted.message === $("message").value.trim()) {
+      const conversation = await api("/api/messages", submitted);
+      if (submitted.conversation_id === current && submitted.message === $("message").value) {
         $("message").value = "";
         $("message").style.height = "auto";
-        draftRequest = null;
       }
+      if (submitted === draftRequest) draftRequest = null;
+      pendingAttachments = pendingAttachments.filter((row) => !submitted.attachments.includes(row.media_id));
+      renderAttachmentStrip();
       render(conversation); await refreshList();
     } catch (error) { $("notice").textContent = error.message; }
     finally { sending = false; composerState(); $("message").focus(); }
   });
+  $("attach-plus")?.addEventListener("click", () => $("attach-input")?.click());
+  $("attach-input")?.addEventListener("change", async (event) => {
+    const files = [...(event.target.files || [])];
+    event.target.value = "";
+    if (!chatReady || !files.length || uploading || sending || busy || !current) return;
+    if (pendingAttachments.length + files.length > MAX_PENDING_ATTACHMENTS) {
+      $("notice").textContent = `At most ${MAX_PENDING_ATTACHMENTS} attachments per message.`;
+      return;
+    }
+    uploading = true; composerState();
+    const errors = [];
+    try {
+      for (const file of files) {
+        const kind = mediaKindFromFile(file);
+        const limit = mediaLimitForKind(kind);
+        if (!kind || !file.size || file.size > limit) {
+          errors.push(!kind ? `${file.name}: unsupported file type.` : `${file.name}: file must be between 1 byte and ${limit / 1024 / 1024}MB.`);
+          continue;
+        }
+        try {
+          $("notice").textContent = `Uploading ${file.name}…`;
+          const stored = await uploadMedia(file, current);
+          pendingAttachments.push(stored);
+          renderAttachmentStrip();
+        } catch (error) {
+          errors.push(error.message);
+        }
+      }
+    } finally {
+      uploading = false;
+      $("notice").textContent = errors.join(" ");
+      renderAttachmentStrip();
+      composerState();
+    }
+  });
   $("message").addEventListener("input", () => {
     $("message").style.height = "auto";
     $("message").style.height = Math.min($("message").scrollHeight, 180) + "px";
+    composerState();
   });
   $("message").addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing && !matchMedia("(pointer: coarse)").matches) {
@@ -439,11 +846,17 @@ if ($("login-form")) {
     }
   });
   $("conversations").addEventListener("change", async () => {
-    current = $("conversations").value; remember("bob.conversation", current); revision = ""; busy = false;
+    if (!chatReady || uploading || sending) return;
+    if (!setBottomTab("chat")) { $("conversations").value = current; return; }
+    $("chats-dialog").close();
+    switchConversation($("conversations").value);
     await poll(); $("messages").scrollTop = $("messages").scrollHeight;
   });
   $("new-chat").addEventListener("click", async () => {
-    try { const conversation = await api("/api/conversations", {}); current = conversation.id; revision = ""; await refreshList(); render(conversation); $("message").focus(); }
+    if (!chatReady || uploading || sending) return;
+    if (!setBottomTab("chat")) return;
+    $("chats-dialog").close();
+    try { const conversation = await api("/api/conversations", {}); switchConversation(conversation.id); await refreshList(); render(conversation); $("message").focus(); }
     catch (error) { $("notice").textContent = error.message; }
   });
   let micRecognition = null;
@@ -571,717 +984,416 @@ if ($("login-form")) {
     } catch (error) { $("notice").textContent = error.message; }
   });
   $("stop").addEventListener("click", async () => {
+    if (!chatReady) return;
     try { await api("/api/cancel", { conversation_id: current }); $("notice").textContent = "Stopping this reply…"; }
     catch (error) { $("notice").textContent = error.message; }
   });
-  let callSession = null;
-  async function drainCallQueue(session) {
-    if (!session || session.drainRunning || callSession !== session) return;
-    session.drainRunning = true;
-    try {
-      while (callSession === session && session.queue.length) {
-        const { transcript, heardAt } = session.queue.shift();
-        if (heardAt !== session.lastHeardAt) continue;
-        await handleCallUtterance(transcript, session.id);
-      }
-    } finally {
-      if (session === callSession) session.drainRunning = false;
-    }
-  }
-  function enqueueCallUtterance(transcript, session) {
-    if (!session || callSession !== session) return;
-    const norm = transcript.trim().toLowerCase();
-    if (norm.length < 3) return;
-    const last = session.queue.at(-1);
-    if (last && last.transcript.trim().toLowerCase() === norm) return;
-    const heardAt = Date.now();
-    session.lastHeardAt = heardAt;
-    session.queue.push({ transcript: transcript.trim(), heardAt });
-    drainCallQueue(session);
-  }
-  function appendCallLine(role, text) {
-    const host = $("call-transcript");
-    if (!host || !text) return;
-    const row = document.createElement("p");
-    row.className = role === "you" ? "call-you" : "call-bob";
-    row.textContent = (role === "you" ? "You: " : "Bob: ") + text.trim();
-    host.append(row);
-    host.scrollTop = host.scrollHeight;
-  }
-  async function speakCallReply(text) {
-    if (!("speechSynthesis" in window) || !text) return;
-    await ensureSpeechVoices();
-    return new Promise((resolve) => {
-      const utter = new SpeechSynthesisUtterance(speechText(text).slice(0, 2000));
-      utter.rate = 1.05;
-      const voices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith("en"));
-      if (voices.length) utter.voice = voices.find((v) => /samantha|daniel|english/i.test(v.name)) || voices[0];
-      utter.onend = utter.onerror = () => resolve();
-      if (callSession) callSession.speaking = utter;
-      speechSynthesis.speak(utter);
-    });
-  }
-  function stopLiveCall() {
-    if (callSession?.recognition) {
-      try { callSession.recognition.stop(); } catch (_) { /* ignore */ }
-    }
-    speechSynthesis.cancel();
-    callSession = null;
-    $("live-call")?.classList.remove("call-active");
-    $("call-dialog")?.close();
-    $("call-status").textContent = "";
-    $("call-transcript").replaceChildren();
-  }
-  async function handleCallUtterance(transcript, sessionId) {
-    if (!callSession || callSession.id !== sessionId || !transcript.trim()) return;
-    if (callSession.busy) return;
-    callSession.busy = true;
-    appendCallLine("you", transcript);
-    const thinkStarted = performance.now();
-    $("call-status").textContent = "Bob is thinking…";
-    speechSynthesis.cancel();
-    try {
-      const requestId = crypto.randomUUID();
-      const convId = callSession.convId || current;
-      const payload = {
-        conversation_id: convId,
-        message: transcript,
-        provider: $("provider-choice").value,
-        request_id: requestId,
-      };
-      await api("/api/messages", payload);
-      const value = await waitForReply(convId, requestId);
-      if (!callSession || callSession.id !== sessionId) return;
-      const msg = value.messages.find((m) => m.role === "assistant" && m.request_id === requestId);
-      const body = msg?.content || "No reply yet.";
-      appendCallLine("bob", body);
-      const thinkMs = Math.round(performance.now() - thinkStarted);
-      $("call-status").textContent = `Listening… (${thinkMs}ms to reply · speak anytime, tap End to stop)`;
-      await speakCallReply(body);
-    } catch (error) {
-      $("call-status").textContent = error.message || "Call error";
-    } finally {
-      if (callSession?.id === sessionId) callSession.busy = false;
-    }
-  }
-  $("live-call")?.addEventListener("click", () => {
-    if (callSession) { stopLiveCall(); return; }
-    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Speech) {
-      $("notice").textContent = "Live call needs Safari on iPhone (HTTPS) or Chrome. Use the mic for dictation.";
-      return;
-    }
-    const rec = new Speech();
-    callSession = {
-      id: crypto.randomUUID(),
-      convId: current,
-      recognition: rec,
-      speaking: null,
-      resultIndex: 0,
-      busy: false,
-      queue: [],
-      drainRunning: false,
-      lastHeardAt: 0,
-    };
-    $("call-dialog")?.showModal();
-    $("call-transcript").replaceChildren();
-    $("call-status").textContent = "Listening… speak naturally. Bob will answer out loud.";
-    $("live-call").classList.add("call-active");
-    rec.lang = "en-US";
-    rec.interimResults = true;
-    rec.continuous = true;
-    rec.onresult = (event) => {
-      if (!callSession) return;
-      let heardInterim = false;
-      for (let index = callSession.resultIndex; index < event.results.length; index += 1) {
-        const row = event.results[index];
-        const said = (row[0]?.transcript || "").trim();
-        if (!row.isFinal && said.length > 1) heardInterim = true;
-        if (!row.isFinal) continue;
-        callSession.resultIndex = index + 1;
-        if (said.length > 2) enqueueCallUtterance(said, callSession);
-      }
-      if (heardInterim && callSession.speaking) {
-        speechSynthesis.cancel();
-        callSession.speaking = null;
-        $("call-status").textContent = "Listening… (interrupted Bob)";
-      }
-    };
-    rec.onerror = (event) => {
-      if (!callSession) return;
-      if (event.error === "not-allowed") $("call-status").textContent = "Microphone blocked — allow mic in Settings.";
-      else if (event.error !== "aborted") $("call-status").textContent = "Mic error — try again or type in chat.";
-    };
-    rec.onend = () => {
-      if (callSession?.recognition === rec) {
-        callSession.resultIndex = 0;
-        try { rec.start(); } catch (_) { /* restart loop while call open */ }
-      }
-    };
-    callSession.resultIndex = 0;
-    try { rec.start(); } catch (_) {
-      stopLiveCall();
-      $("notice").textContent = "Could not start live call.";
-    }
+  const voice = new BobVoice({
+    api,
+    onState(text, phase) {
+      $("call-status").textContent = text;
+      $("call-dialog").dataset.phase = phase;
+      $("live-call").classList.toggle("call-active", voice.active);
+      $("live-call").setAttribute("aria-pressed", String(voice.active));
+      $("live-call").setAttribute("aria-label", voice.active ? "Hang up voice call" : "Start live voice call");
+      // WebKit can drop a pending click if its text node is replaced between
+      // press and release. Streaming state updates must keep this label stable.
+      const endLabel = voice.active ? "Hang up" : "Back to chat";
+      if ($("end-call").textContent !== endLabel) $("end-call").textContent = endLabel;
+      $("resume-call").hidden = phase !== "paused";
+      $("retry-voice-save").hidden = phase !== "unsaved";
+      $("call-hint").textContent = voice.active ? "Your transcript saves to this chat." : "Choose Back to chat, then use the waveform button to call again.";
+    },
+    onTranscript(entries) {
+      const rows = entries.filter(e => e.content.trim()).map(entry => {
+        const row = document.createElement("p");
+        row.className = entry.role === "user" ? "call-you" : "call-bob";
+        row.textContent = (entry.role === "user" ? "You: " : "Bob: ") + entry.content + (entry.interrupted ? " [interrupted]" : "");
+        return row;
+      });
+      $("call-transcript").replaceChildren(...rows);
+      $("call-transcript").scrollTop = $("call-transcript").scrollHeight;
+    },
+    onSaved() { revision = ""; },
   });
-  $("end-call")?.addEventListener("click", () => stopLiveCall());
-  $("call-dialog")?.addEventListener("close", () => stopLiveCall());
+  $("live-call").addEventListener("click", () => {
+    if (voice.active) { voice.stop(); return; }
+    if (!chatReady || busy || sending || !current) { $("notice").textContent = "Wait for chat to load and Bob’s reply to finish before starting a call."; return; }
+    if (micRecognition) { micRecognition.abort(); micRecognition = null; $("mic").classList.remove("mic-active"); $("mic").setAttribute("aria-pressed", "false"); }
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
+    $("call-transcript").replaceChildren();
+    $("call-dialog").showModal();
+    voice.start(current);
+  });
+  $("end-call").addEventListener("click", () => {
+    if (voice.active) voice.stop();
+    else $("call-dialog").close();
+  });
+  $("resume-call").addEventListener("click", () => voice.resume());
+  $("retry-voice-save").addEventListener("click", () => voice.retrySave());
+  $("call-dialog").addEventListener("close", () => voice.stop());
+  window.addEventListener("pagehide", () => voice.stop());
+  window.addEventListener("offline", () => voice.stop("Connection lost. Your transcript will save when you reconnect."));
+  window.addEventListener("online", () => voice.retrySave());
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && voice.active) voice.stop("Call ended when you left this page. Tap the waveform to call again.");
+  });
+  window.addEventListener("beforeunload", event => {
+    if (voice.pending.length) { event.preventDefault(); event.returnValue = ""; }
+  });
   $("logout").addEventListener("click", async () => {
-    try { await api("/api/logout", {}); location.assign("/login"); }
-    catch (error) { $("notice").textContent = error.message; }
+    $("settings-notice").textContent = "";
+    try { await voice.stop(); await api("/api/logout", {}); location.assign("/login"); }
+    catch (_) { $("settings-notice").textContent = "Could not log out. Please try again."; }
   });
-  $("close-report")?.addEventListener("click", () => $("report")?.close());
-  let songProjectId = stored("bob.songProject") || "";
-  async function loadSongList(selectId) {
-    const list = await api("/api/song-projects");
-    const picker = $(selectId || "song-picker");
-    if (!picker) return list;
-    picker.replaceChildren(...list.projects.map((p) => {
-      const opt = document.createElement("option");
-      opt.value = p.id;
-      opt.textContent = p.title || "Untitled";
-      return opt;
+  function element(tag, text, className = "") {
+    const node = document.createElement(tag);
+    if (text != null) node.textContent = text;
+    if (className) node.className = className;
+    return node;
+  }
+  function duration(seconds) {
+    if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) return "";
+    if (seconds < 60) return "less than a minute";
+    const minutes = Math.floor(seconds / 60);
+    return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} hr ${minutes % 60} min`;
+  }
+  function timestamp(value) {
+    if (!value) return "";
+    const date = new Date(typeof value === "number" ? value * 1000 : value);
+    return Number.isNaN(date.getTime()) ? "" : date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  }
+  function disclosure(label, rows, key) {
+    const detail = element("details", null, "disclosure card-details");
+    detail.dataset.detailKey = key;
+    detail.append(element("summary", label));
+    const list = document.createElement("dl");
+    for (const [name, value] of rows) {
+      if (value === undefined || value === null || value === "") continue;
+      list.append(element("dt", name), element("dd", value));
+    }
+    detail.append(list);
+    return detail;
+  }
+  function replaceCards(host, cards) {
+    const open = new Set([...host.querySelectorAll("details[open]")].map((item) => item.dataset.detailKey));
+    cards.forEach((card) => card.querySelectorAll("details").forEach((item) => { item.open = open.has(item.dataset.detailKey); }));
+    host.replaceChildren(...cards);
+  }
+  function modelReason(reason) {
+    return ({ not_logged_in: "Sign-in needed", rate_limit: "Usage limit reached", timeout: "Reply took too long",
+      network: "Connection problem", invalid_output: "No usable reply", nonzero_exit: "Could not reply",
+      budget: "Spending limit reached", refill_required: "Gemini funding needs attention", not_installed: "Not set up", session_unavailable: "Could not reopen the conversation",
+      busy: "Already in use", cooldown: "Waiting before trying again" })[reason] || "Could not reply";
+  }
+  let overviewFetchedAt = 0, overviewLoading = false;
+  function clearOverview() {
+    $("lanes-summary").textContent = "Cannot check models. Try Refresh.";
+    $("lanes").replaceChildren();
+    $("models-empty").hidden = true;
+    $("self-improve-status").textContent = "Cannot check the schedule right now.";
+  }
+  function jobElement(tag, className, text) {
+    const element = document.createElement(tag);
+    element.className = className;
+    if (text != null) element.textContent = text;
+    return element;
+  }
+  function jobDuration(seconds) {
+    if (!Number.isFinite(seconds)) return "Time not reported";
+    const minutes = Math.floor(Math.max(0, seconds) / 60);
+    if (!minutes) return "Less than a minute";
+    if (minutes < 60) return `${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    return hours < 24 ? `${hours} hr${minutes % 60 ? ` ${minutes % 60} min` : ""}` : `${Math.floor(hours / 24)}d ${hours % 24} hr`;
+  }
+  function jobAge(seconds) {
+    return Number.isFinite(seconds) ? seconds < 60 ? "Just now" : `${jobDuration(seconds)} ago` : "Not reported";
+  }
+  function jobLink(url, label) {
+    if (!url) return null;
+    let parsed;
+    try { parsed = new URL(url, location.origin); } catch (_) { return null; }
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return null;
+    const link = jobElement("a", "job-result-link", label);
+    link.href = parsed.href;
+    link.rel = "noopener noreferrer";
+    link.target = "_blank";
+    return link;
+  }
+  function uniqueJobs(rows) {
+    const seen = new Set();
+    return (rows || []).filter((row) => { if (seen.has(row.key)) return false; seen.add(row.key); return true; });
+  }
+  function renderJobs(data) {
+    const dispatch = data.dispatch;
+    const waiting = Number.isInteger(dispatch?.queued) && dispatch.queued > 0
+      ? ` ${dispatch.queued} ${dispatch.queued === 1 ? 'job is' : 'jobs are'} waiting.` : '';
+    const dispatchMessage = dispatch?.mode === 'solo'
+      ? 'Solo mode: additional workers and council are paused.'
+      : dispatch?.paused ? 'Automatic dispatch is paused.' : '';
+    $("jobs-dispatch").textContent = dispatchMessage + waiting;
+    $("jobs-dispatch").hidden = !(dispatchMessage || waiting);
+    const teammates = $('teammate-cards');
+    if (teammates) {
+      teammates.replaceChildren();
+      for (const row of data.teammates || []) {
+        const card = jobElement('article', 'job-card');
+        card.append(jobElement('h4', 'job-task', row.name), jobElement('p', '', row.summary));
+        if (row.source) card.append(jobElement('p', 'muted', 'Source: ' + row.source + (row.modified_at ? ' · saved ' + new Date(row.modified_at * 1000).toLocaleString() : '')));
+        teammates.append(card);
+      }
+    }
+    const reminders = $("reminder-cards");
+    if (reminders) {
+      reminders.replaceChildren();
+      const rows = (data.reminders || []).filter(r => r.state !== 'cancelled').slice(0, 20);
+      for (const row of rows) {
+        const card = jobElement('article', 'job-card');
+        card.append(jobElement('p', 'job-task', row.body));
+        const when = new Date(row.due_at * 1000).toLocaleString();
+        card.append(jobElement('p', 'muted', `${row.state === 'fired' ? 'Delivered' : 'Due'} ${when}${row.interval_seconds ? ' · Repeating' : ''}`));
+        const open = jobElement('button', 'job-result-link', 'Open reminder chat');
+        open.type = 'button';
+        open.addEventListener('click', () => { if (setBottomTab('chat')) { $('conversations').value = row.conversation_id; $('conversations').dispatchEvent(new Event('change')); } });
+        card.append(open);
+        reminders.append(card);
+      }
+      if (!rows.length) reminders.append(jobElement('p', 'muted', 'No reminders yet.'));
+    }
+    const rows = uniqueJobs(data.working);
+    const complete = data.inspection?.screens_available && data.inspection?.processes_available && data.inspection?.queue_available;
+    $("working-count").hidden = !rows.length;
+    $("working-count").textContent = String(rows.length);
+    $("jobs-notice").hidden = complete;
+    $("jobs-notice").textContent = complete ? "" : "Some live activity could not be checked. Retrying…";
+    $("jobs-empty").hidden = rows.length > 0 || !complete;
+    $("live-jobs").replaceChildren(...rows.map((job) => {
+      const card = jobElement("article", "job-card");
+      const top = jobElement("div", "job-card-top");
+      const stateLabel = ({ running: "Live", paused: "Paused", unverified: "Session open", claimed: "Unconfirmed" })[job.state] || "Unconfirmed";
+      const status = jobElement("span", `job-state ${job.state === "running" ? "is-live" : ""}`, stateLabel);
+      const dot = jobElement("span", "job-dot");
+      dot.setAttribute("aria-hidden", "true");
+      status.prepend(dot);
+      top.append(status);
+      if (Number.isFinite(job.elapsed_seconds)) top.append(jobElement("span", "job-elapsed", jobDuration(job.elapsed_seconds)));
+      card.append(top);
+      const models = (job.models || []).filter((model) => model && model !== "Model not reported");
+      if (models.length) {
+        const llmRow = jobElement("div", "job-llm-row");
+        models.forEach((model) => llmRow.append(jobElement("span", "job-llm", model)));
+        card.append(llmRow);
+      }
+      if (job.project !== "Project not specified") card.append(jobElement("p", "job-project", job.project));
+      card.append(jobElement("h3", "job-task", job.task));
+      if (job.state === "unverified" || job.state === "claimed") {
+        card.append(jobElement("p", "job-unconfirmed muted", "Worker activity is not confirmed."));
+      }
+      return card;
     }));
-    if (!list.projects.length) {
-      const empty = document.createElement("option");
-      empty.value = "";
-      empty.textContent = "No songs yet — tap New song";
-      picker.append(empty);
-    }
-    return list;
-  }
-  async function loadSong(id) {
-    try {
-      const list = await loadSongList("song-picker");
-      const row = list.projects.find((p) => p.id === (id || songProjectId)) || list.projects[0];
-      if (!row) return;
-      songProjectId = row.id;
-      remember("bob.songProject", songProjectId);
-      $("song-picker").value = songProjectId;
-      const project = await api(`/api/song-projects/${songProjectId}`);
-      $("song-title").value = project.title || "";
-      $("song-lyrics").value = project.lyrics || "";
-      $("song-chords").value = project.chords || "";
-      $("song-notes").value = project.notes || "";
-      const versions = $("song-versions");
-      if (versions) {
-        const rows = (project.versions || []).slice().reverse().slice(0, 6);
-        if (rows.length) {
-          versions.hidden = false;
-          versions.replaceChildren(...rows.map((v) => {
-            const li = document.createElement("li");
-            const when = v.at ? new Date(v.at * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
-            li.textContent = `${when}${v.note ? " · " + v.note : ""}`;
-            return li;
-          }));
-        } else {
-          versions.hidden = true;
-          versions.replaceChildren();
-        }
+    const finished = data.inspection?.queue_available ? uniqueJobs(data.recently_finished).slice(0, 5) : [];
+    $("finished-empty").hidden = finished.length > 0;
+    $("finished-empty").textContent = data.inspection?.queue_available ? "No finished jobs yet." : "Finished jobs could not be checked.";
+    $("finished-jobs").replaceChildren(...finished.map((job) => {
+      const card = jobElement("article", "finished-job job-card");
+      const top = jobElement("div", "job-card-top");
+      top.append(jobElement("span", `job-outcome ${job.state === "failed" ? "is-failed" : ""}`,
+        job.state === "done" ? "Finished" : job.state === "failed" ? "Failed" : job.state === "unverified" ? "Outcome unverified" : "Stopped"));
+      if (Number.isFinite(job.finished_at)) top.append(jobElement("span", "job-elapsed muted", jobAge(data.checked_at - job.finished_at)));
+      else if (Number.isFinite(job.last_activity_at)) top.append(jobElement("span", "job-elapsed muted", 'Last activity ' + jobAge(data.checked_at - job.last_activity_at)));
+      card.append(top);
+      card.append(jobElement("p", "job-project", job.project));
+      card.append(jobElement("p", "finished-task", job.task));
+      const footer = jobElement("div", "finished-footer");
+      if (job.result_url?.startsWith("/api/jobs/result?")) {
+        const result = jobElement("button", "job-result-link", "View result");
+        result.type = "button";
+        result.dataset.resultUrl = job.result_url;
+        result.setAttribute("aria-label", `View result for ${job.project}: ${job.task}`);
+        result.addEventListener("click", () => showJobResult(job.result_url, job.project, job.task, result));
+        footer.append(result);
       }
-      markSongClean();
-    } catch (_) { $("song-notice").textContent = "Offline — edits stay on device until you save."; }
+      const external = jobLink(job.external_result_url, "View result");
+      const pr = jobLink(job.pr_url, "View PR ↗");
+      if (external && !job.result_url) footer.append(external);
+      if (pr) footer.append(pr);
+      card.append(footer);
+      return card;
+    }));
+    const details = data.details || {};
+    const list = jobElement("dl", "jobs-detail-list");
+    const add = (label, value) => list.append(jobElement("dt", "", label), jobElement("dd", "", value));
+    add("Live check", new Date(data.checked_at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+    add("Waiting", data.inspection?.queue_available
+      ? `${details.queued || 0} queued${details.unconfirmed ? ` · ${details.unconfirmed} assigned, activity unconfirmed` : ""}`
+      : "Waiting jobs could not be checked.");
+    list.append(jobElement("dt", "", "Activity"), jobElement("dd", "", "A running worker does not confirm progress or completion."));
+    $("jobs-detail-body").replaceChildren(list);
   }
-  $("song-picker")?.addEventListener("change", async () => {
-    if (!(await confirmLeaveSongEdits())) {
-      $("song-picker").value = songProjectId || "";
-      return;
-    }
-    await loadSong($("song-picker").value);
-  });
-  $("song-new")?.addEventListener("click", async () => {
-    if (!(await confirmLeaveSongEdits())) return;
-    songProjectId = "";
-    $("song-picker").value = "";
-    $("song-title").value = "";
-    $("song-lyrics").value = "";
-    $("song-chords").value = "";
-    $("song-notes").value = "";
-    $("song-title").focus();
-    markSongClean();
-  });
-  $("song-coach")?.addEventListener("click", () => {
-    if (!setBottomTab("chat")) return;
-    const title = ($("song-title")?.value || "Untitled").trim().slice(0, 80);
-    const lyricLine = ($("song-lyrics")?.value || "").trim().split("\n").find((l) => l.trim())?.slice(0, 120) || "";
-    const chords = ($("song-chords")?.value || "").trim().slice(0, 80);
-    const field = $("message");
-    const draft = lyricLine
-      ? `help with rhyme and meter for "${title}" — opening line: ${lyricLine}${chords ? ` · chords: ${chords}` : ""}`
-      : `help with rhyme and song structure for "${title}" (add lyrics in Songs if you want line-level edits)`;
-    field.value = draft;
-    field.focus();
-    field.dispatchEvent(new Event("input"));
-    $("song-notice").textContent = "Prepared in chat — send when ready.";
-  });
-  $("song-save").addEventListener("click", async () => {
-    $("song-notice").textContent = "Saving…";
-    try {
-      const project = await api("/api/song-projects", {
-        id: songProjectId || undefined,
-        title: $("song-title").value,
-        lyrics: $("song-lyrics").value,
-        chords: $("song-chords").value,
-        notes: $("song-notes").value,
-        version_note: "saved from phone",
-      });
-      songProjectId = project.id; remember("bob.songProject", songProjectId);
-      $("song-notice").textContent = "Saved " + new Date().toLocaleTimeString();
-      markSongClean();
-      await loadSongList("song-picker");
-      $("song-picker").value = project.id;
-    } catch (error) { $("song-notice").textContent = error.message; }
-  });
-  $("song-demo").addEventListener("click", async () => {
-    const lyrics = $("song-lyrics").value.trim();
-    if (!lyrics) { $("song-notice").textContent = "Add lyrics first."; return; }
-    let receipt = "";
-    try {
-      const quote = await api("/api/music/demo", { lyrics, style: $("song-notes").value || "acoustic songwriter" });
-      if (quote.needs_confirm) {
-        receipt = quote.receipt || "";
-        if (!quote.can_afford_demo) { $("song-notice").textContent = quote.message || "Cap too low for a demo."; return; }
-        if (!window.confirm(quote.message || "Generate local sketch demo ($0)?")) return;
-      }
-    } catch (error) { $("song-notice").textContent = error.message; return; }
-    $("song-notice").textContent = "Generating demo…";
-    try {
-      const demo = await api("/api/music/demo", {
-        lyrics, style: $("song-notes").value || "acoustic songwriter", confirm: true, receipt,
-      });
-      if (demo.audio_id) {
-        const player = $("song-player");
-        player.hidden = false;
-        player.src = `/api/audio/${demo.audio_id}`;
-        $("song-notice").textContent = `Demo ready · ${demo.engine || "local-sketch"} · ${demo.bytes} bytes`;
-      } else $("song-notice").textContent = demo.message || "Demo queued.";
-    } catch (error) { $("song-notice").textContent = error.message; }
-  });
-  $("song-upload").addEventListener("change", async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    $("song-notice").textContent = "Uploading…";
-    try {
-      const buffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      let binary = "";
-      for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-      const stored = await api("/api/audio/upload", { filename: file.name, data_base64: btoa(binary) });
-      const player = $("song-player");
-      player.hidden = false;
-      player.src = `/api/audio/${stored.audio_id}`;
-      $("song-notice").textContent = `Uploaded ${file.name}`;
-    } catch (error) { $("song-notice").textContent = error.message; }
-    event.target.value = "";
-  });
-  function jobLogLines(job) {
-    const events = (job.events || []).filter((e) => e && (e.text || e.sha || e.state));
-    if (events.length) {
-      return events.filter((e) => e.kind === "log" && e.text).map((e) => e.text).slice(-3);
-    }
-    return (job.log_tail || []).slice(-3);
+  let jobsRefreshing = false, jobsFetchedAt = 0;
+  function clearJobs() {
+    $("jobs-dispatch").textContent = '';
+    $("jobs-dispatch").hidden = true;
+    $("jobs-notice").hidden = false;
+    $("jobs-notice").textContent = "Live work is unavailable. Retrying…";
+    $("jobs-empty").hidden = true;
+    $("finished-empty").hidden = true;
+    $("working-count").hidden = true;
+    $("teammate-cards")?.replaceChildren(jobElement("p", "muted", "Teammate status unavailable."));
+    $("reminder-cards")?.replaceChildren(jobElement("p", "muted", "Reminder list unavailable."));
+    $("live-jobs").replaceChildren();
+    $("finished-jobs").replaceChildren();
+    $("jobs-detail-body").replaceChildren(jobElement("p", "muted", "Live check unavailable."));
   }
-  function jobHeadline(job) {
-    const events = (job.events || []).filter((e) => e && (e.text || e.sha || e.state));
-    const status = events.find((e) => e.kind === "status");
-    return status?.text || job.plain_now || "Working…";
-  }
-  function renderOpsDetail(ops, hostId = "ops-detail") {
-    const host = $(hostId);
-    if (!host) return;
-    if (!ops || !Object.keys(ops).length) {
-      host.hidden = true;
-      return;
-    }
-    host.hidden = false;
-    const spend = ops.minimax_spend || {};
-    const roles = ops.roles || {};
-    const allJobs = ops.running_jobs || [];
-    const jobs = allJobs.filter((j) => j.live_screen);
-    const screenCount = ops.service_screen_count;
-    const rows = [
-      ["Now", ops.now_line || "—"],
-      ["Dashboard", ops.dashboard_freshness_seconds == null ? "unknown" : `${ops.dashboard_freshness_seconds}s ago`],
-      ["Round", ops.webchat_round != null ? String(ops.webchat_round) : "—"],
-      ["Builder", roles.building || "idle"],
-      ["Reviews", roles.reviewing || "idle"],
-      ["MiniMax", spend.committed_usd == null ? "unknown" : `$${Number(spend.committed_usd).toFixed(2)} / $${minimaxCapUsd(spend)}`],
-      ["Service screens", screenCount == null ? "—" : String(screenCount)],
-      ["Live jobs", jobs.length ? `${jobs.length} on screen` : "none on screen"],
-    ];
-    const dl = document.createElement("dl");
-    rows.forEach(([label, value]) => {
-      const dt = document.createElement("dt");
-      dt.textContent = label;
-      const dd = document.createElement("dd");
-      dd.textContent = value;
-      dl.append(dt, dd);
-    });
-    if (hostId === "jobs-ops-detail" && allJobs.length) {
-      allJobs.slice(0, 12).forEach((job, index) => {
-        const dt = document.createElement("dt");
-        dt.textContent = `Job ${index + 1}`;
-        const dd = document.createElement("dd");
-        dd.className = "ops-job-snippet";
-        const lines = jobLogLines(job);
-        const sha = job.last_commit?.sha ? ` · ${job.last_commit.sha}` : "";
-        const round = job.round ? ` · round ${job.round}` : "";
-        const elapsed = job.elapsed_seconds != null ? ` · ${Math.round(job.elapsed_seconds / 60)}m elapsed` : "";
-        const stall = job.stall_plain ? ` · ${job.stall_plain}` : (job.stall_state ? ` · ${job.stall_state}` : "");
-        const display = job.display_state ? ` · ${job.display_state}` : "";
-        dd.textContent = `${jobHeadline(job)}${round}${elapsed}${stall}${display}${sha}${lines.length ? "\n" + lines.join("\n") : ""}`;
-        dl.append(dt, dd);
-      });
-    }
-    host.replaceChildren(dl);
-    if (hostId === "ops-detail") {
-      renderOpsDetail(ops, "jobs-ops-detail");
+  async function refreshJobs() {
+    if (jobsRefreshing) return;
+    jobsRefreshing = true;
+    $("refresh-jobs").disabled = true;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    try {
+      const data = await api("/api/jobs/activity", undefined, controller.signal);
+      const age = Date.now() - data.checked_at * 1000;
+      if (!Number.isFinite(age) || age > 30000 || age < -30000) throw new Error("Current work unavailable");
+      jobsFetchedAt = Date.now();
+      renderJobs(data);
+    } catch (_) { jobsFetchedAt = 0; clearJobs(); }
+    finally {
+      clearTimeout(timeout);
+      jobsRefreshing = false;
+      $("refresh-jobs").disabled = false;
     }
   }
-  function renderScoresTable(scores, hostId = "scores-table") {
-    const host = $(hostId);
-    if (!host) return;
-    if (!scores?.length) {
-      host.hidden = hostId === "jobs-scores-table";
-      host.replaceChildren();
-      return;
-    }
-    host.hidden = false;
-    host.replaceChildren(...scores.slice(0, 8).map((row) => {
-      const card = document.createElement("article");
-      card.className = "score-card";
-      const label = document.createElement("span");
-      label.textContent = row.area || "Score";
-      const val = document.createElement("strong");
-      val.textContent = row.score != null && String(row.score).length ? String(row.score) : "—";
-      card.append(label, val);
+  $("refresh-jobs").addEventListener("click", refreshJobs);
+  function renderModels(data) {
+    const entries = Object.entries(data.models || {}).filter(([name]) => providers[name]);
+    $("lanes-summary").textContent = !entries.length ? "Model status is unavailable."
+      : data.inspection?.processes_available === true ? "Current activity and reply availability." : "Reply availability. Background activity could not be checked.";
+    $("models-empty").hidden = entries.length > 0;
+    replaceCards($("lanes"), entries.map(([name, model]) => {
+      const work = (data.work || []).filter((job) => job.worker === name && job.state === "running");
+      const busy = model.state === "busy" || work.length > 0;
+      const needsAction = ["not_logged_in", "not_installed", "budget", "refill_required"].includes(model.reason) && model.state !== "ready";
+      const state = busy ? "In use" : needsAction ? modelReason(model.reason) : ({ ready: "Available to try", cooldown: "Waiting to retry", half_open: "Ready to retry", unchecked: "No reply checked yet" })[model.state] || "Status unavailable";
+      const card = element("article", null, "lane-card");
+      const heading = element("header", null, "card-heading");
+      heading.append(element("h3", providers[name]), element("span", state, `state-label ${busy ? "running" : ""}`));
+      card.append(heading);
+      const usage = model.usage || {};
+      const details = [];
+      if (work.length) details.push(["Current work", [...new Set(work.map((job) => job.title).filter((title) => title && title !== "Task details unavailable"))].join("; ")]);
+      if (model.reason && model.state !== "ready") details.push(["Last reply issue", modelReason(model.reason)]);
+      if (model.retry_at > Date.now() / 1000) details.push(["Try again after", timestamp(model.retry_at)]);
+      if (model.last_success) details.push(["Last reply", timestamp(model.last_success)]);
+      if (typeof usage.spent_usd === "number") details.push(["Recorded cost", `$${usage.spent_usd.toFixed(2)}`]);
+      if (typeof usage.reserved_usd === "number" && usage.reserved_usd > 0) details.push(["Pending cost", `$${usage.reserved_usd.toFixed(2)}`]);
+      if (typeof usage.used_percent === "number") details.push(["Reported plan use", `${usage.used_percent}%`], ["Resets", timestamp(usage.reset_at)]);
+      if (usage.observed_at) details.push(["Usage recorded", timestamp(usage.observed_at)]);
+      if (details.length) card.append(disclosure("Details", details, name));
       return card;
     }));
   }
-  function plainJobTitle(job) {
-    const round = job.round ? `Round ${job.round}` : "Job";
-    const engine = (job.engine || "worker").replace(/_/g, " ");
-    const state = job.display_state ? ` · ${job.display_state}` : "";
-    if (job.live_screen) return `${round} · live on screen${state}`;
-    return `${round} · ${engine}${state}`;
+  function renderSettings(data) {
+    const si = data.automation || {};
+    $("self-improve-status").textContent = si.launchd_files_ok === false ? "Not set up on this computer."
+      : si.launchd_loaded === true ? "Scheduled on this computer."
+      : si.launchd_loaded === false ? "Not scheduled."
+      : "Schedule status is unavailable.";
+    $("quiet-hours-hint").textContent = isQuietHoursCt()
+      ? "Quiet hours are on until 7 AM Central. Read-aloud is off."
+      : "Read-aloud is off from 11 PM to 7 AM Central.";
   }
-  function renderLiveJobs(jobs) {
-    const host = $("live-jobs");
-    const empty = $("jobs-empty");
-    if (!host) return;
-    const rows = (jobs || []).slice(0, 6);
-    if (empty) empty.hidden = rows.length > 0;
-    host.replaceChildren(...rows.map((job) => {
-      const card = document.createElement("article");
-      card.className = "live-job";
-      const header = document.createElement("header");
-      const title = document.createElement("strong");
-      title.textContent = plainJobTitle(job);
-      const stall = document.createElement("span");
-      stall.className = "stall";
-      const elapsed = document.createElement("span");
-      const mins = Math.round((job.elapsed_seconds || 0) / 60);
-      const roundNote = job.round ? ` · round ${job.round}` : "";
-      elapsed.textContent = `${mins}m elapsed${roundNote}${job.started_at ? " · " + job.started_at.replace("T", " ").slice(0, 16) : ""}`;
-      header.append(title, stall, elapsed);
-      const now = document.createElement("p");
-      const events = (job.events || []).filter((e) => e && (e.text || e.sha || e.state));
-      const stallEvent = events.find((e) => e.kind === "stall");
-      const resolvedStall = stallEvent?.state || job.stall_state || "unknown";
-      const stallLabel = job.stall_plain || (resolvedStall === "stalled" ? "Stalled" : resolvedStall === "running" ? "Running" : resolvedStall);
-      const isStalled = resolvedStall === "stalled" || /stalled/i.test(stallLabel);
-      stall.textContent = stallLabel;
-      stall.classList.toggle("stalled", isStalled);
-      stall.classList.toggle("running", !isStalled);
-      now.textContent = jobHeadline(job);
-      const tail = document.createElement("pre");
-      tail.className = "log-tail";
-      const logLines = jobLogLines(job);
-      tail.textContent = logLines.length ? logLines.join("\n") : "";
-      const commit = document.createElement("p");
-      commit.className = "job-commit muted";
-      if (job.last_commit?.sha) {
-        const msg = job.last_commit.message ? job.last_commit.message.replace(/\.md\b/gi, "").slice(0, 80) : "";
-        commit.textContent = `Latest commit ${job.last_commit.sha}${msg ? " — " + msg : ""}`;
-      }
-      const actions = document.createElement("div");
-      actions.className = "live-job-actions";
-      const stopBtn = document.createElement("button");
-      stopBtn.type = "button";
-      stopBtn.className = "quiet";
-      stopBtn.textContent = "Stop";
-      stopBtn.addEventListener("click", () => {
-        const label = plainJobTitle(job);
-        submitChatText(`stop job: ${label} (draft only)`, { confirmStop: true, confirmMessage: `Stop ${label}?` });
-      });
-      const detailBtn = document.createElement("button");
-      detailBtn.type = "button";
-      detailBtn.className = "quiet";
-      detailBtn.textContent = "Details";
-      detailBtn.setAttribute("aria-label", `Details for ${plainJobTitle(job)}`);
-      detailBtn.addEventListener("click", () => {
-        const bodyParts = [job.plain_now || "", ...logLines, ...(job.log_tail || [])].filter(Boolean);
-        const body = [...new Set(bodyParts)].join("\n\n") || "No extra detail yet.";
-        $("report-title").textContent = plainJobTitle(job);
-        $("report-date").textContent = elapsed.textContent || "";
-        $("report-body").textContent = body;
-        $("report")?.showModal();
-      });
-      actions.append(stopBtn, detailBtn);
-      card.append(header, now, tail, commit, actions);
-      return card;
-    }));
-  }
-  async function refreshPanel() {
+  async function refreshOverview() {
+    if (overviewLoading) return;
+    overviewLoading = true;
+    const buttons = [...document.querySelectorAll("[data-refresh]")];
+    buttons.forEach((button) => { button.disabled = true; button.textContent = "Refreshing…"; });
     try {
-      const data = await api("/api/panel");
-      const meta = data.live_ops_meta || {};
-      lastPanelMeta = meta;
-      const ops = data.live_ops || {};
-      lastPanelOps = ops;
-      renderOpsDetail(ops, "jobs-ops-detail");
-      const spend = ops.minimax_spend || {};
-      const roles = ops.roles || {};
-      const jobs = ops.running_jobs || [];
-      const committed = spend.committed_usd;
-      const cap = minimaxCapUsd(spend);
-      const spendText = committed === undefined || committed === null ? "budget unknown" : `$${committed.toFixed(2)} of $${cap}`;
-      const dashAge = ops.dashboard_freshness_seconds;
-      const dashNote = dashAge === null || dashAge === undefined ? "" : ` · dashboard ${dashAge}s ago`;
-      const freshness = meta.stale ? `Stale snapshot${dashNote}` : `Live${dashNote}`;
-      const scoreStamp = ops.generated_at ? ` · scores ${ops.generated_at.replace("T", " ").slice(0, 16)} UTC` : "";
-      const liveCards = jobs.filter((j) => j.live_screen && j.stall_state === "running");
-      const jobLead = liveCards.length
-        ? `${liveCards.length} job${liveCards.length === 1 ? "" : "s"} running on screen`
-        : (jobs.length ? `${jobs.length} tracked — none on screen right now` : "Nothing running on screen");
-      const nowHost = $("now-line");
-      const nowLine = ops.now_line || data.alignment?.now_line;
-      if (nowHost) {
-        if (nowLine) {
-          nowHost.hidden = false;
-          nowHost.textContent = nowLine;
-        } else {
-          nowHost.hidden = true;
-          nowHost.textContent = "";
-        }
-      }
-      $("status-summary").textContent = `${freshness}${scoreStamp} · ${jobLead} · MiniMax ${spendText} · round ${ops.webchat_round || "?"}`;
-      renderLiveJobs(jobs);
-      lastPanelScores = ops.scores;
-      lastPanelOps = ops;
-      renderScoresTable(ops.scores, "jobs-scores-table");
-      if (activeBottomTab === "lanes") {
-        renderOpsDetail(ops);
-        renderScoresTable(ops.scores);
-      }
-      const c = data.conductor || {};
-      $("conductor-summary").textContent = `Draft work on ${c.draft_branch || "unknown branch"}`;
-      const autopilot = liveCards.length
-        ? `Busy — ${liveCards.length} live job${liveCards.length === 1 ? "" : "s"}`
-        : (c.pass_schedule?.state === "finished" && liveCards.length === 0
-          ? `Idle${c.pass_schedule.next_due ? " · next pass " + new Date(c.pass_schedule.next_due * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""}`
-          : (c.pass_schedule?.state ? `Autopilot ${c.pass_schedule.state}` : "Autopilot idle"));
-      $("conductor-status").textContent = [
-        autopilot,
-        c.maintenance ? "Scheduling paused" : "Scheduler on",
-        `Builder: ${roles.building || "none"} · Reviews: ${roles.reviewing || "idle"}`,
-        (c.head_sha || "").slice(0, 7) ? `Latest commit ${(c.head_sha || "").slice(0, 7)}` : "",
-      ].filter(Boolean).join(" · ");
-      const summary = data.handback?.summary?.text || "";
-      const plainHandback = summary.split("\n")
-        .map((l) => l.replace(/^#+\s*/, "").replace(/\*\*/g, "").trim())
-        .filter((l) => l && !l.startsWith("---"))
-        .slice(0, 5)
-        .join(" ");
-      $("handback-plain").textContent = plainHandback || "Handback will appear after your next chat turn.";
-      const si = data.self_improve || {};
-      const age = si.log_age_seconds;
-      const logFresh = age != null && age < 48 * 3600
-        ? `Log updated ${age < 3600 ? Math.round(age / 60) + "m" : Math.round(age / 3600) + "h"} ago`
-        : (age != null ? "Self-improve log stale (>48h)" : "");
-      const streak = si.tick_ok_streak ? `${si.tick_ok_streak} OK tick${si.tick_ok_streak === 1 ? "" : "s"} in a row` : "";
-      const loaded = si.launchd_loaded === true ? "Scheduled tick loaded"
-        : (si.launchd_loaded === false ? "Tick not loaded — run bootstrap on mini" : (si.launchd_loaded === null ? "Launchd probe unavailable" : ""));
-      const health = si.loop_ready === true ? "Self-improve loop ready"
-        : (si.install_ready === true && si.launchd_loaded !== true ? "Self-improve installed — load launchd on mini"
-        : (si.healthy === true ? "Loop healthy"
-        : (si.healthy === false && si.launchd_files_ok ? "Needs a successful tick — check mini bootstrap"
-          : (si.launchd_files_ok ? "Status unknown — refresh Jobs tab" : "Install tick + plist — see mini setup"))));
-      const schedule = si.schedule_hint ? `Schedule: ${si.schedule_hint.replace(/\.$/, "")}` : "";
-      const bootstrap = si.bootstrap_command
-        ? `One-time on mini: ${si.bootstrap_command}`
-        : (si.bootstrap_script ? `One-time on mini: bash ${si.bootstrap_script}` : "");
-      const siShort = si.plain_status || health;
-      const siLine = [siShort, streak, loaded, logFresh].filter(Boolean).join(" · ");
-      $("self-improve-status").textContent = siLine;
-      const jobsSi = $("jobs-self-improve-status");
-      if (jobsSi) {
-        if (siLine.trim()) {
-          jobsSi.hidden = false;
-          jobsSi.textContent = `Self-improve: ${siLine}`;
-        } else {
-          jobsSi.hidden = true;
-        }
-      }
-      const qh = data.quiet_hours || {};
-      if (qh.active === true || qh.active === false) {
-        lastQuietHoursActive = qh.active === true;
-        lastQuietHoursFetchedAt = Date.now();
-      }
-      const qhHost = $("quiet-hours-hint");
-      if (qhHost) {
-        if (qh.active) {
-          qhHost.hidden = false;
-          qhHost.textContent = `Quiet hours (${qh.window || "11 PM–7 AM CT"}) — read-aloud is off. Live call still works.`;
-        } else {
-          qhHost.hidden = true;
-          qhHost.textContent = "";
-        }
-      }
-      lastBootstrapCommand = si.bootstrap_command || (si.bootstrap_script ? `bash ${si.bootstrap_script}` : "");
-      const copyBootstrap = $("copy-bootstrap");
-      if (copyBootstrap) copyBootstrap.hidden = !lastBootstrapCommand;
-      const cl = data.round_changelog || {};
-      const clHost = $("changelog-line");
-      if (clHost) {
-        clHost.textContent = cl.round
-          ? `Round ${cl.round}: ${(cl.line || "").replace(/\*\*/g, "")}`
-          : (cl.line || "Round notes load from the latest RESULT file on the mini.");
-      }
+      const data = await api("/api/overview" + (current ? "?conversation_id=" + encodeURIComponent(current) : ""));
+      const age = Date.now() - Date.parse(data.captured_at);
+      if (!Number.isFinite(age) || age > 30000 || age < -30000) throw new Error("Current status unavailable");
+      overviewFetchedAt = Date.now();
+      renderModels(data); renderSettings(data);
+    } catch (_) { overviewFetchedAt = 0; clearOverview(); }
+    finally {
+      overviewLoading = false;
+      buttons.forEach((button) => { button.disabled = false; button.textContent = "Refresh"; });
+    }
+  }
+  document.querySelectorAll("[data-refresh]").forEach((button) => button.addEventListener("click", refreshOverview));
+  function connectionRestored() {
+    pollFailures = 0;
+    $("connection").textContent = "Connected to Bob";
+    const dot = $("status-dot");
+    if (dot) {
+      dot.classList.remove("warn");
+      dot.classList.add("connected");
+      dot.setAttribute("aria-label", "Connected");
+    }
+    $("offline-banner")?.setAttribute("hidden", "");
+  }
+  const STARTUP_RETRY_MESSAGE = "Cannot connect to Bob yet. Retrying shortly…";
+  async function connectChat(force = false) {
+    if (chatReady || connecting || authRedirecting || (!force && Date.now() < connectAfter)) return;
+    connecting = true;
+    try {
+      // Retry only bounded reads. Do not enable mutations with a remembered
+      // conversation ID until its current server history has actually loaded.
+      csrf = (await api("/api/session")).csrf;
+      await refreshList();
+      const conversation = await api(`/api/conversations/${current}`);
+      if (conversation.id !== current) throw new Error("Conversation changed while connecting");
+      chatReady = true;
+      connectFailures = 0;
+      connectAfter = 0;
+      if ($("notice").textContent === STARTUP_RETRY_MESSAGE) $("notice").textContent = "";
+      render(conversation);
+      connectionRestored();
+      $("messages").scrollTop = $("messages").scrollHeight;
+      void Promise.allSettled([refreshJobs(), refreshOverview()]);
     } catch (_) {
-      lastPanelMeta = { stale: true };
-      lastPanelOps = null;
-      lastPanelScores = null;
-      $("status-summary").textContent = "Jobs panel unavailable — dashboard may be stale";
-      renderOpsDetail({}, "jobs-ops-detail");
-      renderOpsDetail({}, "ops-detail");
-      renderScoresTable(null, "jobs-scores-table");
-      renderLiveJobs([]);
-      const jobsSi = $("jobs-self-improve-status");
-      if (jobsSi) {
-        jobsSi.hidden = false;
-        jobsSi.textContent = "Self-improve status unavailable — refresh when the mini is back.";
+      chatReady = false;
+      if (!authRedirecting) {
+        connectFailures += 1;
+        connectAfter = Date.now() + Math.min(30000, 5000 * 2 ** Math.min(connectFailures - 1, 3));
+        $("notice").textContent = STARTUP_RETRY_MESSAGE;
+        $("connection").textContent = "Reconnecting to Bob";
+        $("offline-banner")?.removeAttribute("hidden");
+        const dot = $("status-dot");
+        if (dot) { dot.classList.add("warn"); dot.setAttribute("aria-label", "Reconnecting"); }
       }
-    }
+    } finally { connecting = false; composerState(); }
   }
-  $("copy-bootstrap")?.addEventListener("click", async () => {
-    const cmd = lastBootstrapCommand;
-    if (!cmd) return;
-    try {
-      await navigator.clipboard.writeText(cmd);
-      $("notice").textContent = "Install command copied — paste in Terminal on the mini.";
-    } catch (_) {
-      $("notice").textContent = cmd;
-    }
-  });
-  $("refresh-dashboard")?.addEventListener("click", async () => {
-    const btn = $("refresh-dashboard");
-    if (!btn || btn.disabled) return;
-    btn.disabled = true;
-    const prior = btn.textContent;
-    btn.textContent = "Refreshing…";
-    const timeout = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("Refresh timed out — try again in a moment.")), 15000);
-    });
-    try {
-      const result = await Promise.race([api("/api/panel/refresh", {}), timeout]);
-      await refreshPanel();
-      $("notice").textContent = result?.spawned
-        ? "Dashboard refresh queued on the mini."
-        : "Dashboard already fresh — showing the latest snapshot.";
-    } catch (error) {
-      $("notice").textContent = error.message;
-    } finally {
-      btn.disabled = false;
-      btn.textContent = prior || "Refresh";
-    }
-  });
-  let lastPanelScores = null;
-  let lastPanelOps = null;
-  let lastPanelMeta = { stale: false };
-  async function refreshLanes() {
-    try {
-      const ops = lastPanelOps || {};
-      renderOpsDetail(ops);
-      renderScoresTable(lastPanelScores);
-      const spend = ops.minimax_spend || {};
-      const roles = ops.roles || {};
-      const dashAge = ops.dashboard_freshness_seconds;
-      const opsLead = [
-        ops.now_line || "Live ops from the mini",
-        dashAge == null ? "dashboard age unknown" : `dashboard ${dashAge}s ago`,
-        spend.committed_usd == null ? "MiniMax spend unknown" : `MiniMax $${Number(spend.committed_usd).toFixed(2)} / $${minimaxCapUsd(spend)}`,
-        `Builder ${roles.building || "idle"} · Reviews ${roles.reviewing || "idle"}`,
-        ops.webchat_round ? `Round ${ops.webchat_round} scores below` : "",
-      ].filter(Boolean).join(" · ");
-      const data = await api("/api/lanes" + (current ? "?conversation_id=" + encodeURIComponent(current) : ""));
-      const entries = Object.entries(data.providers);
-      const cooling = entries.filter(([, lane]) => lane.state === "cooldown").length;
-      const busy = entries.filter(([, lane]) => lane.state === "busy").length;
-      const allReady = entries.length > 0 && entries.every(([, lane]) => lane.state === "ready");
-      const laneNote = cooling
-        ? `${cooling} model${cooling === 1 ? "" : "s"} cooling down`
-        : (busy ? `${busy} model${busy === 1 ? "" : "s"} busy` : (allReady ? "All lanes ready" : "Lane status updating"));
-      const stalePrefix = lastPanelMeta.stale ? "Stale snapshot · " : "";
-      $("lanes-summary").textContent = `${stalePrefix}${opsLead} · ${laneNote}`;
-      $("lanes").replaceChildren(...entries.map(([name, lane]) => {
-        const card = document.createElement("article");
-        card.className = "lane-card";
-        const dot = document.createElement("span");
-        dot.className = `lane-dot ${lane.state === "ready" ? "ok" : lane.state === "cooldown" ? "warn" : "busy"}`;
-        dot.setAttribute("aria-hidden", "true");
-        const title = document.createElement("h3");
-        title.textContent = providers[name];
-        const state = document.createElement("p");
-        state.className = "lane-state";
-        state.textContent = ({ ready: "Ready", cooldown: "Cooling down", busy: "Busy" }[lane.state] || lane.state.replace(/_/g, " "));
-        const detail = document.createElement("p");
-        detail.className = "lane-detail muted";
-        const spend = lane.spend;
-        const capUsd = name === "minimax" ? minimaxCapUsd(spend) : spend.cap_usd;
-        const capPart = spend.cap_usd != null ? ` / $${capUsd} cap` : "";
-        const cost = spend.committed_usd !== undefined && ["gemini", "minimax"].includes(name)
-          ? `$${spend.committed_usd.toFixed(2)}${capPart}`
-          : spend.billing;
-        detail.textContent = [lane.detail, cost, lane.retry_at > Date.now() / 1000 ? `Retry ${new Date(lane.retry_at * 1000).toLocaleTimeString()}` : ""].filter(Boolean).join(" · ");
-        card.append(dot, title, state, detail);
-        return card;
-      }));
-    } catch (_) { $("lanes-summary").textContent = "Health unavailable"; }
+  function refreshAfterReconnect() {
+    if (document.hidden || authRedirecting) return;
+    if (!chatReady) { void connectChat(true); return; }
+    if (Date.now() - overviewFetchedAt > 30000) clearOverview();
+    if (Date.now() - jobsFetchedAt > 30000) clearJobs();
+    refreshJobs(); refreshOverview(); poll();
   }
-  async function init() {
+  function init() {
     try {
       primeSpeechVoices();
-      const micBtn = $("mic");
-      const speakBtn = $("speak");
-      if (micBtn && !window.SpeechRecognition && !window.webkitSpeechRecognition) {
-        micBtn.setAttribute("title", "Use keyboard dictation (mic key on iOS keyboard)");
-      }
-      if (speakBtn && !("speechSynthesis" in window)) speakBtn.hidden = true;
-      csrf = (await api("/api/session")).csrf; current = stored("bob.conversation");
-      await refreshList(); await poll(); $("messages").scrollTop = $("messages").scrollHeight;
-      await refreshPanel(); await refreshLanes(); await loadSong();
-      setInterval(refreshPanel, 8000);
-      setInterval(refreshLanes, 5000);
-      setInterval(poll, 1200);
-      if ("EventSource" in window) {
-        let alignSince = 0;
-        const connectAlign = () => {
-          const source = new EventSource(`/api/alignment/stream?since=${alignSince}`);
-          source.onmessage = (event) => {
-            try {
-              const row = JSON.parse(event.data);
-              if (row.seq) alignSince = Math.max(alignSince, row.seq);
-              if (["chat-turn", "handback-turn", "inbox", "tick"].includes(row.kind)) refreshPanel();
-            } catch (_) { /* ignore */ }
-          };
-          source.onerror = () => {
-            source.close();
-            setTimeout(connectAlign, 5000);
-          };
-        };
-        connectAlign();
-      }
+      const recognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+      $("mic").hidden = !recognition;
+      // Live audio uses getUserMedia + Web Audio; it does not require either
+      // browser dictation or device read-aloud support.
+      $("live-call").hidden = false;
+      $("speak").hidden = !("speechSynthesis" in window);
+      $("voice-status").textContent = (recognition ? "Tap the microphone to dictate. " : "Use your keyboard’s microphone to dictate. ")
+        + "Tap the waveform to talk with Bob in an AI voice. Interrupt anytime, then tap Hang up. Your transcript saves to this chat. Keep this page open during the call.";
+      const preference = stored("bob.provider");
+      if ([...$("provider-choice").options].some((option) => option.value === preference)) $("provider-choice").value = preference;
+      current = stored("bob.conversation");
+      // Install once, before the first network read. A failed bootstrap must
+      // leave its own recovery path alive, without adding timers on retries.
+      setInterval(() => { if (chatReady && !authRedirecting && !document.hidden) { refreshJobs(); refreshOverview(); } }, 8000);
+      setInterval(() => { if (!document.hidden) { if (chatReady) poll(); else void connectChat(); } }, 1200);
+      setInterval(() => { if (overviewFetchedAt && Date.now() - overviewFetchedAt > 30000) clearOverview(); if (jobsFetchedAt && Date.now() - jobsFetchedAt > 30000) clearJobs(); }, 1000);
+      document.addEventListener("visibilitychange", refreshAfterReconnect);
+      window.addEventListener("online", refreshAfterReconnect);
+      void connectChat();
     } catch (error) { $("notice").textContent = error.message; }
   }
   composerState(); init();

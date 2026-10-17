@@ -79,6 +79,8 @@ def launch(row):
 
 def candidates(row, health):
     order = list(task_queue.worker_order(row["kind"]))
+    if row.get('report_contract'):
+        order = [lane for lane in order if lane in row['report_contract']['permitted_workers']]
     preferred = row["requested_worker"]
     if preferred in order:
         order.remove(preferred)
@@ -102,7 +104,7 @@ def candidates(row, health):
 
 
 def tick():
-    if (CONDUCTOR / "MAINTENANCE").exists():
+    if (CONDUCTOR / "MAINTENANCE").exists() or (CONDUCTOR / 'locks/webbob-activation.json').exists():
         return 0
     with lock("web-dispatch", blocking=False):
         task_queue.recover(ROOT, worker_alive)
@@ -118,7 +120,8 @@ def tick():
                     usage = budget.status(lane)
                     rate = budget.RATES[lane]
                     estimate = ((len(pending["prompt"].encode()) + 8192) * max(rate[0], rate[3]) + 8192 * rate[1]) / 1_000_000
-                    if usage["committed_usd"] + estimate > usage["cap_usd"] * .95:
+                    if usage['tier'] == 'stop' or (usage['cap_usd'] is not None and
+                            usage["committed_usd"] + estimate > usage["cap_usd"] * .95):
                         continue
                 row = task_queue.claim(ROOT, lane, identifier=pending["id"], allow_fallback=True,
                                        limit=health[lane].get("capacity", task_queue.capacity(lane)))

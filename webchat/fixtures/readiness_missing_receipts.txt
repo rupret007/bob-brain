@@ -1,0 +1,29 @@
+### Source Identity
+
+* **Project Identity:** Project `Web Bob` (project ID `web-bob`, goal ID `project-web-bob`), cited from the saved project record loaded with this conversation (revision 2, as of the saved record).
+* **Hold Identity:** Hold request ID `35a4d470-912d-4699-80a4-69860f68c52a` cited from supplied saved chat hold facts (reason: "Hold execution until I choose its scope").
+* **Current Directives:** Owner instructions delivered in this chat setting the report fields to source identity, verified records, and the two largest gaps, while excluding texting and changes.
+
+---
+
+### What Is Recorded (Not Live-Verified)
+
+The facts below are recorded in the saved project record loaded with this chat (revision 2, as of the saved record) and are not live-verified:
+
+* **Saved Constraints:** The saved project record records `constraint-ee610834655f` as "This is planning only".
+* **Saved Priorities:** The saved project record records `priority` (revision 2) as "continuity across conversations is the first priority, then conversation quality".
+* **Lifecycle Stages:** No task record is supplied in the saved project record, so no lifecycle stage is recorded, scoped to the available records. Budget admission is not recorded in the available records; acceptance is not recorded in the available records; lease is not recorded in the available records; execution start is not recorded in the available records, with an execution-start receipt not established in the supplied records; result verified is not recorded in the available records; completion is not recorded in the available records. External execution remains unverified without supporting receipts, though the absence of a receipt does not prove external execution never occurred.
+* **Hold Record:** The active hold is recorded separately in the supplied saved chat hold facts under request ID `35a4d470-912d-4699-80a4-69860f68c52a`.
+
+---
+
+### The Two Largest Gaps
+
+1. **Unverified Live Cross-Conversation Continuity:** Although the saved project record lists continuity across conversations as the first priority, live inspection and external execution remain unverified without supporting receipts. There is no live check record establishing that conversation state, serialization, or restore hooks persist across actual session boundaries.
+2. **Missing Task Lifecycle Admission and Execution Records:** No task record is supplied in the available records, and the active hold under request ID `35a4d470-912d-4699-80a4-69860f68c52a` remains active. Budget admission is not recorded, acceptance is not recorded, lease is not recorded, execution start is not recorded, result verification is not recorded, and completion is not recorded, leaving readiness verification unexecuted and operational status unverified.
+
+---
+
+### Scope Boundary
+
+Per your instruction, texting mechanisms are completely excluded from this report's scope, and zero system changes, file edits, or external commands are authorized or executed.

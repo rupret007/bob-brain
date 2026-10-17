@@ -12,11 +12,11 @@ import unittest
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 from app import Chat, RequestError
 from failover import AllDown, Circuit, ORDER, ProviderError, classify, reset_time
-from providers import Cancelled, Providers, clean_env, parse_codex, parse_cursor, run
+from providers import Cancelled, Providers, clean_env, kill_group, parse_codex, parse_cursor, run
 from actions import queue_once
 
 
@@ -221,6 +221,28 @@ class FailoverTests(Fixture):
                     result = subprocess.run(["/bin/ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True)
                     self.assertTrue(not result.stdout.strip() or result.stdout.strip().startswith("Z"), (pid, result.stdout))
 
+    def test_cleanup_continues_owned_groups_and_reports_live_permission_failure(self):
+        with patch.object(sys, 'path', [str(Path(__file__).resolve().parents[1] / 'services'), *sys.path]):
+            import command
+        import signal
+        proc = Mock(pid=1000)
+        error = PermissionError(1, 'fixture group denied')
+        calls = []
+        def send(group, sig):
+            calls.append((group, sig))
+            if group == 1001:
+                raise error
+            return True
+        rows = '1000 999 1000\n1001 1000 1001\n2000 999 2000\n'
+        with patch('providers.subprocess.run', return_value=Mock(stdout=rows)), \
+                patch.object(command, 'signal_group', side_effect=send):
+            with self.assertRaises(PermissionError) as caught:
+                kill_group(proc)
+        self.assertIs(caught.exception, error)
+        self.assertEqual(calls, [(1001, signal.SIGTERM), (1000, signal.SIGTERM),
+                                 (1001, signal.SIGKILL), (1000, signal.SIGKILL)])
+        self.assertTrue(proc.wait.called)
+
     def test_drill_file_requires_startup_opt_in(self):
         path = self.root / "conductor/webchat/.drill.json"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -270,7 +292,7 @@ class FailoverTests(Fixture):
             for thread in threads:
                 thread.join(4)
         self.assertEqual(sorted(observed), [7, 29])
-        self.assertEqual(self.provider.timeouts["gemini"], 120)
+        self.assertEqual(self.provider.timeouts["gemini"], 180)
 
 
 class QueueTests(Fixture):
@@ -289,7 +311,7 @@ class QueueTests(Fixture):
             time.sleep(.01)
         self.assertFalse(self.chat.worker_info(self.identifier))
 
-    def submit(self, text="What is a safe memory question?", request_id=None):
+    def submit(self, text="Describe safe memory in one sentence.", request_id=None):
         self.chat.submit(self.identifier, text, request_id or str(uuid.uuid4()))
         self.wait()
 
@@ -304,7 +326,7 @@ class QueueTests(Fixture):
         self.chat.close()
         self.chat = Chat(self.chat.folder, self.root, self.provider)
         self.assertEqual(self.chat.history(self.identifier)["messages"][-1]["status"], "waiting")
-        self.chat.submit(self.identifier, "What is a safe memory question?", request_id)
+        self.chat.submit(self.identifier, "Describe safe memory in one sentence.", request_id)
         self.assertEqual(len(self.chat.history(self.identifier)["messages"]), 2)
         with self.assertRaises(RequestError):
             self.chat.submit(self.identifier, "Different turn", str(uuid.uuid4()))
@@ -342,7 +364,10 @@ class QueueTests(Fixture):
         self.assertFalse(result["messages"][-1]["action_card"]["executable"])
 
     def test_confirmation_receipt_survives_failed_conversation_save(self):
-        self.submit("do it")
+        # A persisted proposal from an earlier server version remains valid.
+        self.chat.conversations[self.identifier]["pending_job"] = "review PR #161"
+        self.chat.conversations[self.identifier]["pending_job_id"] = str(uuid.uuid4())
+        self.chat.save(self.chat.conversations[self.identifier])
         request_id = str(uuid.uuid4())
         from task_dispatch import task_queue
         original_save = self.chat.save

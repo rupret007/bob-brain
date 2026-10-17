@@ -45,6 +45,9 @@ class FakeProviders:
 
 class Fixture(unittest.TestCase):
     def setUp(self):
+        notifier = patch('reminders.notify_macos', return_value=True)
+        self.reminder_notifier = notifier.start()
+        self.addCleanup(notifier.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.folder = self.root / "conductor/webchat"
@@ -52,6 +55,11 @@ class Fixture(unittest.TestCase):
         self.fake = FakeProviders()
         self.chat = Chat(self.folder, self.root, self.fake)
         self.identifier = self.chat.conversation_list()["conversations"][0]["id"]
+        # Unit/HTTP fixtures have a private queue and private host observations.
+        for name in ("_screen_sessions", "process_table"):
+            sampler = patch("live_status_snapshot." + name, return_value={})
+            sampler.start()
+            self.addCleanup(sampler.stop)
 
     def tearDown(self):
         self.fake.hold.set()
@@ -67,6 +75,49 @@ class Fixture(unittest.TestCase):
 
 
 class StateTests(Fixture):
+    def test_create_reminder_for_2am_confirms_with_defaults(self):
+        from reminders import ZONE
+        from task_dispatch import task_queue
+        self.chat.reminders.clock = lambda: datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
+        with patch('app.parse_work', side_effect=AssertionError('Reminder entered coding queue')):
+            result = self.chat.submit(self.identifier, 'Create a reminder for 2am to go to bed', str(uuid.uuid4()))
+        from consent_fixture import confirm_chat
+        self.assertFalse(self.chat.reminders.listing())
+        reply = confirm_chat(self, self.chat, self.identifier, result['messages'][-1])
+        self.assertEqual(reply['provider'], 'reminders')
+        self.assertIn('Reminder saved: go to bed', reply['content'])
+        self.assertIn('Oct 10, 2026 at 02:00 AM CDT', reply['content'])
+        self.assertNotIn('?', reply['content'])
+        row, = self.chat.reminders.listing()
+        self.assertEqual(row['body'], 'go to bed')
+        self.assertIsNone(row['interval_seconds'])
+        self.assertEqual(row['due_at'], datetime(2026, 10, 10, 2, tzinfo=ZONE).timestamp())
+        self.assertFalse(self.fake.calls)
+        self.assertFalse(task_queue.tasks(self.root))
+        self.reminder_notifier.assert_not_called()
+
+    def test_direct_action_does_not_bypass_or_release_saved_hold(self):
+        import copy
+        self.chat.submit(self.identifier, 'Hold all work', str(uuid.uuid4()))
+        before = copy.deepcopy(self.chat.get(self.identifier)['intent_state'])
+        result = self.chat.submit(self.identifier, 'Create a reminder for 2am to go to bed', str(uuid.uuid4()))
+        self.assertIn('On hold:', result['messages'][-1]['content'])
+        self.assertEqual(self.chat.get(self.identifier)['intent_state'], before)
+        self.assertFalse(self.chat.reminders.listing())
+        self.assertFalse(self.fake.calls)
+        self.reminder_notifier.assert_not_called()
+
+    def test_chat_alignment_uses_one_consistent_live_observation(self):
+        first = dict(webchat_round=71, marker='first observation')
+        second = dict(webchat_round=72, marker='later observation')
+        with patch('app.load_live_ops', side_effect=[dict(live_ops=first), dict(live_ops=second)]) as sample, \
+                patch('app.state_ledger.sync_from_live_ops') as sync:
+            self.chat.submit(self.identifier, 'Explain a suspended fourth chord.', str(uuid.uuid4()))
+            self.wait()
+        self.assertEqual(sync.call_args.args[1], first)
+        self.assertEqual(sync.call_args.kwargs['webchat_round'], first['webchat_round'])
+        self.assertEqual(sample.call_count, 1)
+
     def test_password_persistence_permissions_and_symlinks(self):
         self.assertEqual(password_at(self.folder), self.chat.password)
         self.assertGreaterEqual(len(self.chat.password), 32)
@@ -208,7 +259,8 @@ class HTTPTests(Fixture):
         self.assertIn("password", body)
         self.assertIn("no-store", headers["Cache-Control"])
         self.assertIn("frame-ancestors 'none'", headers["Content-Security-Policy"])
-        for path in ("/api", "/api/status", "/api/review", "/api/jobs", "/api/conversations", "/api/conversations/" + self.identifier):
+        for path in ("/api", "/api/status", "/api/review", "/api/jobs", "/api/jobs/activity", "/api/jobs/result?id=job",
+                     "/api/conversations", "/api/conversations/" + self.identifier):
             for method in ("GET", "POST"):
                 self.assertEqual(self.request(method, path)[0], 401, (method, path))
         self.assertEqual(self.request("GET", "/.password")[0], 404)
@@ -223,6 +275,60 @@ class HTTPTests(Fixture):
         self.assertEqual(self.request("GET", "/api/status", headers={"Host": "evil.example"})[0], 403)
         self.assertEqual(self.request("POST", "/api/logout", {})[0], 200)
         self.assertEqual(self.request("GET", "/api")[0], 401)
+
+    def test_shell_and_session_stay_responsive_during_chat_io(self):
+        self.login()
+        finished, results = threading.Event(), []
+        def inspect():
+            try:
+                for route in ('/', '/app.js', '/api/version', '/api/session', '/api/reminders'):
+                    results.append(self.request('GET', route)[0])
+            finally:
+                finished.set()
+        # Text reads, bridge receipt waits and other synchronous chat operations
+        # hold this lock; they must not lock a logged-in owner out of the shell.
+        with self.chat.lock:
+            thread = threading.Thread(target=inspect)
+            thread.start()
+            responsive = finished.wait(1)
+        thread.join(5)
+        self.assertTrue(responsive, 'Unrelated chat work blocked authenticated page/session reads')
+        self.assertEqual(results, [200] * 5)
+
+    def test_login_can_finish_while_chat_operation_waits(self):
+        finished, tokens = threading.Event(), []
+        def login():
+            try:
+                tokens.append(self.chat.login(self.chat.password))
+            finally:
+                finished.set()
+        with self.chat.lock:
+            thread = threading.Thread(target=login)
+            thread.start()
+            responsive = finished.wait(1)
+        thread.join(5)
+        self.assertTrue(responsive, 'Unrelated chat work blocked owner login')
+        self.assertEqual(len(tokens), 1)
+        self.assertIsNotNone(self.chat.authenticate('bob_session=' + tokens[0]))
+
+    def test_logout_revokes_authentication_before_waiting_for_voice_cleanup(self):
+        self.login()
+        entered, release, results = threading.Event(), threading.Event(), []
+        def cleanup(_owner):
+            entered.set()
+            release.wait(5)
+        def logout():
+            results.append(self.request('POST', '/api/logout', {})[0])
+        with patch.object(self.chat.voice, 'logout', side_effect=cleanup):
+            thread = threading.Thread(target=logout)
+            thread.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                self.assertEqual(self.request('GET', '/api/session')[0], 401)
+            finally:
+                release.set()
+                thread.join(5)
+        self.assertEqual(results, [200])
 
     def test_bad_password_throttles_without_creating_sessions(self):
         for _ in range(10):
@@ -270,24 +376,76 @@ class HTTPTests(Fixture):
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(body)["messages"][-1]["content"], "A saved reply.")
 
+    def test_jobs_activity_and_result_are_read_only_and_redacted(self):
+        self.login()
+        journal = self.root / "conductor/state/queue.jsonl"
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        journal.write_text(json.dumps(dict(id="job", status="succeeded", title="Web Bob result", finished_at=time.time(),
+                                            result="Saved result " + self.chat.password)) + "\n")
+        before = journal.read_bytes()
+        code, _, body = self.request("GET", "/api/jobs/activity")
+        self.assertEqual(code, 200)
+        view = json.loads(body)
+        self.assertEqual(view["working"], [])
+        self.assertEqual(view["recently_finished"][0]["result_url"], "/api/jobs/result?id=job")
+        code, _, body = self.request("GET", "/api/jobs/result?id=job")
+        self.assertEqual(code, 200)
+        self.assertIn("Saved result", body)
+        self.assertNotIn(self.chat.password, body)
+        self.assertEqual(self.request("GET", "/api/jobs/result?id=missing")[0], 404)
+        self.assertEqual(before, journal.read_bytes())
+        self.assertEqual(self.fake.calls, [])
+
     def test_explicit_providers_reach_model_and_reject_unknown_provider(self):
         self.login()
         for provider in ("minimax", "gemini", "codex", "claude", "cursor"):
             with self.subTest(provider=provider), patch("app.state_ledger.try_status_reply", return_value="local shortcut"):
                 code, _, _ = self.request("POST", "/api/messages", {
-                    "conversation_id": self.identifier, "message": "what are the workers doing right now",
+                    "conversation_id": self.identifier, "message": "Hello Bob",
                     "request_id": str(uuid.uuid4()), "provider": provider})
                 self.assertEqual(code, 202)
                 self.wait()
                 self.assertEqual(self.fake.calls[-1]["preferred_provider"], provider)
                 answer = self.chat.history(self.identifier)["messages"][-1]
-                self.assertIn("Answering provider: " + answer["provider"], answer["content"])
-                self.assertIn("Queue:", answer["content"])
+                self.assertEqual("A saved reply.", answer["content"])
+                self.assertNotIn("Answering provider:", answer["content"])
         for provider in ("grok", "unknown", None):
             self.assertEqual(self.request("POST", "/api/messages", {
                 "conversation_id": self.identifier, "message": "hello",
                 "request_id": str(uuid.uuid4()), "provider": provider})[0], 400)
         self.assertEqual(len(self.fake.calls), 5)
+
+    def test_progress_status_is_local_plain_and_does_not_start_duplicate_work(self):
+        from test_worker_activity import PS, SCREENS
+        from worker_activity import parse_processes
+        self.login()
+        with patch("live_status_snapshot._screen_sessions", return_value=SCREENS), \
+                patch("live_status_snapshot.process_table", return_value=parse_processes(PS)):
+            # This establishes context and a future preference. It does not
+            # itself ask for a current observation or authorize new work.
+            context = ("The hold is lifted. Bob already started WebJam #161, AdoptIQ #26, StoryBoard #47, and Shelf #10 on Claude, "
+                       "so don't start duplicates. For anything new, use start a job: plus the task. When I ask for status, give it in plain words from the real queue.")
+            code, _, _ = self.request("POST", "/api/messages", dict(conversation_id=self.identifier,
+                message=context, request_id=str(uuid.uuid4())))
+            self.assertEqual(code, 202)
+            self.wait()
+            contextual = self.chat.history(self.identifier)["messages"][-1]
+            self.assertEqual(contextual["content"], "A saved reply.")
+            self.assertNotIn("status_observation", contextual)
+            self.assertEqual(len(self.fake.calls), 1)
+            for text in ("Ok great is it moving along now?", "Status?"):
+                code, _, body = self.request("POST", "/api/messages", dict(conversation_id=self.identifier,
+                    message=text, request_id=str(uuid.uuid4())))
+                self.assertEqual(code, 202)
+                answer = json.loads(body)["messages"][-1]
+                self.assertEqual(answer["status"], "done")
+                self.assertIn("working on", answer["content"])
+                self.assertNotIn("Ready when you are", answer["content"])
+                self.assertNotIn("running for", answer["content"])
+                self.assertNotIn("start a job:", answer["content"])
+                self.assertNotIn("None", answer["content"])
+        self.assertEqual(len(self.fake.calls), 1)
+        self.assertFalse((self.root / "conductor/state/queue.jsonl").exists())
 
     def test_tailnet_origin_and_secure_cookie(self):
         connection = http.client.HTTPConnection("127.0.0.1", self.port)
@@ -305,6 +463,62 @@ class HTTPTests(Fixture):
             self.assertEqual(self.request("POST", "/api/messages", {"conversation_id": self.identifier, "message": message, "request_id": str(uuid.uuid4())})[0], 400)
         self.assertEqual(self.fake.calls, [])
         self.assertEqual(self.request("POST", "/api/messages", {}, {"Content-Length": "9999999"})[0], 413)
+
+    def test_media_upload_message_and_fetch(self):
+        import base64
+
+        from chat_media import resolve_media
+        self.login()
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC"
+        )
+        code, _, body = self.request(
+            "POST",
+            "/api/media/upload",
+            {"conversation_id": self.identifier, "filename": "dot.png", "data_base64": base64.b64encode(png).decode()},
+        )
+        self.assertEqual(code, 201)
+        media_id = json.loads(body)["media_id"]
+        code, _, body = self.request(
+            "POST",
+            "/api/messages",
+            {"conversation_id": self.identifier, "message": "What color is the pixel?", "request_id": str(uuid.uuid4()),
+             "attachments": [media_id]},
+        )
+        self.assertEqual(code, 202)
+        self.wait()
+        history = json.loads(self.request("GET", "/api/conversations/" + self.identifier)[2])
+        user = next(m for m in history["messages"] if m["role"] == "user")
+        self.assertEqual(user["attachments"][0]["media_id"], media_id)
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        headers = {"Cookie": self.cookie} if self.cookie else {}
+        connection.request("GET", f"/api/media/{media_id}?conversation_id={self.identifier}", headers=headers)
+        response = connection.getresponse()
+        payload = response.read()
+        connection.close()
+        self.assertEqual(response.status, 200)
+        self.assertTrue(payload.startswith(b"\x89PNG"))
+        self.assertTrue(resolve_media(self.root, media_id, conversation_id=self.identifier).exists())
+
+    def test_attachment_only_message_allowed(self):
+        import base64
+
+        self.login()
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC"
+        )
+        _, _, body = self.request(
+            "POST",
+            "/api/media/upload",
+            {"conversation_id": self.identifier, "filename": "dot.png", "data_base64": base64.b64encode(png).decode()},
+        )
+        media_id = json.loads(body)["media_id"]
+        code, _, _ = self.request(
+            "POST",
+            "/api/messages",
+            {"conversation_id": self.identifier, "message": "", "request_id": str(uuid.uuid4()), "attachments": [media_id]},
+        )
+        self.assertEqual(code, 202)
 
     def test_cannot_bind_public_interface(self):
         with self.assertRaises(ValueError):
@@ -391,7 +605,7 @@ class ProviderTests(Fixture):
         provider.call("gemini", "context", None, threading.Event())
         self.assertIn("api_call.py", calls[-1][0][-2])
         self.assertEqual(calls[-1][0][-1], "gemini")
-        self.assertTrue(calls[-1][1]["prompt"].startswith("context"))
+        self.assertTrue(json.loads(calls[-1][1]["prompt"])["prompt"].startswith("context"))
         self.assertIn("<bob-webchat-reply>", calls[-1][1]["prompt"])
 
     def test_gemini_short_answers_and_retry_logs(self):
@@ -456,10 +670,14 @@ class ProviderTests(Fixture):
         (folder / "HANDBACK-SUMMARY.md").write_text("# HANDBACK-SUMMARY\n\n## Running\n- council review\n")
         provider = self.provider()
         value = self.chat.conversations[self.identifier]
-        value["messages"] = [{"role": "user", "content": "hey", "status": "done"}]
+        value["messages"] = [{"role": "user", "content": "quick status?", "status": "done"}]
         prompt = provider.prompt(value, fast=True)
         self.assertIn("handoff-digest", prompt)
         self.assertIn("council review", prompt.lower())
+        value["messages"] = [{"role": "user", "content": "hey", "status": "done"}]
+        greeting = provider.prompt(value, fast=True)
+        self.assertNotIn("handoff-digest", greeting)
+        self.assertNotIn("council review", greeting.lower())
 
     def test_live_status_snapshot_builder_reads_jobs_and_lanes(self):
         from live_status_snapshot import build_live_status_snapshot
@@ -484,6 +702,29 @@ class ProviderTests(Fixture):
         self.assertIn("webbob-context-fixture", json.dumps(snap))
         self.assertEqual(snap["lane_locks"]["cursor"]["state"], "busy")
         self.assertIn("queue_jobs", snap)
+
+    def test_prompt_includes_chat_attachment_snapshot(self):
+        import base64
+
+        from chat_media import store_media
+
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFWEXHbQSACj/P8Fu7N9hAAAAAElFTkSuQmCC"
+        )
+        stored = store_media(self.root, png, "dot.png", conversation_id=self.identifier, redact=self.chat.redact)
+        provider = self.provider()
+        value = self.chat.conversations[self.identifier]
+        value["messages"] = [{
+            "role": "user",
+            "content": "what is in the photo?",
+            "status": "done",
+            "attachments": [{"media_id": stored["media_id"], "filename": "dot.png", "kind": "image"}],
+        }]
+        with patch("chat_media.prompt_image_bytes", return_value=(png, "png")), patch("chat_media.scan_image", return_value=""):
+            prompt = provider.prompt(value, fast=True)
+        self.assertIn("chat_attachments (current turn)", prompt)
+        self.assertIn("Image attachment", prompt)
+        self.assertGreaterEqual(len(provider._vision_parts), 1)
 
     def test_gemini_prompt_includes_live_status_snapshot(self):
         conductor = self.root / "conductor"
@@ -570,12 +811,18 @@ class ProviderTests(Fixture):
         (self.root / "bob-brain/memory/profile.md").write_text("Jeff's memory")
         value = self.chat.conversations[self.identifier]
         value["messages"] = [{"role": "user", "content": "turn-%02d" % i, "status": "done"} for i in range(25)]
+        value["messages"][-1]["content"] += ": From BOB-STATE: what is the current handoff?"
         prompt = self.provider().prompt(value)
         self.assertIn("Current hard rules", prompt)
         self.assertIn("Jeff's memory", prompt)
         self.assertNotIn("turn-04", prompt)
         self.assertIn("turn-05", prompt)
         self.assertIn("turn-24", prompt)
+        value["messages"][-1]["content"] = "turn-24"
+        ordinary = self.provider().prompt(value)
+        self.assertNotIn("Current hard rules", ordinary)
+        self.assertNotIn("Jeff's memory", ordinary)
+        self.assertIn("turn-24", ordinary)
 
     def test_parent_tokens_are_not_forwarded(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test", "CODEX_THREAD_ID": "parent", "CURSOR_API_KEY": "test", "GITHUB_TOKEN": "test"}):
@@ -660,10 +907,14 @@ class HandbackJobTests(Fixture):
         self.assertEqual(self.chat.conversations[self.identifier].get("pending_council"), "mobile sheet UX")
         self.chat.submit(self.identifier, "yes, run council", str(uuid.uuid4()))
         self.wait()
-        index = (self.root / "next-prompts/INDEX.md").read_text()
-        self.assertIn("webchat-", index)
-        bodies = " ".join(p.read_text().lower() for p in (self.root / "next-prompts").glob("webchat-*.md"))
-        self.assertIn("council", bodies)
+        from task_dispatch import task_queue
+        answer = self.chat.history(self.identifier)["messages"][-1]
+        rows = [task_queue.tasks(self.root)[key] for key in answer["task_ids"]]
+        self.assertEqual([row["requested_worker"] for row in rows], ["gemini", "minimax", "claude"])
+        self.assertEqual([row["kind"] for row in rows], ["audit", "test-writing", "analysis"])
+        for row in rows:
+            self.assertIn(row["id"], answer["content"])
+            self.assertIn("council question", row["prompt"])
         self.assertNotIn("pending_council", self.chat.conversations[self.identifier])
 
     def test_job_confirm_dispatches_durable_task(self):
@@ -686,20 +937,19 @@ class HandbackJobTests(Fixture):
         self.assertEqual(assistant["action_card"]["state"], "queued")
         self.assertIn("webchat-", assistant["action_card"].get("queue_id", ""))
         self.assertEqual(assistant["action_card"].get("goal_text"), "fix the webchat panel")
-        self.assertIn("post the result here", assistant.get("content", ""))
+        self.assertEqual(assistant["content"], "I queued “fix the webchat panel” for the next available worker (job `" + assistant["task_id"] + "`).")
 
     def test_job_merge_refused_before_queue(self):
         self.chat.submit(self.identifier, "start a job: merge #158", str(uuid.uuid4()))
         self.assertNotIn("pending_job", self.chat.conversations[self.identifier])
 
-    def test_do_more_offers_conductor_job(self):
+    def test_do_more_asks_for_the_task_instead_of_inventing_one(self):
         self.assertIsNotNone(parse_do_more("I need you to do more"))
         self.chat.submit(self.identifier, "I need you to do more", str(uuid.uuid4()))
         pending = self.chat.conversations[self.identifier].get("pending_job")
-        self.assertIsNotNone(pending)
-        self.assertIn("conductor", pending.lower())
+        self.assertIsNone(pending)
         last = self.chat.conversations[self.identifier]["messages"][-1]
-        self.assertIn("not read-only", last.get("content", "").lower())
+        self.assertEqual(last["content"], "What would you like me to work on?")
 
     def test_do_more_does_not_match_negation(self):
         self.assertIsNone(parse_do_more("please do not run it yourself"))
@@ -812,7 +1062,7 @@ class HandbackJobTests(Fixture):
         self.assertEqual(assistant["status"], "done")
         self.assertEqual(assistant.get("provider"), "state")
         self.assertIn("mini", assistant["content"].lower())
-        self.assertIn("provider-health.json", assistant["content"])
+        self.assertNotIn("provider-health.json", assistant["content"])
         self.assertNotIn("tests running", assistant["content"])
 
     def test_panel_and_handback_api_shape(self):
@@ -956,7 +1206,8 @@ class HandbackJobTests(Fixture):
         (self.root / "next-prompts/INDEX.md").write_text("| Pri | File | Project | Kind | Status | Notes |\n| --- | --- | --- | --- | --- | --- |\n")
         proposal = str(uuid.uuid4())
         stale = str(uuid.uuid4())
-        self.chat.submit(self.identifier, "do it", proposal)
+        self.chat.conversations[self.identifier].update(pending_job="review PR #161", pending_job_id=proposal)
+        self.chat.save(self.chat.conversations[self.identifier])
         self.assertEqual(self.chat.conversations[self.identifier].get("pending_job_id"), proposal)
         value = self.chat.submit(self.identifier, f"yes, start job proposal {stale}", str(uuid.uuid4()))
         assistant = value["messages"][-1]
@@ -992,13 +1243,12 @@ class HandbackJobTests(Fixture):
         path = resolve_audio(self.root, stored["audio_id"])
         self.assertTrue(path.exists())
 
-
     def test_music_coach_cheap_reply(self):
         from music_notebook import try_music_coach_reply
         self.assertIn("chorus", (try_music_coach_reply("help with chorus hook") or "").lower())
         refrain_only = (try_music_coach_reply("polish the refrain") or "").lower()
         self.assertIn("refrain", refrain_only)
-        self.assertIn("versions", refrain_only)
+        self.assertIn("paste your refrain here", refrain_only)
         verse_only = (try_music_coach_reply("tighten the verse lyrics") or "").lower()
         self.assertIn("verse", verse_only)
         self.assertNotIn("chorus/refrain tip", verse_only)
@@ -1028,6 +1278,14 @@ class HandbackJobTests(Fixture):
         self.assertIn("tag", tag_bridge)
         hyphen = (try_music_coach_reply("double-chorus lift") or "").lower()
         self.assertIn("double", hyphen)
+        for request in ("song structure", "modulation", "song intro", "pre-chorus", "capo",
+                        "song dynamics", "double chorus", "tag line", "riff", "outro",
+                        "chord progression", "verse", "refrain", "hook", "chorus", "rhyme",
+                        "melody", "bridge", "time signature", "tempo"):
+            with self.subTest(request=request):
+                reply = try_music_coach_reply(request)
+                self.assertIsNotNone(reply)
+                self.assertNotRegex(reply, r"Songs|Song panel|audio upload|rough MP3")
 
     def test_self_improve_schedule_hint_from_plist(self):
         plist = self.root / "conductor/launchd/com.jeff.bob-webchat-self-improve.plist"
@@ -1088,6 +1346,22 @@ class HandbackJobTests(Fixture):
             out = load_live_ops(self.root, max_age=120.0)
         self.assertTrue(out["meta"]["stale"])
         self.assertEqual(out["live_ops"].get("now_line"), "cached")
+
+    def test_load_live_ops_read_only_skips_inline_snapshot(self):
+        from ops_panel import load_live_ops
+
+        dash = self.root / "conductor/dashboard.json"
+        dash.parent.mkdir(parents=True, exist_ok=True)
+        old = time.time() - 3600
+        dash.write_text(
+            json.dumps({"live_ops": {"generated_at": "2020-01-01T00:00:00+00:00", "now_line": "cached-only"}})
+        )
+        os.utime(dash, (old, old))
+        with patch("ops_panel.inline_live_ops") as inline:
+            out = load_live_ops(self.root, max_age=120.0, read_only=True)
+        inline.assert_not_called()
+        self.assertTrue(out["meta"]["stale"])
+        self.assertEqual(out["live_ops"].get("now_line"), "cached-only")
 
     def test_maybe_spawn_dashboard_refresh_respects_fresh_dashboard(self):
         from ops_panel import maybe_spawn_dashboard_refresh
@@ -1178,7 +1452,8 @@ class HandbackJobTests(Fixture):
         state_ledger.write_now(self.root, "offline parity fixture", sha="fedcba1")
         result = run_eval(self.root)
         self.assertEqual(result["passed"], result["total"], result["cases"])
-        self.assertEqual(result["total"], 24)
+        self.assertEqual(result["total"], 169)
+        self.assertEqual(sum(case["name"].startswith("Instinct: ") for case in result["cases"]), 22)
 
     def test_catchup_event_ack_cursor(self):
         ledger_dir = Path(__file__).resolve().parent.parent / "state"
@@ -1190,10 +1465,11 @@ class HandbackJobTests(Fixture):
         state_ledger.record_webchat_turn(self.root, ask="ack drill turn", provider="state")
         state_ledger.write_catchup(self.root)
         self.assertIn("ack drill", (self.root / "conductor/state/BOB-CATCHUP.md").read_text())
-        seq = alignment_events.latest_seq(self.root)
-        state_ledger.ack_events_for_bob(self.root, seq=seq)
+        receipt = state_ledger.bob_catchup(self.root)
+        seq = receipt['through_seq']
+        state_ledger.ack_events_for_bob(self.root, receipt=receipt)
         loaded = state_ledger.load_state(self.root)
-        self.assertGreaterEqual(int(loaded.get("bob_events_ack_seq") or 0), seq)
+        self.assertGreaterEqual(int(loaded.get("bob_coordination_ack_seq") or 0), seq)
 
 class InstallerTests(Fixture):
     def test_webchat_only_leaves_other_agents_alone(self):

@@ -1,0 +1,790 @@
+nice: setpriority: Operation not permitted
+EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+======================================================================
+ERROR: test_ambiguous_names_and_duplicate_transports_require_exact_target (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_andrea_authenticated_health_and_missing_bridge_honesty (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_andrea_errors_do_not_leak_secrets (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_cancel_and_malformed_approval_preserve_observed_delivery_outcome (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_colloquial_text_phrasing_is_not_texting_help (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_concurrent_yes_has_one_durable_audit_record (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_confirmation_persists_before_handoff_and_once_for_receipt (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_core_exclusions_are_applied_before_texting_projection (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_disk_failure_does_not_claim_confirmation (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_duplicate_draft_request_never_rotates_consent (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_edit_start_and_recipient_or_body_edit_reset_confirmation (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_embedded_approval_is_not_a_separate_yes (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_empty_missing_and_unverifiable_thread (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_exact_confirmation_consumed_once_and_truthfully_blocked (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_exact_lookup_rejects_missing_wrong_duplicate_and_unverified_identity (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_exact_older_instinct_thread_remains_read_only (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_exact_older_thread_drafts_and_confirms_once_without_model_or_job (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_expiry_restart_and_replay_never_authorize (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_failed_ambiguous_edit_also_withdraws_consent (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_http_auth_csrf_and_session_bound_confirmation (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_intervening_message_cancel_new_draft_and_combined_yes_edit (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_invalid_andrea_receipts_do_not_claim_sent_or_not_sent (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_legacy_receipt_is_submission_only_and_old_sent_drafts_offer_refresh (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_lost_andrea_reply_keeps_delivery_unconfirmed_and_cannot_replay (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_lost_receipt_can_be_checked_after_restart_without_reconfirming (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_payload_tampering_invalidates_binding (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_private_storage_and_public_projection (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_protected_draft_never_inspects_bridge_receipts (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_read_allowlist_and_loopback_no_proxy (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_read_and_confirmation_waits_are_bounded_and_never_retried (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_reads_summaries_and_no_jobs_or_model_calls (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_receipt_check_cannot_send_pending_draft_or_claim_uncertain_success (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_receipt_save_failure_keeps_consent_consumed_after_restart (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_receipt_slower_than_old_five_second_limit_still_reports_sent_once (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_same_request_cannot_confirm_draft (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_send_request_is_only_a_draft_and_separate_yes_is_required (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_sent_refresh_reports_later_failure_without_resend_and_survives_restart (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_separate_yes_sends_via_mock_andrea_bluebubbles_path (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_separate_yes_success_message_content (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_submission_delivery_and_unavailable_checks_have_distinct_owner_replies (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_texting_does_not_clear_holds_or_capture_later_resume (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_texting_persists_each_turn_and_clears_pending_work (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_thread_instructions_are_inert_and_private_from_providers (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_token_comparison_timing_safe (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_transport_errors_are_safe_and_reads_never_follow_redirects (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_version_lookup_revokes_previous_text_consent (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_worker_prefixed_texting_still_respects_holds (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_worker_routing_cannot_bypass_text_draft_gate (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_wrong_conversation_login_or_token_cannot_confirm (test_texting.TextingTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_texting.py", line 27, in setUp
+    self.mock = MockMessaging(self.root)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/texting_fixture.py", line 157, in __init__
+    self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/http/server.py", line 138, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+PermissionError: [Errno 1] Operation not permitted
+
+----------------------------------------------------------------------
+Ran 49 tests in 0.012s
+
+FAILED (errors=49)

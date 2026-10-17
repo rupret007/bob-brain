@@ -1,0 +1,1434 @@
+#!/usr/bin/env python3
+"""Release checks and rollback transaction; replay never executes worker jobs.
+
+Historical vendor gates are superseded by Jeff's 2026-09-29 instructions.
+Checks honor the current dispatch mode. Live replay must never send a text.
+"""
+import argparse
+import concurrent.futures
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from datetime import datetime, timezone
+
+CODE = Path(__file__).resolve().parents[1]
+if __name__ == '__main__' and '--root' in sys.argv:
+    os.environ['BOB_ROOT'] = sys.argv[sys.argv.index('--root') + 1]
+sys.path[:0] = [str(CODE / d) for d in ('webchat', 'services', 'state', 'reviews', 'release')]
+from release_ownership import serialized
+import activation_journal as journal
+import qualification_scope
+from texting_deploy_record import atomic_json, atomic_text, require_disk_space, reserve_recovery, release_recovery
+from live_redeploy_check import Client, require
+
+ORDER = ('texting', 'gaps', 'media', 'voice', 'ui', 'instinct', 'remaining', 'bridge', 'improve')
+BASE = 'draft/webbob-clean-0927'
+RESTART_PROMPT = ("Go ahead and restart the AdoptIQ, Fantasy Football and WebJam projects back up "
+                  "but I want you to only use Gemini and Minimax on them for right now.")
+START_PROMPT = 'Ok start up all work here. Max effort on web bob before we loose grok bot'
+RESOURCE_ACTION_PROMPT = 'Ok make it happen use any and all resources.'
+RESOURCE_PROMPTS = (
+    'top priority use any and all resources',
+    'Ok top priority is to make web bob better than grok bot. Make it happen any and all resources.',
+)
+
+
+def andrea_pin():
+    return json.loads((CODE / 'release/andrea-bridge.json').read_text())
+
+
+def andrea_gates(root):
+    sha = andrea_pin()['sha']
+    folder = root / 'conductor/reviews' / ('SOLO-0018-andrea-bridge-' + sha[:12])
+    results = [json.loads((folder / (name + '.json')).read_text()) for name in ('major', 'docs', 'build')]
+    for row in results:
+        require(row['sha'] == sha and row['exit'] == 0 and digest(row['log']) == row['log_sha256'],
+                'Andrea exact-tip full checks failed or changed')
+    return dict(sha=sha, results=results)
+
+
+def bridge_replay(root, cid, draft_id):
+    """Inspect health and committed cancellation; never try an ordinary send."""
+    import sqlite3
+    from texting import Andrea
+    config_path = root / 'conductor/webchat/andrea-bridge.json'
+    require(config_path.is_file() and not config_path.is_symlink() and not config_path.stat().st_mode & 0o077,
+            'Bridge configuration is not private')
+    cfg = json.loads(config_path.read_text())
+    health = Andrea(cfg['url'], cfg['token']).call('health')
+    require(health.get('ok') and health.get('connected') and health.get('paused') is False and
+            health.get('instinctReadOnly') is True and health.get('sha') == andrea_pin()['sha'] and
+            health.get('deliveryProtocol') == 1,
+            'Actual Andrea bridge is unavailable or at the wrong revision')
+    saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
+    remote = saved['_texting']['drafts'][draft_id]['bridge']
+    with sqlite3.connect(Path(cfg['audit_db']).resolve().as_uri() + '?mode=ro', uri=True) as db:
+        row = db.execute('SELECT state, digest, actionId FROM webbob_drafts WHERE id = ?', (remote['draftId'],)).fetchone()
+    require(row == ('cancelled', remote['digest'], remote['actionId']), 'Andrea cancellation was not durably recorded')
+    return [dict(check='actual Andrea exact-build health, persisted challenge and durable cancellation',
+                 andrea_sha=health['sha'], passed=True, real_texts_sent=0)]
+
+
+def live_messaging_reads(root, feature):
+    """Bounded service observations; no recent-thread discovery or draft writes."""
+    from texting import Andrea, BlueBubbles, recipient
+    from instinct import Instinct
+    checks=[]
+    if ORDER.index(feature)>=ORDER.index('bridge'):
+        path=root/'conductor/webchat/andrea-bridge.json'
+        require(path.is_file() and not path.is_symlink() and not path.stat().st_mode&0o077,'Bridge config is not private')
+        cfg=json.loads(path.read_text())
+        health=Andrea(cfg['url'],cfg['token']).call('health')
+        require(health.get('ok') and health.get('connected') and health.get('paused') is False and
+                health.get('instinctReadOnly') is True and health.get('sha')==andrea_pin()['sha'] and
+                health.get('deliveryProtocol')==1,'Actual Andrea bridge health/revision failed')
+        checks.append(dict(check='actual Andrea exact-build read-only health',andrea_sha=health['sha'],
+                           observed_at=time.time(),passed=True,real_texts_sent=0,scope='live service observation'))
+    if ORDER.index(feature)>=ORDER.index('instinct'):
+        path=root/'conductor/webchat/instinct.json'
+        require(path.is_file() and not path.is_symlink() and path.stat().st_size<=65536,'Pinned Instinct mapping unavailable')
+        mapping=json.loads(path.read_text());guid=mapping.get('chat_guid')
+        require(isinstance(guid,str) and 0<len(guid)<=500,'Explicit Instinct thread pin required; discovery is not allowed')
+        gateway=BlueBubbles();chats=gateway.exact_chat(guid)
+        require(len(chats)==1,'Exact Instinct thread unavailable')
+        target=recipient(chats[0]);addresses={Instinct.address(a) for a in target['addresses']}
+        require(len(addresses)==1 and addresses.issubset({Instinct.address(a) for a in mapping.get('addresses',[])}),
+                'Pinned Instinct recipient differs from protected mapping')
+        messages=gateway.messages(guid)
+        require(isinstance(messages,list) and len(messages)<=30,'Instinct bounded read failed')
+        checks.append(dict(check='exact configured Instinct metadata and bounded messages read',passed=True,
+                           scope='live direct service read; product digest and confirmation controls are isolated',
+                           messages_read=len(messages),observed_at=time.time(),mapping_sha256=digest(path)))
+    return checks
+
+
+def retained_delivery_replay(root):
+    """Verify immutable consumed owner proof; never refresh, cancel or resend."""
+    pin=json.loads((CODE/'release/retained-delivery.json').read_text())
+    manifest_path=root/pin['manifest']
+    require(manifest_path.is_file() and not manifest_path.is_symlink() and
+            manifest_path.resolve().is_relative_to((root/'conductor/reviews').resolve()) and
+            digest(manifest_path)==pin['sha256'],'Retained delivery manifest changed')
+    manifest=json.loads(manifest_path.read_text());hashes={};records={}
+    for name in ('phone','phone_send','phone_return','owner_attestation'):
+        row=manifest['files'][name];path=Path(row['path'])
+        require(path.is_file() and not path.is_symlink() and path.resolve().is_relative_to((root/'conductor/reviews').resolve())
+                and digest(path)==row['sha256'],'Retained owner delivery evidence changed')
+        hashes[name]=row['sha256'];records[name]=json.loads(path.read_text())
+    proof=records['phone']
+    require(proof['status']=='PASS_OWNER_PHONE_DELIVERY' and proof['sha']==manifest['sha'] and
+            proof['andrea_sha']==andrea_pin()['sha'] and proof['real_submissions']==1 and
+            all(proof[k] is True for k in ('physical_receipt_without_retry','matching_return_read','synchronized_return_copy_not_used')),
+            'Retained owner delivery proof is incomplete')
+    require(all(proof['evidence_hashes'][k]==hashes[k] for k in ('phone_send','phone_return','owner_attestation')),
+            'Retained delivery child bindings differ')
+    return [dict(check='immutable consumed owner delivery/return proof retained',passed=True,
+                 scope='historical owner proof, freshly hash-verified; no fresh delivery claim',
+                 source_sha=manifest['sha'],manifest_sha256=pin['sha256'],evidence_sha256=hashes,
+                 real_texts_sent=0,additional_confirmations=0)]
+
+
+def run(argv, **kw):
+    return subprocess.check_output([str(a) for a in argv], text=True, timeout=60, **kw).strip()
+
+
+def git(*args):
+    return run(['git', '-C', CODE, *args])
+
+
+def digest(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def source_digest(folder):
+    values = []
+    for path in sorted(Path(folder).rglob('*')):
+        if path.is_file() and '__pycache__' not in path.parts and path.suffix != '.pyc':
+            values.append((str(path.relative_to(folder)), digest(path)))
+    return hashlib.sha256(json.dumps(values, separators=(',', ':')).encode()).hexdigest()
+
+
+def identity():
+    sha = git('rev-parse', 'HEAD')
+    require(git('branch', '--show-current').startswith('draft/'), 'Release requires a draft branch')
+    require(not git('status', '--porcelain'), 'Release checkout must be clean')
+    return sha
+
+
+def submit(client, cid, prompt, request=None, attachments=None, *, provider=None):
+    import uuid
+    request = request or str(uuid.uuid4())
+    payload = dict(conversation_id=cid, message=prompt, request_id=request)
+    if provider:
+        payload['provider'] = provider
+    if attachments:
+        payload['attachments'] = attachments
+    value = client.call('/api/messages', payload)
+    deadline = time.monotonic() + 90
+    while True:
+        answer = next(m for m in value['messages'] if m.get('role') == 'assistant' and m.get('request_id') == request)
+        if answer['status'] == 'done':
+            require(bool(answer['content'].strip()), 'Empty reply')
+            require(not answer.get('task_ids') and not answer.get('task_id'), 'Solo replay dispatched a worker')
+            return value, answer
+        require(answer['status'] not in ('error', 'cancelled', 'waiting'), 'Replay reply failed')
+        require(time.monotonic() < deadline, 'Replay reply timed out')
+        time.sleep(.2)
+        value = client.call('/api/conversations/' + cid)
+
+
+def bridge_replay_target(chat):
+    """Select a personal direct recipient; SMS short codes are not send targets."""
+    from texting import recipient, TextingError
+    try:
+        target = recipient(chat)
+        if len(target['addresses']) != 1 or not re.fullmatch(r'(?:iMessage|SMS|RCS);-;[^;\s]+', target['guid']):
+            return False
+        address = target['addresses'][0].strip().lower()
+        guid_address = target['guid'].split(';')[2].strip().lower()
+        if address != guid_address:
+            return False
+        if '@' in address:
+            return bool(re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}", address))
+        return bool(re.fullmatch(r'\+?[0-9 ().-]+', address) and
+                    10 <= len(re.sub(r'\D', '', address)) <= 15)
+    except (TextingError, KeyError, TypeError):
+        return False
+
+
+def replay(client, root, sha, *, real_reads=False, feature='texting'):
+    """Authenticated no-send regression; sensitive message content stays in sessions."""
+    client.login()
+    require(client.call('/api/version')['sha'] == sha, 'Live version differs from candidate')
+    cid = client.new()
+    receipts = []
+    for prompt, provider, expected in (
+        ('texting help', 'texting', 'draft'),
+        ('yes wbtxt-00000000000000000000000000000000', 'texting', 'Nothing sent.'),
+        ('cancel text draft 0000000000000000', 'texting', 'no longer current'),
+        ('what version are you?', 'dispatcher', sha[:7]),
+    ):
+        value, answer = submit(client, cid, prompt)
+        require(answer.get('provider') == provider, 'Wrong route for ' + prompt)
+        require(expected.lower() in answer['content'].lower(), 'Wrong response for ' + prompt)
+        again, duplicate = submit(client, cid, prompt, answer['request_id'])
+        require(duplicate == answer and len(again['messages']) == len(value['messages']), 'Idempotency failed')
+        receipts.append(dict(prompt=prompt, request_id=answer['request_id'], provider=provider,
+                             answer_sha256=hashlib.sha256(answer['content'].encode()).hexdigest(), passed=True))
+    if real_reads:
+        receipts.extend(live_messaging_reads(root, feature))
+    else:
+        receipts.extend(isolated_texting_controls(client, cid, root, feature))
+    if ORDER.index(feature) >= ORDER.index('gaps'):
+        receipts.extend(gaps_replay(client, cid, root, real=real_reads))
+    if ORDER.index(feature) >= ORDER.index('media'):
+        receipts.extend(media_replay(client, root, real=real_reads))
+    if ORDER.index(feature) >= ORDER.index('instinct'):
+        if not real_reads:
+            receipts.extend(instinct_replay(client, cid))
+    if ORDER.index(feature) >= ORDER.index('remaining'):
+        receipts.extend(remaining_replay(client, cid, root, real=real_reads))
+    if feature == 'improve':
+        receipts.extend(resources_replay(client, root, real=real_reads))
+        receipts.extend(sticky_greeting_replay(client, root, real=real_reads))
+        receipts.extend(capability_replay(client, cid, root))
+        receipts.extend(memory_removal_replay(client, cid, root, real=real_reads))
+        if real_reads:
+            receipts.extend(retained_delivery_replay(root))
+    from task_dispatch import task_queue
+    require(not any(r['conversation_id'] == cid for r in task_queue.tasks(root).values()), 'Replay queued work')
+    saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
+    require(not saved.get('_texting', {}).get('audit'), 'Replay attempted delivery')
+    return dict(all_pass=True, conversation_id=cid, checks=receipts, real_texts_sent=0, queued_workers=0)
+
+
+def isolated_texting_controls(client, cid, root, feature):
+    """Full confirmation/cancel controls against the isolated messaging server."""
+    receipts=[]
+    target='Alex Morgan'
+    _, drafted = submit(client, cid, 'draft reply to ' + target + ': Web Bob no-send verification. Cancel this draft.')
+    card = drafted.get('text_draft', {})
+    require(card.get('state') == 'pending' and card.get('body') == 'Web Bob no-send verification. Cancel this draft.',
+            'Draft did not bind the exact recipient/body')
+    if ORDER.index(feature) >= ORDER.index('bridge'):
+        require(card.get('delivery_available') is True, 'Andrea did not persist the exact draft challenge')
+    token = card['confirm_message']
+    _, bare = submit(client, cid, 'yes')
+    require(bare['content'].startswith('Nothing sent.'), 'Bare yes authorized delivery')
+    _, cancelled = submit(client, cid, 'cancel text draft ' + card['id'])
+    require(cancelled['content'] == 'Text draft cancelled. Nothing sent.', 'Draft cancel failed')
+    _, stale = submit(client, cid, token)
+    require('already used, cancelled, or replaced' in stale['content'], 'Cancelled token was accepted')
+    receipts.append(dict(check='exact draft, bare approval, cancel, stale token', passed=True))
+    _, newer = submit(client, cid, 'draft reply to ' + target + ': Version interruption check. Do not send.')
+    require(newer.get('text_draft', {}).get('state') == 'pending', 'Interruption-check draft failed')
+    confirmation = newer['text_draft']['confirm_message']
+    submit(client, cid, 'what version are you?')
+    _, revoked = submit(client, cid, confirmation)
+    require('already used, cancelled, or replaced' in revoked['content'], 'Version lookup retained stale text consent')
+    receipts.append(dict(check='version lookup revokes previous text consent', passed=True))
+    return receipts
+
+
+def verify_resource_clarification(answer):
+    content = answer.get('content', '')
+    require(answer.get('provider') == 'planner' and '?' in content and
+            re.search(r'\b(?:task|goal|objective)\b', content, re.I) and
+            re.search(r'\b(?:result|outcome|accomplish)\b', content, re.I) and
+            not re.search(r'\b(?:ready|on board|queued|assigned|started)\b', content, re.I) and
+            'I did not start, assign, or queue' not in content and
+            not answer.get('improvement_receipt') and not answer.get('task_id') and not answer.get('task_ids'),
+            'Unscoped resource request did not ask for a concrete objective without inventing work')
+
+
+def resources_replay(client, root, *, real):
+    """Exercise useful clarification, bounded improvement and genuine status controls."""
+    from task_dispatch import task_queue
+    cid = client.new()
+    receipts = []
+    solo_mode = (root / 'conductor/SOLO-WORKER').exists()
+    prompts = RESOURCE_PROMPTS + (RESOURCE_PROMPTS[0],
+        'Ok well make that your goal. Research what grok bot does and self improve to be better than it.',
+        'Ok enable what we need to enable') + ((RESOURCE_ACTION_PROMPT,) if solo_mode else ())
+    for index, prompt in enumerate(prompts):
+        if index == 2:
+            # Follow-ups now advance through the executor. Repeated release
+            # gates exercise the saved hold boundary; the one unheld owner
+            # execution proof is performed separately after LIVE_PASS.
+            _, held = submit(client, cid, 'Hold Web Bob')
+            require(held.get('provider') == 'dispatcher' and 'On hold: Web Bob' in held['content'],
+                    'Improvement continuation hold was not acknowledged')
+        before = client.call('/api/conversations/' + cid)['messages']
+        value, answer = submit(client, cid, prompt)
+        if index == 0:
+            verify_resource_clarification(answer)
+        elif index == 1:
+            verify_improvement_reply(root, before, answer)
+        else:
+            saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
+            require('Web Bob' in saved['intent_state']['holds'] and
+                    answer.get('provider') == 'dispatcher' and answer['content'].startswith('On hold: Web Bob') and
+                    saved.get('improvement_goal', {}).get('investigation'),
+                    'Improvement follow-up ignored a saved hold or lost completed investigation')
+        require(not answer.get('status_observation') and
+                'Codex, Claude, Cursor, Gemini and MiniMax are idle.' not in answer['content'],
+                'Resource-use action returned canned operational status')
+        user = next(m for m in value['messages'] if m.get('role') == 'user' and m.get('request_id') == answer['request_id'])
+        require(user['content'] == prompt, 'Resource request text changed')
+        again, duplicate = submit(client, cid, prompt, answer['request_id'])
+        require(duplicate == answer and len(again['messages']) == len(value['messages']),
+                'Resource request retry was not idempotent')
+        saved = json.loads((root / 'conductor/webchat/sessions' / (cid + '.json')).read_text())
+        require(next(m for m in saved['messages'] if m['id'] == answer['id']) == answer,
+                'Improvement/resource reply was not durably saved')
+        receipts.append(dict(check='Jeff resource request asks for objective, investigates source, or preserves a hold', prompt=prompt,
+                             conversation_id=cid, request_id=answer['request_id'], provider=answer['provider'],
+                             answer=answer['content'], improvement_receipt=answer.get('improvement_receipt'),
+                             real_provider=False, passed=True))
+    for prompt in ('what is the status?', 'how are the workers doing?'):
+        _, answer = submit(client, cid, prompt)
+        require(answer.get('provider') == 'state' and answer.get('status_observation'),
+                'Real status question lost its server-owned observation')
+        receipts.append(dict(check='Resource fix preserves real status route', prompt=prompt, passed=True))
+    if not solo_mode:
+        receipts.append(held_action_replay(client, root, RESOURCE_ACTION_PROMPT))
+    require(not any(row['conversation_id'] == cid for row in task_queue.tasks(root).values()),
+            'Improvement audit replay queued workers')
+    # An unheld standalone enable must observe actual settings and perform the
+    # bounded local check, never inherit the held conversation's restrictions.
+    enabled_cid = client.new()
+    _, enabled = submit(client, enabled_cid, 'Ok enable what we need to enable')
+    verify_improvement_reply(root, [], enabled)
+    require(not any(row['conversation_id'] == enabled_cid for row in task_queue.tasks(root).values()),
+            'Standalone configuration check queued workers')
+    receipts.append(dict(check='unheld enable observes current settings and records source investigation',
+                         conversation_id=enabled_cid, request_id=enabled['request_id'], passed=True))
+    return receipts
+
+
+def verify_improvement_reply(root, before, answer):
+    """Assert actual audit evidence, not just agreeable answer wording."""
+    receipt = answer.get('improvement_receipt') or {}
+    require(answer.get('provider') == 'planner' and answer.get('status') == 'done' and
+            receipt.get('request_id') == answer.get('request_id') and
+            receipt.get('completed_step') == 'local_transcript_and_scheduling_audit',
+            'Self-improvement request did not complete a recorded first step')
+    require(receipt.get('transcript_sha256') == hashlib.sha256(json.dumps(before, sort_keys=True).encode()).hexdigest()
+            and receipt.get('inspected_message_count') == len(before), 'Audit did not inspect this saved history')
+    require(receipt.get('scheduling_blocks') == {name: (root / 'conductor' / name).exists()
+                                                for name in ('SOLO-WORKER', 'MAINTENANCE')},
+            'Enable response used stale scheduling facts')
+    require(receipt.get('regression_cases') and len(receipt.get('plan', [])) == 3 and
+            receipt.get('queued_jobs') == 0 and receipt.get('workers_started') == 0 and
+            receipt.get('code_changed') is False and not answer.get('task_id') and not answer.get('task_ids'),
+            'Audit has no concrete plan or claims unperformed work')
+    from improvement_investigation import investigate
+    expected = investigate()
+    require(receipt.get('investigation') == expected and expected['failed'] == 0,
+            'Improvement investigation does not match current source and actual routing outcomes')
+    require(answer.get('improvement_progress', {}).get('investigation_sha256') == expected['sha256'] and
+            'changed no code' in answer['content'] and 'Next:' in answer['content'],
+            'Investigation reply hides its result or execution limits')
+
+
+def held_action_replay(client, root, prompt):
+    """Exercise exact action routing against a saved hold in a fresh test conversation."""
+    from chat_intent import blocked_scopes, hold_reply
+    from task_dispatch import task_queue
+    cid = client.new()
+    path = root / 'conductor/webchat/sessions' / (cid + '.json')
+    _, held = submit(client, cid, 'Hold all work')
+    saved = json.loads(path.read_text())
+    hold = saved['intent_state']['holds'].get('all')
+    require(held.get('provider') == 'dispatcher' and hold and hold['request_id'] == held['request_id'] and
+            hold.get('released_projects') == [],
+            'Replay hold was not durably confirmed')
+    value, answer = submit(client, cid, prompt)
+    saved = json.loads(path.read_text())
+    scopes = blocked_scopes(saved['intent_state'], [])
+    require(saved['intent_state']['holds'].get('all') == hold and scopes and
+            answer.get('provider') == 'dispatcher' and answer['content'] == hold_reply(scopes) and
+            not answer.get('status_observation'), 'Exact action did not honor its saved conversation hold')
+    again, duplicate = submit(client, cid, prompt, answer['request_id'])
+    require(duplicate == answer and len(again['messages']) == len(value['messages']),
+            'Held action retry was not idempotent')
+    require(not any(row['conversation_id'] == cid for row in task_queue.tasks(root).values()),
+            'Held replay queued work')
+    return dict(check='Jeff exact action honors explicit fresh conversation hold', prompt=prompt,
+                provider=answer['provider'], answer=answer['content'], conversation_id=cid,
+                request_id=answer['request_id'], scope='Saved test-conversation hold; global workers remain enabled',
+                queued_workers=0, passed=True)
+
+
+def sticky_greeting_replay(client, root, *, real):
+    """Repeat Jeff's exact incident in a fresh persisted conversation."""
+    cid = client.new()
+    receipts = []
+    submit(client, cid, 'Hey there', provider='gemini' if real else None)
+    # Deliberately persist a dispatcher ready-line before repeating the incident.
+    submit(client, cid, 'Hold WebJam')
+    submit(client, cid, 'go')
+    for number in (1, 2):
+        # Select Gemini for the product-answer check and require its receipt.
+        value, answer = submit(client, cid, RESTART_PROMPT, provider='gemini' if real else None)
+        provider = answer.get('provider')
+        require(provider in ({'gemini'} if real else {'fixture'}),
+                'Substantive restart request bypassed the model')
+        content = answer['content']
+        require(len(content.split()) >= 20 and all(
+            word in re.sub(r'[^a-z]', '', content.lower())
+            for word in ('adoptiq', 'fantasyfootball', 'webjam', 'gemini', 'minimax')),
+            'Restart answer did not address the projects and model restriction')
+        require('ready when you are' not in content.lower(), 'Sticky greeting returned')
+        again, duplicate = submit(client, cid, RESTART_PROMPT, answer['request_id'],
+                                  provider='gemini' if real else None)
+        require(duplicate == answer and len(again['messages']) == len(value['messages']),
+                'Restart request retry was not idempotent')
+        receipts.append(dict(check='Jeff sticky-greeting live replay', turn=number,
+                             conversation_id=cid, request_id=answer['request_id'], prompt=RESTART_PROMPT,
+                             provider=provider, answer=content, real_provider=real, passed=True))
+    if not (root / 'conductor/SOLO-WORKER').exists():
+        receipts.append(held_action_replay(client, root, START_PROMPT))
+        return receipts
+    _, started = submit(client, cid, START_PROMPT, provider='gemini' if real else None)
+    require(started.get('provider') in ({'gemini'} if real else {'fixture'}),
+            'Solo work request bypassed the model')
+    require('solo Codex' in started['content'] and 'Ready when you are' not in started['content'],
+            'Solo work request did not explain the current restriction')
+    receipts.append(dict(check='Jeff start-all-work maintenance recovery', prompt=START_PROMPT,
+                         provider=started['provider'], answer=started['content'],
+                         conversation_id=cid, request_id=started['request_id'], passed=True))
+    return receipts
+
+
+def memory_removal_replay(client, cid, root, *, real):
+    import uuid
+    from bob_gaps import profile_path
+    path = profile_path(root)
+    before = path.read_bytes()
+    _, answer = submit(client, cid, 'manage saved memories')
+    require(answer.get('provider') == 'memory' and answer.get('private_memory') and not answer.get('attempts'),
+            'Memory management must stay private and deterministic')
+    if real:
+        # Production replay may inspect/cancel but never remove an owner note.
+        _, refusal = submit(client, cid, 'yes, remove saved note proposal ' + str(uuid.uuid4()))
+        require('stale' in refusal['content'], 'Unbound removal approval was accepted')
+        require(path.read_bytes() == before, 'Memory inspection/refusal modified owner notes')
+        return [dict(check='private memory management and unbound removal refusal; owner notes unchanged', passed=True)]
+    choices = answer.get('memory_notes', [])
+    require(bool(choices), 'Synthetic staging notes are missing removal choices')
+    _, proposed = submit(client, cid, 'remove saved note ' + choices[0]['id'])
+    require(path.read_bytes() == before, 'Review changed memory before confirmation')
+    _, removed = submit(client, cid, 'yes, remove saved note proposal ' + proposed['action_card']['proposal_id'])
+    require('Removed one saved Web Bob note' in removed['content'], 'Synthetic removal failed')
+    require(path.read_bytes() == b''.join(before.splitlines(keepends=True)[1:]), 'Removal changed another note')
+    return [dict(check='synthetic staging exact-note review and separate removal confirmation', passed=True)]
+
+
+def capability_replay(client, cid, root):
+    from capabilities import reply
+    checks = []
+    jobs = client.call('/api/jobs/activity')
+    solo_mode = (root / 'conductor/SOLO-WORKER').exists()
+    paused = solo_mode or (root / 'conductor/MAINTENANCE').exists()
+    require(jobs.get('dispatch', {}).get('mode') == ('solo' if solo_mode else 'paused' if paused else 'enabled')
+            and jobs.get('dispatch_paused') == paused, 'Jobs must explain the current dispatch pause')
+    require(jobs['dispatch']['queued'] == (jobs['details']['queued'] if jobs['inspection']['queue_available'] else None),
+            'Jobs waiting count must agree with the inspected queue')
+    checks.append(dict(check='Jobs dispatch mode and honest waiting count', passed=True))
+    for row in jobs['recently_finished']:
+        if row.get('source') == 'lane_observation':
+            require(row['state'] == 'unverified' and row.get('finished_at') is None
+                    and isinstance(row.get('last_activity_at'), (int, float)),
+                    'Archived lane has no authority to claim completion')
+    checks.append(dict(check='archived lanes cannot claim verified completion', passed=True))
+    for prompt in ('Can you send texts?', 'What can you do?', 'Can you remember things?',
+                   'Can you start workers?', 'Can you text Instinct?', 'Can you set reminders?',
+                   'Can you watch videos?', 'Can we talk?', 'What does force-push mean?',
+                   'Explain gh pr ready.', 'What does merging a PR mean?'):
+        started = time.monotonic()
+        value, answer = submit(client, cid, prompt)
+        elapsed = time.monotonic() - started
+        require(answer.get('provider') == 'capabilities' and answer['content'] == reply(prompt, root),
+                'Capability reply must be accurate and server-owned')
+        require(not answer.get('attempts'), 'Capability question entered a model lane')
+        again, duplicate = submit(client, cid, prompt, answer['request_id'])
+        require(answer == duplicate and len(value['messages']) == len(again['messages']),
+                'Capability replay was not idempotent')
+        checks.append(dict(prompt=prompt, passed=True, seconds=round(elapsed, 4), provider='capabilities'))
+    return checks
+
+
+def verify_delivery_refresh(before_audit, after_audit, bridge, evidence, answer):
+    """A cached failure is not evidence that the requested inspection succeeded."""
+    previous = before_audit.get('delivery_checks', [])
+    current = after_audit.get('delivery_checks', [])
+    require('could not refresh' not in answer.get('content', '').lower() and
+            len(current) == len(previous) + 1 and current[:-1] == previous and
+            current[-1]['state'] == evidence['state'],
+            'Delivery refresh did not append a new successful inspection')
+    require({k: v for k, v in before_audit.items() if k != 'delivery_checks'} ==
+            {k: v for k, v in after_audit.items() if k != 'delivery_checks'},
+            'Delivery refresh changed the original confirmation audit')
+    require(all(evidence.get(key) == bridge[key] for key in ('actionId', 'digest')),
+            'Delivery evidence does not belong to the original action and scope')
+
+
+def delivered_notice_replay(client, root):
+    """Refresh the original notice transport evidence; never submit send authority."""
+    notice_path = root / 'conductor/reviews/BEAT-GROK-0700-milestone-1-notice.json'
+    if not notice_path.exists():
+        return []
+    notice = json.loads(notice_path.read_text())
+    require(notice.get('real_confirmations_submitted') == notice.get('real_texts_sent') == 1 and
+            notice.get('resends') == 0, 'Notice requires reconciliation before receipt replay')
+    path = root / 'conductor/webchat/sessions' / (notice['conversation_id'] + '.json')
+    before = json.loads(path.read_text())['_texting']
+    draft = before['drafts'][notice['draft_id']]
+    require(draft['state'] in ('delivery_unconfirmed', 'submitted', 'sent', 'delivered', 'delivery_failed') and draft['token'] is None and
+            draft['bridge']['actionId'] == notice['action_id'] and
+            hashlib.sha256(draft['body'].encode()).hexdigest() == notice['body_sha256'] and
+            len(before['audit']) == 1, 'Existing notice consent or identity changed')
+    _, answer = submit(client, notice['conversation_id'], 'check text delivery ' + notice['draft_id'])
+    after = json.loads(path.read_text())['_texting']
+    import sqlite3
+    from texting import delivery_reply
+    cfg = json.loads((root / 'conductor/webchat/andrea-bridge.json').read_text())
+    with sqlite3.connect(Path(cfg['audit_db']).resolve().as_uri() + '?mode=ro', uri=True) as db:
+        record = db.execute('SELECT evidence FROM webbob_delivery WHERE draftId = ?',
+                            (draft['bridge']['draftId'],)).fetchone()
+    require(record is not None, 'Original notice has no durable transport observation')
+    evidence = json.loads(record[0])
+    checked = after['drafts'][notice['draft_id']]
+    require(len(after['audit']) == 1, 'Delivery refresh changed the audit count')
+    verify_delivery_refresh(before['audit'][0], after['audit'][0], draft['bridge'], evidence, answer)
+    require(answer.get('provider') == 'texting' and 'nothing was resent' in answer['content'].lower() and
+            checked['state'] == evidence['state'] and evidence.get('checkedAt') and
+            evidence.get('messageGuid') and len(after['audit']) == 1 and
+            after['audit'][0]['event'] == before['audit'][0]['event'] and
+            after['audit'][0]['delivery_checks'][-1]['state'] == evidence['state'] and
+            checked['token'] is None and checked['bridge'] == draft['bridge'],
+            'Original notice status did not match its durable transport evidence and consumed scope')
+    if evidence['state'] in ('sent', 'delivered'):
+        require(evidence['error'] == 0, 'Transport error was reported as successful')
+    elif evidence['state'] == 'delivery_failed':
+        require(isinstance(evidence['error'], int) and evidence['error'] > 0, 'Failure lacks transport evidence')
+    require(delivery_reply(checked) in answer['content'], 'Notice status text contradicts its evidence')
+    _, cancelled = submit(client, notice['conversation_id'], 'cancel text draft ' + notice['draft_id'])
+    final = json.loads(path.read_text())['_texting']
+    require(cancelled.get('provider') == 'texting' and 'confirmation was already used' in cancelled['content'] and
+            delivery_reply(checked) in cancelled['content'] and 'Nothing sent.' not in cancelled['content'] and
+            final == after, 'Cancellation must preserve the observed outcome and consumed consent')
+    return [dict(check='original notice status refreshed against durable transport evidence without sending',
+                 state=evidence['state'], passed=True, real_texts_sent=0, additional_confirmations=0)]
+
+
+def instinct_replay(client, cid):
+    _, answer = submit(client, cid, 'digest Instinct')
+    require(answer.get('provider') == 'instinct' and 'read from BlueBubbles' in answer['content'],
+            'Verified live Instinct mapping/read is unavailable')
+    for category in ('Bills / deadlines', 'Security', 'Appointments'):
+        require(category + ':' in answer['content'], 'Missing Instinct digest category')
+    digest_hash = hashlib.sha256(answer['content'].encode()).hexdigest()
+    _, drafted = submit(client, cid, 'draft reply to Instinct: Please prepare options for Jeff to review.')
+    card = drafted.get('text_draft', {})
+    require(card.get('state') == 'read_only' and card.get('read_only') and card.get('confirm_message') is None,
+            'Instinct draft exposed send authority')
+    require(card.get('body') == '[Bob via Andrea]\nPlease prepare options for Jeff to review.', 'Instinct draft differs')
+    for attempt in ('yes', 'yes wbtxt-' + 'a' * 32):
+        _, denied = submit(client, cid, attempt)
+        require('Instinct is read-only' in denied['content'], 'Instinct confirmation was not permanently refused')
+    _, cancelled = submit(client, cid, 'cancel text draft ' + card['id'])
+    require('Nothing sent.' in cancelled['content'], 'Instinct cancellation failed')
+    return [dict(check='verified Instinct digest, all flag categories, read-only draft, confirmations refused, cancel',
+                 answer_sha256=digest_hash, passed=True)]
+
+
+def remaining_replay(client, cid, root, *, real=False):
+    checks=[]
+    if real:
+        rows=client.call('/api/reminders')
+        require(isinstance(rows.get('reminders'),list),'Authenticated reminder store unavailable')
+        checks.append(dict(check='authenticated reminder listing; no reminder created or fired by replay',passed=True,scope='live read only'))
+    else:
+        import uuid
+        def schedule(prompt):
+            _, draft = submit(client, cid, prompt)
+            match = re.search(r'Reply `(yes wbrem-[0-9a-f]{32})`', draft['content'])
+            require(draft.get('provider') == 'reminders' and match is not None and
+                    'Reminder saved' not in draft['content'], 'Reminder did not require separate confirmation')
+            return submit(client, cid, match[1])[1]
+        body = 'Web Bob local reminder replay ' + uuid.uuid4().hex[:8]
+        saved = schedule('remind me to ' + body + ' in 1 second')
+        require(saved.get('provider') == 'reminders' and 'Reminder saved' in saved['content'], 'Reminder was not saved')
+        deadline = time.monotonic() + 10
+        while True:
+            history = client.call('/api/conversations/' + cid)
+            notices = [m for m in history['messages'] if m.get('reminder_notice') and body in m['content']]
+            if notices:
+                break
+            require(time.monotonic() < deadline, 'Due reminder did not reach chat through the background loop')
+            time.sleep(.2)
+        require(len(notices) == 1, 'Duplicate reminder delivery')
+        repeated = schedule('remind me every 1 minute to ' + body + ' recurring')
+        match = re.search(r'ID ([0-9a-f]{16})', repeated['content'])
+        require(match is not None, 'Recurring reminder did not save')
+        identifier = match[1]
+        _, cancelled = submit(client, cid, 'cancel reminder ' + identifier)
+        require('cancelled' in cancelled['content'], 'Recurring reminder cancellation failed')
+        rows = client.call('/api/reminders')['reminders']
+        require(next(r for r in rows if r['id'] == identifier)['state'] == 'cancelled', 'Cancellation was not durable')
+        checks.append(dict(check='due reminder exactly once and durable recurring cancellation',passed=True,scope='isolated staging'))
+    for command in ('Karen QA status', 'band desk status'):
+        _, answer = submit(client, cid, command)
+        require(answer.get('provider') == 'teammates' and 'Source:' in answer['content'], 'Teammate status lacks its source')
+    from teammates import band_mappings
+    mappings=band_mappings(root)
+    require(bool(mappings),'No configured Band Desk thread available')
+    name=mappings[0]['name']
+    require(0<len(name)<=100 and not any(c in name for c in '\r\n'),'Invalid configured Band Desk name')
+    _, digest = submit(client, cid, 'band desk digest for '+name)
+    evidence = digest.get('teammate_evidence', {})
+    require(digest.get('provider') == 'teammates' and evidence.get('all_read') is True and
+            len(evidence.get('band_reads',[]))==1 and evidence['band_reads'][0]['name']==name, 'Bounded configured Band Desk read failed')
+    return checks+[dict(check='sourced Karen/Band Desk status and one configured read-only digest',
+                 passed=True, scope='live bounded product read' if real else 'isolated staging',answer_sha256=hashlib.sha256(digest['content'].encode()).hexdigest())]
+
+
+def gaps_replay(client, cid, root, *, real):
+    from bob_gaps import profile_path
+    fact = 'Instinct may digest and flag bills, security and appointments, and draft replies, but must never send.'
+    base = root / 'bob-brain/memory/profile.md'
+    original_hash = digest(base) if base.exists() else None
+    private_path=profile_path(root)
+    private_before=private_path.read_bytes() if private_path.exists() else None
+    if not real:
+        _, proposal = submit(client, cid, 'remember that ' + fact)
+        require(proposal.get('action_card', {}).get('state') == 'confirm', 'Memory lacks confirmation')
+        _, saved = submit(client, cid, 'yes, save memory proposal ' + proposal['action_card']['proposal_id'])
+        require(saved.get('action_card', {}).get('state') == 'done' and fact.rstrip('.') in profile_path(root).read_text(),
+                'Confirmed memory was not persisted')
+        require((digest(base) if base.exists() else None) == original_hash, 'Memory modified main checkout')
+        from memory_store import read_memory
+        import stat
+        require(fact.rstrip('.') in read_memory(root)['text'], 'Private memory reader did not recover saved fact')
+        require(stat.S_IMODE(profile_path(root).stat().st_mode) == 0o600 and
+                stat.S_IMODE(profile_path(root).parent.stat().st_mode) == 0o700,
+                'Memory file/directory permissions are not private')
+        saved_hash = digest(profile_path(root))
+        _, repeated = submit(client, cid, 'remember that ' + fact)
+        require(repeated.get('action_card', {}).get('state') == 'confirm', 'Repeated memory lacks confirmation')
+        _, confirmed = submit(client, cid, 'yes, save memory proposal ' + repeated['action_card']['proposal_id'])
+        require(confirmed.get('action_card', {}).get('state') == 'done' and
+                digest(profile_path(root)) == saved_hash, 'Repeated confirmed memory changed saved bytes')
+    _, inspected = submit(client, cid, 'show my saved memories')
+    require(inspected.get('provider') == 'memory' and inspected.get('private_memory') is True and
+            (real or fact.rstrip('.') in inspected['content']) and 'not all profile or chat context' in inspected['content'] and
+            not inspected.get('attempts'), 'Memory inspection must read saved facts directly without model inference')
+    if real:
+        require((private_path.read_bytes() if private_path.exists() else None)==private_before,'Live inspection changed private memory')
+    require((digest(base) if base.exists() else None)==original_hash,'Memory changed main checkout')
+    _, search = submit(client, cid, 'look up Python programming language')
+    require(search['provider'] == 'state' and 'python' in search['content'].lower() and 'https://' in search['content'],
+            'Web research lacked a supported answer/source')
+    checks=[dict(check='private memory inspection without mutation' if real else 'confirmed private memory overlay and repeat confirmation',passed=True,scope='live read only' if real else 'isolated staging'),
+            dict(check='web research with source',real_network=real,passed=True)]
+    if not real:
+        _, shot = submit(client,cid,'take a screenshot')
+        match=re.search(r'/api/captures/([0-9a-f]{16})',shot['content'])
+        require(match is not None,'Screenshot fixture capture failed')
+        import urllib.request
+        raw=client.open(urllib.request.Request(client.url+match[0],headers={'Origin':client.url}),parse=False)
+        require(raw.startswith(b'\x89PNG\r\n\x1a\n'),'Authenticated capture fixture is not PNG')
+        checks.append(dict(check='authenticated screenshot fixture PNG',real_capture=False,sha256=hashlib.sha256(raw).hexdigest(),passed=True))
+    return checks
+
+
+def media_replay(client, root, *, real):
+    import base64
+    import uuid
+    import urllib.request
+    from test_chat_media import png_fixture, pdf_fixture
+    cid = client.new()
+    note, pdf = 'clarinet-' + uuid.uuid4().hex[:8], 'cello-' + uuid.uuid4().hex[:8]
+    files = [('picture.png', png_fixture()), ('note.txt', ('Token: ' + note).encode()),
+             ('document.pdf', pdf_fixture('Token: ' + pdf))]
+    uploaded = []
+    for filename, raw in files:
+        info = client.call('/api/media/upload', dict(conversation_id=cid, filename=filename,
+                          data_base64=base64.b64encode(raw).decode()))
+        served = client.open(urllib.request.Request(client.url + info['url'], headers={'Origin': client.url}), parse=False)
+        require(served == raw, 'Media download changed bytes')
+        uploaded.append(info)
+    with tempfile.TemporaryDirectory(prefix='solo-live-media-') as tmp:
+        clip = Path(tmp) / 'clip.mp4'
+        subprocess.run(['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi',
+                        '-i', 'color=c=red:s=64x64:d=1', '-an', '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+                        '-movflags', '+faststart', str(clip)], check=True, timeout=15)
+        raw = clip.read_bytes()
+        video = client.call('/api/media/upload', dict(conversation_id=cid, filename='clip.mp4', data_base64=base64.b64encode(raw).decode()))
+        partial = client.open(urllib.request.Request(client.url + video['url'],
+                              headers={'Origin': client.url, 'Range': 'bytes=0-15'}), parse=False)
+        require(partial == raw[:16], 'Live video range/seek failed')
+    wrong = client.new()
+    try:
+        client.call(uploaded[0]['url'].replace(cid, wrong))
+    except RuntimeError as error:
+        require('HTTP 404' in str(error), 'Cross-conversation media denial was not 404')
+    else:
+        raise RuntimeError('Cross-conversation attachment access succeeded')
+    prompt = "Describe the dominant color in the attached image and give the Token value in the text file and PDF. Echo the image as an attachment."
+    ids = [row['media_id'] for row in uploaded]
+    value, answer = submit(client, cid, prompt, attachments=ids)
+    verify_media_answer(answer, note, pdf, ids[0], real=real)
+    repeated, duplicate = submit(client, cid, prompt, answer['request_id'], attachments=ids)
+    require(duplicate == answer and len(repeated['messages']) == len(value['messages']), 'Media replay duplicated inference')
+    return [dict(check='image/text/PDF upload/download ownership and idempotent multimodal reply',
+                 conversation_id=cid, provider=answer.get('provider'), real_provider=real,
+                 answer_sha256=hashlib.sha256(answer['content'].encode()).hexdigest(), passed=True)]
+
+
+def verify_media_answer(answer, note, pdf, image_id, *, real):
+    require(not real or answer.get('provider') == 'gemini', 'Live image answer did not use the vision provider')
+    require('red' in answer['content'].lower() and note in answer['content'] and pdf in answer['content'],
+            'Media model did not read the real image/text/PDF')
+    require('Attachment notes:' not in answer['content'], 'Media model used incomplete attachment content')
+    require(any(a['media_id'] == image_id for a in answer.get('attachments', [])), 'Image was not returned as an owned attachment')
+
+
+def staging(root, sha, feature):
+    from app import Chat, Server
+    # No model inference needed for these deterministic commands. Real messaging reads
+    # are reserved for production. No fixture can authorize a real send.
+    from texting_fixture import MockMessaging, OfflineProviders
+    from texting import Texting, BlueBubbles, Andrea
+    with tempfile.TemporaryDirectory(prefix='solo-staging-') as folder:
+        private = Path(folder)
+        mock = MockMessaging(private)
+        mock.enable_web_bob_send = ORDER.index(feature) >= ORDER.index('bridge')
+        if ORDER.index(feature) >= ORDER.index('instinct'):
+            from instinct_fixture import GUID, MESSAGES
+            mock.chats.append(dict(guid=GUID, displayName='Instinct',
+                participants=[dict(address='+15550101999')], lastMessage=dict(MESSAGES[0])))
+            mock.messages = [dict(m) for m in MESSAGES]
+        class StagingProviders(OfflineProviders):
+            def reply(self, conversation, cancel, progress):
+                user = next(m for m in reversed(conversation['messages']) if m['role'] == 'user')
+                if user['content'] in (*RESOURCE_PROMPTS, RESOURCE_ACTION_PROMPT):
+                    return dict(content='I can improve Web Bob by checking the requested behavior and its regression evidence. '
+                                'No additional work was started by this reply.', provider='fixture', attempts=[])
+                if user['content'] in (RESTART_PROMPT, 'Ok start up all work here. Max effort on web bob before we loose grok bot'):
+                    return dict(content='AdoptIQ, Fantasy Football and WebJam can be scoped to Gemini and MiniMax. '
+                                'The worker runner is stopped, so those projects have not restarted. '
+                                'We can discuss the next steps here.', provider='fixture', attempts=[])
+                if user.get('attachments'):
+                    from chat_media import validate_attachment_ids, enrich_for_model
+                    metas = validate_attachment_ids(private, user['attachments'], conversation_id=conversation['id'])
+                    bundle = enrich_for_model(private, metas, redact=lambda text: text)
+                    require(not bundle['warnings'], 'Staging media extraction failed')
+                    tokens = re.findall(r'(?:clarinet|cello)-[0-9a-f]{8}', bundle['text'])
+                    return dict(content='Red. ' + ' '.join(tokens) + ' <bob-webchat-attachment media_id="' + metas[0]['media_id'] + '" />', provider='fixture', attempts=[])
+                return super().reply(conversation, cancel, progress)
+        (private / 'conductor').mkdir(exist_ok=True)
+        (private / 'conductor/SOLO-WORKER').touch()
+        chat = Chat(private / 'conductor/webchat', private, StagingProviders(),
+                    texting=Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token, expected_protocol=1)))
+        if ORDER.index(feature) >= ORDER.index('remaining'):
+            band = private / 'bin/band_messages_watch_run.py'
+            band.parent.mkdir()
+            band.write_text("CHATS = [{'name': 'Stalemate', 'chat_guid': 'fixture-band'}]\n")
+            mock.chats.append(dict(guid='fixture-band', displayName='Stalemate', participants=[]))
+            qa = private / 'wt-webjam-polish/PRE_KAREN_QA.md'
+            qa.parent.mkdir()
+            qa.write_text('Karen remains pending.')
+            from unittest.mock import Mock
+            chat.providers.start_probes = lambda: None
+            chat.providers.circuit = Mock()
+            chat.start_background()
+        server = Server(('127.0.0.1', 0), chat)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            from contextlib import ExitStack
+            from unittest.mock import patch
+            with ExitStack() as stack:
+                if ORDER.index(feature) >= ORDER.index('gaps'):
+                    def fake_capture(root, target=None):
+                        path = root / 'conductor/webchat/captures/0123456789abcdef.png'
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(b'\x89PNG\r\n\x1a\n')
+                        return path.stem, path
+                    stack.enter_context(patch('app.capture_screenshot', side_effect=fake_capture))
+                    stack.enter_context(patch('app.web_search', return_value=dict(answer='Python is a programming language.', source='https://www.python.org/')))
+                proof = replay(Client(f'http://127.0.0.1:{server.server_port}', chat.folder / '.password'), private, sha, feature=feature)
+            require(not mock.sends and not mock.unexpected_writes, 'Staging attempted messaging write')
+            return dict(scope='real isolated HTTP; synthetic messaging; no workers', **proof)
+        finally:
+            server.shutdown()
+            server.server_close()
+            chat.close()
+            mock.close()
+
+
+def checks(root, feature):
+    sha = identity()
+    scope=qualification_scope.selected()
+    require(scope is None or feature=='improve','Scoped qualification requires the complete improve feature set')
+    out = root / 'conductor/reviews' / f'SOLO-0018-{feature}-{sha[:12]}'
+    out.mkdir(mode=0o700, exist_ok=True)
+    if feature == 'improve':
+        attempts = sorted(out.glob('attempt-*'))
+        out = out / f'attempt-{len(attempts) + 1:04d}'
+        out.mkdir(mode=0o700)
+        # A crash or failed staging run remains a failed attempt, never an old green.
+        atomic_json(out / 'checks.json', dict(sha=sha, feature=feature, all_pass=False, at=time.time()))
+    require_disk_space(root, CODE, 'checks')
+    commands = {name: [sys.executable, '-m', 'unittest', 'discover', '-s', name, '-p', 'test_*.py']
+                for name in ('webchat', 'services', 'reviews', 'release')}
+    if ORDER.index(feature) >= ORDER.index('bridge'):
+        commands['bridge-contract'] = [sys.executable, 'release/bridge_probe.py', '--andrea',
+            str(root / 'workspaces' / andrea_pin().get('worktree', 'andrea-webbob-bridge-0018')),
+            '--output', str(out / 'bridge-contract.json')]
+    commands['eval'] = [sys.executable, 'webchat/bob_parity_eval.py']
+    commands['browser'] = [sys.executable, 'webchat/texting_proof.py', '--output-dir', str(out / 'texting-browser')]
+    if ORDER.index(feature) >= ORDER.index('media'):
+        commands['media-browser'] = [sys.executable, 'webchat/media_browser_test.py', '--screenshots', str(out / 'media-browser')]
+    if ORDER.index(feature) >= ORDER.index('voice'):
+        commands['voice-js'] = ['node', '--test', 'webchat/test_voice_js.cjs']
+        if scope is None:
+            commands['voice-browser'] = [sys.executable, 'release/voice_probe.py', '--root', str(root), '--output', str(out / 'voice-browser')]
+    if ORDER.index(feature) >= ORDER.index('instinct'):
+        commands['instinct-browser'] = [sys.executable, 'webchat/instinct_proof.py', '--output-dir', str(out / 'instinct-browser')]
+    if ORDER.index(feature) >= ORDER.index('remaining'):
+        commands['remaining-browser'] = [sys.executable, 'webchat/remaining_proof.py', '--output-dir', str(out / 'remaining-browser')]
+    if feature == 'improve':
+        commands['cold-browser'] = [sys.executable, 'webchat/cold_start_proof.py', '--output-dir', str(out / 'cold-browser')]
+        commands['startup-recovery-browser'] = [sys.executable, 'webchat/startup_recovery_proof.py', '--output-dir', str(out / 'startup-recovery-browser')]
+        commands['voice-availability-browser'] = [sys.executable, 'webchat/voice_availability_proof.py', '--output-dir', str(out / 'voice-availability-browser')]
+        commands['jobs-results-browser'] = [sys.executable, 'webchat/jobs_results_proof.py', '--output-dir', str(out / 'jobs-results-browser')]
+        commands['memory-removal-browser'] = [sys.executable, 'webchat/memory_removal_proof.py', '--output-dir', str(out / 'memory-removal-browser')]
+        commands['project-handoffs-browser'] = [sys.executable, 'webchat/project_handoffs_proof.py', '--output-dir', str(out / 'project-handoffs-browser')]
+        commands['reply-lifecycle-browser'] = [sys.executable, 'webchat/reply_lifecycle_proof.py', '--output-dir', str(out / 'reply-lifecycle-browser')]
+    for path in sorted((CODE / 'webchat').glob('test_*.mjs')):
+        commands[path.stem] = ['node', str(path)]
+
+    def check(item):
+        name, argv = item
+        log = out / (name + '.log')
+        env = {k: v for k, v in os.environ.items() if not any(s in k.upper() for s in ('KEY', 'TOKEN', 'SECRET', 'PASSWORD'))}
+        env.pop('PYTHONPATH', None)
+        env.pop('NODE_PATH', None)
+        env.pop('BOB_ANDREA_WEBBOB_CONFIG', None)
+        env.pop('ANDREA_WEBBOB_CONFIG_PATH', None)
+        # Synthetic suites must never debit an operator's active model budget.
+        # The real voice probe retains attribution for its actual transports.
+        if name != 'voice-browser':
+            env = fixture_generation_environment(env)
+        # macOS /var is a symlink: existing repo identity tests expect canonical
+        # temporary paths, matching the predecessor release harness.
+        env['TMPDIR'] = '/private/tmp'
+        env['BOB_PLAYWRIGHT_MODULE'] = str(root / 'conductor/webchat/node_modules/playwright')
+        with tempfile.TemporaryDirectory(prefix='solo-tests-', dir='/private/tmp') as tmp, log.open('w') as stream:
+            env['BOB_ROOT'] = tmp
+            process = subprocess.Popen(argv, cwd=CODE, env=env, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+            deadline = time.monotonic() + 900
+            try:
+                while process.poll() is None:
+                    # Stop our own test groups with headroom before crossing the floor.
+                    require(shutil.disk_usage(root).free >= 5 * 1024**3 + 128 * 1024**2,
+                            'Tests reached disk safety headroom')
+                    require(time.monotonic() < deadline, 'Test suite exceeded deadline')
+                    time.sleep(.5)
+            except BaseException:
+                os.killpg(process.pid, signal.SIGTERM)
+                process.wait(timeout=10)
+                raise
+        body = log.read_text()
+        count = re.search(r'Ran (\d+) tests?', body)
+        skipped = re.search(r'skipped=(\d+)', body)
+        receipt = dict(command=argv, exit=process.returncode, log=str(log), log_sha256=digest(log),
+                       tests=int(count[1]) if count else None, skipped=int(skipped[1]) if skipped else 0)
+        print(name + ': ' + str(process.returncode), flush=True)
+        return name, receipt
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        results = dict(pool.map(check, [(n, a) for n, a in commands.items() if not n.endswith('browser')]))
+    # Browser/listener assertions are serialized after suites that use private listeners.
+    for name in (n for n in commands if n.endswith('browser')):
+        name, receipt = check((name, commands[name]))
+        results[name] = receipt
+    require(identity() == sha, 'Candidate changed during checks')
+    passed = all(r['exit'] == 0 and r['skipped'] == 0 for r in results.values())
+    record = dict(sha=sha, feature=feature, all_pass=passed, results=results, at=time.time())
+    record.update(qualification_scope.outcome(passed,scope))
+    if passed and ORDER.index(feature) >= ORDER.index('bridge'):
+        record['andrea'] = andrea_gates(root)
+    if passed:
+        from unittest.mock import patch
+        with patch.dict(os.environ, fixture_generation_environment(os.environ), clear=True):
+            record['staging'] = staging(root, sha, feature)
+    atomic_json(out / 'checks.json', record)
+    require(passed, 'Offline check failed; inspect ' + str(out))
+    print(str(out / 'checks.json'), flush=True)
+
+
+def fixture_generation_environment(environment):
+    return {key:value for key,value in environment.items()
+            if not key.startswith(('BOB_GENERATION_','BOB_QUALIFICATION_')) and key != 'BOB_REQUIRE_GENERATION_BUDGET'}
+
+
+def verify_checks(sha, feature, check_path):
+    check = json.loads(check_path.read_text())
+    scope=qualification_scope.selected()
+    require(scope is None or feature=='improve','Scoped qualification requires the complete improve feature set')
+    require(check['sha'] == sha and check['feature'] == feature,
+            'Stale or wrong-feature release evidence')
+    require(qualification_scope.passed(check,scope) and check['staging']['all_pass'], 'Tests/evals/staging failed or qualification scope differs')
+    required = {'webchat', 'services', 'reviews', 'release', 'eval', 'browser'}
+    if ORDER.index(feature) >= ORDER.index('media'):
+        required.add('media-browser')
+    if ORDER.index(feature) >= ORDER.index('voice'):
+        required.add('voice-js')
+        if scope is None:required.add('voice-browser')
+        else:require('voice-browser' not in check['results'],'Deferred voice cannot be represented as a passing check')
+    if ORDER.index(feature) >= ORDER.index('instinct'):
+        required.add('instinct-browser')
+    if ORDER.index(feature) >= ORDER.index('remaining'):
+        required.add('remaining-browser')
+    if feature == 'improve':
+        required.update(('cold-browser', 'startup-recovery-browser', 'voice-availability-browser', 'jobs-results-browser', 'reply-lifecycle-browser', 'memory-removal-browser', 'project-handoffs-browser'))
+    if ORDER.index(feature) >= ORDER.index('bridge'):
+        required.add('bridge-contract')
+        require(check.get('andrea', {}).get('sha') == andrea_pin()['sha'], 'Andrea exact-tip evidence missing')
+        for row in check['andrea']['results']:
+            require(row['exit'] == 0 and digest(row['log']) == row['log_sha256'], 'Andrea suite/log changed')
+        contract = json.loads((check_path.parent / 'bridge-contract.json').read_text())
+        require(contract['all_pass'] and contract['andrea_sha'] == andrea_pin()['sha'] and contract['real_texts_sent'] == 0,
+                'Cross-repository protocol proof failed')
+    required.update(p.stem for p in (CODE / 'webchat').glob('test_*.mjs'))
+    require(required <= check['results'].keys(), 'Missing mandatory suite')
+    for name in required:
+        row = check['results'][name]
+        require(row['exit'] == 0 and row['skipped'] == 0 and digest(row['log']) == row['log_sha256'],
+                'Failed/skipped/changed check: ' + name)
+
+
+def consecutive_checks(sha, feature, check_path):
+    attempts = sorted(check_path.parent.parent.glob('attempt-*'))
+    require(len(attempts) >= 2 and attempts[-1] == check_path.parent,
+            'Two consecutive latest pre-deploy greens are required')
+    for attempt in attempts[-2:]:
+        verify_checks(sha, feature, attempt / 'checks.json')
+    return [dict(path=str(p / 'checks.json'), sha256=digest(p / 'checks.json')) for p in attempts[-2:]]
+
+
+def verify_gates(sha, feature, check_path, review_path):
+    verify_checks(sha, feature, check_path)
+    review = json.loads(review_path.read_text())
+    scope=qualification_scope.selected()
+    require(review.get('qualification_scope')==scope,'Self-review qualification scope differs')
+    require(review['sha'] == sha and review['feature'] == feature, 'Stale or wrong-feature release evidence')
+    pair = consecutive_checks(sha, feature, check_path) if feature == 'improve' else None
+    require(review['reviewer'] == 'Codex solo' and review['verdict'] == 'PASS' and
+            review['checks_sha256'] == digest(check_path) and review['findings'] and
+            not review.get('unresolved_blockers'), 'Self-review missing or unresolved')
+    result = dict(checks_sha256=digest(check_path), self_review_sha256=digest(review_path))
+    if scope:result['qualification_scope']=scope
+    if pair:
+        result['predeploy_greens'] = pair
+    return result
+
+
+def versions(root, expected):
+    result = {}
+    origin = (root / 'conductor/webchat/.public-origin').read_text().strip()
+    for name, url in (('local', 'http://127.0.0.1:8787'), ('public', origin)):
+        client = Client(url, root / 'conductor/webchat/.password')
+        client.login()
+        result[name] = client.call('/api/version')
+        require(result[name]['sha'] == expected, 'Wrong ' + name + ' version')
+    return result
+
+
+def verify_worker_service_mode(root, sessions):
+    """An archived solo marker permits enabled services; an active one still forbids them."""
+    if (root / 'conductor/SOLO-WORKER').exists():
+        require(not {'svc-job-runner', 'svc-reviewer'} & sessions.keys(),
+                'Council/worker service is running while solo mode is active')
+
+
+def unchanged_services(before, after, changed=()):
+    differences = {name: dict(before=value, after=after.get(name)) for name, value in before.items()
+                   if name.startswith('svc-') and name not in changed and after.get(name) != value}
+    require(not differences, 'Unrelated durable service changed: ' + json.dumps(
+        dict(differences=differences, before=before, after=after), sort_keys=True))
+
+
+def settle_transient_services(before, *, timeout=30):
+    """Observe finite scheduler screens ending before the restart baseline.
+
+    Run under release coordination, after stopping a runner when required. Do
+    not kill a tick/pass or infer that it succeeded. Persistent service identity
+    remains strict during the wait; unknown services are never excluded.
+    """
+    from runtime import screen_sessions
+    finite = {'svc-project-tick', 'svc-conductor-pass'}
+    deadline = time.monotonic() + timeout
+    after = dict(before)
+    observed = set()
+    while finite & after.keys():
+        observed.update(after[name] for name in finite & after.keys())
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, 'Finite scheduler still active before restart: ' + json.dumps(
+            dict(before=before, after=after, observed=sorted(observed)), sort_keys=True))
+        time.sleep(min(.1, remaining))
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, 'Finite scheduler wait expired: ' + json.dumps(
+            dict(before=before, after=after, observed=sorted(observed)), sort_keys=True))
+        try:
+            after = screen_sessions(timeout=min(15, remaining))
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            raise RuntimeError('Finite scheduler inventory unavailable: ' + json.dumps(
+                dict(before=before, after=after, observed=sorted(observed),
+                     probe_failure=type(exc).__name__ + ': ' + str(exc)), sort_keys=True)) from exc
+        unchanged_services(before, after, finite)
+        require(time.monotonic() < deadline, 'Finite scheduler inventory exceeded restart wait: ' + json.dumps(
+            dict(before=before, after=after, observed=sorted(observed)), sort_keys=True))
+    return dict(before=before, after=after, observed=sorted(observed))
+
+
+@serialized
+def restart(root, pins):
+    """Refresh the web server and any already enabled runner under recovery intent."""
+    journal.permit_restart(root, pins)
+    from state import lock
+    from runtime import screen_sessions
+    import runner_activation
+    pending = journal.pending(root)
+    with runner_activation.coordinated(root):
+        with runner_activation.refresh(root, pins, pending) as runner:
+            pin_paths = {name: root / 'conductor/state' / (name + '-code-root') for name in ('webchat', 'dispatch')}
+            original_pins = {name: path.read_text() for name, path in pin_paths.items()}
+            try:
+                settled = settle_transient_services(screen_sessions())
+            except BaseException as failure:
+                # The finite pass can legitimately outlive the bounded wait. No
+                # pins or web process have changed yet: restore only the stopped
+                # required runner so transaction recovery can use its unchanged
+                # predecessor path, rather than timing out on the same pass again.
+                try:
+                    require(all(path.read_text() == original_pins[name] for name, path in pin_paths.items()),
+                            'Pins changed during pre-restart wait')
+                    if runner['required']:
+                        runner_activation.start(root, Path(original_pins['dispatch'].strip()))
+                except BaseException as recovery:
+                    raise RuntimeError(str(failure) + '; pre-pin runner restoration failed: ' + str(recovery)) from failure
+                raise
+            before = settled['after']
+            verify_worker_service_mode(root, before)
+            p = subprocess.run(['lsof', '-t', '-iTCP:8787', '-sTCP:LISTEN'], capture_output=True, text=True)
+            pids = p.stdout.split()
+            require(p.returncode in (0, 1) and len(pids) <= 1, 'Ambiguous server listener')
+            pid = int(pids[0]) if pids else None
+            if pid:
+                command = run(['ps', '-p', pid, '-o', 'command='])
+                require(str(root) in command and '/webchat/app.py' in command, 'Listener ownership mismatch')
+            for name, code in pins.items():
+                atomic_text(root / 'conductor/state' / (name + '-code-root'), str(code) + '\n')
+            if 'svc-webchat' in before:
+                run(['screen', '-S', before['svc-webchat'], '-X', 'quit'])
+            if pid:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                for _ in range(60):
+                    try:
+                        os.kill(pid, 0)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(.25)
+                else:
+                    raise RuntimeError('Old web server did not exit')
+            env = dict(os.environ, BOB_ROOT=str(root), BOB_WEBCHAT_DRILLS='0')
+            run(['screen', '-dmS', 'svc-webchat', '/bin/bash', root / 'conductor/webchat/run.sh'], env=env)
+            import urllib.request
+            for _ in range(80):
+                try:
+                    with urllib.request.urlopen('http://127.0.0.1:8787/login', timeout=1) as response:
+                        if response.status == 200 and response.headers.get('X-Bob-Webchat') == '1':
+                            break
+                except OSError:
+                    pass
+                time.sleep(.25)
+            else:
+                raise RuntimeError('New web server did not become healthy')
+            after = screen_sessions()
+            changed = {'svc-webchat', 'svc-job-runner'} if runner['required'] else {'svc-webchat'}
+            unchanged_services(before, after, changed)
+            verify_worker_service_mode(root, after)
+            result = dict(before=before, after=after, restarted=sorted(changed), transient_wait=settled)
+        final = screen_sessions()
+        unchanged_services(before, final, changed)
+        verify_worker_service_mode(root, final)
+        result.update(after=final, runner=runner)
+    return result
+
+
+def verify_recovery_pins(root, record):
+    """An old rollback must never replace a newer release, even at the same SHA."""
+    candidate = Path(record['rollback']) / 'candidate'
+    for name in ('webchat', 'dispatch'):
+        current = Path((root / 'conductor/state' / (name + '-code-root')).read_text().strip())
+        allowed = {candidate.resolve(): record['sha'],
+                   Path(record['snapshots'][name]).resolve(): record['previous']}
+        original = record.get('original_pins', {}).get(name)
+        if original:
+            allowed[Path(original).resolve()] = record['previous']
+        require(current.is_absolute() and current.resolve() in allowed,
+                'Rollback refused: code pin belongs to an unrelated release')
+        require(json.loads((current / 'webbob-build.json').read_text())['sha'] == allowed[current.resolve()],
+                'Rollback refused: pinned build identity changed')
+
+
+@serialized
+def recover(root, record):
+    import runner_activation
+    with runner_activation.coordinated(root):
+        return recover_locked(root, record)
+
+
+def recover_locked(root, record):
+    import runner_activation
+    import task_queue
+    journal.match(root, record)
+    verify_recovery_pins(root, record)
+    for name, expected in record.get('snapshot_hashes', {}).items():
+        require(source_digest(Path(record['snapshots'][name])) == expected, 'Rollback snapshot changed: ' + name)
+    release_recovery(record)
+    if 'runner_refresh' in record:
+        # Cleanup is required even when a crash happened before either pin
+        # changed, or when no runner was enabled. The unchanged fast path must
+        # not leave held/new candidate tasks for a legacy dispatcher to launch.
+        runner_activation.drain(root)
+        cancelled = task_queue.cancel_for_rollback(root, record.get('at', 0))
+        record['rollback_cancelled_tasks'] = sorted(set(record.get('rollback_cancelled_tasks', [])) |
+                                                   {row['id'] for row in cancelled})
+    unchanged = False
+    try:
+        versions(root, record['previous'])
+        pins = [Path((root / 'conductor/state' / (name + '-code-root')).read_text().strip()) for name in ('webchat', 'dispatch')]
+        unchanged = all(json.loads((p / 'webbob-build.json').read_text())['sha'] == record['previous'] for p in pins)
+        if unchanged and 'runner_refresh' in record and runner_activation.required(root, record):
+            unchanged = runner_activation.matches(root, pins[1])
+    except (OSError, ValueError, RuntimeError):
+        pass
+    if not unchanged:
+        record['rollback_runtime'] = restart(root, record['snapshots'])
+    record['rollback_restart_needed'] = not unchanged
+    record['restored'] = versions(root, record['previous'])
+    if 'runner_refresh' in record and runner_activation.required(root, record):
+        import runner_activation
+        dispatch = Path((root / 'conductor/state/dispatch-code-root').read_text().strip())
+        require(runner_activation.matches(root, dispatch), 'Required runner was not restored to the predecessor dispatch code')
+    record.update(rolled_back=True, all_pass=False, status='ROLLED_BACK')
+    if record.get('qualification_scope'):record['scope_passed']=False
+
+
+@serialized
+def transaction(root, record, path, activate, live, publish=atomic_json, final_path=None):
+    """Any post-activation failure, including final publication, restores predecessor."""
+    journal.require_clear(root)
+    activated = False
+    intent = None
+    scope=qualification_scope.selected()
+    require(record.get('qualification_scope')==scope,'Activation qualification scope differs')
+    try:
+        require_disk_space(root, CODE, 'before-activation')
+        record.update(activated=True, status='ACTIVATING')
+        publish(path, record)
+        intent = journal.begin(root, record, path, final_path)
+        activated = True
+        activate()
+        record['rounds'] = []
+        for index in (1, 2):
+            require_disk_space(root, CODE, 'live-round-' + str(index))
+            proof = live()
+            require(qualification_scope.selected()==scope,'Qualification scope changed during live checks')
+            require(qualification_scope.passed(proof,scope), 'Live replay failed or qualification scope differs')
+            record['rounds'].append(proof)
+            publish(path, record)
+        require(qualification_scope.selected()==scope,'Qualification scope changed before final publication')
+        record.update(qualification_scope.outcome(True,scope), status='SCOPED_LIVE_PASS' if scope else 'LIVE_PASS', finished_at=time.time())
+        publish(path, record)
+        if final_path:
+            publish(final_path, record)
+        release_recovery(record)
+        journal.finish(root, intent)
+    except BaseException as exc:
+        import runner_activation
+        with runner_activation.coordinated(root):
+            record.update(all_pass=False, failure=type(exc).__name__ + ': ' + str(exc))
+            if record.get('qualification_scope'):record['scope_passed']=False
+            if activated:
+                try:
+                    recover(root, record)
+                except BaseException as recovery_error:
+                    record['rollback_error'] = type(recovery_error).__name__ + ': ' + str(recovery_error)
+            else:
+                release_recovery(record)
+            # Rollback happens before attempting any potentially failing evidence write.
+            atomic_json(path, record)
+            if final_path and activated:
+                atomic_json(final_path, record)
+            if intent and record.get('rolled_back') and not record.get('rollback_error'):
+                journal.finish(root, intent)
+            raise
+
+
+@serialized
+def deploy(args):
+    root = args.root
+    journal.require_clear(root)
+    sha = identity()
+    gates = verify_gates(sha, args.feature, args.checks, args.review)
+    scope=qualification_scope.selected()
+    from runtime import screen_sessions
+    verify_worker_service_mode(root, screen_sessions())
+    index = ORDER.index(args.feature)
+    if index:
+        predecessor = root / 'conductor/reviews' / ('SOLO-0018-' + ORDER[index - 1] + '-live.json')
+        if args.feature == 'improve':
+            latest = root / 'conductor/reviews/SOLO-0018-improve-live.json'
+            if latest.exists():
+                value = json.loads(latest.read_text())
+                if qualification_scope.historical_passed(value) and value.get('sha') == args.previous:
+                    predecessor = latest
+                elif value.get('previous') == args.previous and value.get('rolled_back'):
+                    predecessor = Path(value['predecessor_receipt'])
+        prior = json.loads(predecessor.read_text())
+        require(qualification_scope.historical_passed(prior) and prior['sha'] == args.previous and len(prior['rounds']) == 2 and
+                all(qualification_scope.historical_passed(r) for r in prior['rounds']), 'Predecessor has not passed two live rounds')
+    else:
+        require(args.previous == 'a777736b3f0a37c82b0c4c62be8c91117c4c9881', 'Initial baseline changed')
+    remote = dict(line.split()[::-1] for line in git('ls-remote', 'origin', 'refs/heads/' + BASE).splitlines())
+    merge = remote['refs/heads/' + BASE]
+    git('fetch', '--no-tags', 'origin', BASE)
+    git('merge-base', '--is-ancestor', sha, merge)
+    require(not git('diff', '--name-only', sha, merge), 'Clean merge differs from checked tree')
+    pr = json.loads(run(['gh', 'pr', 'view', args.pr, '--json', 'headRefOid,baseRefName,isDraft,state']))
+    require(pr['headRefOid'] == sha and pr['baseRefName'] == BASE and pr['isDraft'] and
+            pr['state'] in ('OPEN', 'MERGED'), 'PR is not the checked draft')
+    versions(root, args.previous)
+    client = Client('http://127.0.0.1:8787', root / 'conductor/webchat/.password')
+    client.login()
+    session = client.call('/api/session')
+    require(not session.get('active_conversations') and not session.get('active_conversation'), 'Chat reply in flight')
+    require_disk_space(root, CODE, 'snapshot')
+    stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+    folder = root / 'rollbacks' / ('webbob-solo-' + args.feature + '-' + stamp)
+    folder.mkdir(mode=0o700)
+    record = dict(sha=sha, feature=args.feature, previous=args.previous, gates=gates, draft_pr=args.pr,
+                  rollback=str(folder), all_pass=False, activated=False, snapshots={}, original_pins={}, at=time.time())
+    if scope:record.update(qualification_scope.outcome(False,scope))
+    import runner_activation
+    record['runner_refresh'] = runner_activation.obligation(root)
+    if index:
+        shutil.copyfile(predecessor, folder / 'predecessor-receipt.json')
+        record['predecessor_receipt'] = str(folder / 'predecessor-receipt.json')
+    for name in ('webchat', 'dispatch'):
+        prior = Path((root / 'conductor/state' / (name + '-code-root')).read_text().strip())
+        require(json.loads((prior / 'webbob-build.json').read_text())['sha'] == args.previous, 'Pin baseline mismatch')
+        record['original_pins'][name] = str(prior)
+        snapshot = folder / ('previous-' + name)
+        shutil.copytree(prior, snapshot, ignore=shutil.ignore_patterns('.git', '.password', '.session-secret',
+            'keys.env', '.env', '.env.*', 'sessions', 'node_modules', '__pycache__', 'uploads', 'evidence', 'task-runs'))
+        record['snapshots'][name] = str(snapshot)
+    record['snapshot_hashes'] = {name: source_digest(Path(p)) for name, p in record['snapshots'].items()}
+    # Freeze tracked candidate bytes; future edits to the worktree cannot change live code.
+    release = folder / 'candidate'
+    release.mkdir(mode=0o700)
+    archive = subprocess.Popen(['git', '-C', str(CODE), 'archive', sha], stdout=subprocess.PIPE)
+    extracted = subprocess.run(['tar', '-xf', '-', '-C', str(release)], stdin=archive.stdout)
+    archive.stdout.close()
+    require(extracted.returncode == archive.wait() == 0, 'Candidate archive failed')
+    atomic_json(release / 'webbob-build.json', dict(sha=sha, built_at=datetime.now(timezone.utc).isoformat()))
+    path = folder / 'release.json'
+    atomic_text(folder / 'rollback.sh', '#!/bin/bash\nset -euo pipefail\n' + shlex.join([
+        sys.executable, str(release / 'release/solo.py'), 'rollback', '--root', str(root),
+        '--feature', args.feature, '--record', str(path)]) + '\n')
+    (folder / 'rollback.sh').chmod(0o700)
+    reserve_recovery(path, record)
+    atomic_json(path, record)
+    origin = (root / 'conductor/webchat/.public-origin').read_text().strip()
+
+    def live():
+        pair = versions(root, sha)
+        observed_runner = runner_activation.observe(root)
+        if observed_runner and Path(observed_runner['code_root']).resolve() == release.resolve():
+            runner_activation.preserve_observed(root, record, observed_runner)
+        if runner_activation.required(root, record):
+            require(runner_activation.matches(root, release), 'Live runner is not using the candidate dispatch code')
+        results = [replay(Client(url, root / 'conductor/webchat/.password'), root, sha, real_reads=True, feature=args.feature)
+                   for url in ('http://127.0.0.1:8787', origin)]
+        number = len(record.get('rounds', [])) + 1
+        browser_path = folder / f'browser-round-{number}.json'
+        env = dict(os.environ, BOB_PLAYWRIGHT_MODULE=str(root / 'conductor/webchat/node_modules/playwright'))
+        run(['node', CODE / 'webchat/capture_parity.cjs', root, origin, sha,
+             folder / f'browser-round-{number}.png', browser_path], env=env)
+        browser = json.loads(browser_path.read_text())
+        require(browser['pass_check'], 'Live browser check failed')
+        if ORDER.index(args.feature) >= ORDER.index('voice') and scope is None:
+            from voice_probe import probe
+            for name, url in (('local', 'http://127.0.0.1:8787'), ('public', origin)):
+                results.append(probe(root, folder / f'voice-{name}-round-{number}', url,
+                                     engines=('chromium',) if name == 'local' else ('webkit',)))
+        return dict(**qualification_scope.outcome(all(r['all_pass'] for r in results),scope), versions=pair, endpoints=results,
+                    browser=dict(path=str(browser_path), sha256=digest(browser_path), passed=True))
+
+    def activate():
+        record['activation_runtime'] = restart(root, dict(webchat=release, dispatch=release))
+
+    transaction(root, record, path, activate, live,
+                final_path=root / 'conductor/reviews' / ('SOLO-0018-' + args.feature + '-live.json'))
+    print(('SCOPED_LIVE_PASS ' if scope else 'LIVE_PASS ') + sha + ' rollback=' + str(folder), flush=True)
+
+
+def rollback_publication(root, record):
+    """Bind only this release's existing latest alias to manual recovery.
+
+    The activation journal is gone after a successful deployment. A later
+    manual rollback must publish its outcome to the same derived summary, but
+    must never overwrite a summary belonging to a different release.
+    """
+    feature = record.get('feature')
+    if feature not in ORDER:
+        return None
+    path = root / 'conductor/reviews' / ('SOLO-0018-' + feature + '-live.json')
+    try:
+        published = journal.private_json(path)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, RuntimeError):
+        # A derived summary cannot prevent recovery from a verified canonical
+        # receipt. Do not follow or replace an unsafe/unreadable publication.
+        record['rollback_publication_warning'] = 'Latest release summary was not safely readable; left unchanged.'
+        return None
+    if not isinstance(published, dict):
+        record['rollback_publication_warning'] = 'Latest release summary was malformed; left unchanged.'
+        return None
+    if published.get('feature') == feature and journal.identity(published) == journal.identity(record):
+        return path
+    record['rollback_publication_warning'] = 'Latest release summary belongs to another release; left unchanged.'
+    return None
+
+
+@serialized
+def rollback(root, path):
+    import runner_activation
+    with runner_activation.coordinated(root):
+        intent = journal.pending(root)
+        if intent:
+            require(Path(path).resolve() == Path(intent['path']).resolve(),
+                    'Rollback does not belong to the unfinished Web Bob activation')
+            record = journal.saved_record(root, intent)
+        else:
+            record = journal.private_json(path)
+            # Validate before creating a recovery obligation for a stale receipt.
+            verify_recovery_pins(root, record)
+            intent = journal.begin(root, record, path, rollback_publication(root, record))
+        recover(root, record)
+        atomic_json(path, record)
+        if intent['final_path']:
+            atomic_json(intent['final_path'], record)
+        journal.finish(root, intent)
+
+
+@serialized
+def recover_pending(root):
+    import runner_activation
+    with runner_activation.coordinated(root):
+        intent = journal.pending(root)
+        require(intent is not None, 'No unfinished Web Bob activation to recover')
+        rollback(root, Path(intent['path']))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('action', choices=('check', 'deploy', 'rollback', 'recover-pending'))
+    parser.add_argument('--root', type=Path, required=True)
+    parser.add_argument('--feature', choices=ORDER, required=True)
+    parser.add_argument('--previous')
+    parser.add_argument('--pr')
+    parser.add_argument('--checks', type=Path)
+    parser.add_argument('--review', type=Path)
+    parser.add_argument('--record', type=Path)
+    args = parser.parse_args()
+    os.umask(0o077)
+    os.environ['BOB_ROOT'] = str(args.root)
+    def interrupted(signum, frame):
+        raise RuntimeError('Release interrupted by signal ' + str(signum))
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(signum, interrupted)
+    if args.action == 'check':
+        checks(args.root, args.feature)
+    elif args.action == 'deploy':
+        deploy(args)
+    elif args.action == 'recover-pending':
+        recover_pending(args.root)
+    else:
+        rollback(args.root, args.record)
+
+
+if __name__ == '__main__':
+    main()

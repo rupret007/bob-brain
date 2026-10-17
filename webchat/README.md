@@ -12,10 +12,68 @@ Claude subscription are needed. The messenger supports mobile layouts, dark mode
 saved conversation selection, new conversations, polling replies, and Stop.
 Enter sends on a desktop; Shift+Enter adds a line. On a phone, use Send.
 
-Status opens `conductor/STATUS.md`; Gemini review opens the saved
-`conductor/reviews/LATEST.md`; Jobs shows `screen -ls` and
-`next-prompts/INDEX.md`. Reports show their file timestamps. Opening a report
-does not request a new model review or change the queue.
+## Live voice calls
+
+Tap the waveform immediately to the right of the composer microphone to talk
+with Bob. The microphone button still dictates text. Live calls stream microphone
+audio and generated speech in both directions; speaking interrupts Bob's queued
+audio. Tap **Hang up** to stop. The call transcript appears in the current chat
+and survives reloads. Interrupted replies are marked and may include words that
+had been generated but not played. Server action receipts remain separate from
+the spoken paraphrase.
+
+Calls use **Gemini Live (`gemini-3.8-live`)**, the Realtime equivalent available
+through `GEMINI_API_KEY` in `conductor/keys.env`. The Python server needs no new
+packages. It issues one-use tokens constrained to the server's model, instructions
+and tools; the permanent key never reaches the browser. Audio uses a direct TLS
+WebSocket and an AudioWorklet. See Google's [Live WebSocket guide](https://ai.google.dev/gemini-api/docs/live-api/get-started-websocket)
+and [ephemeral-token documentation](https://ai.google.dev/gemini-api/docs/live-api/ephemeral-tokens).
+
+Use the tailnet **HTTPS** origin on iPhone Safari, or HTTPS/localhost on desktop.
+Allow microphone access when asked. Audio is unlocked from the initial tap;
+**Resume audio** appears if Safari suspends it. Leaving the page ends the call.
+Calls last at most ten minutes; tap the waveform again to continue with saved
+context. There are at most two concurrent calls, with a 45-second server lease
+to recover slots after a tab disappears. A failed transcript save offers retry;
+keep the page open until it confirms the save. Raw recordings are not stored.
+Token creation is limited to ten attempts per minute per login session and
+twenty across the single owner's sessions. Failed attempts count too; hanging
+up or logging in again does not reset the one-minute window.
+
+The call receives the same redacted profile, handback, status and recent chat
+context as typed chat. The `ask_bob` tool routes the **saved spoken words** through
+`Chat.submit`; model-supplied tool arguments cannot authorize a different request.
+Existing dispatcher, memory behavior, draft-only rules and action receipts apply.
+Interrupting speech does not undo an already queued job. All voice endpoints
+require the existing login cookie, CSRF token and allowed origin.
+
+Offline verification:
+
+```bash
+PYTHONPATH=state python3 -m unittest discover -s webchat -p 'test_*.py'
+python3 -m unittest discover -s services -p 'test_*.py'
+node --test webchat/test_voice_js.cjs
+```
+
+`voice_proof_server.py` creates an isolated foreground server on a spare loopback
+port, optionally with a TLS proxy on a spare tailnet port. It does not start
+provider probes, coding workers or services. `voice_browser_proof.cjs` exercises
+real audio, interruption and dispatch with recorded microphone fixtures. See
+[`reviews/WEBBOB-VOICE-0927.md`](../reviews/WEBBOB-VOICE-0927.md) for the exact
+proof setup, screenshots and physical-device verification boundary.
+
+The four tabs are Chat, Jobs, Models and Settings. Jobs shows current
+workers and saved results; View jobs in Chat opens it without sending a message.
+Models shows current activity and reply availability, with measured usage in
+collapsed details. Writing help stays in chat. The removed Songs interface does
+not delete previously saved projects. Settings saves your preferred first-choice model on this device.
+Opening these tabs does not request a model answer or change the queue.
+Conversation history reads also leave saved job intents and result receipts
+unchanged. Startup and the existing one-second background loop recover accepted
+jobs and deliver results; both recovery paths defer new effects once shutdown
+begins. Queue inspection preserves interrupted journal bytes; the next locked
+writer repairs a torn final append before committing. This separates reading
+from recovery but does not provide an atomic deployment drain.
 
 ## Conversation and provider behavior
 
@@ -36,7 +94,7 @@ API slots per provider. MiniMax has a **$59 chat ceiling** even if background cr
 is increased elsewhere; the child process applies the lower of the chat and shared caps.
 Reservations and uncertain calls count toward the cap. Lane health shows that
 committed amount, not just settled charges.
-Both API lanes default to a $48 shared ceiling, warn at 70%, reduce concurrency
+The shared ceilings are $50 for Gemini and $48 for MiniMax. Both warn at 70%, reduce concurrency
 to one at 85%, and reject reservations that would cross 95%. Configure lower
 ceilings with `BOB_GEMINI_CAP_USD` and `BOB_MINIMAX_CAP_USD`. CLI plan percentages
 are unknown unless observed quota data is supplied in the private
@@ -44,18 +102,88 @@ are unknown unless observed quota data is supplied in the private
 Observed 95% usage stops that CLI until its reset; provider rate-limit responses
 also impose cooldowns. Token counts and estimated dollars do not stand in for
 subscription quota measurements.
+Chat routing reads these ceilings as literal metadata from its checked release's
+`services/budget.py`, with the same runtime tightening, and reads ledger bytes
+under the shared lock. A legacy dashboard's cached Python modules cannot select
+the budget policy. Missing metadata or a malformed ledger remains an unknown
+observation; the API child's existing reservation checks still enforce admission.
 
 ## Max-mode tasks
 
 Ordinary work requests such as `Ok figure out what is wrong with Gemini` and
-`start a job: ...` go directly to the durable dispatcher. A server receipt names
+`fix the login button` go directly to the durable dispatcher. A server receipt names
 the job only after the queue write succeeds; claim updates name the actual worker,
 and the completed result is posted in the originating conversation. Model prose
 cannot acknowledge queue or inbox effects. Explicit small text writes such as
-`start a job: write hello to /tmp/example.txt` use Codex, Cursor or Claude with file
+`write hello to /tmp/example.txt` use Codex, Cursor or Claude with file
 tools; success requires the server to verify the changed file and its contents.
 
-Operational replies use the current queue, lane locks and generation health from
+Named multi-project requests create one durable job per project. For example,
+`prioritize Web Bob, WebJam, AdoptIQ, StoryBoard` saves the order; `push everything
+to the max and fix anything you find` queues four project jobs. Each receipt sentence
+names the project and requested worker; job IDs stay in structured job data. Assignment prefers ready
+compatible lanes and accounts for existing claims and queued work. Coding jobs
+use Codex/Cursor; Gemini and MiniMax produce repository reports and proposed patches.
+
+“Remember you can use Gemini and MiniMax for the ongoing jobs” now assigns real
+jobs: Gemini gets a whole-repository audit and plan, and MiniMax gets a review
+with regression test drafts. The server names each task, worker and durable job
+ID after saving it. Existing coding claims continue unchanged. Missing work,
+holds, maintenance or unavailable lanes get an honest explanation, never a
+readiness-only acknowledgement. A queued receipt means waiting for runner
+capacity; a started receipt requires a recorded worker claim.
+
+When no permitted ongoing job or identified project lane remains, matching
+webchat and dispatcher deployment pins can identify the running Web Bob Git
+checkout for these API reports. The assignments explicitly say no current task
+or execution is confirmed. This fallback only supplies Web Bob repository
+context to API workers; project/global holds, maintenance and provider
+availability still apply. Missing or mismatched pins cannot supply context.
+`webchat/build_info.py` is a tracked source module: `CODE_ROOT` comes from its
+resolved `__file__`, never a generated manifest or the persistent `BOB_ROOT`.
+Git must resolve a real checkout and find that module in HEAD. Normal checkouts,
+linked worktrees (`.git` files), and tracked nested code directories are supported;
+an untracked rollback/archive under another repository cannot borrow its identity.
+The pins at `conductor/state/webchat-code-root` and `dispatch-code-root` must
+both contain absolute paths resolving to that running code directory (including
+the code subdirectory in a nested layout). Deployment writes absolute paths with
+a trailing newline; absolute symlink aliases are accepted, relative paths are
+rejected because the services can start from different working directories.
+An unverified `lane-integrate-deploy-0204` screen with no project, repository or
+task does not supply project context or block this fallback. The attempt2
+regressions assert those observed fields before checking real Gemini `audit`
+and MiniMax `test-writing` jobs, while preserving Barker and Wildflower holds.
+
+Named API requests also support audits, planning, research, repository reviews,
+test-case writing and eval grading. Gemini job calls use `gemini-2.5-pro`;
+research enables `google_search`. MiniMax uses `MiniMax-M2.7`. The runner supplies
+bounded tracked repository evidence, omitting credentials, links and private
+runtime files. Accepted reports and fenced proposed patches are saved under
+`conductor/reviews/api-workers/`; API workers never deploy, apply changes or
+resolve conflicts. Status and Jobs show the task and exact executing model.
+
+Conversation files also save explicit holds and the latest permission transition.
+`hold off on Web Bob` blocks new submissions for that project; `go`, `resume`, or
+`the hold is lifted` clears the applicable hold. An explicit project push also
+authorizes those projects. A held request survives a reload and can be resumed.
+Holds govern new chat submissions; they do not stop already queued/running jobs
+or restart services. Old conversations migrate user directives in order without
+dispatching them, and assistant text cannot restore a cleared hold.
+
+Status questions, including `is it moving along now?`, get a short server summary
+of live work: task label, worker/model and elapsed process time. Read-only `screen
+-ls` and `ps` observations include `lane-*` work and standalone CLI workers outside
+the queue. Queue claims, screen descendants and CLI wrappers are joined to avoid
+duplicates; live workers override cached ready lanes. Desktop apps and helpers
+are excluded. Open screens without a confirmed worker and unavailable checks are
+reported as unverified. A running process proves activity, not forward progress;
+an exact model variant is shown only when present in the process arguments.
+Task labels come from queue titles/projects or readable screen names, never raw
+process prompts. Missing task details use a readable project or lane label; missing exact model metadata stays unreported. Internal job IDs, screen
+names, PIDs and finished-job history are shown only when requested. Ordinary chat
+never recommends special job syntax.
+
+Operational replies also use lane locks and generation health from
 `webchat/sessions/provider-health.json` plus `logs/webchat-failover.log`. The server
 identifies the actual answering provider on each attempt. Old chat errors never
 override recovered health, and configuration probes alone do not prove generation.
@@ -76,7 +204,8 @@ Max mode: review this design and supplied evidence ...
 [mini] Run services/test_services.py.
 ```
 
-API and Claude analysis packages need evidence in the request; they cannot inspect files.
+API report packages receive a server-collected repository snapshot. Claude and
+answer-only analysis packages still need evidence in the request.
 Coding packages own separate production/test files on private draft branches.
 Local commits are reported for review; max mode does not integrate or publish
 them. Mini accepts existing `services/test_*.py` or `webchat/test_*.py` suites,
@@ -120,9 +249,16 @@ and refreshed operational context.
 Only one reply runs **per conversation** — not globally across all chats (other conversations can reply in parallel). CLI
 calls use `chat-<provider>` locks separate from background `lane-*` locks; a busy
 CLI slot falls through to the next provider. Handback: `conductor/handback/`
-(BOB-STATE in, HANDBACK-LOG out). Say `start a job: …` to queue a durable task
-without a second confirmation. The job runner launches it as capacity becomes
-available; nothing merges automatically. Retransmitting the same request ID does
+(BOB-STATE in, HANDBACK-LOG out). Natural requests such as `fix the login button`,
+`review PR #161`, and `have Claude review this design` queue durable tasks without
+a second confirmation. `go` accepts the most recent clear work proposal; an
+ambiguous request gets one short question. Ordinary answers have no job footer.
+Receipts say, for example, `I queued “Review PR #161” for Claude.` only after
+the durable write. They remain unchanged at their original timestamps.
+Structured job data records actual claims and execution; a separate completion
+message names the actual worker and links verified project results.
+The job runner launches work as capacity becomes available; nothing merges
+automatically. Retransmitting the same request ID does
 not duplicate work. The server saves intent before queue writes and acknowledges
 the job only after the fsynced journal append. Interrupted writes are reconciled
 idempotently. Queue updates share a lock and fence stale claim tokens.
@@ -230,6 +366,69 @@ being stored or forwarded. Avoid pasting credentials into chat.
 
 ## Verification
 
+### Text threads and reply drafts
+
+The **Texts** chip lists recent threads. Chat supports `read texts from Alex`,
+`summarize texts from Alex`, and `draft reply to Alex: I’ll bring the charts at 6.`
+Use a full name, address, or exact thread ID when several threads match. Web Bob
+does not guess between matching recipients or SMS/iMessage duplicates. Summaries
+are local, extractive snapshots of at most 30 messages with counts, dates, and
+recent excerpts. Draft cards preserve the supplied body and display all recipient
+addresses plus the thread ID. Thread content and draft history stay out of model
+requests and the shared handback ledger.
+
+Send the displayed `yes wbtxt-…` as a **separate chat message** to record consent
+to that exact card. Merely filling the composer does not confirm anything. Tokens
+expire after five minutes and are bound to the conversation, login, recipient,
+body and revision. Editing clears the token before the editor opens; reviewing
+the edit creates a new card/token. Cancellation, another turn or draft, logout,
+and server restart invalidate consent. An unrelated conversation’s work controls
+keep their normal behavior. Consent and its exact recipient/body audit are saved
+in the private conversation file (mode 600), with duplicate requests handled once.
+
+**Production delivery remains blocked by the installed Andrea bridge.** The installed Andrea
+control API rejects both direct sends and message-action `send`/`send_again`.
+A valid Web Bob yes produces **“Not sent”**, consumes the token, and records only
+local consent when the bridge is unavailable. With credentials configured, a
+valid confirmation probes Andrea’s `/web-bob/send` once; the unavailable bridge
+returns an honest blocked receipt. No direct BlueBubbles send, delivery queue or
+automatic retry is used. Andrea currently
+requires a fresh approval on its own registered Telegram chat or Messages
+self-thread; Web Bob cannot impersonate that owner message. An independently
+approved Andrea bridge is still required to finish outbound texting parity.
+
+BlueBubbles reads use its existing
+`~/Library/Application Support/bluebubbles-server/config.db`, opened read-only
+for `socket_port` and `password`; `chat.db` and Andrea’s filesystem are not used
+by Web Bob. A test/development instance can set `BOB_BLUEBUBBLES_CONFIG_DB` to a
+separate config database. Only `POST /api/v1/chat/query` (a read query) and
+`GET /api/v1/chat/<guid>/message` are allowed. Requests use loopback, disable
+proxies/redirects, have a five-second timeout, and bound response size.
+
+Optional `texting status` uses authenticated `GET /health` at
+`BOB_ANDREA_CONTROL_URL` (default `http://127.0.0.1:4315`) with
+`BOB_ANDREA_CONTROL_TOKEN` provisioned by the operator. The URL must be literal
+`127.0.0.1`; neither credentials nor URLs can be set from chat. Only a separate,
+exact confirmation permits the Andrea bridge probe. Consent is durably consumed
+before handoff; if recording the result fails, the saved draft says delivery is
+unconfirmed and the token cannot be reused, including after restart. No environment or running service
+configuration is changed by this feature or its verification scripts.
+
+Run `python3 webchat/texting_proof.py` from this checkout for an isolated browser
+proof of the **blocked “Not sent” path**, with mock BlueBubbles and synthetic
+contacts only. Set `BOB_PLAYWRIGHT_MODULE`
+and `BOB_CHROMIUM_PATH` to an existing Playwright/Chromium installation as needed.
+It creates a private data root inside `reviews/`, binds two spare loopback ports,
+uses the actual login/chat UI, writes screenshots plus JSON evidence to `reviews/`,
+and closes only its own fixtures. It never uses the live services or models.
+The JSON evidence and five screenshots describe this same blocked path: one
+rejected mock Andrea probe, zero mock deliveries and zero real sends. Mock success
+(“Sent via Andrea”) is covered separately by the HTTP E2E and Python unit tests.
+Use `--output-dir <directory>` for scratch evidence; the optional browser unittest
+uses its temporary directory so routine tests do not rewrite committed artifacts.
+
+### General checks
+
 ```bash
 python3 conductor/webchat/test_webchat.py
 python3 -m unittest discover -s conductor/webchat -p 'test_*.py' -v
@@ -245,6 +444,25 @@ The offline suite uses temporary directories and fake providers. The optional
 connection check; it expects `evidence/live-chat.json` from the initial two-turn
 check. Set `BOB_PLAYWRIGHT_MODULE` / `BOB_CHROMIUM_PATH` if using a cached runtime.
 The initial verification record is `conductor/reviews/WEBCHAT-RESULT.md`.
+
+For the four phone tabs, use the isolated proof from the repository checkout:
+
+```sh
+python3 webchat/isolated_tabs_proof.py --output-dir reviews
+```
+
+It starts an ephemeral loopback listener with private chats, credentials
+and storage. Headless Chromium captures `webbob-tab-<name>-0927.png` for Chat,
+Jobs, Models and Settings, and tests phone layouts,
+stale/unavailable status, duplicate rows and logout. The mandatory Chromium/WebKit
+UI test additionally checks that existing private song data remains unchanged and
+that shell navigation makes no song/music/audio requests. Screenshots
+use actual responses from that isolated instance, including read-only host
+activity; regression fixtures run afterward. It launches no model or worker and
+does not restart the live service. Set `BOB_PLAYWRIGHT_MODULE` and
+`BOB_CHROMIUM_PATH` when using an existing runtime outside the default paths.
+The review and raw evidence are in `reviews/WEBBOB-CLEAN-0927.md` and
+`reviews/WEBBOB-CLEAN-0927.tabs-evidence.json`.
 
 ## Repeat the live failover drills
 
@@ -268,3 +486,290 @@ Restart normally afterward so drills are disabled. The broader
 but affects the entire process; prefer the scoped script on a live phone server.
 
 Final failover evidence and architecture review: `reviews/WEBCHAT-FAILOVER-RESULT.md`.
+
+## Photos, videos, and files
+
+The composer supports six attachments per message: photos up to 12 MiB, videos
+up to 35 MiB, and PDF/UTF-8 text files up to 8 MiB. Upload progress and failures
+appear above the composer. Quick actions leave the text and attachments staged;
+switching conversations preserves each draft until the page is reloaded. Replies
+can return existing attachments from the same conversation, with previews and
+original-file download links.
+
+The browser uploads the `File` directly to `POST /api/media/upload` as
+`application/octet-stream`, with `X-Filename` (percent-encoded),
+`X-Conversation-Id`, and the usual `X-CSRF-Token`. JSON clients may send
+`{conversation_id, filename, data_base64}`; the request cap includes base64
+expansion. Submit returned IDs in `POST /api/messages` as `attachments: [...]`.
+Use the returned attachment URL for GET/HEAD; it contains `conversation_id`.
+Media endpoints require login and matching conversation ownership. Video serving
+supports byte ranges, and `&download=1` returns the original filename.
+Unbound uploads from the initial draft must be reattached; orphaned or invalid
+metadata never grants access to a blob.
+
+Media preparation runs in the existing asynchronous reply worker, with two
+preparations at a time and a shared 20-second processing budget per turn. Each
+subprocess has a shorter deadline and Stop terminates its process group. Images
+are normalized before model input; videos provide up to four sampled frames from
+the first two minutes. `ffmpeg` and `ffprobe` provide decoding; macOS `sips` handles
+HEIC/HEIF. Local `tesseract` scans normalized images/frames for known secrets
+before remote vision. Failed safety checks withhold the visual payload and show
+an explanation. This detects recognized secrets, not every possible credential.
+Text files, PDF excerpts, and transcripts are redacted before model input.
+
+PDF text extraction uses `pdftotext` when available or native PDFKit on macOS;
+only the first 20 pages and a bounded text excerpt enter context. Scanned PDFs
+without extractable text ask for page images or a text export. Optional audio
+transcription uses the Python `whisper` CLI only with an already cached tiny
+model, samples up to 30 seconds, and never downloads model weights in chat.
+Unavailable audio, decoding failures, and missing dependencies are visible in
+the reply. Unsupported browser video codecs retain the original download link.
+
+Auto mode prefers Gemini for images/video. The configured MiniMax M2.7 and CLI
+providers receive extracted text only; their replies disclose that limitation.
+Assistant attachment markers must resolve to this conversation's stored media;
+missing/foreign IDs produce an explicit attachment failure notice.
+
+Offline regression commands (disposable data and stubbed providers):
+
+```sh
+python3 -m unittest discover -s webchat -p 'test_*.py'
+python3 -m unittest discover -s services -p 'test_*.py'
+python3 webchat/media_browser_test.py --screenshots reviews
+```
+
+The browser test uses installed Playwright WebKit and Chromium, local fixture
+media, and an ephemeral loopback listener. Set `BOB_PLAYWRIGHT_MODULE` if needed.
+See `reviews/MEDIA-FIXED-0927.md` for finding dispositions and test limits.
+
+### Instinct partnership thread (draft lane; not deployed)
+
+In authenticated Web Bob chat, use `Instinct status`, `latest Instinct replies`,
+`read Instinct thread`, `digest Instinct`, or `weekly Instinct partnership audit`.
+Each request reads the existing BlueBubbles allowlist with its read-only
+`config.db` credentials: up to 200 recent chats and 30 messages from the resolved
+thread. Status reports the observation time and message window, never delivery
+or partnership health inferred from an old message. Digests flag possible bills
+and deadlines, security, and appointments using keyword matches plus dated
+excerpts. Counts apply only to this window; attachments are not analyzed.
+
+The default resolver requires an exact `Instinct` display name and a verified
+single recipient. Duplicate transports may use the newest `lastMessage` only
+when their participant addresses are identical. Ambiguous recipients, tied or
+unknown duplicate timestamps, groups, and missing threads fail closed. If the
+thread has no display name or needs disambiguation, an operator can pin its
+already-verified BlueBubbles GUID using `BOB_INSTINCT_CHAT_GUID` (or the private `conductor/webchat/instinct.json` file with `{"chat_guid":"verified exact thread ID"}`); there is no
+fallback from a missing pin to another contact. No production mapping, phone
+number, thread content, or credential is checked into this branch.
+
+`draft reply to Instinct` suggests conservative wording based on the latest
+incoming text's categories. `draft reply to Instinct: exact body` uses the supplied
+body. Both show the exact recipient and body (including `[Bob via Andrea]`) in the
+existing texting card. Even `send a message to Instinct: ...` only creates a
+draft. Instinct drafts never receive a send token. Even a valid legacy token is
+refused on the server for Instinct, pinned identities and matching alternate
+transports/groups. Editing a draft cannot remove this restriction for an Instinct
+recipient. No direct BlueBubbles send, automatic reply, routine, watcher or job
+is created. Jeff's current read-only instruction overrides older tagged-brief
+permissions in Bob's historical skill.
+
+Incoming text is quoted as untrusted data and never evaluated or sent to a model.
+Suggestions use local templates. Instinct turns carry the existing `texting`
+privacy flag, so thread contents, draft bodies, and consent tokens stay out of
+provider context and operational handback logs. Read excerpts hide phone numbers
+and email handles; consent cards show recipients so Jeff can verify them.
+
+Offline validation uses synthetic read-only messaging fixtures:
+
+```bash
+cd webchat
+python3 -m pytest -q test_instinct.py test_texting.py test_texting_e2e.py
+python3 instinct_eval.py
+python3 bob_parity_eval.py
+```
+
+The Instinct rubric also runs inside the broader Bob parity eval. Releases use
+`release/solo.py`: exact-tip self-review, full tests/evals, staging and two
+consecutive live greens. No model council or worker preflight is required.
+
+Instinct identities learned from the verified mapping are retained in that private file across restarts. Direct thread IDs, renamed threads, alternate transports and groups containing a protected address remain read-only. Never put this private mapping in Git.
+
+### Personal reminders and read-only teammates
+
+Use `remind me to check the oven in 10 minutes`, `remind me to call Sam on
+2026-10-01 at 14:00`, `create a reminder for 2am to go to bed`, or `set a timer
+for 10 minutes`. Create, set, set up, and schedule accept reminder, timer, and
+alarm requests directly, before coding-job routing. They default to one occurrence;
+an unlabeled timer uses “Timer” as its body. Use `my reminders` / `my timers` and
+`cancel reminder ID` / `cancel timer ID` to inspect or cancel them. Local dates use
+America/Chicago; an undated clock time means its next occurrence, shown with the
+resolved date in the saved receipt. Unclear dates and ambiguous daylight-saving
+times are not guessed; daylight-saving transitions need an explicit ISO UTC offset.
+`remind me every 2 hours to stretch` (or `set a routine every 2 hours to stretch`)
+creates an interval notification, never an executable job. An interval day is
+24 hours, not a calendar-day clock rule. The store permits 200 pending reminders
+and retains bounded completed history; the saved chat keeps delivered notices.
+
+Direct interval requests save immediately only for recognized complete tasks,
+such as `stretch`, `call mom`, `call room 204`, `take my pills`, and `drink water`.
+Unrecognized wording, extra clauses, references to reminders or saving, and all
+mixed letter/digit body tokens (including ticket IDs) produce a draft requiring
+a separate exact `yes wbrem-…` message. Even ordinary tasks outside the supported
+forms require confirmation.
+One-shot intervals accept `mins` and `hrs`; recurring abbreviations still draft.
+
+Reminders use Web Bob's existing one-second background loop; they do not start
+job-runner or another scheduler. Delivery saves a message in the originating
+chat and a Jobs entry. OS notifications are disabled by default, including for
+pending reminders restored after an upgrade. To authorize best-effort local alerts,
+the owner can set `BOB_REMINDER_MACOS_NOTIFICATIONS=1` for the production server
+entry point. Tests and staging must explicitly inject a fake notifier; constructing
+`Chat` never enables OS notifications, even with that environment variable set.
+When authorized, delivery attempts a local macOS notification using `osascript`.
+The Mac must be awake with Web Bob running in a user session; macOS notification
+permission and Focus settings control whether the alert is displayed. A successful
+script exit is not proof that the user saw an alert. Closed browsers see the saved
+chat message when reopened; server downtime
+catches up on return. Active voice/model turns defer delivery until idle.
+A durable notification identity prevents duplicate messages after a crash between
+chat persistence and store acknowledgement. Missed recurring intervals produce
+one catch-up notice, not a burst. OS alerts are best effort: failure does not undo
+chat delivery, and a crash after the firing-state write may lose that OS alert.
+Reminders do not send phone push, iMessage-to-self, email, SMS, or calendar events.
+A reminder's body is plain text, never a command to execute. Tests inject the
+notification hook or mock `subprocess.run`; they never display real alerts.
+
+`Karen QA status` reports the saved `wt-webjam-polish/PRE_KAREN_QA.md` with its
+source and save time; it never implies a new independent review or contacts her.
+`band desk status` and `band desk digest [for Stalemate]` use the already-pinned
+read-only watch mappings in `bin/band_messages_watch_run.py`, parsed as data
+without importing or executing that watch. Band messages are private, bounded,
+dated quotes and never reach model context. No new polling or outbound action
+is started. Existing Texts provides separate reviewable drafts. The Jobs view
+also displays reminder and teammate status.
+
+Saved note removal: Settings → Saved memory → Manage saved notes lists recent
+single-line Web Bob notes. Review an exact note, then use **Remove this note** or
+**Keep note**. Each confirmation belongs to one conversation and one complete
+file snapshot; a changed file requires a new review. Removal affects one entry,
+including only one copy of a duplicate. Other notes, chat history, other profile
+context and information already sent to models remain. Ambiguous legacy multiline
+or oversized files are inspectable but not removable through this control.
+Management and review stay out of model chat history; removal requires typed Chat
+with Auto selected. Tests use private synthetic notes; live release replay only
+inspects and refuses unbound approvals without deleting owner notes.
+
+### Google Calendar (direct, owner-confirmed actions)
+
+Use `show my calendar today`, `what's on my calendar tomorrow?`, `calendar this
+week`, `calendar next 7 days`, or `calendar on 2026-10-12`. Without a window,
+Calendar reads the next seven days starting at local midnight. Reads show actual
+Google responses, at most 100 events, and explicitly report a truncated page.
+Failures never become invented events or an empty-calendar claim.
+
+Use `create a calendar event Dentist tomorrow at 2pm for 30 minutes` or
+`create a calendar event for 2am to go to bed`. Defaults are the authorized user's
+primary calendar, America/Chicago, one hour, one occurrence, private visibility,
+and no event alerts. Review the stored draft and reply with its exact
+`yes wbcal-…` token in the same conversation within one hour. `cancel wbcal-…`
+cancels an unsubmitted draft. A new draft replaces that conversation's prior
+unsubmitted draft. Titles and explicit times are required; ambiguous dates and
+DST clock changes need a clearer time (ISO timestamps with offsets work).
+Attendee/invitation and recurring-event requests are unsupported. Creates never
+include attendees and request `sendUpdates=none`.
+
+Calendar uses an existing authorized-user OAuth JSON file with `client_id`,
+`client_secret`, and `refresh_token`, readable only by its owner (mode 0600).
+Set `BOB_GOOGLE_CALENDAR_CREDENTIALS` in the server's environment to its path,
+or use `~/.config/webbob/google-calendar.json`. An existing
+`~/.config/gcloud/application_default_credentials.json` is also checked if the
+Web Bob file is absent. The user grant must permit Calendar reads and event
+writes (for example the Google Calendar `calendar.events` OAuth scope), and
+Calendar API access must be enabled for that OAuth client. No service-account
+credentials, connector-session credentials, or paid model calls are used.
+Missing/invalid credentials or denied access return `needs auth`; this feature
+does not start a login flow or queue a coding job. Credentials are never printed,
+changed, or stored in chat. OAuth refresh and Google HTTPS calls occur only for
+an explicit read or an approved create, with no automatic retries.
+
+Drafts and consumed confirmations are stored privately under `calendar/` in the
+webchat data folder. They survive restarts; the consumed receipt is persisted
+before the API call. Only a matching Google event confirmation produces a
+created receipt. A timeout, uncertain response, or interrupted receipt write
+stays unconfirmed and cannot replay the create. Check Google Calendar before
+making another draft after an uncertain result. Calendar creates respect saved
+global and project holds. The separate reminder and BlueBubbles text-read paths
+are unchanged; outbound texts still require their existing exact draft approval.
+Tests inject Calendar and messaging clients and never call real services.
+
+### Local tasks, web lookups, and morning routines
+
+These commands run directly in the chat process, before coding-job routing:
+
+| Request | Behavior |
+| --- | --- |
+| `read file ~/Documents/notes.txt` | Read a UTF-8 file, at most 64 KiB. |
+| `list files in ~/Documents` | List up to 200 visible names. |
+| `create file ~/Documents/note.txt: hello` | Create a new private file, without replacing an existing file. |
+| `write file ~/Documents/note.txt: replacement` | Create if absent; otherwise save an overwrite draft showing the replacement. |
+| `delete file ~/Documents/note.txt` | Save a deletion draft; directories cannot be deleted. |
+| `run terminal: pwd` / `terminal: date` | Show the local-task directory (home) or current America/Chicago time. |
+| `terminal: cat ~/Documents/notes.txt` / `terminal: ls ~/Documents` | Use the same bounded file read/list operations. |
+| `search the web for Python` / `look up Python` | Fetch a DuckDuckGo instant answer and its source URL. |
+| `every morning do read file ~/Documents/notes.txt` | Read that file each morning and save the result in this chat. |
+| `every morning at 8am do look up Python` | Run the same fixed web lookup each morning. |
+| `every morning remind me to stretch` | Save a notification-only morning reminder. |
+
+Terminal commands are implemented through the bounded local file/time operations;
+there is no shell, executable launch, pipes, redirection, or general command runner.
+Paths must be absolute under the owner's home or start with `~/`; quote paths
+containing spaces if using terminal syntax. Dot/private configuration paths,
+Library, Applications, Web Bob's code/data folders, runtime roots, configured
+accounting roots, symlinks, hard links, and special files are excluded. Runtime
+policy protection is rechecked before execution, including saved confirmations
+and routines; invalid policy blocks local file operations. No directory creation,
+recursive operations, or file execution is supported. The server needs ordinary
+OS permission to access the selected files.
+Credential/key filenames are excluded even in visible directories. Reads (including
+terminal `cat` and scheduled reads) refuse the entire result before returning or
+persisting content when it contains credential fields, private-key blocks, or
+recognized token/authentication patterns, including CSV headers and XML tags.
+Creates and replacements also reject credential content; overwrites and deletes
+inspect existing content both when drafting and immediately before the effect.
+Confirmation cannot override credential protection. This conservative check can reject
+credential examples; it cannot identify arbitrary unlabelled secrets in prose.
+
+Overwrite/delete drafts require a separate exact `yes wblocal-…` in the same chat
+within one hour. `cancel wblocal-…` cancels a draft. A newer destructive draft
+replaces the older one. Confirmation checks the file identity and content against
+the saved draft; a changed file needs a new draft. Private receipts in
+`local-tasks/` survive restarts. A consumed confirmation is stored before any file
+change, and success is recorded only after the operation completes. An interrupted
+or failed operation remains unconfirmed and is never automatically replayed. Check
+the actual file before retrying with a new request. Receipt storage is bounded to
+1,000 requests / 4 MiB and fails visibly when full.
+Production file operations and routine path validation run in a separate process
+with a five-second deadline, including receipt I/O. Receipt locks wait at most one
+second. A timeout kills the worker and reports an unverified result; any consumed
+confirmation remains non-replayable. Test file adapters are explicitly injected.
+
+The web adapter uses one HTTPS GET endpoint, with a ten-second timeout, bounded
+response, no proxies or redirects, and no page-following, credentials or paid API.
+Only the requested query is sent to DuckDuckGo. Instant answers are limited and may
+be absent; an empty response or transport failure never becomes an invented answer.
+File contents and search excerpts are returned as data and never executed as commands.
+
+Morning routines share the existing reminder store and one-second scheduler.
+They default to 9am America/Chicago; explicit morning times support 3am–11:59am.
+The local clock stays fixed across daylight-saving changes. `my routines` lists
+saved schedules and `cancel routine ID` cancels one. After downtime, a routine
+runs once and advances to the next morning. Busy chats defer execution. At most
+one routine action runs per tick so owner hold/cancel turns can run between lookups. Saved
+global/project holds are checked both at registration and each run; only an
+explicit owner resume releases them. Each occurrence has a durable receipt, so
+a crash before its chat message is saved does not repeat the action. Results go
+to the originating chat without OS alerts; notification-only reminders retain
+their best-effort macOS notification only with the owner opt-in above. The Mac must be awake with Web Bob
+running. Writes, deletes, calendar writes and sends cannot run unattended; sends
+retain the existing separate draft and explicit approval flow. Tests inject a
+temporary home, network adapter, Calendar/messaging clients and notification hook.

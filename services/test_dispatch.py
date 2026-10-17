@@ -29,6 +29,19 @@ from web_dispatch import task_queue as queue
 
 
 class DispatchTests(unittest.TestCase):
+    def test_pending_activation_fences_both_chat_and_legacy_runner_admission(self):
+        self.enqueue()
+        marker = self.core / 'locks/webbob-activation.json'
+        marker.parent.mkdir(exist_ok=True)
+        marker.write_text('{pending')
+        with patch.object(web_dispatch, 'launch') as launch, patch.object(lanes, 'refresh') as refresh, \
+                patch.object(runtime, 'schedule_pass') as legacy:
+            self.assertEqual(web_dispatch.tick(), 0)
+            runtime.runner_cycle()
+            launch.assert_not_called()
+            refresh.assert_not_called()
+            legacy.assert_not_called()
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="webbob-dispatch-test-")
         self.root = Path(self.tmp.name)
@@ -46,6 +59,9 @@ class DispatchTests(unittest.TestCase):
         self.acceptance = patch.object(result_acceptance, "accept", return_value={"accepted": True, "method": "test-review"})
         self.acceptance.start()
         self.addCleanup(self.acceptance.stop)
+        self.validation = patch.object(mini_worker, "verify_coding", return_value=None)
+        self.validation.start()
+        self.addCleanup(self.validation.stop)
 
     def tearDown(self):
         for item in reversed(self.patches):
@@ -61,6 +77,193 @@ class DispatchTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             queue.enqueue(self.root, "conversation", "one", "Different request")
         self.assertEqual(len(queue.tasks(self.root)), 1)
+
+    def test_policy_changed_after_claim_blocks_before_workspace_or_model_effects(self):
+        row=self.enqueue(worker='codex');claim=queue.claim(self.root,'codex',identifier=row['id'])
+        policy=self.core/'state/generation-policy.json'
+        policy.write_text(json.dumps(dict(budget_id='overnight',accounting_root=str(self.root),purpose='product')))
+        with patch.object(dispatch_worker,'prepare_task') as prepare,patch.object(dispatch_worker,'ask') as ask:
+            self.assertEqual(dispatch_worker.execute(row['id'],claim['claim_token']),1)
+        prepare.assert_not_called();ask.assert_not_called()
+        saved=queue.tasks(self.root)[row['id']]
+        self.assertEqual(saved['status'],'failed');self.assertIsNone(saved.get('execution_started_at'))
+
+    def test_attempt_limit_is_durable_at_admission_and_part_of_request_identity(self):
+        args = (self.root, 'conversation', 'bounded', 'Run webchat/test_answer_intent.py')
+        row = queue.enqueue(*args, worker='mini', attempt_limit=1)
+        first = json.loads((self.core / 'state/queue.jsonl').read_text().splitlines()[0])
+        self.assertEqual((first['attempt_limit'], first['max_attempts'], first['attempts']), (1, 1, 0))
+        self.assertEqual(queue.enqueue(*args, worker='mini', attempt_limit=1), row)
+        before = (self.core / 'state/queue.jsonl').read_bytes()
+        for limit in (None, 2):
+            with self.assertRaisesRegex(ValueError, 'different attempt limit'):
+                queue.enqueue(*args, worker='mini', attempt_limit=limit)
+        self.assertEqual((self.core / 'state/queue.jsonl').read_bytes(), before)
+
+    def test_attempt_limit_rejects_invalid_values_without_admitting_work(self):
+        for limit in (True, False, 0, -1, 1.0, '1', [], {}):
+            with self.subTest(limit=limit), self.assertRaisesRegex(ValueError, 'positive integer'):
+                queue.enqueue(self.root, 'conversation', 'invalid', 'Run tests', worker='mini', attempt_limit=limit)
+        self.assertFalse(queue.tasks(self.root))
+
+    def test_unlimited_argument_preserves_existing_and_legacy_retry_policy(self):
+        local = self.enqueue('local', worker='mini')
+        ordinary = self.enqueue('ordinary')
+        self.assertEqual(local['max_attempts'], 3)
+        self.assertEqual(ordinary['max_attempts'], 5)
+        with queue.locked(self.root) as path:
+            local.pop('attempt_limit')
+            local.pop('max_attempts')
+            local = queue._append(path, local, 'legacy_fixture')
+        self.assertEqual(self.enqueue('local', worker='mini'), local)
+        claim = queue.claim(self.root, 'mini', identifier=local['id'])
+        retried = queue.transition(self.root, local['id'], claim['claim_token'], 'retry', error='fixture failure')
+        self.assertEqual(retried['status'], 'queued')
+
+    def test_single_attempt_failure_and_timeout_are_terminal_in_real_dispatcher(self):
+        for index, error in enumerate((RuntimeError('Mini tests failed'), subprocess.TimeoutExpired(['unittest'], 300))):
+            row = queue.enqueue(self.root, 'conversation', 'failed-' + str(index),
+                                'Run webchat/test_answer_intent.py', worker='mini', attempt_limit=1)
+            claim = queue.claim(self.root, 'mini', identifier=row['id'])
+            with patch.object(mini_worker, 'execute', side_effect=error) as execute, \
+                    patch.object(dispatch_worker, 'ask') as ask:
+                dispatch_worker.execute(row['id'], claim['claim_token'])
+                execute.assert_called_once()
+                ask.assert_not_called()
+            result = queue.tasks(self.root)[row['id']]
+            self.assertEqual((result['status'], result['attempts'], result['max_attempts']), ('failed', 1, 1))
+            self.assertIsNone(queue.claim(self.root, 'mini', identifier=row['id'], now=time.time() + 1000))
+            self.assertEqual(queue.recover(self.root, lambda _: False, now=time.time() + 1000), [])
+
+    def test_single_attempt_lost_worker_cannot_restart_after_recovery(self):
+        for running in (False, True):
+            row = queue.enqueue(self.root, 'conversation', 'lost-' + str(running), 'Run tests', worker='mini', attempt_limit=1)
+            claim = queue.claim(self.root, 'mini', identifier=row['id'], now=100)
+            if running:
+                queue.transition(self.root, row['id'], claim['claim_token'], 'running', now=101)
+            recovered = queue.recover(self.root, lambda _: False, now=300)
+            self.assertEqual([(r['status'], r['attempts']) for r in recovered], [('failed', 1)])
+            self.assertIsNone(queue.claim(self.root, 'mini', identifier=row['id'], now=301))
+            self.assertIsNone(queue.transition(self.root, row['id'], claim['claim_token'], 'succeeded', now=301, result='Stale'))
+
+    def test_single_attempt_busy_lane_does_not_consume_execution(self):
+        row = queue.enqueue(self.root, 'conversation', 'busy', 'Run tests', worker='mini', attempt_limit=1)
+        claim = queue.claim(self.root, 'mini', identifier=row['id'], now=100)
+        busy = queue.transition(self.root, row['id'], claim['claim_token'], 'busy', now=101)
+        self.assertEqual((busy['status'], busy['attempts'], busy['max_attempts']), ('queued', 0, 1))
+        claim = queue.claim(self.root, 'mini', identifier=row['id'], now=107)
+        self.assertEqual(claim['attempts'], 1)
+        failed = queue.transition(self.root, row['id'], claim['claim_token'], 'retry', now=108)
+        self.assertEqual(failed['status'], 'failed')
+
+    def permission(self, cid='conversation', holds=None):
+        path = self.core / 'webchat/sessions' / (cid + '.json')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(dict(id=cid, intent_state=dict(holds=holds or {}))))
+        return path
+
+    def test_activation_admission_preserves_existing_request_but_refuses_new_bound_rows(self):
+        permission = self.permission()
+        old = queue.enqueue(self.root, 'conversation', 'one', 'Explain queues', permission_file=permission)
+        marker = self.core / 'locks/webbob-activation.json'
+        marker.parent.mkdir(exist_ok=True)
+        marker.write_text('{}')
+        self.assertEqual(queue.enqueue(self.root, 'conversation', 'one', 'Explain queues',
+                                       permission_file=permission)['id'], old['id'])
+        with self.assertRaises(queue.AdmissionPaused):
+            queue.enqueue(self.root, 'conversation', 'two', 'Explain queues', permission_file=permission)
+        self.assertEqual(list(queue.tasks(self.root)), [old['id']])
+
+    def test_rollback_refuses_active_rows_before_changing_any_pending_task(self):
+        permission = self.permission()
+        queued = queue.enqueue(self.root, 'conversation', 'pending', 'Explain queues', permission_file=permission)
+        active = self.enqueue('active')
+        queue.claim(self.root, 'codex', identifier=active['id'])
+        path = self.core / 'state/queue.jsonl'
+        before = path.read_bytes()
+        with self.assertRaisesRegex(RuntimeError, 'drained'):
+            queue.cancel_for_rollback(self.root, queued['created_at'])
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_rollback_cancels_new_and_held_pending_rows_but_preserves_unrelated_old_work(self):
+        permission = self.permission()
+        old = queue.enqueue(self.root, 'conversation', 'old', 'Explain queues', permission_file=permission)
+        start = time.time()
+        new = queue.enqueue(self.root, 'conversation', 'new', 'Explain queues', permission_file=permission)
+        held_permission = self.permission('held', {'Web Bob': {}})
+        held = queue.enqueue(self.root, 'held', 'old-held', 'Review Web Bob', permission_file=held_permission,
+                             project_scopes=['Web Bob'])
+        with queue.locked(self.root) as path:
+            held['created_at'] = start - 1
+            queue._append(path, held, 'fixture_old')
+        legacy = queue.enqueue(self.root, 'standalone', 'legacy', 'Explain queues')
+        changed = queue.cancel_for_rollback(self.root, start)
+        self.assertEqual({r['id'] for r in changed}, {new['id'], held['id']})
+        rows = queue.tasks(self.root)
+        for row in (old, legacy):
+            self.assertEqual(rows[row['id']]['status'], 'queued')
+        for row in changed:
+            self.assertEqual(row['status'], 'failed')
+            self.assertIn('original request is preserved', row['error'])
+        self.assertEqual(queue.cancel_for_rollback(self.root, start), [])
+
+    def test_partial_admission_cleanup_is_scoped_and_refuses_active_group_atomically(self):
+        first = self.enqueue('group:0')
+        second = self.enqueue('group:1')
+        unrelated = self.enqueue('group-other')
+        queue.claim(self.root, 'codex', identifier=second['id'])
+        path = self.core / 'state/queue.jsonl'
+        before = path.read_bytes()
+        with self.assertRaisesRegex(RuntimeError, 'active admission'):
+            queue.abort_admission(self.root, 'conversation', 'group')
+        self.assertEqual(path.read_bytes(), before)
+        queue.cancel_user_task(self.root, 'conversation', second['id'])
+        queue.abort_admission(self.root, 'conversation', 'group')
+        rows = queue.tasks(self.root)
+        self.assertEqual(rows[first['id']]['status'], 'failed')
+        self.assertEqual(rows[unrelated['id']]['status'], 'queued')
+        self.assertTrue(rows[second['id']]['cancelled_at'])
+
+    def test_project_workers_persist_separate_repositories_and_draft_branches_before_execution(self):
+        catalog = {}
+        names = ("WebJam", "AdoptIQ", "StoryBoard", "Fantasy Football")
+        def git(repo, *args):
+            return subprocess.check_output(["git", "-C", str(repo), *args], text=True, stderr=subprocess.DEVNULL).strip()
+        for name in names:
+            repo = self.root / name
+            repo.mkdir()
+            git(repo, "init", "-b", "main")
+            (repo / "project.txt").write_text(name)
+            git(repo, "add", "project.txt")
+            git(repo, "-c", "user.name=Test", "-c", "user.email=test@localhost", "commit", "-m", "Initial")
+            catalog[name] = dict(repo=str(repo), remote="owner/project")
+        (self.core / "services").mkdir()
+        (self.core / "services/projects.json").write_text(json.dumps(catalog))
+        seen = []
+        def work(worker, prompt, **kwargs):
+            current = next(row for row in queue.tasks(self.root).values() if row["status"] == "running")
+            self.assertTrue(current["execution_started_at"])
+            self.assertEqual(current["worktree"], str(kwargs["cwd"]))
+            self.assertEqual(current["branch"], "draft/" + current["id"])
+            self.assertEqual(Path(current["repo"]), Path(catalog[current["project"]]["repo"]).resolve())
+            self.assertEqual((kwargs["cwd"] / "project.txt").read_text(), current["project"])
+            seen.append(current["worktree"])
+            return "Inspected the isolated fixture and verified the requested project."
+        with patch.object(dispatch_worker, "ask", side_effect=work), \
+                patch("jobs.external_webjam_lease", return_value=False):
+            for i, name in enumerate(names):
+                row = queue.enqueue(self.root, "conversation", name, "Improve " + name, kind="coding")
+                claim = queue.claim(self.root, ("codex", "cursor")[i % 2], identifier=row["id"])
+                self.assertEqual(dispatch_worker.execute(row["id"], claim["claim_token"]), 0,
+                                 queue.tasks(self.root)[row["id"]].get("error"))
+                self.assertEqual(queue.tasks(self.root)[row["id"]]["status"], "succeeded")
+        self.assertEqual(len(set(seen)), 4)
+
+    def test_queue_replay_cannot_add_publication_authority(self):
+        queue.enqueue(self.root, "conversation", "one", "Improve WebJam", kind="coding")
+        with self.assertRaises(ValueError):
+            queue.enqueue(self.root, "conversation", "one", "Improve WebJam", kind="coding", publish_project="WebJam")
+        self.assertIsNone(next(iter(queue.tasks(self.root).values()))["publish_project"])
 
     def test_only_allowed_workers_and_tool_routing(self):
         for worker in ("grok", "unknown", "Grok"):
@@ -279,9 +482,37 @@ class DispatchTests(unittest.TestCase):
     def test_coding_without_commit_is_not_success(self):
         self.enqueue(worker="codex", kind="coding")
         row = queue.claim(self.root, "codex")
-        with patch.object(dispatch_worker, "prepare_task", return_value=self.root), patch.object(dispatch_worker, "ask", return_value="I made changes"), patch.object(dispatch_worker, "git", side_effect=["draft/" + row["id"], " M file.py"]):
+        with patch.object(dispatch_worker, "prepare_task", return_value=self.root), patch.object(dispatch_worker, "ask", return_value="I made changes"), patch.object(dispatch_worker, "git", side_effect=["base-sha", "draft/" + row["id"], " M file.py"]):
             dispatch_worker.execute(row["id"], row["claim_token"])
         self.assertEqual(queue.tasks(self.root)[row["id"]]["status"], "failed")
+
+    def test_required_coding_checks_precede_acceptance_publication_and_success(self):
+        self.validation.stop()
+        row = queue.enqueue(self.root, "conversation", "incomplete-api", "Improve StoryBoard", kind="coding",
+                            worker="cursor", publish_project="StoryBoard")
+        claim = queue.claim(self.root, "cursor")
+        branch = "draft/" + row["id"]
+        def git(cwd, *args):
+            if args[0] == "rev-parse": return "a" * 40
+            if args[0] == "branch": return branch
+            return ""
+        with patch.object(dispatch_worker, "prepare_task", return_value=self.root), \
+                patch.object(dispatch_worker, "git", side_effect=git), \
+                patch.object(dispatch_worker, "ask", return_value="Fixed API install. Tests: shared 106 pass. Status: Pass.") as ask, \
+                patch.object(mini_worker, "verify_coding", side_effect=result_acceptance.ResultRejected("Required coding check failed: pnpm test")) as verify, \
+                patch.object(dispatch_worker.draft_publish, "publish") as publish, \
+                patch.object(result_acceptance, "accept") as accept:
+            self.assertEqual(dispatch_worker.execute(row["id"], claim["claim_token"]), 1)
+        verify.assert_called_once()
+        publish.assert_not_called()
+        accept.assert_not_called()
+        self.assertEqual(ask.call_count, 1)
+        self.assertIn("After the final code edit", ask.call_args.args[1])
+        self.assertIn('["pnpm", "test"]', ask.call_args.args[1])
+        result = queue.tasks(self.root)[row["id"]]
+        self.assertEqual(result["status"], "failed")
+        self.assertNotIn("result", result)
+        self.assertFalse((self.core / "state/task-runs" / row["id"] / "RESULT.md").exists())
 
     def test_api_only_prompt_has_no_workspace_framing_in_either_call(self):
         import api
@@ -342,7 +573,7 @@ class DispatchTests(unittest.TestCase):
                 answer = "Tomatoes grow best with enough sunlight and regular watering."
                 with patch.object(dispatch_worker, "ask", side_effect=[answer, review]) as ask:
                     self.assertEqual(dispatch_worker.execute(row["id"], row["claim_token"]), 1)
-                self.assertEqual(ask.call_count, 2)
+                self.assertEqual(ask.call_count, 3 if review == "Not JSON" else 2)
                 self.assertEqual(ask.call_args.kwargs["purpose"], "result-acceptance")
                 result = queue.tasks(self.root)[row["id"]]
                 self.assertEqual(result["status"], "failed")
@@ -350,7 +581,7 @@ class DispatchTests(unittest.TestCase):
                 self.assertEqual(result["rejected_result"], answer)
                 self.assertFalse((self.core / "state/task-runs" / row["id"] / "RESULT.md").exists())
 
-    def test_file_inspection_routes_to_tools_and_api_selection_explains_limit(self):
+    def test_file_inspection_routes_to_tools_and_named_api_produces_report(self):
         prompt = "Read services/dispatch_worker.py and summarize the failure path."
         row = queue.enqueue(self.root, "conversation", "inspection", prompt)
         self.assertEqual(row["kind"], "inspection")
@@ -358,8 +589,9 @@ class DispatchTests(unittest.TestCase):
             self.assertIsNone(queue.claim(self.root, worker))
         self.assertIsNotNone(queue.claim(self.root, "codex"))
         for worker in queue.API_WORKERS:
-            with self.assertRaisesRegex(ValueError, "API-only"):
-                queue.enqueue(self.root, "conversation", worker, prompt, worker=worker)
+            report = queue.enqueue(self.root, "conversation", worker, prompt, worker=worker)
+            self.assertEqual(report["kind"], "review")
+            self.assertIsNotNone(queue.claim(self.root, worker))
 
     def test_old_misclassified_file_task_fails_before_an_api_call(self):
         task = self.enqueue(worker="minimax")
@@ -575,8 +807,15 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(queue.tasks(self.root)[row["id"]]["worker"], "cursor")
 
     def test_mini_worker_runs_local_test_suite_and_reports_result(self):
+        import shutil
+        from source_identity import PATHS
+        source = mini_worker.CODE_ROOT
+        for relative in PATHS:
+            target = self.root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source / relative, target)
         suite = self.root / "services"
-        suite.mkdir()
+        suite.mkdir(exist_ok=True)
         (suite / "test_cpu.py").write_text("import unittest\nclass CPU(unittest.TestCase):\n def test_sum(self):\n  self.assertEqual(sum(range(100)),4950)\n")
         row = queue.enqueue(self.root, "conversation", "mini", "Run services/test_cpu.py", worker="mini")
         claim = queue.claim(self.root, "mini")
@@ -587,3 +826,7 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(result["status"], "succeeded")
         self.assertIn("Ran 1 test", result["result"])
         self.assertIn("OK", result["result"])
+        identity = result['acceptance']['execution_identity']
+        self.assertEqual(identity['suite'], 'services/test_cpu.py')
+        self.assertEqual(identity['source_hashes']['services/test_cpu.py'],
+                         __import__('hashlib').sha256((suite / 'test_cpu.py').read_bytes()).hexdigest())

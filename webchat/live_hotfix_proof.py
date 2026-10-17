@@ -110,8 +110,8 @@ def main():
             answer = client.call("/api/conversations/" + conversation)["messages"][-1]
             if answer["status"] == "done":
                 assert answer["provider"] == provider
-                assert "Answering provider: " + provider in answer["content"]
-                assert "gemini=ready" in answer["content"] and "minimax=ready" in answer["content"]
+                assert {"gemini": "Gemini", "minimax": "MiniMax"}[provider] + " answered this message." in answer["content"]
+                assert "Gemini — last reply succeeded" in answer["content"] and "MiniMax — last reply succeeded" in answer["content"]
                 data["health"].append(dict(conversation_id=conversation, request_id=request_id, provider=provider,
                                            answer=answer["content"], at=time.time()))
                 save()

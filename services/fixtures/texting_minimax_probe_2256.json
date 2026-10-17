@@ -1,0 +1,25 @@
+{
+  "source": "TEXTING-DEPLOY-2055 / mandatory MiniMax worker probe attempt3",
+  "repo_tip": "c63dc2fb3d3b55eaaf6c8bf00275cd64290cde6e",
+  "job_id": "webchat-aa41695212ce548bb9ab08bba6ef1cee",
+  "source_job_id": "webchat-20bfc6f211c05e1f95221804051ff8a9",
+  "worker": "minimax",
+  "kind": "test-writing",
+  "prompt": "Project: Web Bob\nYour independent subtask:\nReview and regression test-case drafts for the following ongoing task. Deliver concrete findings and an actionable plan or test drafts. Never deploy or resolve conflicts.\nOngoing task:\nObserved active lane: Web Bob unblock 1035. Its original task prompt was not recorded; inspect the project's current code and state that limitation. Do not invent the lane's exact assignment.",
+  "prompt_sha256": "c4d9a7ec11bf1238384a7d57093d9cdcb8bdc5269a58e3a8d8f86cbd051348b3",
+  "error": "Missing concrete regression test drafts (setup, action and expected assertion required)",
+  "answer": "{\n  \"regression_tests\": [\n    {\n      \"name\": \"empty answer missing test drafts raises ResultRejected\",\n      \"target\": \"services/result_acceptance.py::check_deliverables\",\n      \"setup\": \"prompt='Draft regression tests for the queue module.'; answer=''\",\n      \"action\": \"check_deliverables(prompt, answer)\",\n      \"expected\": \"raises ResultRejected('Missing concrete regression test drafts (setup, action and expected assertion required)')\"\n    },\n    {\n      \"name\": \"complete answer with two test cases and findings passes guard\",\n      \"target\": \"services/result_acceptance.py::check_deliverables\",\n      \"setup\": \"prompt='Your independent subtask:\\\\nReview and regression test-case drafts for the following ongoing task.\\\\nOngoing task:\\\\nWeb Bob unblock 1035.'; answer='Regression test: case one\\\\nTarget: services/result_acceptance.py::check_deliverables\\\\nSetup: prompt=\\\"Draft tests.\\\"; answer=\\\"One case.\\\"\\\\nAction: check_deliverables(prompt, answer)\\\\nExpected: raises ResultRejected(\\\\'Missing concrete regression test drafts\\\\')\\\"\\\\n\\\\nRegression test: case two\\\\nTarget: services/result_acceptance.py::check_deliverables\\\\nSetup: prompt=\\\"Your independent subtask:\\\\nDraft tests.\\\"; answer=\\\"Regression test: first\\\\nTarget: example\\\\nSetup: x=1\\\\nAction: fn(x)\\\\nExpected: pass\\\\n\\\\nRegression test: second\\\\nTarget: example\\\\nSetup: x=2\\\\nAction: fn(x)\\\\nExpected: pass\\\\n\\\\nFindings/limits: Two cases validated.\\\"\\\\nAction: check_deliverables(prompt, answer)\\\\nExpected: {\\\"guard_outcome\\\": \\\"pass\\\"}\"\n    }\n  ],\n  \"plan\": {\n    \"change\": \"Validate that existing test suite covers concrete draft format and conditional unblock plan requirements; identify coverage gaps if any.\",\n    \"validation\": \"python3 -m unittest discover -s services -p 'test_*.py' (test_result_acceptance.py::AcceptanceTests contains tests for draft format and unblock plan)\",\n    \"exit_condition\": \"Report delivered with two grounded regression test drafts covering check_deliverables guard behavior; completion.accepted=true\"\n  },\n  \"completion\": {\n    \"accepted\": true,\n    \"reason\": \"Delivered two unexecuted regression test drafts for services/result_acceptance.py::check_deliverables: (1) empty answer raises ResultRejected, (2) complete answer with two test cases and Findings/limits passes guard. Original task prompt for Web Bob unblock 1035 was not recorded; cannot infer exact assignment from lane name alone.\"\n  },\n  \"findings_limits\": \"Original task prompt for Web Bob unblock 1035 not recorded in evidence. The fixture services/fixtures/texting_jobcompletion_1035.json is referenced but omitted from snapshot; its contents cannot be used as task definition. Test drafts exercise check_deliverables guard directly using literal inputs. Existing unit tests in test_result_acceptance.py (test_1035_exploratory_answer_cannot_win_a_positive_vote, test_drafts_without_resolution_plan_and_empty_case_labels_fail_closed) cover concrete draft format but rely on the missing fixture. Drafts are unexecuted; server must run validation.\"\n}",
+  "answer_sha256": "d044a5632ec6c02a7680203ee800db420d36c99fadfb1d8ffae697f2df22ef4a",
+  "answer_origin": "Verbatim rejected_result, equal to stripped call-1.txt; second regression_tests object has only name, target and setup. Outer action/expected were buried inside setup.",
+  "artifacts": {
+    "probe": {
+      "path": "/Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/TEXTING-WORKER-2055-c63dc2f-attempt3.json",
+      "sha256": "7cbac509b4836d050e6258eb6b8a1d330914ee8206d47e7f8013fc42ba979cbd"
+    },
+    "call": {
+      "path": "/Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/TEXTING-WORKER-2055-20260928-213810/call-1.txt",
+      "sha256": "d044a5632ec6c02a7680203ee800db420d36c99fadfb1d8ffae697f2df22ef4a"
+    }
+  },
+  "evidence_limits": "Historical rejected answer is regression input only. It must never be included in worker repository snapshots or treated as a current answer."
+}

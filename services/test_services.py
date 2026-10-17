@@ -25,13 +25,97 @@ class ServicesTest(unittest.TestCase):
         for module in (api,budget,jobs,lanes,runtime,state,worker,workspaces):
             for name,value in [('ROOT',self.root),('CONDUCTOR',self.core)]:
                 if hasattr(module,name):self.patches.append(patch.object(module,name,value))
-        self.patches += [patch.object(runtime,'HEARTBEATS',self.core/'heartbeats'),patch.object(runtime,'SERVICES',self.core/'services'),patch.dict(os.environ,{'BOB_ROOT':str(self.root)})]
+        self.patches += [patch.object(runtime,'HEARTBEATS',self.core/'heartbeats'),patch.object(runtime,'SERVICES',self.core/'services'),patch.dict(os.environ,{'BOB_ROOT':str(self.root)}),
+                         # The sandbox protects the fixture's core, even when
+                         # TMPDIR is inside the real source checkout.
+                         patch.object(workspaces,'__file__',str(self.core/'services/workspaces.py'))]
         for p in self.patches:p.start()
     def tearDown(self):
         for p in reversed(self.patches):p.stop()
         self.tmp.cleanup()
     def folder(self):
         p=self.root/'job';p.mkdir();return p
+    def test_screen_inventory_accepts_one_many_and_no_sessions(self):
+        for output, code, expected in (
+            ('There is a screen on:\n\t1352.svc-webchat\t(Detached)\n1 Socket in /tmp/.screen.\n',
+             0, {'svc-webchat': '1352.svc-webchat'}),
+            ('There are screens on:\n\t1352.svc-webchat\t(Attached)\n\t1400.svc-job-runner\t(Detached)\n2 Sockets in /tmp/.screen.\n',
+             0, {'svc-webchat': '1352.svc-webchat', 'svc-job-runner': '1400.svc-job-runner'}),
+            ('No Sockets found in /tmp/.screen.\n', 1, {}),
+        ):
+            with self.subTest(output=output), patch.object(runtime, 'run', return_value=NS(
+                    returncode=code, stdout=output, stderr='')) as probe:
+                self.assertEqual(runtime.screen_sessions(timeout=4), expected)
+                probe.assert_called_once_with(['screen', '-ls'], capture_output=True, text=True, timeout=4)
+
+    def test_unavailable_screen_inventory_remains_an_error(self):
+        for output in ('', 'Cannot access screen directory: Permission denied\n',
+                       'error while checking Sockets in an unavailable directory\n'):
+            with self.subTest(output=output), patch.object(runtime, 'run', return_value=NS(
+                    returncode=1, stdout='', stderr=output)):
+                with self.assertRaisesRegex(RuntimeError, 'screen inventory unavailable'):
+                    runtime.screen_sessions()
+        with patch.object(runtime, 'run', side_effect=subprocess.TimeoutExpired(['screen', '-ls'], 3)):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                runtime.screen_sessions(timeout=3)
+
+    def test_start_waits_for_slow_bootstrap_after_one_launch(self):
+        elapsed = [0.0]
+        def sleep(seconds):
+            elapsed[0] += seconds
+        with patch.object(runtime, 'run', return_value=NS(returncode=0)) as launch, \
+                patch.object(runtime, 'screen_sessions', return_value={'svc-job-runner': '123.svc-job-runner'}), \
+                patch.object(runtime, 'service_lock_held', side_effect=lambda name: elapsed[0] >= 12), \
+                patch.object(runtime.time, 'monotonic', side_effect=lambda: elapsed[0]), \
+                patch.object(runtime.time, 'sleep', side_effect=sleep):
+            self.assertTrue(runtime.start_screen('job-runner'))
+        self.assertGreaterEqual(elapsed[0], 12)
+        self.assertLess(elapsed[0], 30)
+        launch.assert_called_once()
+
+    def test_start_times_out_without_both_screen_and_lifetime_lock(self):
+        for screen, locked in ((True, False), (False, True)):
+            with self.subTest(screen=screen, locked=locked):
+                elapsed = [0.0]
+                def sleep(seconds):
+                    elapsed[0] += seconds
+                with patch.object(runtime, 'run', return_value=NS(returncode=0)) as launch, \
+                        patch.object(runtime, 'screen_sessions', return_value={'svc-job-runner': '123.svc-job-runner'} if screen else {}), \
+                        patch.object(runtime, 'service_lock_held', return_value=locked), \
+                        patch.object(runtime.time, 'monotonic', side_effect=lambda: elapsed[0]), \
+                        patch.object(runtime.time, 'sleep', side_effect=sleep):
+                    self.assertFalse(runtime.start_screen('job-runner'))
+                self.assertEqual(elapsed[0], 30)
+                launch.assert_called_once()
+
+    def test_failed_screen_launch_does_not_poll_or_retry(self):
+        with patch.object(runtime, 'run', return_value=NS(returncode=1)) as launch, \
+                patch.object(runtime, 'screen_sessions') as sessions, patch.object(runtime.time, 'sleep') as sleep:
+            self.assertFalse(runtime.start_screen('job-runner'))
+        launch.assert_called_once()
+        sessions.assert_not_called()
+        sleep.assert_not_called()
+
+    def test_readiness_probe_receives_remaining_deadline_and_timeout_is_failure(self):
+        elapsed = [0.0]
+        limits = []
+        def sessions(*, timeout):
+            limits.append(timeout)
+            elapsed[0] += timeout
+            if len(limits) == 2:
+                raise subprocess.TimeoutExpired(['screen', '-ls'], timeout)
+            return {}
+        def sleep(seconds):
+            elapsed[0] += seconds
+        with patch.object(runtime, 'run', return_value=NS(returncode=0)) as launch, \
+                patch.object(runtime, 'screen_sessions', side_effect=sessions), \
+                patch.object(runtime.time, 'monotonic', side_effect=lambda: elapsed[0]), \
+                patch.object(runtime.time, 'sleep', side_effect=sleep):
+            self.assertFalse(runtime.start_screen('job-runner'))
+        self.assertEqual(limits, [15, 14.8])
+        self.assertEqual(elapsed[0], 30)
+        launch.assert_called_once()
+
     def recover(self):
         with patch.object(runtime,'screen_sessions',return_value={}):jobs.recover()
     def test_journal_tail_repair_preserves_blocked_job(self):
@@ -115,8 +199,24 @@ class ServicesTest(unittest.TestCase):
     def test_cursor_login_auto_activation(self):
         binary=self.root/'cursor';binary.touch()
         for output,expected in [('Not logged in','needs_login'),('Logged in','ready')]:
-            with patch.object(lanes,'CURSOR',binary),patch.object(lanes,'run',return_value=NS(returncode=0,stdout=output,stderr='')):
+            with patch.dict(os.environ,{},clear=True),patch.object(lanes,'CURSOR',binary),patch.object(lanes,'run',return_value=NS(returncode=0,stdout=output,stderr='')):
                 self.assertEqual(lanes.refresh()['cursor']['state'],expected)
+    def test_goal_polling_never_spends_native_metadata_allowance(self):
+        binary=self.root/'cursor';binary.touch()
+        policy=self.core/'state/generation-policy.json';policy.parent.mkdir()
+        valid=dict(budget_id='fixture',accounting_root=str(self.root),purpose='product')
+        cases=[({},json.dumps(valid)),({},'{broken'),
+               ({'BOB_GENERATION_BUDGET':'fixture','BOB_GENERATION_BUDGET_ROOT':str(self.root)},None),
+               ({'BOB_REQUIRE_GENERATION_BUDGET':'1'},None)]
+        for env,body in cases:
+            if body is None:policy.unlink(missing_ok=True)
+            else:policy.write_text(body)
+            with self.subTest(env=env,body=body),patch.dict(os.environ,env,clear=True),patch.object(lanes,'CURSOR',binary),patch.object(lanes,'run') as probe:
+                for _ in range(2):
+                    row=lanes.refresh()['cursor']
+                    self.assertEqual(row['state'],'unverified')
+                    self.assertIn('deferred',row['detail'])
+                probe.assert_not_called()
     def test_lane_lease_shared_with_council_and_reviews(self):
         with state.lock('lane-cursor'),patch.object(lanes,'cli') as cli:
             with self.assertRaises(BlockingIOError):lanes.ask('cursor','prompt')
@@ -236,6 +336,13 @@ class ServicesTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'cooldown'):lanes.ask('claude','review',purpose='review')
         cli.assert_not_called()
 
+    def test_claude_session_limit_on_stdout_preserves_the_reset_reason(self):
+        result=NS(returncode=1,stdout=json.dumps(dict(is_error=True,result="You've hit your session limit · resets 6:20pm (America/Chicago)")),stderr='')
+        with patch.object(lanes,'run',return_value=result),patch.object(lanes,'sandbox_command',side_effect=lambda cmd,cwd,**kwargs:cmd):
+            with self.assertRaisesRegex(RuntimeError,'session limit.*6:20pm'):
+                lanes.cli('claude','review',self.root,False,120)
+        self.assertIn('6:20pm', state.read_json(self.core / 'lane-cooldowns.json')['claude']['detail'])
+
     def test_live_dashboard_snapshot_fields(self):
         import live_dashboard
         jobs_map = {"job-a": {"job_id": "job-a", "state": "running", "launched_at": time.time() - 120,
@@ -268,7 +375,7 @@ class ServicesTest(unittest.TestCase):
         self.assertGreaterEqual(seq, 1)
         rows = alignment_events.read_events(self.root, since_seq=seq - 1)
         self.assertTrue(any(r.get("summary") == "hello alignment" for r in rows))
-        self.assertTrue((self.root / "conductor/state/events.jsonl").exists())
+        self.assertTrue((self.root / "conductor/state" / alignment_events.EVENTS_FILE).exists())
 
     def test_state_ledger_catchup_and_now(self):
         ledger_dir = str(HERE.parent / "state")

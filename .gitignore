@@ -27,6 +27,8 @@ webjam-ux/*.error.txt
 launchd/retired/
 !services/projects.json
 !services/backlog.json
+!webchat/fixtures/replies_session_0927.json
+!webchat/fixtures/hold_resume_delivery_1006d.json
 
 screenrc/
 webchat/.password
@@ -35,3 +37,5 @@ webchat/uploads/
 webchat/node_modules/
 state/task-runs/
 state/dispatch-code-root
+reviews/.texting-proof-*/
+.voice-work/
