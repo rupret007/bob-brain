@@ -1,0 +1,16 @@
+{
+  "name": "Lease board honesty check",
+  "prompt": "Keep the multi-agent coordination board on private rupret007/Bob-the-Bot honest so Codex, Cursor Cloud (grok), and Claude never collide on the same checkout. Run the saved Multi-agent lease board sync recipe.\n\nFor every open `coord: rupret007/<repo>` issue, compare what the issue claims against real GitHub state (current main SHA, open PRs with draft state and head SHA, CI conclusion on those heads) and against what is actually running on my side (Cloud agent runs I launched, drafts waiting on Karen's leftover+security gate). Then fix the issue body: a live lease only where a run or an open draft really exists, agent none with the lease cleared where nothing is running, and an owner-gated lane (review passed but Jeff must tap-merge, log in, or approve spend) released from any agent with the next action naming Jeff. Expire any lease whose deadline has passed or that names an agent with no running job and no open draft. Carry every holds line forward verbatim — parked PRs and owner-only gates especially. Post one short delta comment per issue changed, with real SHAs, and say nothing on lanes untouched.\n\nThis is a bookkeeping pass only: never merge, undraft, close, rebase, or edit any pull request, never touch a parked PR, never change product code, and never invent a SHA or run id.\n\nStay silent when the board already matched reality. Only tell Jeff when there is something he actually needs: a real collision (two agents on one repo), a lane stuck waiting on him, or a lane released that unblocks a wave. One short message, no routine status notes.",
+  "schedule": "40 9-18 * * 1-5",
+  "triggerPresentation": {
+    "version": 1,
+    "trigger": {
+      "type": "cron",
+      "schedule": "40 9-18 * * 1-5"
+    }
+  },
+  "enabled": false,
+  "provenance": "user",
+  "createdAt": 1788446442886,
+  "lastRunAt": 1789083907507
+}
