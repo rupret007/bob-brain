@@ -10,7 +10,6 @@ import unittest
 import uuid
 from unittest.mock import Mock, patch
 
-import pytest
 import texting
 from app import Chat
 from texting import Andrea, Texting, TextingError, fingerprint, request_json
@@ -28,95 +27,101 @@ def prepared(value):
                 actionId=uuid.uuid4().hex, expiresAt=(time.time()+299)*1000)
 
 
-@pytest.fixture
-def release_pin(tmp_path, monkeypatch):
-    # Redirect only this module's Path constructor; never touch the release pin.
-    source = tmp_path / 'webchat' / 'texting.py'
-    pin = tmp_path / 'release' / 'andrea-bridge.json'
-    pin.parent.mkdir()
-    monkeypatch.setattr(texting, 'Path', lambda value: source if value == texting.__file__ else Path(value))
-    return pin
+class ReleasePinAndConfirmTests(unittest.TestCase):
+    def release_pin(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        tmp_path = Path(folder.name)
+        source = tmp_path / 'webchat' / 'texting.py'
+        pin = tmp_path / 'release' / 'andrea-bridge.json'
+        pin.parent.mkdir(parents=True, exist_ok=True)
+        patcher = patch.object(texting, 'Path', lambda value: source if value == texting.__file__ else Path(value))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return pin
 
+    def test_invalid_release_pin_refuses_protocol1_send(self):
+        cases = [
+            (None, 'missing-file'), ('{invalid', 'invalid-json'), ('{}', 'missing-key'),
+            ('{"protocol":"1"}', 'string'), ('{"protocol":true}', 'bool'), ('{"protocol":3}', 'unknown-int'),
+            ('{"protocol":1,"protocol":2}', 'duplicate-key'), ('{"protocol":1.0}', 'float-one'),
+            ('{"protocol":2.0}', 'float-two'), ('{"protocol":false}', 'false'), ('{"protocol":0}', 'zero'),
+            ('{"protocol":-1}', 'negative'), ('{"protocol":null}', 'null-value'), ('{"protocol":[]}', 'list-value'),
+            ('{"protocol":{}}', 'object-value'), ('[]', 'list-root'), ('null', 'null-root')
+        ]
+        for raw, case_id in cases:
+            with self.subTest(raw=raw, id=case_id):
+                release_pin = self.release_pin()
+                if raw is not None:
+                    release_pin.write_text(raw)
+                client = Andrea('http://127.0.0.1:4316', 'synthetic')
+                self.assertIsNone(client.expected_protocol)
+                value = draft()
+                value['bridge'] = dict(draftId='b'*64, digest=Andrea.scope_digest(Andrea.scope(value)),
+                                       actionId='action')
+                self.assertTrue(Andrea.remote_valid(value))  # A valid legacy record must still be refused.
+                receipt = dict(ok=True, state='sent', messageGuid='synthetic-message', **value['bridge'])
+                with patch.object(client, 'call', return_value=receipt) as call:
+                    self.assertIs(client.deliver(value, 'yes wbtxt-'+'c'*32, 'confirm'), False)
+                    call.assert_not_called()
+                with patch.object(client, 'call', return_value=health(1)) as call:
+                    self.assertIsNone(client.prepare(value))
+                    call.assert_called_once_with('health')
 
-@pytest.mark.parametrize('raw', [
-    None, '{invalid', '{}', '{"protocol":"1"}', '{"protocol":true}', '{"protocol":3}',
-    '{"protocol":1,"protocol":2}', '{"protocol":1.0}', '{"protocol":2.0}',
-    '{"protocol":false}', '{"protocol":0}', '{"protocol":-1}', '{"protocol":null}',
-    '{"protocol":[]}', '{"protocol":{}}', '[]', 'null',
-], ids=['missing-file', 'invalid-json', 'missing-key', 'string', 'bool', 'unknown-int',
-        'duplicate-key', 'float-one', 'float-two', 'false', 'zero', 'negative', 'null-value',
-        'list-value', 'object-value', 'list-root', 'null-root'])
-def test_invalid_release_pin_refuses_protocol1_send(release_pin, raw):
-    if raw is not None:
-        release_pin.write_text(raw)
-    client = Andrea('http://127.0.0.1:4316', 'synthetic')
-    assert client.expected_protocol is None
-    value = draft()
-    value['bridge'] = dict(draftId='b'*64, digest=Andrea.scope_digest(Andrea.scope(value)),
-                           actionId='action')
-    assert Andrea.remote_valid(value)  # A valid legacy record must still be refused.
-    receipt = dict(ok=True, state='sent', messageGuid='synthetic-message', **value['bridge'])
-    with patch.object(client, 'call', return_value=receipt) as call:
-        assert client.deliver(value, 'yes wbtxt-'+'c'*32, 'confirm') is False
-        call.assert_not_called()
-    with patch.object(client, 'call', return_value=health(1)) as call:
-        assert client.prepare(value) is None
-        call.assert_called_once_with('health')
+    def test_release_pin_accepts_exact_supported_integers(self):
+        for protocol in [1, 2]:
+            with self.subTest(protocol=protocol):
+                release_pin = self.release_pin()
+                release_pin.write_text(json.dumps({'protocol': protocol}))
+                client = Andrea('http://127.0.0.1:4316', 'synthetic')
+                self.assertIs(type(client.expected_protocol), int)
+                self.assertEqual(client.expected_protocol, protocol)
+                with patch.object(client, 'call', return_value=health(protocol)):
+                    self.assertIn('connected', client.status())
 
+    def test_confirm_rejects_whitespace_padded_approval(self):
+        for protocol in [1, 2]:
+            for padding in [' ', '\t', '\n', '\u00a0']:
+                with self.subTest(protocol=protocol, padding=padding):
+                    client = Andrea('http://127.0.0.1:4316', 'synthetic', expected_protocol=protocol)
+                    handler = Texting(Mock(), client)
+                    value = draft()
+                    exact = 'yes wbtxt-'+'c'*(64 if protocol == 2 else 32)
+                    value.update(state='pending', epoch=handler.epoch, expires_at=time.time()+299,
+                                 token=exact[4:], bridge={'protocol': protocol})
+                    value['fingerprint'] = fingerprint(value)
+                    conversation = dict(id=value['conversation_id'], messages=[{}],
+                                        _texting=dict(active=value['id'], drafts={value['id']: value}, audit=[]))
+                    persist = Mock()
+                    with patch.object(handler.instinct, 'is_target', return_value=False), \
+                            patch.object(client, 'deliver', return_value='submitted') as deliver:
+                        answer = handler.confirm(conversation, padding+exact+padding, value['actor'], 'confirm', persist)
+                        self.assertIn('Nothing sent', answer)
+                        deliver.assert_not_called()
+                        persist.assert_not_called()
+                        self.assertEqual(value['state'], 'pending')
+                        self.assertEqual(conversation['_texting']['audit'], [])
+                        # The same otherwise valid draft accepts the raw exact message.
+                        handler.confirm(conversation, exact, value['actor'], 'confirm', persist)
+                        deliver.assert_called_once_with(value, exact, 'confirm')
+                        persist.assert_called_once_with(conversation)
 
-@pytest.mark.parametrize('protocol', [1, 2])
-def test_release_pin_accepts_exact_supported_integers(release_pin, protocol):
-    release_pin.write_text(json.dumps({'protocol': protocol}))
-    client = Andrea('http://127.0.0.1:4316', 'synthetic')
-    assert type(client.expected_protocol) is int
-    assert client.expected_protocol == protocol
-    with patch.object(client, 'call', return_value=health(protocol)):
-        assert 'connected' in client.status()
-
-
-@pytest.mark.parametrize('protocol', [1, 2])
-@pytest.mark.parametrize('padding', [' ', '\t', '\n', '\u00a0'])
-def test_confirm_rejects_whitespace_padded_approval(protocol, padding):
-    client = Andrea('http://127.0.0.1:4316', 'synthetic', expected_protocol=protocol)
-    handler = Texting(Mock(), client)
-    value = draft()
-    exact = 'yes wbtxt-'+'c'*(64 if protocol == 2 else 32)
-    value.update(state='pending', epoch=handler.epoch, expires_at=time.time()+299,
-                 token=exact[4:], bridge={'protocol': protocol})
-    value['fingerprint'] = fingerprint(value)
-    conversation = dict(id=value['conversation_id'], messages=[{}],
-                        _texting=dict(active=value['id'], drafts={value['id']: value}, audit=[]))
-    persist = Mock()
-    with patch.object(handler.instinct, 'is_target', return_value=False), \
-            patch.object(client, 'deliver', return_value='submitted') as deliver:
-        answer = handler.confirm(conversation, padding+exact+padding, value['actor'], 'confirm', persist)
-        assert 'Nothing sent' in answer
-        deliver.assert_not_called()
-        persist.assert_not_called()
-        assert value['state'] == 'pending'
-        assert conversation['_texting']['audit'] == []
-        # The same otherwise valid draft accepts the raw exact message.
-        handler.confirm(conversation, exact, value['actor'], 'confirm', persist)
-        deliver.assert_called_once_with(value, exact, 'confirm')
-        persist.assert_called_once_with(conversation)
-
-
-def test_in_memory_seen_ids_refuse_reused_draft_id_without_sqlite():
-    client = Andrea('http://127.0.0.1:4316', 'synthetic', expected_protocol=2)
-    assert client._ids_path is None
-    value = draft()
-    response = prepared(value)
-    response['requestDigest'] = Andrea.scope_digest(Andrea.scope(value))
-    other = {**value, 'conversation_id': 'other', 'request_id': 'other'}
-    reused = {**response, 'requestDigest': Andrea.scope_digest(Andrea.scope(other))}
-    fresh = {**reused, 'draftId': 'f'*64}
-    with patch('texting.sqlite3.connect') as connect, \
-            patch.object(client, 'call', side_effect=[health(), response, health(), reused, health(), fresh]):
-        assert client.prepare(value) is not None
-        assert response['draftId'] in client._seen_ids
-        assert client.prepare(other) is None
-        assert client.prepare(other) is not None
-        connect.assert_not_called()
+    def test_in_memory_seen_ids_refuse_reused_draft_id_without_sqlite(self):
+        client = Andrea('http://127.0.0.1:4316', 'synthetic', expected_protocol=2)
+        self.assertIsNone(client._ids_path)
+        value = draft()
+        response = prepared(value)
+        response['requestDigest'] = Andrea.scope_digest(Andrea.scope(value))
+        other = {**value, 'conversation_id': 'other', 'request_id': 'other'}
+        reused = {**response, 'requestDigest': Andrea.scope_digest(Andrea.scope(other))}
+        fresh = {**reused, 'draftId': 'f'*64}
+        with patch('texting.sqlite3.connect') as connect, \
+                patch.object(client, 'call', side_effect=[health(), response, health(), reused, health(), fresh]):
+            self.assertIsNotNone(client.prepare(value))
+            self.assertIn(response['draftId'], client._seen_ids)
+            self.assertIsNone(client.prepare(other))
+            self.assertIsNotNone(client.prepare(other))
+            connect.assert_not_called()
 
 
 class Protocol2SecurityTests(unittest.TestCase):
