@@ -5,7 +5,6 @@ current digest. Routines, timers, and background jobs must never call execute().
 """
 import asyncio
 from contextlib import contextmanager
-import inspect
 import json
 from pathlib import Path
 import re
@@ -20,9 +19,12 @@ from webbob.workspace import fingerprint
 ALLOWED_SEND_TRIGGERS = frozenset({"explicit_approval"})
 _TRIGGER_REQUIRED = object()
 JEFF_APPROVAL_TTL_SECONDS = 900
-ALLOWED_JEFF_APPROVAL_SOURCES = frozenset({"jeff_chat", "jeff_ui"})
-FORBIDDEN_JEFF_APPROVAL_SOURCES = frozenset(
-    {"agent", "tool", "routine", "inbound", "automation", "timer", "background"}
+JEFF_BOB_CHAT_AUTHOR = "jeff"
+FORBIDDEN_JEFF_APPROVAL_AUTHORS = frozenset(
+    {"agent", "tool", "routine", "inbound", "automation", "timer", "background", "bob", "webbob"}
+)
+_ALLOWED_CONTACT_EMAIL_DOMAINS = frozenset(
+    {"b.co", "example.com", "example.org", "gmail.com", "googlemail.com"}
 )
 _BIDI_AND_FORMAT = frozenset(
     "\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\ufeff"
@@ -120,6 +122,11 @@ class JeffDraftConsentVerifier:
                 proof TEXT PRIMARY KEY, account TEXT, conversation TEXT, draft_id TEXT,
                 digest TEXT, expires REAL, consumed INTEGER NOT NULL DEFAULT 0)"""
             )
+            db.execute(
+                """CREATE TABLE IF NOT EXISTS bob_chat_messages (
+                message_id TEXT PRIMARY KEY, bob_chat TEXT NOT NULL, author TEXT NOT NULL,
+                text TEXT NOT NULL, consumed INTEGER NOT NULL DEFAULT 0)"""
+            )
         self.path.chmod(0o600)
 
     @contextmanager
@@ -137,18 +144,38 @@ class JeffDraftConsentVerifier:
         finally:
             db.close()
 
-    def issue(self, draft_id, digest, approval_text, *, source, bob_chat=None):
-        if source in FORBIDDEN_JEFF_APPROVAL_SOURCES:
-            raise MessageDraftError("agent or inbound approval forbidden")
-        if source not in ALLOWED_JEFF_APPROVAL_SOURCES:
+    def ingest_bob_chat_message(self, message_id, author, text):
+        """Record a Bob-chat line after the server has verified the real sender."""
+        if not re.fullmatch(r"[A-Za-z0-9:_-]{8,128}", message_id):
+            raise MessageDraftError("invalid bob chat message id")
+        if author in FORBIDDEN_JEFF_APPROVAL_AUTHORS or author != JEFF_BOB_CHAT_AUTHOR:
             raise MessageDraftError("only Jeff may approve send")
-        chat = bob_chat or self.bob_chat
-        if chat != self.bob_chat:
-            raise MessageDraftError("approval must be bound to Bob chat")
-        normalize_jeff_approval_text(approval_text)
+        if not isinstance(text, str) or not text:
+            raise MessageDraftError("invalid bob chat message")
+        with self._db() as db:
+            if db.execute("SELECT 1 FROM bob_chat_messages WHERE message_id=?", (message_id,)).fetchone():
+                raise MessageDraftError("bob chat message already recorded")
+            db.execute(
+                "INSERT INTO bob_chat_messages VALUES (?,?,?,?,0)",
+                (message_id, self.bob_chat, author, text),
+            )
+
+    def issue(self, draft_id, digest, message_id):
+        """Mint consent only from a stored Bob-chat message verified as Jeff."""
+        if not re.fullmatch(r"[A-Za-z0-9:_-]{8,128}", message_id):
+            raise MessageDraftError("invalid bob chat message id")
         proof = uuid.uuid4().hex
         expires = time.time() + JEFF_APPROVAL_TTL_SECONDS
         with self._db() as db:
+            row = db.execute(
+                "SELECT * FROM bob_chat_messages WHERE message_id=?", (message_id,)
+            ).fetchone()
+            if not row or row["bob_chat"] != self.bob_chat or row["consumed"]:
+                raise MessageDraftError("only Jeff may approve send")
+            if row["author"] != JEFF_BOB_CHAT_AUTHOR:
+                raise MessageDraftError("only Jeff may approve send")
+            normalize_jeff_approval_text(row["text"])
+            db.execute("UPDATE bob_chat_messages SET consumed=1 WHERE message_id=?", (message_id,))
             db.execute(
                 "INSERT INTO jeff_send_approvals VALUES (?,?,?,?,?,?,0)",
                 (proof, self.account, self.conversation, draft_id, digest, expires),
@@ -176,20 +203,14 @@ class JeffDraftConsentVerifier:
             db.execute("UPDATE jeff_send_approvals SET consumed=1 WHERE proof=?", (proof,))
         return True
 
-    def verify_callback(self):
-        def _callback(digest, proof, draft_id):
-            return self.verify(draft_id, digest, proof)
-
-        return _callback
-
-
 class MessageDraftGate:
-    def __init__(self, path, account, conversation, *, verify_consent, ownership, dispatch):
-        if not all(callable(f) for f in (verify_consent, ownership, dispatch)):
-            raise MessageDraftError("consent verifier, ownership and dispatch adapters required")
+    def __init__(self, path, account, conversation, *, jeff_consent, ownership, dispatch):
+        if type(jeff_consent) is not JeffDraftConsentVerifier:
+            raise MessageDraftError("JeffDraftConsentVerifier required")
+        if not callable(ownership) or not callable(dispatch):
+            raise MessageDraftError("ownership and dispatch adapters required")
         self.path, self.account, self.conversation = Path(path), account, conversation
-        self.verify, self.ownership, self.dispatch = verify_consent, ownership, dispatch
-        self._verify_accepts_draft_id = len(inspect.signature(verify_consent).parameters) >= 3
+        self.jeff_consent, self.ownership, self.dispatch = jeff_consent, ownership, dispatch
         if not self.path.parent.is_dir() or self.path.is_symlink():
             raise MessageDraftError("private store unavailable")
         with self.db() as db:
@@ -201,9 +222,7 @@ class MessageDraftGate:
         self.path.chmod(0o600)
 
     def _consent_ok(self, draft_id, approved_digest, proof):
-        if self._verify_accepts_draft_id:
-            return self.verify(approved_digest, proof, draft_id) is True
-        return self.verify(approved_digest, proof) is True
+        return self.jeff_consent.verify(draft_id, approved_digest, proof) is True
 
     @contextmanager
     def db(self):
@@ -231,13 +250,16 @@ class MessageDraftGate:
         local, domain = visible.rsplit("@", 1)
         if not local or not domain or not all(ord(c) < 128 for c in local):
             raise MessageDraftError("single explicit recipient required")
-        try:
-            domain_ascii = domain.encode("idna").decode("ascii")
-        except UnicodeError:
+        if not domain.isascii() or _unicode_abuse(domain):
+            raise MessageDraftError("single explicit recipient required")
+        domain_lower = domain.lower()
+        if any(label.startswith("xn--") for label in domain_lower.split(".")):
+            raise MessageDraftError("single explicit recipient required")
+        if domain_lower not in _ALLOWED_CONTACT_EMAIL_DOMAINS:
             raise MessageDraftError("single explicit recipient required")
         if not re.fullmatch(r"[A-Za-z0-9._%+-]+", local):
             raise MessageDraftError("single explicit recipient required")
-        if not re.fullmatch(r"[A-Za-z0-9.-]+\.[A-Za-z0-9.-]+", domain_ascii):
+        if not re.fullmatch(r"[A-Za-z0-9.-]+\.[A-Za-z0-9.-]+", domain_lower):
             raise MessageDraftError("single explicit recipient required")
         return visible
 

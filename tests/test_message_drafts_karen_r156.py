@@ -3,6 +3,7 @@ import asyncio
 import tempfile
 import time
 import unittest
+import uuid
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,13 +32,15 @@ class KarenR156ReproTests(unittest.IsolatedAsyncioTestCase):
             self.path,
             "owner@example.org",
             "bob-chat",
-            verify_consent=self.jeff.verify_callback(),
+            jeff_consent=self.jeff,
             ownership=lambda _: nullcontext(),
             dispatch=self.dispatch,
         )
 
-    def approve(self, dr):
-        return self.jeff.issue(dr["id"], dr["digest"], "yes", source="jeff_chat")
+    def approve(self, dr, *, message_id=None):
+        message_id = message_id or f"jeff-msg-{uuid.uuid4().hex}"
+        self.jeff.ingest_bob_chat_message(message_id, "jeff", "yes")
+        return self.jeff.issue(dr["id"], dr["digest"], message_id)
 
     async def test_r1_execute_without_trigger_kwarg_forbidden(self):
         d = self.gate.prepare("text", {"chat_guid": "andrea-guid-0001", "body": "hi"})
@@ -71,7 +74,7 @@ class KarenR156ReproTests(unittest.IsolatedAsyncioTestCase):
             self.path,
             "owner@example.org",
             "bob-chat",
-            verify_consent=self.jeff.verify_callback(),
+            jeff_consent=self.jeff,
             ownership=lambda _: nullcontext(),
             dispatch=self.dispatch,
         )
@@ -109,7 +112,7 @@ class KarenR156ReproTests(unittest.IsolatedAsyncioTestCase):
             self.path,
             "owner@example.org",
             "bob-chat",
-            verify_consent=self.jeff.verify_callback(),
+            jeff_consent=self.jeff,
             ownership=lambda _: nullcontext(),
             dispatch=boom,
         )
@@ -127,7 +130,7 @@ class KarenR156ReproTests(unittest.IsolatedAsyncioTestCase):
             self.path,
             "owner@example.org",
             "other-chat",
-            verify_consent=self.jeff.verify_callback(),
+            jeff_consent=self.jeff,
             ownership=lambda _: nullcontext(),
             dispatch=self.dispatch,
         )
@@ -141,6 +144,38 @@ class KarenR156ReproTests(unittest.IsolatedAsyncioTestCase):
         for extra in ({"cc": "x@y.z"}, {"attachments": "/etc/passwd"}):
             with self.assertRaises(MessageDraftError):
                 self.gate.prepare("email", dict({"to": "a@b.co", "subject": "s", "body": "b"}, **extra))
+
+    def test_r10_forged_source_or_author_refused(self):
+        d = self.gate.prepare("text", {"chat_guid": "andrea-guid-0001", "body": "x"})
+        mid = "jeff-msg-forged-source-01"
+        self.jeff.ingest_bob_chat_message(mid, "jeff", "yes")
+        with self.assertRaises(TypeError):
+            self.jeff.issue(d["id"], d["digest"], "yes", source="jeff_chat")
+        with self.assertRaises(MessageDraftError):
+            self.jeff.ingest_bob_chat_message("agent-msg-forged-01", "agent", "yes")
+
+    def test_r11_arbitrary_consent_callable_refused(self):
+        with self.assertRaises(MessageDraftError):
+            MessageDraftGate(
+                self.path,
+                "owner@example.org",
+                "bob-chat",
+                jeff_consent=lambda d, p, i=None: True,
+                ownership=lambda _: nullcontext(),
+                dispatch=self.dispatch,
+            )
+
+    def test_r12_ascii_only_email_domains_refused(self):
+        cases = (
+            "andrea@xn--gmil-63d.com",
+            "andrea@gma\u00eck.com",
+            "andrea@gmai1.com",
+            "andrea@gma1l.com",
+            "andrea@gmai\u200crn.com",
+        )
+        for to in cases:
+            with self.assertRaises(MessageDraftError):
+                self.gate.prepare("email", {"to": to, "subject": "s", "body": "b"})
 
 
 if __name__ == "__main__":

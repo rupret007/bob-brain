@@ -2,6 +2,7 @@ import ast
 import asyncio
 import inspect
 import threading
+import uuid
 import time
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -36,7 +37,7 @@ class MessageDraftGateTests(unittest.IsolatedAsyncioTestCase):
             self.path,
             "owner@example.org",
             "bob-chat",
-            verify_consent=self.jeff.verify_callback(),
+            jeff_consent=self.jeff,
             ownership=self._ownership,
             dispatch=self.dispatch,
         )
@@ -56,8 +57,10 @@ class MessageDraftGateTests(unittest.IsolatedAsyncioTestCase):
         self.sent.append((channel, payload))
         return SimpleNamespace(isError=False, model_dump=lambda **kw: {"channel": channel, "id": "provider-1"})
 
-    def approve(self, draft, *, source="jeff_chat", text="yes"):
-        return self.jeff.issue(draft["id"], draft["digest"], text, source=source)
+    def approve(self, draft, *, text="yes", message_id=None):
+        message_id = message_id or f"jeff-msg-{uuid.uuid4().hex}"
+        self.jeff.ingest_bob_chat_message(message_id, "jeff", text)
+        return self.jeff.issue(draft["id"], draft["digest"], message_id)
 
     def test_present_shows_exact_draft_without_dispatch(self):
         draft = self.gate.prepare("text", self.text)
@@ -208,9 +211,12 @@ class MessageDraftGateTests(unittest.IsolatedAsyncioTestCase):
 
     def test_agent_and_inbound_approval_refused(self):
         draft = self.gate.prepare("text", self.text)
-        for source in ("agent", "tool", "routine", "inbound"):
+        for author in ("agent", "tool", "routine", "inbound"):
+            mid = f"forged-{author}-msg-01"
             with self.assertRaises(MessageDraftError):
-                self.jeff.issue(draft["id"], draft["digest"], "yes", source=source)
+                self.jeff.ingest_bob_chat_message(mid, author, "yes")
+            with self.assertRaises(MessageDraftError):
+                self.jeff.issue(draft["id"], draft["digest"], mid)
 
     async def test_cross_draft_replay_rejected(self):
         same = {"chat_guid": "andrea-guid-0001", "body": "A"}
@@ -256,7 +262,7 @@ class MessageDraftGateTests(unittest.IsolatedAsyncioTestCase):
             self.path,
             "owner@example.org",
             "other-chat",
-            verify_consent=self.jeff.verify_callback(),
+            jeff_consent=self.jeff,
             ownership=lambda _: nullcontext(),
             dispatch=self.dispatch,
         )
@@ -282,22 +288,16 @@ class MessageDraftGateTests(unittest.IsolatedAsyncioTestCase):
         self.dispatch.assert_not_awaited()
 
     async def test_draft_row_expiry_independent_of_jeff_ttl(self):
-        approvals = {}
-
-        def verify(digest, proof, draft_id=None):
-            return approvals.get(proof) == digest
-
         gate = MessageDraftGate(
             self.path,
             "owner@example.org",
             "bob-chat",
-            verify_consent=verify,
+            jeff_consent=self.jeff,
             ownership=lambda _: nullcontext(),
             dispatch=self.dispatch,
         )
         draft = gate.prepare("text", self.text)
-        proof = "standing-proof"
-        approvals[proof] = draft["digest"]
+        proof = self.approve(draft, message_id="jeff-msg-expiry-row-01")
         real = time.time
         import webbob.message_drafts as md
 
@@ -323,7 +323,7 @@ class MessageDraftGateTests(unittest.IsolatedAsyncioTestCase):
             self.path,
             "owner@example.org",
             "bob-chat",
-            verify_consent=self.jeff.verify_callback(),
+            jeff_consent=self.jeff,
             ownership=lambda _: nullcontext(),
             dispatch=boom,
         )
@@ -348,16 +348,13 @@ class MessageDraftGateTests(unittest.IsolatedAsyncioTestCase):
     async def test_concurrent_double_execute_sends_once(self):
         self.sent.clear()
         draft = self.gate.prepare("text", dict(self.text, body="race body text"))
-        proof = f"race-{draft['digest']}"
-
-        def verify(digest, _proof, draft_id=None):
-            return _proof == proof and digest == draft["digest"]
+        proof = self.approve(draft, message_id="jeff-msg-race-body-01")
 
         gate = MessageDraftGate(
             self.path,
             "owner@example.org",
             "bob-chat",
-            verify_consent=verify,
+            jeff_consent=self.jeff,
             ownership=self._ownership,
             dispatch=self.dispatch,
         )
@@ -365,7 +362,7 @@ class MessageDraftGateTests(unittest.IsolatedAsyncioTestCase):
             self.path,
             "owner@example.org",
             "bob-chat",
-            verify_consent=verify,
+            jeff_consent=self.jeff,
             ownership=self._ownership,
             dispatch=self.dispatch,
         )
