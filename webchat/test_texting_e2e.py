@@ -25,7 +25,7 @@ class TextingE2ETest(unittest.TestCase):
         self.mock = MockMessaging(self.root)
         self.mock.enable_web_bob_send = True
         self.providers = OfflineProviders()
-        self.texting = Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token))
+        self.texting = Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token, expected_protocol=1))
         self.chat = Chat(self.root / "conductor/webchat", self.root, self.providers, texting=self.texting)
         self.identifier = self.chat.new_conversation()["id"]
         token = self.chat.login(self.chat.password)

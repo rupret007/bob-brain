@@ -34,7 +34,7 @@ class InstinctFixture:
         self.mock.enable_web_bob_send = True
         self.now = NOW
         self.providers = OfflineProviders()
-        self.texting = Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token),
+        self.texting = Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token, expected_protocol=1),
                               clock=lambda: self.now)
         self.texting.instinct.chat_guid = ""
         self.reminder_notifier = Mock(return_value=True)

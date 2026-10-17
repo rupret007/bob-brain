@@ -71,7 +71,7 @@ def negative_contract(bridge, health, draft, receipt):
             assert bridge.prepare(draft) is None
         checked += 1
     remote = draft['bridge']
-    prepared = dict(ok=True, **{k:remote[k] for k in ('draftId','digest','actionId')}, expiresAt=(time.time()+299)*1000)
+    prepared = dict(ok=True, **{k:remote[k] for k in ('draftId','digest','actionId')}, expiresAt=(time.time()+299)*1000, requestDigest=remote['requestDigest'])
     for bad in ([], {}, {**prepared, 'challenge': 'wbtxt-'+'0'*64},
                 {**prepared, 'approvalToken': 'wbtxt-'+'0'*64}, {**prepared, 'expiresAt': True},
                 {**prepared, 'state': 'approval_unavailable'}, {**prepared, 'digest': 'bad'}):
@@ -101,6 +101,26 @@ def negative_contract(bridge, health, draft, receipt):
             call.assert_not_called()
         checked += 1
     return checked
+
+
+def offline_negative_contract():
+    """Validate the negative matrix without starting servers or Andrea workers."""
+    bridge = Andrea('http://127.0.0.1:4316', 'synthetic-offline-token', expected_protocol=2)
+    value = sample_draft()
+    binding = Andrea.scope_digest(Andrea.scope(value))
+    value['bridge'] = dict(protocol=2, draftId='b'*64, digest='d'*64, actionId='synthetic-action',
+                           requestDigest=binding, localDigest=binding)
+    health = dict(ok=True, protocol=2, service='andrea-web-bob', connected=True,
+                  paused=False, instinctReadOnly=True, sha=None, deliveryProtocol=1)
+    receipt = dict(ok=True, state='delivered', messageGuid='synthetic-message', deliveryProtocol=1,
+                   **{k: value['bridge'][k] for k in ('draftId', 'digest', 'actionId', 'requestDigest')})
+    receipt['delivery'] = dict(state='delivered', error=0, checkedAt=time.time()*1000,
+                               deliveredAt=None, fresh=True,
+                               **{k: receipt[k] for k in ('messageGuid', 'actionId', 'digest')})
+    assert bridge.delivery_receipt(value, receipt) == 'delivered'
+    return dict(all_pass=True, scope='offline synthetic negative contract',
+                negative_contract_cases=negative_contract(bridge, health, value, receipt),
+                real_texts_sent=0, worker_dispatches=0)
 
 
 def probe(andrea):
@@ -273,10 +293,14 @@ def probe(andrea):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--andrea', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--andrea', type=Path)
+    parser.add_argument('--negative-contract', action='store_true', help='Offline synthetic negative cases only')
+    parser.add_argument('--output', type=Path)
     args = parser.parse_args()
-    result = probe(args.andrea.resolve())
+    if not args.negative_contract and args.andrea is None:
+        parser.error('--andrea is required unless --negative-contract is selected')
+    result = offline_negative_contract() if args.negative_contract else probe(args.andrea.resolve())
     result['at'] = time.time()
-    args.output.write_text(json.dumps(result, indent=2)+'\n')
+    if args.output:
+        args.output.write_text(json.dumps(result, indent=2)+'\n')
     print(json.dumps(result))

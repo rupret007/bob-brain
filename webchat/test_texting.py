@@ -28,7 +28,7 @@ class TextingTests(unittest.TestCase):
         self.now = [1790535600.0]
         self.providers = OfflineProviders()
         self.texting = Texting(BlueBubbles(self.mock.config_db),
-                              Andrea(self.mock.base, self.mock.token), clock=lambda: self.now[0])
+                              Andrea(self.mock.base, self.mock.token, expected_protocol=1), clock=lambda: self.now[0])
         self.folder = self.root / "conductor/webchat"
         self.chat = Chat(self.folder, self.root, self.providers, texting=self.texting)
         self.identifier = self.chat.new_conversation()["id"]
@@ -367,7 +367,7 @@ class TextingTests(unittest.TestCase):
         self.assertIn("expired", self.say(draft["confirm_message"])["messages"][-1]["content"])
         draft = self.draft()
         restored = Chat(self.folder, self.root, self.providers,
-            texting=Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token), clock=lambda: self.now[0]))
+            texting=Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token, expected_protocol=1), clock=lambda: self.now[0]))
         try:
             value = restored.submit(self.identifier, draft["confirm_message"], str(uuid.uuid4()), actor=self.actor)
             self.assertIn("expired", value["messages"][-1]["content"])
@@ -462,7 +462,7 @@ class TextingTests(unittest.TestCase):
         self.assertEqual(self.private()["drafts"][draft["id"]]["state"], "delivery_unconfirmed")
         self.assertIsNone(self.private()["drafts"][draft["id"]]["token"])
         restored = Chat(self.folder, self.root, self.providers,
-                       texting=Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token)))
+                       texting=Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token, expected_protocol=1)))
         try:
             history = restored.history(self.identifier)
             self.assertIn("delivery is unconfirmed", history["messages"][-1]["content"])
@@ -486,7 +486,7 @@ class TextingTests(unittest.TestCase):
         self.assertIn('Delivery remains unconfirmed', repeated['messages'][-1]['content'])
         self.assertNotIn('Nothing sent.', repeated['messages'][-1]['content'])
         restored = Chat(self.folder, self.root, self.providers,
-                       texting=Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token)))
+                       texting=Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token, expected_protocol=1)))
         try:
             history = restored.history(self.identifier)
             cards = [m["text_draft"] for m in history["messages"] if m.get("text_draft")]
@@ -561,7 +561,7 @@ class TextingTests(unittest.TestCase):
         self.say(card['confirm_message'])
         self.chat.close()
         self.chat = Chat(self.folder, self.root, self.providers, texting=Texting(
-            BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token)))
+            BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token, expected_protocol=1)))
         # Any authenticated owner session may inspect a persisted receipt;
         # it supplies no send authority and cannot reuse the old confirmation.
         check = self.chat.history(self.identifier)['messages'][-3]['text_draft']['check_delivery_message']
@@ -833,21 +833,26 @@ class AndreaProtocolTests(unittest.TestCase):
                       expiresAt=(time.time()+299)*1000)
         if protocol == 1:
             result['challenge'] = 'wbtxt-' + 'c'*32
+        else:
+            result['requestDigest'] = Andrea.scope_digest(Andrea.scope(self.value))
         return result
 
     def bind(self, protocol):
+        self.client = Andrea('http://127.0.0.1:4316', 'fixture-only-token', expected_protocol=protocol)
         with patch.object(self.client, 'call', side_effect=[self.health(protocol), self.response(protocol)]):
             remote = self.client.prepare(self.value)
         self.assertIsNotNone(remote)
         self.value['bridge'] = {k: remote[k] for k in ('draftId', 'digest', 'actionId')}
         if protocol == 2:
-            self.value['bridge'].update(protocol=2, localDigest=remote['localDigest'])
+            self.value['bridge'].update(protocol=2, localDigest=remote['localDigest'], requestDigest=remote['requestDigest'])
         return remote
 
     def receipt(self, state='sent', protocol=2):
         remote = self.value['bridge']
         result = dict(ok=True, state=state, deliveryProtocol=1, messageGuid='receipt-123',
                       **{k: remote[k] for k in ('draftId', 'digest', 'actionId')})
+        if remote.get('protocol') == 2:
+            result['requestDigest'] = remote['requestDigest']
         result['delivery'] = dict(state=state, error=4 if state == 'delivery_failed' else 0,
                                   deliveredAt=time.time()*1000 if state == 'delivered' else None,
                                   checkedAt=time.time()*1000, fresh=True,
@@ -869,7 +874,7 @@ class AndreaProtocolTests(unittest.TestCase):
                     self.assertEqual(self.client.deliver(self.value, approval, 'confirm-123'), 'sent')
                     payload = call.call_args.args[1]
                     if protocol == 2:
-                        self.assertEqual(payload, dict(bridgeDraftId=remote['draftId'], approvalToken=approval[4:]))
+                        self.assertEqual(payload, dict(bridgeDraftId=remote['draftId'], requestDigest=remote['requestDigest'], approvalToken=approval[4:]))
                     else:
                         self.assertEqual(payload['confirmation'], approval)
                         self.assertEqual(payload['actor'], self.value['actor'])
@@ -879,7 +884,7 @@ class AndreaProtocolTests(unittest.TestCase):
                     for c in call.call_args_list[1:]:
                         self.assertNotIn('approvalToken', c.args[1])
                         if protocol == 2:
-                            self.assertEqual(c.args[1], dict(bridgeDraftId=remote['draftId']))
+                            self.assertEqual(c.args[1], dict(bridgeDraftId=remote['draftId'], requestDigest=remote['requestDigest']))
                 for state in ('submitted', 'sent', 'delivered', 'delivery_failed', 'delivery_unconfirmed'):
                     self.assertEqual(self.client.delivery_receipt(self.value, self.receipt(state)), state)
                 cancelled = {k: v for k, v in receipt.items() if k != 'messageGuid'}
@@ -911,6 +916,7 @@ class AndreaProtocolTests(unittest.TestCase):
 
     def test_malformed_draft_and_approval_shapes_fail_closed(self):
         for protocol in (1, 2):
+            self.client.expected_protocol = protocol
             base = self.response(protocol)
             invalid = [None, [], {}, {**base, 'extra': 1}]
             invalid += [{k: v for k, v in base.items() if k != key} for key in base]

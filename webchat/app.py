@@ -175,6 +175,7 @@ class Chat(TaskDispatch):
         )
         self.texting = texting or Texting()
         self.texting.instinct.bind_state(folder)
+        self.texting.andrea.bind_state(folder)
         self.voice = VoiceCalls(self)
         from reminders import Reminders
         self.reminders = Reminders(folder)
@@ -752,7 +753,7 @@ class Chat(TaskDispatch):
                     value.pop(key, None)
                 self.save(value)
                 self.conversations[identifier] = copy.deepcopy(value)
-            if self.texting.handle(conversation, text, actor, request_id, persist_texting, self.redact):
+            if self.texting.handle(conversation, raw_text, actor, request_id, persist_texting, self.redact):
                 return self.public(conversation)
             calendar = self.calendar.handle(text, identifier, request_id, intent_state)
             if calendar is not None:

@@ -20,7 +20,7 @@ def draft():
 
 class AndreaBridgeTests(unittest.TestCase):
     def setUp(self):
-        self.client = Andrea('http://127.0.0.1:4316', 'fixture-only-dedicated-token')
+        self.client = Andrea('http://127.0.0.1:4316', 'fixture-only-dedicated-token', expected_protocol=1)
 
     def bound(self):
         value = draft()

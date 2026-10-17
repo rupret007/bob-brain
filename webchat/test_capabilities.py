@@ -112,7 +112,7 @@ class CapabilityTests(Fixture):
         mock = MockMessaging(self.root)
         self.addCleanup(mock.close)
         mock.enable_web_bob_send = True
-        self.chat.texting = Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token))
+        self.chat.texting = Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token, expected_protocol=1))
         self.chat.texting.instinct.bind_state(self.folder)
         card = self.ask('draft reply to Alex Morgan: Do not send this.')['messages'][-1]['text_draft']
         self.ask('Can you send texts?')

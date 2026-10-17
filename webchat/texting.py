@@ -17,6 +17,7 @@ import re
 import secrets
 import sqlite3
 import time
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -92,6 +93,15 @@ def local_url(value):
     return value.rstrip("/")
 
 
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
 def request_json(base, path, *, data=None, headers=None, timeout=5):
     # No environment proxies, redirects, retries, or URL supplied by a chat.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
@@ -103,7 +113,7 @@ def request_json(base, path, *, data=None, headers=None, timeout=5):
             raw = response.read(MAX_RESPONSE + 1)
         if len(raw) > MAX_RESPONSE:
             raise TextingError("The messaging response was too large. Try a smaller thread.")
-        result = json.loads(raw)
+        result = json.loads(raw, object_pairs_hook=unique_object)
         if not isinstance(result, dict):
             raise ValueError("expected object")
         return result
@@ -171,7 +181,17 @@ class BlueBubbles:
 
 class Andrea:
     """Dedicated owner bridge; never use Andrea's read/control credentials."""
-    def __init__(self, base=None, token=None):
+    def __init__(self, base=None, token=None, *, expected_protocol=None):
+        self._seen_ids = set()
+        self._ids_lock = threading.Lock()
+        self._ids_path = None
+        if expected_protocol is None:
+            try:
+                pin = Path(__file__).resolve().parents[1] / 'release/andrea-bridge.json'
+                expected_protocol = json.loads(pin.read_text(), object_pairs_hook=unique_object)['protocol']
+            except (OSError, ValueError, KeyError, TypeError):
+                expected_protocol = None  # Missing release policy never enables legacy.
+        self.expected_protocol = expected_protocol
         self.base, self.token = base or "http://127.0.0.1:4316", token or ""
         if base is None and token is None:
             config_path = os.environ.get("BOB_ANDREA_WEBBOB_CONFIG")
@@ -180,13 +200,38 @@ class Andrea:
                     path = Path(config_path)
                     if not path.is_absolute() or path.is_symlink() or path.stat().st_mode & 0o077 or path.stat().st_size > 24000:
                         raise ValueError("private config required")
-                    cfg = json.loads(path.read_text())
+                    cfg = json.loads(path.read_text(), object_pairs_hook=unique_object)
                     self.base = local_url(cfg["url"])
                     if not isinstance(cfg["token"], str) or len(cfg["token"]) < 32:
                         raise ValueError("dedicated token required")
                     self.token = cfg["token"]
+                    if 'protocol' in cfg:
+                        self.expected_protocol = cfg['protocol']
                 except (OSError, ValueError, KeyError, TypeError, TextingError):
                     self.token = ""
+
+    def bind_state(self, folder):
+        # A unique remote ID remains spent across conversations and restarts.
+        self._ids_path = Path(folder) / 'andrea-draft-ids.sqlite3'
+
+    def claim_remote_id(self, identifier):
+        with self._ids_lock:
+            if identifier in self._seen_ids:
+                return False
+            if self._ids_path is not None:
+                try:
+                    with closing(sqlite3.connect(self._ids_path)) as db:
+                        self._ids_path.chmod(0o600)
+                        with db:
+                            db.execute('CREATE TABLE IF NOT EXISTS seen (id TEXT PRIMARY KEY)')
+                            db.execute('INSERT INTO seen VALUES (?)', (identifier,))
+                except (OSError, sqlite3.Error):
+                    return False
+            self._seen_ids.add(identifier)
+            return True
+
+    def expected(self, protocol):
+        return self.supported_protocol(self.expected_protocol) and protocol == self.expected_protocol
 
     def call(self, route, payload=None):
         return request_json(self.base, "/web-bob/v1/" + route, data=payload,
@@ -262,12 +307,13 @@ class Andrea:
         return (cls.supported_protocol(protocol) and cls.hex_id(remote.get('draftId')) and
                 cls.hex_id(remote.get('digest')) and isinstance(remote.get('actionId'), str) and
                 bool(remote['actionId'].strip()) and
-                remote.get('localDigest' if protocol == 2 else 'digest') == cls.scope_digest(cls.scope(draft)))
+                remote.get('localDigest' if protocol == 2 else 'digest') == cls.scope_digest(cls.scope(draft)) and
+                (protocol != 2 or remote.get('requestDigest') == cls.scope_digest(cls.scope(draft))))
 
     @classmethod
     def bound_payload(cls, draft):
         remote = draft['bridge']
-        return {'bridgeDraftId': remote['draftId']} if remote.get('protocol', 1) == 2 else {
+        return {'bridgeDraftId': remote['draftId'], 'requestDigest': remote['requestDigest']} if remote.get('protocol', 1) == 2 else {
             **cls.scope(draft), 'bridgeDraftId': remote['draftId']}
 
     def prepare(self, draft):
@@ -276,7 +322,7 @@ class Andrea:
         scope = self.scope(draft)
         try:
             health = self.call('health')
-            if (not self.health_valid(health) or
+            if (not self.health_valid(health) or not self.expected(health['protocol']) or
                     type(health.get('connected')) is not bool or type(health.get('paused')) is not bool):
                 return None
             protocol = health['protocol']
@@ -286,9 +332,12 @@ class Andrea:
         required = ('ok', 'digest', 'draftId', 'actionId', 'expiresAt')
         if protocol == 1:
             required += ('challenge',)
+        else:
+            required += ('requestDigest',)
         if (not self.shape(result, required, protocol=protocol) or
                 result.get("ok") is not True or not self.hex_id(result.get('digest')) or
                 not self.hex_id(result.get('draftId')) or
+                (protocol == 2 and result.get('requestDigest') != self.scope_digest(scope)) or
                 (protocol == 1 and (result['digest'] != self.scope_digest(scope) or
                  not isinstance(result['challenge'], str) or
                  not re.fullmatch(r"wbtxt-[a-f0-9]{32}", result['challenge']))) or
@@ -297,14 +346,15 @@ class Andrea:
                 not time.time() * 1000 < result["expiresAt"] <= (time.time() + CONFIRM_SECONDS + 5) * 1000):
             return None
         if protocol == 2:
-            # Andrea chooses actor and draftRequestId, so its digest cannot be
-            # recomputed here. Preserve it as an opaque remote binding and keep
-            # a separate fingerprint to detect any local scope edits.
+            # requestDigest must come from Andrea's immutable stored request,
+            # independently of its normalized action digest. Never synthesize it.
+            if not self.claim_remote_id(result['draftId']):
+                return None
             return {**result, 'protocol': 2, 'localDigest': self.scope_digest(scope)}
         return result
 
     def cancel(self, draft):
-        if not self.token or not self.remote_valid(draft):
+        if not self.token or not self.remote_valid(draft) or not self.expected(draft['bridge'].get('protocol', 1)):
             return
         try:
             result = self.call('cancel', self.bound_payload(draft))
@@ -316,7 +366,7 @@ class Andrea:
         if not self.token:
             return "Andrea Web Bob bridge access is not configured. Delivery is blocked."
         result = self.call("health")
-        if not self.health_valid(result):
+        if not self.health_valid(result) or not self.expected(result['protocol']):
             raise TextingError("Andrea did not return a recognized owner-bridge response. Delivery is blocked.")
         if result.get("paused") is not False or result.get("connected") is not True:
             return "Andrea’s Web Bob bridge is reachable, but outbound messaging is paused or unavailable. Delivery is blocked."
@@ -325,7 +375,7 @@ class Andrea:
     def deliver(self, draft, confirmation, request_id):
         """Return correlated transport state, False for rejection, or None if unknown."""
         remote = draft.get("bridge")
-        if not self.token or not self.remote_valid(draft):
+        if not self.token or not self.remote_valid(draft) or not self.expected(draft['bridge'].get('protocol', 1)):
             return False
         if remote.get('protocol', 1) == 2:
             approval = re.fullmatch(r'yes (wbtxt-[a-f0-9]{64})', confirmation) if isinstance(confirmation, str) else None
@@ -351,9 +401,11 @@ class Andrea:
             return False
         remote = draft['bridge']
         protocol = remote.get('protocol', 1)
-        if (not cls.shape(result, ('ok', 'draftId', 'digest', 'actionId', 'state'),
+        required = ('ok', 'draftId', 'digest', 'actionId', 'state') + (('requestDigest',) if protocol == 2 else ())
+        if (not cls.shape(result, required,
                           ('messageGuid', 'deliveryProtocol', 'delivery', 'deliveryRefreshUnavailable'), protocol) or
                 result['ok'] is not True or
+                (protocol == 2 and result['requestDigest'] != remote['requestDigest']) or
                 any(result[k] != remote[k] for k in ('draftId', 'digest', 'actionId')) or
                 not isinstance(result['state'], str) or
                 result['state'] not in (*DELIVERY_STATES, 'pending', 'cancelled', 'expired',
@@ -416,7 +468,7 @@ class Andrea:
 
     def check_delivery(self, draft):
         """Revoke unconsumed consent, then inspect the original receipt; never resend."""
-        if not self.token or not self.remote_valid(draft):
+        if not self.token or not self.remote_valid(draft) or not self.expected(draft['bridge'].get('protocol', 1)):
             return None
         payload = self.bound_payload(draft)
         try:
@@ -611,7 +663,7 @@ class Texting:
             if bridge:
                 draft["bridge"] = {k: bridge[k] for k in ("draftId", "digest", "actionId")}
                 if bridge.get('protocol') == 2:
-                    draft['bridge'].update(protocol=2, localDigest=bridge['localDigest'])
+                    draft['bridge'].update(protocol=2, localDigest=bridge['localDigest'], requestDigest=bridge['requestDigest'])
                     draft['token'] = None  # Only Andrea's independent owner path has the approval.
                 else:
                     draft["token"] = bridge["challenge"]

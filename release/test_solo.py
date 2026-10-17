@@ -33,6 +33,49 @@ class CurrentModeReplayTests(unittest.TestCase):
                 andrea.call.return_value=dict(health,**{key:bad})
                 with self.assertRaises(Exception):solo.live_messaging_reads(self.root,'improve')
 
+    def test_isolated_remaining_replay_confirms_reminders_at_all_hours(self):
+        from datetime import datetime
+        from app import Chat
+        from reminders import ZONE
+        from texting_fixture import OfflineProviders
+        import uuid
+        for hour, minute in ((9, 0), (19, 50), (23, 30)):
+            with self.subTest(hour=hour):
+                folder = self.root / str(hour)
+                chat = Chat(folder / 'webchat', folder, OfflineProviders())
+                self.addCleanup(chat.close)
+                now = [datetime(2026, 10, 16, hour, minute, tzinfo=ZONE).timestamp()]
+                chat.reminders.clock = lambda: now[0]
+                cid = chat.new_conversation()['id']
+                seen = []
+                def send(client, cid, text):
+                    seen.append(text)
+                    if text in ('Karen QA status', 'band desk status'):
+                        return {}, dict(provider='teammates', content='Source: fixture')
+                    if text == 'band desk digest for Fixture Band':
+                        return {}, dict(provider='teammates', content='fixture',
+                                        teammate_evidence=dict(all_read=True, band_reads=[dict(name='Fixture Band')]))
+                    value = chat.submit(cid, text, str(uuid.uuid4()), actor='fixture-owner')
+                    answer = value['messages'][-1]
+                    if text.startswith('remind me'):
+                        self.assertIn('Reply `yes wbrem-', answer['content'])
+                        self.assertNotIn('Reminder saved', answer['content'])
+                    return value, answer
+                def call(path):
+                    if path == '/api/reminders':
+                        return dict(reminders=chat.reminders.listing())
+                    self.assertEqual(path, '/api/conversations/' + cid)
+                    now[0] += 2
+                    chat.deliver_reminders()
+                    return chat.conversations[cid]
+                client = Mock(); client.call.side_effect = call
+                with patch.object(solo, 'submit', side_effect=send), patch(
+                        'teammates.band_mappings', return_value=[dict(name='Fixture Band')]):
+                    checks = solo.remaining_replay(client, cid, folder)
+                self.assertTrue(all(c['passed'] for c in checks))
+                self.assertEqual(sum(text.startswith('yes wbrem-') for text in seen), 2)
+                self.assertFalse(chat.providers.calls)
+
     def test_live_remaining_replay_never_creates_reminders_or_reads_multiple_bands(self):
         client=Mock();client.call.return_value={'reminders':[]}
         def submit(client,cid,text):
@@ -150,7 +193,7 @@ class CurrentModeReplayTests(unittest.TestCase):
         import threading
         mock = MockMessaging(self.root)
         chat = Chat(self.root / 'conductor/webchat', self.root, OfflineProviders(),
-                    texting=Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token)))
+                    texting=Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token, expected_protocol=1)))
         server = Server(('127.0.0.1', 0), chat)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()

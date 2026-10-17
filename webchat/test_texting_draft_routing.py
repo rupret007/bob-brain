@@ -21,7 +21,7 @@ class TextingDraftRoutingTests(unittest.TestCase):
         root = Path(tmp.name)
         self.providers = OfflineProviders()
         self.texting = Texting(bluebubbles=Mock(),
-                              andrea=Andrea('http://127.0.0.1:4316', 'fixture-secret'))
+                              andrea=Andrea('http://127.0.0.1:4316', 'fixture-secret', expected_protocol=1))
         self.texting.resolve = Mock(return_value=dict(guid='iMessage;-;fixture',
             displayName='Andrea', participants=[dict(address='fixture@example.test')]))
         self.texting.instinct.is_target = Mock(return_value=False)
