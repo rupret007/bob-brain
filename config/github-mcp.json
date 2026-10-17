@@ -1,0 +1,12 @@
+{
+  "upstream": "https://github.com/github/github-mcp-server",
+  "release": "v2.0.2",
+  "license": "MIT",
+  "read_server_args": ["stdio", "--read-only", "--tools", "pull_request_read,list_pull_requests,get_file_contents"],
+  "trusted_publisher_server_args": ["stdio", "--tools", "create_pull_request"],
+  "model_mutation_tools": [],
+  "draft_only": true,
+  "merge_requires": ["independent Karen PASS for exact current SHA", "Jeff standing approval covering repository and merge"],
+  "webbob_can_merge": false,
+  "webbob_can_undraft": false
+}

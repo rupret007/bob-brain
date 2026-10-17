@@ -1,0 +1,21 @@
+{
+  "upstream": "https://github.com/taylorwilsdon/google_workspace_mcp",
+  "revision": "789730452b9c5452b2c8d348cf005d196c12ba4e",
+  "license": "MIT",
+  "status": "needs Jeff: OAuth consent + scopes",
+  "launch_after_consent": ["workspace-mcp", "--transport", "stdio", "--permissions", "gmail:readonly", "calendar:readonly", "drive:readonly"],
+  "scopes": [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/drive.readonly"
+  ],
+  "read_tools": ["search_gmail_messages", "get_gmail_message_content", "get_events", "search_drive_files", "get_drive_file_content"],
+  "writes_enabled": false,
+  "additional_minimum_write_scopes_if_separately_approved": [
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/calendar.events"
+  ]
+}

@@ -1,0 +1,16 @@
+[
+  {
+    "id": "github-identity",
+    "path": "memory/profile.md",
+    "line": 6,
+    "line_sha256": "5761ecbdeb57109a1971fffaae48c96affb978d79bcfd6272efada5ca9b8a42b",
+    "body": "Jeff's GitHub login is rupret007."
+  },
+  {
+    "id": "primary-daw",
+    "path": "user-memory/by-agent/dde0e4ca-6bee-45f3-b623-5adfbe85b1c3/profile.md",
+    "line": 14,
+    "line_sha256": "bea1e4c79add3179913854e6b0484f969d3c28d91eb9868ac3cd76a354d09eb0",
+    "body": "Jeff’s primary DAW is Logic Pro. Music tooling should deliver Logic-ready files (WAV/AIFF/MIDI/stems), not Ableton-first workflows."
+  }
+]

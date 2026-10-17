@@ -1,0 +1,16 @@
+{
+  "name": "Multi-LLM usage pulse",
+  "prompt": "Multi-LLM usage pulse (TOKEN CONSERVE). Write USAGE.md beat on Mini. Stay silent unless ChatGPT/Claude/Spark are critically depleted AND overnight work would fail without a Jeff action (e.g. Full reset click). Do not WakeParent for ordinary meter snapshots.",
+  "schedule": "35 9,13,17,21 * * 1-5",
+  "triggerPresentation": {
+    "version": 1,
+    "trigger": {
+      "type": "cron",
+      "schedule": "35 9,13,17,21 * * 1-5"
+    }
+  },
+  "enabled": true,
+  "provenance": "user",
+  "createdAt": 1788769268512,
+  "lastRunAt": 1789526472056
+}

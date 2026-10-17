@@ -1,0 +1,16 @@
+{
+  "name": "Daytime Codex Extra High pickup",
+  "prompt": "Bob ↔ Codex 1:1 sync conductor (weekday daytime). Shared record = Bob-the-Bot coord issue body + timestamped BEFORE/AFTER comments (America/Chicago). Chat is not state. Keep lanes moving; prepare ≤4K goals/steers.\n\nINJECT: use UI Automation composer type+Return (+ Steer if queued chips stuck) per [Bob Codex queue inject](sand-workflow:bob-codex-queue-inject). Do NOT `codex queue` / ipc.sock / daemon bootstrap beside live Goals. Never exec for watched jobs.\n\n1) Mini: ~/.codex/goals_1.sqlite for active (day 01a035ac…, WebJam 01a06f79…, Fantasy 01a0703c…). Healthy → paint coord leases; quiet unless collision.\n2) Stalled (>25m) or idle: draft ≤4K next Ultra/product steer; UI-inject into SAME thread. Day skips WebJam; WebJam webjam-only; Fantasy Fantasy-only.\n3) Idle board: reconcile coord vs GitHub. Skip leased/parked/owner-gates/Barker/AdoptIQ hosted-empty/live Cisco/unsigned WebJam tag.\n4) BEFORE + 4h lease before new code work.\n5) AFTER + body update; release when done.\n6) Drafts → Karen leftover+security; Bob leftover-squashes only after PASS with tip MATCH main.\n7) Quiet when healthy.\n\nFollow Bob Codex 1:1 sync + Bob Codex queue inject.",
+  "schedule": "*/20 9-20 * * 1-5",
+  "triggerPresentation": {
+    "version": 1,
+    "trigger": {
+      "type": "cron",
+      "schedule": "*/20 9-20 * * 1-5"
+    }
+  },
+  "enabled": false,
+  "provenance": "untrusted",
+  "createdAt": 1788426463877,
+  "lastRunAt": 1789091619240
+}
