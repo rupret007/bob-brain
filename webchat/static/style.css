@@ -818,6 +818,20 @@ code { overflow-wrap: anywhere; font-size: 11px; }
 
 .jobs-heading #refresh-jobs { margin-left: auto; }
 
+.attachment-text-preview, .attachment-reminder-dialog { width: min(96vw, 520px); max-height: 90vh; border: 1px solid var(--line); border-radius: 16px; padding: 16px; background: var(--surface); color: var(--text); }
+.attachment-preview-meta, .attachment-reminder-meta, .attachment-reminder-coverage { font-size: 13px; margin: 8px 0; overflow-wrap: anywhere; }
+.attachment-preview-toolbar { display: flex; gap: 8px; margin: 8px 0 12px; }
+.attachment-preview-body { max-height: min(50vh, 360px); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 12px; padding: 12px; font-size: 14px; line-height: 1.45; user-select: text; }
+.attachment-preview-page { margin-bottom: 12px; }
+.attachment-preview-page-label { font-size: 12px; color: var(--muted); margin: 0 0 4px; }
+.attachment-reminder-form label { display: block; margin-top: 10px; font-size: 13px; }
+.attachment-reminder-form textarea, .attachment-reminder-form input { width: 100%; box-sizing: border-box; font: inherit; padding: 10px; margin-top: 4px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); }
+.attachment-reminder-warning { font-size: 12px; color: var(--warn, #e8b060); margin: 6px 0; }
+.attachment-reminder-error { font-size: 12px; color: var(--danger); min-height: 1.2em; margin: 4px 0 0; }
+.attachment-reminder-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+.attachment-reminder-actions button { min-height: 44px; }
+.attachment-reminder-page { margin-left: 8px; font-size: 12px; color: var(--muted); }
+
 /* Text previews preserve the exact body and never interpret message HTML. */
 .message.assistant.texting .body { white-space: pre-wrap; }
 .message.assistant.private-memory .body { white-space: pre-wrap; }

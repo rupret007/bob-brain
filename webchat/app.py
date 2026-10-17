@@ -367,6 +367,20 @@ class Chat(TaskDispatch):
         for message in public.get('messages', []):
             message.pop('_generation', None)
             message.pop('_reply_contract', None)
+            attachments = message.get("attachments")
+            if attachments:
+                refreshed = []
+                for att in attachments:
+                    mid = att.get("media_id") if isinstance(att, dict) else None
+                    if not mid:
+                        refreshed.append(att)
+                        continue
+                    try:
+                        meta = load_meta(self.root, mid, conversation_id=value["id"])
+                        refreshed.append(public_attachment(meta, root=self.root, redact=self.redact))
+                    except FileNotFoundError:
+                        refreshed.append(att)
+                message["attachments"] = refreshed
         info = self.workers.get(value["id"])
         public["reply_stopping"] = bool(info and info["cancel"].is_set())
         return public
@@ -615,7 +629,7 @@ class Chat(TaskDispatch):
             raise RequestError(400, "The message contains invalid text.") from None
         if text and self.redact(text) != text:
             raise RequestError(400, "This message appears to contain a secret. Remove it before sending; it was not saved or sent to a model.")
-        public_attachments = [public_attachment(meta) for meta in attachment_metas]
+        public_attachments = [public_attachment(meta, root=self.root, redact=self.redact) for meta in attachment_metas]
         with self.lock:
             conversation = copy.deepcopy(self.get(identifier))
             if source_voice is None and self.voice.busy(identifier):
@@ -1166,7 +1180,9 @@ class Chat(TaskDispatch):
                         try:
                             if len(resolved) >= MAX_ATTACHMENTS_PER_MESSAGE:
                                 raise ValueError()
-                            resolved.append(public_attachment(load_meta(self.root, mid, conversation_id=identifier)))
+                            resolved.append(public_attachment(
+                                load_meta(self.root, mid, conversation_id=identifier),
+                                root=self.root, redact=self.redact))
                         except (FileNotFoundError, OSError, ValueError):
                             unavailable = True
                     if resolved:
@@ -1882,6 +1898,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, BUILD)
         assets = {"/style.css": ("style.css", "text/css; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                   "/action-history.js": ("action-history.js", "text/javascript; charset=utf-8"),
+                  "/attachment-reminder.js": ("attachment-reminder.js", "text/javascript; charset=utf-8"),
                   "/voice.js": ("voice.js", "text/javascript; charset=utf-8"),
                   "/voice-capture.js": ("voice-capture.js", "text/javascript; charset=utf-8"),
                   "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json")}
@@ -2165,7 +2182,7 @@ class Handler(BaseHTTPRequestHandler):
                 stored = store_media(chat.root, blob, name, conversation_id=conversation_id, redact=chat.redact)
             except ValueError as exc:
                 raise RequestError(400, str(exc)) from exc
-            return self.send(201, public_attachment(stored))
+            return self.send(201, public_attachment(stored, root=chat.root, redact=chat.redact))
         raise RequestError(404, "Not found.")
 
 

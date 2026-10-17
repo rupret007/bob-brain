@@ -846,11 +846,98 @@ def requested_attachment_ids(message: dict) -> list[str]:
     return list(dict.fromkeys(selected))
 
 
-def public_attachment(meta: dict) -> dict:
+def _pdf_page_ui_status(entry: dict) -> str:
+    text = str(entry.get("text") or "").strip()
+    if text:
+        return "ok"
+    if entry.get("empty"):
+        return "image_only"
+    return "empty"
+
+
+def _text_preview_coverage_note(plain: dict) -> str:
+    if plain.get("status") == "truncated":
+        return plain.get("coverage_label") or "text excerpt (truncated)"
+    return "page text, fully available"
+
+
+def _voice_preview_from_memo(memo: dict, base: dict, redact) -> dict:
+    if memo.get("status") != "ok" or not str(memo.get("text") or "").strip():
+        return {**base, "kind": "voice", "transcript_unavailable": True,
+                "coverage_note": "voice transcription unavailable", "segments": []}
+    transcribed_s = float(memo.get("transcribed_duration_s") or MEMO_TRANSCRIBE_MAX_S)
+    full = memo.get("full_duration_s")
+    truncated = bool(memo.get("truncated"))
+    start_label = f"[00:00–{_format_duration(transcribed_s)}]"
+    segments = [{"label": start_label, "text": redact(memo.get("text") or ""), "available": True}]
+    if truncated and full is not None and math.isfinite(full) and full > transcribed_s:
+        segments.append({
+            "label": f"[{_format_duration(transcribed_s)}–{_format_duration(full)} unavailable]",
+            "text": "",
+            "available": False,
+        })
+    coverage = (f"voice transcript, 00:00–{_format_duration(transcribed_s)} only"
+                if truncated else (memo.get("coverage_label") or "voice transcript"))
+    return {**base, "kind": "voice", "transcript_unavailable": False,
+            "coverage_note": coverage, "segments": segments}
+
+
+def _pdf_preview_from_extract(pdf: dict, base: dict, redact) -> dict:
+    if pdf.get("status") == "unavailable":
+        return {**base, "kind": "pdf", "coverage_note": "PDF text unavailable", "pages": []}
+    pages = []
+    for entry in pdf.get("pages") or []:
+        text = redact(entry.get("text") or "")
+        pages.append({"page": entry["page"], "text": text,
+                      "status": _pdf_page_ui_status({**entry, "text": text})})
+    default_page = next((row["page"] for row in pages if row["status"] == "ok"), None)
+    if not default_page and pages:
+        default_page = pages[0]["page"]
+    if pdf.get("status") == "empty":
+        note = "image-only — text unavailable"
+    elif pdf.get("status") == "truncated":
+        note = pdf.get("coverage_label") or "page text excerpt (truncated)"
+    else:
+        note = "page text, fully available"
+    return {**base, "kind": "pdf", "coverage_note": note, "pages": pages, "default_page": default_page}
+
+
+def build_attachment_preview(root: Path, meta: dict, redact) -> dict | None:
+    """Client excerpt preview for reminder UI; bounded local reads only."""
+    try:
+        path = resolve_media(root, meta["media_id"], conversation_id=meta["conversation_id"])
+    except (FileNotFoundError, ValueError):
+        return None
+    base = {"conversation_id": meta["conversation_id"],
+            "filename": meta.get("filename") or meta["media_id"],
+            "media_id": meta["media_id"]}
+    budget = MediaBudget(seconds=8)
+    kind = meta.get("kind")
+    if kind == "audio":
+        return _voice_preview_from_memo(transcribe_voice_memo(path, budget), base, redact)
+    if kind != "file":
+        return None
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        return _pdf_preview_from_extract(extract_pdf_text(path, budget), base, redact)
+    if suffix in {".txt", ".md", ".csv", ".json", ".log"}:
+        plain = plain_text_attachment(path)
+        text = redact(plain.get("text") or "")
+        status = "ok" if text.strip() else "empty"
+        return {**base, "kind": "text", "coverage_note": _text_preview_coverage_note(plain),
+                "pages": [{"page": 1, "text": text, "status": status}], "default_page": 1}
+    return None
+
+
+def public_attachment(meta: dict, *, root: Path | None = None, redact=None) -> dict:
     from urllib.parse import quote
     url = f"/api/media/{meta['media_id']}?conversation_id={quote(meta['conversation_id'], safe='')}"
     out = {"media_id": meta["media_id"], "filename": meta.get("filename") or meta["media_id"],
            "kind": meta.get("kind", "file"), "url": url, "bytes": meta.get("bytes", 0)}
     if meta.get("kind") == "audio":
         out["memo_label"] = memo_chip_label(meta.get("duration_s"))
+    if root is not None and redact is not None:
+        preview = build_attachment_preview(root, meta, redact)
+        if preview is not None:
+            out["preview"] = preview
     return out

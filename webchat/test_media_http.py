@@ -97,13 +97,16 @@ class MediaHTTPTests(fixtures.Fixture):
         blob = header + b'\x00' * (size - len(header))
         self.assertGreater(size, media.MAX_VIDEO_BYTES)
         self.assertLessEqual(size, media.MAX_AUDIO_BYTES)
-        code, _, body = self.request('POST', '/api/media/upload', {
+        payload = json.dumps({
             'conversation_id': self.identifier,
             'filename': 'memo.wav',
             'data_base64': base64.b64encode(blob).decode(),
+        }).encode()
+        code, _, body_bytes = self.raw('POST', '/api/media/upload', payload, headers={
+            'Content-Type': 'application/json',
         })
         self.assertEqual(code, 201)
-        info = json.loads(body)
+        info = json.loads(body_bytes)
         self.assertEqual(info['kind'], 'audio')
         self.assertEqual(info['bytes'], size)
 

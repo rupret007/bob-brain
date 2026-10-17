@@ -498,6 +498,34 @@ class HTTPTests(Fixture):
         self.assertTrue(payload.startswith(b"\x89PNG"))
         self.assertTrue(resolve_media(self.root, media_id, conversation_id=self.identifier).exists())
 
+    def test_conversation_history_hydrates_text_attachment_preview(self):
+        import base64
+
+        self.login()
+        payload = base64.b64encode(b"History preview line for reminder").decode()
+        code, _, body = self.request(
+            "POST",
+            "/api/media/upload",
+            {"conversation_id": self.identifier, "filename": "notes.txt", "data_base64": payload},
+        )
+        self.assertEqual(code, 201)
+        upload = json.loads(body)
+        self.assertIn("preview", upload)
+        self.assertEqual(upload["preview"]["kind"], "text")
+        code, _, _ = self.request(
+            "POST",
+            "/api/messages",
+            {"conversation_id": self.identifier, "message": "see attachment", "request_id": str(uuid.uuid4()),
+             "attachments": [upload["media_id"]]},
+        )
+        self.assertEqual(code, 202)
+        self.wait()
+        history = json.loads(self.request("GET", "/api/conversations/" + self.identifier)[2])
+        user = next(m for m in history["messages"] if m["role"] == "user" and m.get("attachments"))
+        preview = user["attachments"][0]["preview"]
+        self.assertEqual(preview["kind"], "text")
+        self.assertIn("History preview line", preview["pages"][0]["text"])
+
     def test_attachment_only_message_allowed(self):
         import base64
 

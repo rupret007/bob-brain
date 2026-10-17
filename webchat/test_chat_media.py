@@ -605,6 +605,42 @@ class ChatMediaTests(unittest.TestCase):
         self.assertIn('sampled frames only', bundle['warnings'][0])
         self.assertLess(time.monotonic() - before, media.MEDIA_PREP_SECONDS)
 
+    def test_public_attachment_omits_preview_without_root(self):
+        stored = self.store(b"hello preview", "notes.txt")
+        public = media.public_attachment(stored)
+        self.assertNotIn("preview", public)
+
+    def test_public_attachment_includes_text_preview(self):
+        stored = self.store(b"Reminder excerpt alpha\nsecond line", "notes.txt")
+        public = media.public_attachment(stored, root=self.root, redact=self.redact)
+        preview = public.get("preview")
+        self.assertIsInstance(preview, dict)
+        self.assertEqual(preview["kind"], "text")
+        self.assertEqual(preview["conversation_id"], self.cid)
+        self.assertIn("Reminder excerpt alpha", preview["pages"][0]["text"])
+
+    def test_public_attachment_pdf_preview_uses_extracted_pages(self):
+        stored = self.store(pdf_fixture("PDF reminder body"), "paper.pdf")
+        fake = {"status": "ok", "pages": [{"page": 1, "text": "PDF reminder body", "empty": False}],
+                "coverage_label": "PDF excerpt: page 1 of 1.", "text": "[Page 1]\nPDF reminder body"}
+        with patch.object(media, "extract_pdf_text", return_value=fake):
+            public = media.public_attachment(stored, root=self.root, redact=self.redact)
+        preview = public["preview"]
+        self.assertEqual(preview["kind"], "pdf")
+        self.assertEqual(preview["pages"][0]["status"], "ok")
+        self.assertEqual(preview["pages"][0]["text"], "PDF reminder body")
+
+    def test_public_attachment_voice_preview_marks_missing_transcript(self):
+        stored = self.store(wav_fixture(), "memo.wav")
+        missing = {"status": "unavailable", "text": media.TRANSCRIPTION_UNAVAILABLE,
+                   "truncated": False, "transcribed_duration_s": 0,
+                   "coverage_label": "Transcription coverage not available"}
+        with patch.object(media, "transcribe_voice_memo", return_value=missing):
+            public = media.public_attachment(stored, root=self.root, redact=self.redact)
+        preview = public["preview"]
+        self.assertEqual(preview["kind"], "voice")
+        self.assertTrue(preview["transcript_unavailable"])
+
 
 if __name__ == '__main__':
     unittest.main()

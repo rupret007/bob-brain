@@ -295,6 +295,14 @@ if ($("login-form")) {
           item.append(caption);
         }
       }
+      if (att.preview) {
+        const excerpt = document.createElement("button");
+        excerpt.type = "button";
+        excerpt.className = "attach-excerpt-link";
+        excerpt.textContent = "Read excerpt";
+        excerpt.addEventListener("click", () => openAttachmentTextPreview(att, current));
+        item.append(excerpt);
+      }
       const link = document.createElement("a");
       link.href = url + "&download=1";
       link.className = "attach-download";
@@ -303,6 +311,131 @@ if ($("login-form")) {
       item.append(link); wrap.append(item);
     }
     parent.append(wrap);
+  }
+  let attachmentPreviewState = null;
+  function renderAttachmentPreviewBody(preview) {
+    const host = $("attachment-preview-body");
+    if (!host) return;
+    host.replaceChildren();
+    if (!preview) return;
+    if (preview.kind === "voice" && Array.isArray(preview.segments)) {
+      for (const segment of preview.segments) {
+        const block = document.createElement("section");
+        block.className = "attachment-preview-page";
+        const label = document.createElement("p");
+        label.className = "attachment-preview-page-label";
+        label.textContent = segment.label || (segment.available ? "transcript" : "unavailable");
+        const text = document.createElement("div");
+        text.className = segment.available ? "attachment-preview-text" : "attachment-preview-text is-muted";
+        text.textContent = segment.text || (segment.available ? "" : "[unavailable]");
+        block.append(label, text);
+        host.append(block);
+      }
+      return;
+    }
+    const pages = Array.isArray(preview.pages) ? preview.pages : [];
+    if (!pages.length && preview.fallback_text) {
+      const text = document.createElement("div");
+      text.className = "attachment-preview-text";
+      text.textContent = preview.fallback_text;
+      host.append(text);
+      return;
+    }
+    for (const page of pages) {
+      const block = document.createElement("section");
+      block.className = "attachment-preview-page";
+      block.dataset.page = String(page.page ?? "");
+      const label = document.createElement("p");
+      label.className = "attachment-preview-page-label";
+      label.textContent = page.page != null ? `Page ${page.page}` : "Excerpt";
+      const text = document.createElement("div");
+      text.className = "attachment-preview-text";
+      if (page.status === "image_only") text.textContent = "[image-only — no selectable text]";
+      else if (page.status === "empty") text.textContent = "[empty page]";
+      else text.textContent = page.text || "";
+      block.append(label, text);
+      host.append(block);
+    }
+  }
+  function attachmentPreviewSelection() {
+    const host = $("attachment-preview-body");
+    const selection = document.getSelection();
+    if (!host || !selection || selection.isCollapsed || !selection.rangeCount) return "";
+    const range = selection.getRangeAt(0);
+    if (!host.contains(range.commonAncestorContainer)) return "";
+    return selection.toString();
+  }
+  function attachmentPreviewPageNumber() {
+    const host = $("attachment-preview-body");
+    const selection = document.getSelection();
+    if (!host || !selection || !selection.rangeCount) return attachmentPreviewState?.pageNumber ?? null;
+    let node = selection.anchorNode;
+    while (node && node !== host) {
+      if (node.dataset?.page) return Number(node.dataset.page);
+      node = node.parentElement;
+    }
+    return attachmentPreviewState?.pageNumber ?? null;
+  }
+  function syncAttachmentReminderAction() {
+    if (!attachmentPreviewState) return;
+    const selectedText = attachmentPreviewSelection();
+    attachmentPreviewState.selectedText = selectedText;
+    attachmentPreviewState.pageNumber = attachmentPreviewPageNumber();
+    window.AttachmentReminder?.updatePreviewAction?.({
+      button: $("attachment-reminder-action"),
+      preview: attachmentPreviewState.preview,
+      conversationId: current,
+      pageNumber: attachmentPreviewState.pageNumber,
+      selectedText,
+    });
+  }
+  function openAttachmentTextPreview(att, conversationId) {
+    if (!att?.preview) return;
+    attachmentPreviewState = {
+      mediaId: att.media_id,
+      filename: att.filename,
+      preview: {
+        ...att.preview,
+        filename: att.filename || att.preview.filename,
+        media_id: att.media_id,
+        conversation_id: att.preview.conversation_id || conversationId,
+      },
+      pageNumber: att.preview.default_page ?? (att.preview.pages?.[0]?.page ?? null),
+      selectedText: "",
+      selectionId: crypto.randomUUID(),
+    };
+    $("attachment-preview-title").textContent = att.filename || "Attachment excerpt";
+    const coverage = window.AttachmentReminder?.coverageNoteForPreview?.(attachmentPreviewState.preview, attachmentPreviewState.pageNumber) || "";
+    $("attachment-preview-meta").textContent = coverage;
+    renderAttachmentPreviewBody(attachmentPreviewState.preview);
+    syncAttachmentReminderAction();
+    if (!$("attachment-text-preview").open) $("attachment-text-preview").showModal();
+  }
+  function closeAttachmentTextPreview() {
+    attachmentPreviewState = null;
+    if ($("attachment-text-preview")?.open) $("attachment-text-preview").close();
+  }
+  function initAttachmentPreviewUi() {
+    window.AttachmentReminder?.mount?.();
+    $("close-attachment-preview")?.addEventListener("click", closeAttachmentTextPreview);
+    $("attachment-text-preview")?.addEventListener("close", () => { attachmentPreviewState = null; });
+    $("attachment-preview-body")?.addEventListener("mouseup", syncAttachmentReminderAction);
+    $("attachment-preview-body")?.addEventListener("keyup", syncAttachmentReminderAction);
+    $("attachment-reminder-action")?.addEventListener("click", () => {
+      if (!attachmentPreviewState) return;
+      window.AttachmentReminder?.openReminderDialog?.({
+        preview: attachmentPreviewState.preview,
+        conversationId: current,
+        pageNumber: attachmentPreviewState.pageNumber,
+        selectedText: attachmentPreviewState.selectedText,
+        selectionId: attachmentPreviewState.selectionId,
+        insertIntoComposer: (draft) => {
+          $("message").value = draft;
+          $("message").dispatchEvent(new Event("input"));
+          $("message").focus();
+        },
+      });
+    });
   }
   function composerState() {
     const hasText = Boolean($("message").value.trim());
@@ -1402,6 +1535,7 @@ if ($("login-form")) {
   }
   function init() {
     try {
+      initAttachmentPreviewUi();
       primeSpeechVoices();
       const recognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
       $("mic").hidden = !recognition;
