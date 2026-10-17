@@ -1,8 +1,10 @@
 """Turn requests to use LLMs on ongoing work into durable, scoped assignments."""
 import json
 import re
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "state"))
 import task_queue
 from api_tasks import ROLES
 from build_info import CODE_ROOT, git_checkout_root

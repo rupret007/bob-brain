@@ -150,8 +150,12 @@ class RecoveryWordingTests(unittest.TestCase):
         original = copy.deepcopy(snap)
         # Load mock targets before the IO boundary, also when this test runs
         # alone. Build identity lookup must not invoke Git during that import.
+        state_dir = str(Path(__file__).resolve().parents[1] / "state")
         with patch("subprocess.check_output", side_effect=OSError("Offline build identity")):
             import providers
+            import sys
+            if state_dir not in sys.path:
+                sys.path.insert(0, state_dir)
             import task_queue
         # Import and rendering must not read files, run workers, call models,
         # send, or reach a network.
