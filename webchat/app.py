@@ -365,6 +365,7 @@ class Chat(TaskDispatch):
         for message in public.get('messages', []):
             message.pop('_generation', None)
             message.pop('_reply_contract', None)
+            message.pop('_memory_edit', None)
         info = self.workers.get(value["id"])
         public["reply_stopping"] = bool(info and info["cancel"].is_set())
         return public
@@ -593,6 +594,11 @@ class Chat(TaskDispatch):
             raise RequestError(400, 'Choose one provider for provider-only mode.')
         if not isinstance(text, str):
             raise RequestError(400, "Write a message between 1 and 6,000 characters.")
+        from memory_edit import Invalid as InvalidMemoryEdit, validate_request as validate_memory_edit
+        try:
+            validate_memory_edit(text, self.redact)
+        except InvalidMemoryEdit as exc:
+            raise RequestError(400, str(exc)) from None
         text = text.strip()
         raw_attachments = attachments if attachments is not None else []
         try:
@@ -679,11 +685,17 @@ class Chat(TaskDispatch):
             if not parse_memory_confirm(text)[0] and not parse_remember(text) and not MEMORY_DISMISS.match(text):
                 conversation.pop("pending_memory", None)
                 conversation.pop("pending_memory_id", None)
+            from memory_edit import take_pending as take_memory_edit, handle as memory_edit_turn
+            pending_edit = take_memory_edit(conversation)
             from memory_removal import handle as memory_removal_turn
             removal = memory_removal_turn(self, conversation, text, request_id, source_voice=source_voice,
                                          provider=provider, worker=worker, attachments=public_attachments)
             if removal is not None:
                 return removal
+            correction = memory_edit_turn(self, conversation, text, request_id, pending=pending_edit,
+                source_voice=source_voice, provider=provider, worker=worker, attachments=public_attachments)
+            if correction is not None:
+                return correction
             from project_context import handle as project_context_turn
             from project_context import observe as observe_project
             observe_project(self.ledger_root(identifier), conversation, text)
