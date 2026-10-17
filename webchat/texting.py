@@ -11,6 +11,7 @@ import copy
 import hashlib
 import hmac
 import json
+import logging
 import math
 import os
 import re
@@ -24,6 +25,8 @@ import urllib.request
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 CONFIRM_SECONDS = 300
 SUPPORTED_PROTOCOLS = {1, 2}
@@ -208,7 +211,15 @@ class Andrea:
                         raise ValueError("dedicated token required")
                     self.token = cfg["token"]
                     if 'protocol' in cfg:
-                        self.expected_protocol = cfg['protocol']
+                        pinned = self.expected_protocol
+                        cfg_protocol = cfg['protocol']
+                        if pinned == 2 and cfg_protocol == 1:
+                            logger.warning(
+                                "Web Bob config protocol %s downgrades pinned expected protocol %s",
+                                cfg_protocol,
+                                pinned,
+                            )
+                        self.expected_protocol = cfg_protocol
                 except (OSError, ValueError, KeyError, TypeError, TextingError):
                     self.token = ""
 
