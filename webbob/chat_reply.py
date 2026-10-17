@@ -8,11 +8,18 @@ import time
 
 MAX_ATTEMPTS = 3
 BACKOFF_BASE_SECONDS = 1.0
+SEND_TIMEOUT_SECONDS = 30.0
+IN_FLIGHT_LEASE_SECONDS = SEND_TIMEOUT_SECONDS
 REPLY_ID = re.compile(r"[a-zA-Z0-9_.:-]{1,100}")
+BOB_CHAT_CONVERSATION = re.compile(r"bob-chat:[a-zA-Z0-9_.:-]{1,80}")
 
 
 class ChatReplyError(ValueError):
     pass
+
+
+class ReplyNotSentError(ChatReplyError):
+    """Transport confirms the visible Bob-chat message was not posted."""
 
 
 def body_digest(body):
@@ -29,8 +36,8 @@ class ChatReplyJournal:
     """Per-conversation store for one visible assistant reply per stable message id."""
 
     def __init__(self, path, conversation):
-        if not isinstance(conversation, str) or not conversation:
-            raise ChatReplyError("conversation required")
+        if not isinstance(conversation, str) or not BOB_CHAT_CONVERSATION.fullmatch(conversation):
+            raise ChatReplyError("bob-chat conversation required")
         self.path, self.conversation = path, conversation
         if not self.path.parent.is_dir() or self.path.is_symlink():
             raise ChatReplyError("private reply store unavailable")
@@ -67,6 +74,16 @@ class ChatReplyJournal:
         return {"id": row["id"], "state": row["state"], "receipt": row["receipt"],
                 "attempts": row["attempts"], "next_retry_at": row["next_retry_at"]}
 
+    def _mark_uncertain_delivered(self, reply_id, now):
+        receipt = f"uncertain:{reply_id}"
+        with self.db() as db:
+            db.execute(
+                "UPDATE replies SET state='delivered', receipt=?, next_retry_at=NULL, updated_at=? WHERE id=?",
+                (receipt, now, reply_id),
+            )
+            row = self._row(db, reply_id)
+        return self._snapshot(row)
+
     def prepare(self, reply_id, body):
         if not REPLY_ID.fullmatch(reply_id):
             raise ChatReplyError("invalid reply id")
@@ -95,15 +112,14 @@ class ChatReplyJournal:
         if not callable(send):
             raise ChatReplyError("transport adapter required")
         now = time.time() if now is None else now
-        digest = body_digest(body)
         self.prepare(reply_id, body)
         with self.db() as db:
             row = self._row(db, reply_id)
             if row["state"] == "delivered":
                 return self._snapshot(row)
-            if row["state"] == "in_flight":
-                return self._snapshot(row)
             if row["state"] == "failed":
+                return self._snapshot(row)
+            if row["state"] == "in_flight" and now < row["updated_at"] + IN_FLIGHT_LEASE_SECONDS:
                 return self._snapshot(row)
             if row["state"] == "failed_retry" and row["next_retry_at"] is not None and now < row["next_retry_at"]:
                 return self._snapshot(row)
@@ -115,10 +131,10 @@ class ChatReplyJournal:
             db.execute("UPDATE replies SET state='in_flight', attempts=?, updated_at=? WHERE id=?",
                        (attempts, now, reply_id))
         try:
-            receipt = await asyncio.wait_for(send(body), 30)
+            receipt = await asyncio.wait_for(send(reply_id, body), SEND_TIMEOUT_SECONDS)
             if not isinstance(receipt, str) or not receipt:
                 raise ChatReplyError("transport receipt required")
-        except Exception:
+        except ReplyNotSentError:
             delay = retry_delay(attempts)
             next_at = now + delay
             terminal = attempts >= MAX_ATTEMPTS
@@ -128,6 +144,17 @@ class ChatReplyJournal:
                            (state, None if terminal else next_at, now, reply_id))
                 row = self._row(db, reply_id)
             return self._snapshot(row)
+        except ChatReplyError:
+            delay = retry_delay(attempts)
+            next_at = now + delay
+            state = "failed_retry" if attempts < MAX_ATTEMPTS else "failed"
+            with self.db() as db:
+                db.execute("""UPDATE replies SET state=?, receipt=NULL, next_retry_at=?, updated_at=? WHERE id=?""",
+                           (state, None if state == "failed" else next_at, now, reply_id))
+                row = self._row(db, reply_id)
+            return self._snapshot(row)
+        except Exception:
+            return self._mark_uncertain_delivered(reply_id, now)
         with self.db() as db:
             db.execute("UPDATE replies SET state='delivered', receipt=?, next_retry_at=NULL, updated_at=? WHERE id=?",
                        (receipt, now, reply_id))
