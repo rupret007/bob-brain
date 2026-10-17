@@ -242,6 +242,27 @@ class ContextTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assert_body_denied('Plain text ' + label + ': See you soon')
 
+    def test_plain_text_exempt_only_before_a_format_word(self):
+        # Karen #144: labels main blocks must stay blocked; the exemption needs files/format/mode next.
+        for body in ('Plain text: See you soon', 'plain text - See you soon', 'Plain text \u2013 See you soon',
+                     'Plain text (from Jeff): See you soon', 'Plain text, from Jeff: See you soon',
+                     'PLAIN TEXT: See you soon', 'plain_text: See you soon', 'Plain-text: See you soon',
+                     'Plain text. See you soon', 'Plain text\nSee you soon', 'Plain text "See you soon"',
+                     'Plain text from Jeff: See you soon', 'plain text message: See you soon',
+                     'Plain text files? No. Plain text: See you soon',
+                     'Store configs as plain text.', 'Store as plain text', 'plain text filesystem notes',
+                     'plain text formatting: See you soon', 'plain text modes: See you soon'):
+            with self.subTest(body=body):
+                self.assert_body_denied(body)
+        for index, body in enumerate(('Use plain text files.', 'Keep it in plain text file storage.',
+                                      'Plain text format only.', 'Export in plain text formats.',
+                                      'Editor in plain text mode.', 'Use plain_text files.')):
+            with self.subTest(body=body):
+                fact = copy.deepcopy(self.fact)
+                fact['id'] = 'fmtword-' + str(index)
+                fact['body'] = body
+                self.accept(fact)
+
     def test_standalone_text_labels_rejected(self):
         for body in ('Text: See you soon', "Jeff's text: See you soon",
                      'Text: See you soon. Use plain text files.'):
@@ -249,7 +270,7 @@ class ContextTests(unittest.TestCase):
                 self.assert_body_denied(body)
 
     def test_plain_text_format_facts_preserve_original_body(self):
-        for index, body in enumerate(('Store configs as plain text.',
+        for index, body in enumerate(('Store configs as plain text files.',
                                      'Use the plain text format.',
                                      'Use PLAIN-TEXT files.',
                                      'Use plain\ntext mode.')):
