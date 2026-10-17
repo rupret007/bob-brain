@@ -5,9 +5,10 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import unicodedata
 from unittest.mock import patch
 
-from webbob.shared_context import AcceptedWriter, BOTS, ContextError, SharedContext, VerifiedAcceptance, digest, import_day_one
+from webbob.shared_context import AcceptedWriter, BOTS, ContextError, SharedContext, VerifiedAcceptance, digest, import_day_one, safe_fact
 
 
 class ContextTests(unittest.TestCase):
@@ -278,6 +279,140 @@ class ContextTests(unittest.TestCase):
                      'plain text\nfiles: See you soon'):
             with self.subTest(body=body):
                 self.assert_body_denied(body)
+
+    def test_plain_text_payload_continuations_denied(self):
+        for body in (
+                'plain text files, from Jeff: see you soon',
+                'plain text files. from Jeff: see you soon',
+                'plain text files.\nFrom Jeff: see you',
+                'plain text files...from Jeff: hi',
+                'plain text files,— from Jeff: hi',
+                'plain text format, hey call me',
+                'plain text mode hey call me',
+                'plain text mode on: hey call me',
+                'plain text files saying: see you soon',
+                'plain text files quoting Jeff: see you soon',
+                'plain text format reads "see you soon"',
+                'plain text format of the message: see you',
+                'plain text files files: see you',
+                'plain text files format: see you',
+                'tex\u0301t from Jeff: see you'):
+            with self.subTest(body=body):
+                with self.assertRaises(ContextError):
+                    safe_fact(body)
+
+    def test_plain_text_payloads_with_encoding_suffix_denied(self):
+        for bypass in (
+                'plain text files, from Jeff: see you soon',
+                'plain text files. from Jeff: see you soon',
+                'plain text files.\nFrom Jeff: see you',
+                'plain text files...from Jeff: hi',
+                'plain text files,— from Jeff: hi',
+                'plain text format, hey call me',
+                'plain text mode hey call me',
+                'plain text mode on: hey call me',
+                'plain text files saying: see you soon',
+                'plain text files quoting Jeff: see you soon',
+                'plain text format reads "see you soon"',
+                'plain text format of the message: see you',
+                'plain text files files: see you',
+                'plain text files format: see you'):
+            body = bypass + ', UTF-8 encoded.'
+            with self.subTest(body=body):
+                with self.assertRaises(ContextError):
+                    safe_fact(body)
+
+    def test_plain_text_encoding_suffix_must_end_text(self):
+        for separator in ('\n', '\r', '\r\n', '\u2028', '\u2029'):
+            for payload in ('', 'from Jeff: see you', 'hey call me',
+                            'plain text files, from Jeff: see you soon'):
+                body = 'Use plain text files, UTF-8 encoded.' + separator + payload
+                with self.subTest(body=body):
+                    with self.assertRaises(ContextError):
+                        safe_fact(body)
+
+    def test_plain_text_exact_encoding_suffixes_allowed(self):
+        for word in ('file', 'files', 'format', 'formats', 'mode'):
+            for encoding in ('UTF-8', 'UTF8', 'UTF-16', 'ASCII', 'Latin-1', 'ISO-8859-1'):
+                for name in (encoding, encoding.lower(), encoding.swapcase()):
+                    for ending in ('', '.', ' encoded', ' EnCoDeD.'):
+                        body = 'Use plain text ' + word + ', ' + name + ending
+                        with self.subTest(body=body):
+                            self.assertEqual(safe_fact(body), body)
+        for suffix in ('ＵＴＦ－８ ｅｎｃｏｄｅｄ．', 'UT\u200bF-8 encoded.',
+                       'UTF-8 en\u200ccoded.', 'UTF-8 encoded.\ufeff'):
+            body = 'Use plain text files, ' + suffix
+            with self.subTest(body=body):
+                self.assertEqual(safe_fact(body), body)
+
+    def test_plain_text_nonexact_encoding_suffixes_denied(self):
+        for suffix in ('UTF-32', 'UTF-8ish', 'UTF-8encoded.', 'UTF-8 encoded..',
+                       'UTF-8 encoded. ', 'UTF-8, ASCII', 'UTF-8 encoded,',
+                       'UTF-8 encoded. from Jeff: see you', 'UTF-8 encoded. hey call me',
+                       'UTF-8 encoded; from Jeff: see you', 'UTF-8\nencoded.',
+                       '\u0410SCII encoded.', 'ASC\u0131\u0131 encoded.', 'UT\u0301F-8 encoded.',
+                       'UTF-8 enc\u0301oded.', 'UTF-8 encoded.\u0301'):
+            body = 'Use plain text files, ' + suffix
+            with self.subTest(body=body):
+                with self.assertRaises(ContextError):
+                    safe_fact(body)
+        with self.assertRaises(ContextError):
+            safe_fact('Use plain text, UTF-8 encoded.')
+
+    def test_plain_text_encoding_nonbreaking_hyphen_denied(self):
+        # NFKC maps U+2011 to U+2010, which is still not ASCII U+002D.
+        self.assertEqual(unicodedata.normalize('NFKC', 'UTF\u20118'), 'UTF\u20108')
+        with self.assertRaises(ContextError):
+            safe_fact('Use plain text files, UTF\u20118 encoded.')
+
+    def test_plain_text_legitimate_endings_allowed(self):
+        for body in ('Store configs as plain text files.',
+                     'Use plain text mode only',
+                     'Use plain text only',
+                     'Store configs in plain text'):
+            with self.subTest(body=body):
+                self.assertEqual(safe_fact(body), body)
+        for word in ('file', 'files', 'format', 'formats', 'mode'):
+            for ending in ('', '.', ','):
+                body = 'Use plain text ' + word + ending
+                with self.subTest(body=body):
+                    self.assertEqual(safe_fact(body), body)
+
+    def test_plain_text_allowlist_continuations_allowed(self):
+        for format_word in ('', ' file', ' files', ' format', ' formats', ' mode'):
+            for continuation in ('only', 'storage', 'for configs', 'in the repo',
+                                 'not binary', 'then compress'):
+                body = 'Use plain text' + format_word + ' ' + continuation
+                with self.subTest(body=body):
+                    self.assertEqual(safe_fact(body), body)
+
+    def test_plain_text_allowlist_does_not_hide_payloads(self):
+        for continuation in ('only', 'storage', 'for', 'in', 'not', 'then'):
+            for payload in (': see you', ' reads "see you"', ' (see you)',
+                            '\nsee you', '\rsee you', '\u2028see you', '\u2029see you',
+                            ', from Jeff: see you', '. quoting Jeff: see you',
+                            '...saying: see you', ',— from Jeff: see you'):
+                for format_word in ('', ' files'):
+                    body = 'plain text' + format_word + ' ' + continuation + payload
+                    with self.subTest(body=body):
+                        with self.assertRaises(ContextError):
+                            safe_fact(body)
+
+    def test_plain_text_allowlist_requires_whole_words(self):
+        for continuation in ('onlyish', 'storages', 'formatting', 'inside', 'nothing', 'thence'):
+            body = 'plain text files ' + continuation
+            with self.subTest(body=body):
+                with self.assertRaises(ContextError):
+                    safe_fact(body)
+
+    def test_combining_marks_and_nfkc_checked_without_changing_body(self):
+        for body in ('ｔｅｘ\u0301ｔ from Jeff: see you',
+                     'plain tex\u0301t files only: see you'):
+            with self.subTest(body=body):
+                with self.assertRaises(ContextError):
+                    safe_fact(body)
+        body = 'Use plain tex\u0301t files.'
+        self.assertEqual(safe_fact(body), body)
 
     def test_plain_text_format_exemption_requires_phrase_boundary(self):
         for word in ('file', 'files', 'format', 'formats', 'mode'):
