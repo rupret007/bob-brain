@@ -1,0 +1,12 @@
+[Unit]
+Description=Bob cluster worker
+After=bob-nats.service
+Wants=bob-nats.service
+PartOf=bob-cluster.target
+StartLimitIntervalSec=0
+[Service]
+ExecStart=/bin/bash %h/.config/bob-cluster/worker-run.sh
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=bob-cluster.target

@@ -1,0 +1,47 @@
+#!/bin/bash
+# nuc-run: run one job in an isolated git worktree on the NucBox (WSL ext4).
+# Usage: nuc-run <owner/repo> <ref> <job-id> [--class heavy|light] [--timeout SEC] -- <command...>
+# Writes ~/work/results/<job-id>/{result.json,log.txt}. Exit code = command exit code.
+# Concurrency: heavy=4 slots, light=6 slots (flock). Never echoes credentials.
+set -uo pipefail
+repo="$1"; ref="$2"; job="$3"; shift 3
+class=heavy; tmo=1800
+while [ $# -gt 0 ] && [ "$1" != "--" ]; do
+  case "$1" in --class) class="$2"; shift 2;; --timeout) tmo="$2"; shift 2;; *) echo "bad arg $1" >&2; exit 64;; esac
+done
+[ "${1:-}" = "--" ] && shift
+[ $# -gt 0 ] || { echo "no command" >&2; exit 64; }
+. ~/.nvm/nvm.sh >/dev/null 2>&1
+[ -f ~/nuc-tools/pw-env.sh ] && . ~/nuc-tools/pw-env.sh
+name="${repo##*/}"; mir=~/work/.mirrors/$name.git; wt=~/work/wt/$job; out=~/work/results/$job
+mkdir -p ~/work/.mirrors ~/work/wt "$out" ~/work/.locks
+log="$out/log.txt"; : > "$log"
+slots=4; [ "$class" = light ] && slots=6
+start=$(date +%s); got=""
+while [ -z "$got" ]; do
+  for i in $(seq 1 $slots); do
+    exec 9>~/work/.locks/$class.$i
+    if flock -n 9; then got=$i; break; fi
+  done
+  [ -z "$got" ] && sleep 5
+done
+waited=$(( $(date +%s) - start ))
+{
+  if [ ! -d "$mir" ]; then git clone --bare --quiet "https://github.com/$repo.git" "$mir"; fi
+  git -C "$mir" fetch --quiet --prune origin '+refs/heads/*:refs/heads/*' '+refs/pull/*/head:refs/pull/*/head' 2>/dev/null || git -C "$mir" fetch --quiet origin
+  rm -rf "$wt"; git -C "$mir" worktree prune
+  git -C "$mir" worktree add --quiet --detach "$wt" "$ref"
+} >>"$log" 2>&1 || { echo '{"job":"'"$job"'","status":"setup_failed"}' > "$out/result.json"; exit 70; }
+cd "$wt"
+sha=$(git rev-parse --short HEAD)
+if [ -f package-lock.json ]; then npm ci --no-audit --no-fund --prefer-offline >>"$log" 2>&1 || { echo '{"job":"'"$job"'","status":"npm_ci_failed","sha":"'"$sha"'"}' > "$out/result.json"; exit 71; }; fi
+t0=$(date +%s.%N)
+timeout "$tmo" "$@" >>"$log" 2>&1; rc=$?
+t1=$(date +%s.%N)
+dur=$(echo "$t1-$t0" | bc)
+st=pass; [ $rc -ne 0 ] && st=fail; [ $rc -eq 124 ] && st=timeout
+printf '{"job":"%s","repo":"%s","ref":"%s","sha":"%s","class":"%s","slot":%s,"wait_sec":%s,"cmd_sec":%s,"rc":%s,"status":"%s","host":"nucbox-wsl","finished":"%s"}\n' \
+  "$job" "$repo" "$ref" "$sha" "$class" "$got" "$waited" "$dur" "$rc" "$st" "$(date -Is)" > "$out/result.json"
+cat "$out/result.json"
+cd ~ && git -C "$mir" worktree remove --force "$wt" >/dev/null 2>&1
+exit $rc
