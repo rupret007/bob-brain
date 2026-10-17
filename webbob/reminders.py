@@ -27,8 +27,9 @@ class ReminderStore:
         self.path.chmod(0o600)
 
     def _reject_symlink_path(self):
-        if self.path.is_symlink() or self.path.parent.is_symlink():
-            raise ReminderError("reminder store unavailable")
+        for part in (self.path, *self.path.parents):
+            if part.is_symlink():
+                raise ReminderError("reminder store unavailable")
 
     @contextmanager
     def db(self):

@@ -146,6 +146,24 @@ class MorningCalendarRoutineStoreTests(unittest.TestCase):
         with self.assertRaises(MorningCalendarError):
             routine.cancel()
 
+    def test_symlinked_ancestor_directory_rejected_for_read_and_write(self):
+        real_root = Path(self.tmp.name) / "real-root"
+        real_root.mkdir()
+        link_root = Path(self.tmp.name) / "link-root"
+        os.symlink(real_root, link_root)
+        nested = link_root / "nested"
+        nested.mkdir()
+        path = nested / "morning.sqlite"
+        self.assertFalse(path.parent.is_symlink())
+        clock = lambda: datetime(2026, 3, 7, 7, 0, tzinfo=CHICAGO)
+        with self.assertRaises(MorningCalendarError):
+            MorningCalendarRoutine(path, clock=clock)
+        good = real_root / "nested" / "good.sqlite"
+        MorningCalendarRoutine(good, clock=clock)
+        alias = link_root / "nested" / "good.sqlite"
+        with self.assertRaises(MorningCalendarError):
+            MorningCalendarRoutine(alias, clock=clock).cancel()
+
     def test_store_file_mode_is_private(self):
         MorningCalendarRoutine(self.path, clock=lambda: datetime(2026, 3, 7, 7, 0, tzinfo=CHICAGO))
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)

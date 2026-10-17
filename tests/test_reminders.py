@@ -101,6 +101,25 @@ class ReminderStoreTests(unittest.TestCase):
         with self.assertRaises(ReminderError):
             self.store.list()
 
+    def test_symlinked_ancestor_directory_rejected_for_read_and_write(self):
+        real_root = Path(self.tmp.name) / "real-root"
+        real_root.mkdir()
+        link_root = Path(self.tmp.name) / "link-root"
+        os.symlink(real_root, link_root)
+        nested = link_root / "nested"
+        nested.mkdir()
+        path = nested / "reminders.sqlite"
+        self.assertFalse(path.parent.is_symlink())
+        due = datetime(2026, 3, 7, 18, 0, tzinfo=CHICAGO)
+        with self.assertRaises(ReminderError):
+            ReminderStore(path, clock=self.clock).create("blocked", due)
+        good = real_root / "nested" / "good.sqlite"
+        ReminderStore(good, clock=self.clock).create("ok", due)
+        alias = link_root / "nested" / "good.sqlite"
+        self.assertTrue(alias.exists())
+        with self.assertRaises(ReminderError):
+            ReminderStore(alias, clock=self.clock).list()
+
     def test_store_file_mode_is_private(self):
         self.store.create("Private", datetime(2026, 3, 7, 18, 0, tzinfo=CHICAGO))
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
