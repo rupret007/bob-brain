@@ -1,0 +1,7 @@
+{
+  "brave_spend_model": "brave_search",
+  "cost_per_query_usd": 0.005,
+  "cost_per_query_microdollars": 5000,
+  "default_daily_query_cap": 50,
+  "jeff_confirmation": "Jeff must confirm the Brave account stays on $0 prepay with a hard provider usage limit before enabling live search."
+}
