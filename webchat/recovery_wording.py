@@ -9,11 +9,14 @@ import math
 import re
 from datetime import datetime
 
+from chat_intent import blocked_scopes
+
 
 MAX_AGE_SECONDS = 24 * 60 * 60
+LIVE_LANE_STATES = frozenset(("running", "paused", "claimed", "unverified"))
 STAGES = frozenset(("queued", "claimed", "launched", "running", "failed",
                     "blocked", "succeeded", "harvested", "paused",
-                    "unverified", "not_observed"))
+                    "unverified", "not_observed", "finished"))
 RESULT_MARKERS = frozenset(("deliverables persisted", "harvest_complete",
                             "result verified; pending harvest",
                             "API report verified; pending harvest"))
@@ -59,13 +62,45 @@ def _evidence_age(row, captured_at, available):
     updated = _stamp(row.get("last_activity_at") if lane else row.get("updated_at"))
     # Live lane paths were inspected at capture; historical lanes use the
     # recorded activity timestamp. Never treat an old report as fresh work.
-    if lane and row.get("state") != "not_observed":
+    if lane and row.get("state") in LIVE_LANE_STATES:
         updated = captured
     if captured is not None and updated is not None:
         age = captured - updated
         if 0 <= age <= MAX_AGE_SECONDS:
             return age
     return None
+
+
+def _qualifies_result_marker(row):
+    marker = row.get("recovery")
+    stage = row.get("state")
+    return (isinstance(marker, str) and marker in RESULT_MARKERS
+            and stage in ("running", "harvested", "succeeded")
+            and row.get("bucket") != "failed")
+
+
+def _row_hold_active(state, row):
+    holds = (state or {}).get("holds") or {}
+    if not holds:
+        return False
+    project = row.get("project")
+    if isinstance(project, str) and project:
+        return bool(blocked_scopes(state, [project]))
+    if "all" in holds:
+        return True
+    return False
+
+
+def _dedupe_keys(row):
+    keys = []
+    job_id = _identifier(row.get("job_id"))
+    if job_id:
+        keys.append(("job", job_id))
+    if row.get("source") == "lane_collector":
+        lane = _identifier(row.get("screen"))
+        if lane:
+            keys.append(("lane", lane))
+    return keys
 
 
 def format_recovery_message(row, *, captured_at, available=True, hold_active=False):
@@ -88,9 +123,7 @@ def format_recovery_message(row, *, captured_at, available=True, hold_active=Fal
     fresh = _evidence_age(row, captured_at, available) is not None
     path = _result_path(row.get("result_path")) if lane else None
     marker = row.get("recovery")
-    recorded_result = (isinstance(marker, str) and marker in RESULT_MARKERS
-                       and stage in ("running", "harvested", "succeeded")
-                       and row.get("bucket") != "failed")
+    recorded_result = _qualifies_result_marker(row)
     next_step = "Inspect status for this job." if job_id else "Inspect status."
     if not fresh:
         explanation = "Current outcome is unknown; evidence is missing, stale, or unavailable."
@@ -104,7 +137,7 @@ def format_recovery_message(row, *, captured_at, available=True, hold_active=Fal
             next_step = f"Open the saved result `{path}`."
         else:
             next_step = "Inspect status for this job to locate the saved result."
-    elif stage == "failed":
+    elif stage == "failed" or row.get("bucket") == "failed":
         explanation = "Failure is recorded; no result evidence is included in this snapshot. Whether a result exists is unknown."
     elif stage == "blocked":
         explanation = "A block is recorded; the cause and result are unknown."
@@ -123,8 +156,9 @@ def recovery_messages(snapshot):
     rows = [row for bucket in ("failed", "queued", "done", "claimed")
             for row in queue.get(bucket, []) if isinstance(row, dict)
             and (row.get("state") in ("failed", "blocked")
+                 or row.get("bucket") == "failed" and row.get("state") == "harvested"
                  or row.get("state") == "queued" and row.get("recovery") == "waiting for lane/worktree lease"
-                 or isinstance(row.get("recovery"), str) and row["recovery"] in RESULT_MARKERS)]
+                 or _qualifies_result_marker(row))]
     bob = snapshot.get("bob_lanes") or {}
     rows += [row for key in ("live", "finished_recent") for row in bob.get(key, [])
              if isinstance(row, dict) and row.get("source") == "lane_collector"
@@ -138,16 +172,21 @@ def recovery_messages(snapshot):
     # Rank across buckets and lanes before deduplication and the note limit.
     # Freshest evidence wins; stable ties retain the existing snapshot order.
     rows.sort(key=priority)
+    hold_state = snapshot.get("recovery_hold_state")
+    legacy_hold = snapshot.get("recovery_hold_active") is True
     notes, seen = [], set()
     for row in rows:
-        identity = _identifier(row.get("job_id")) or _identifier(row.get("screen"))
-        if identity in seen:
+        keys = _dedupe_keys(row)
+        if keys and any(key in seen for key in keys):
             continue
-        seen.add(identity)
+        for key in keys:
+            seen.add(key)
+        hold_active = (_row_hold_active(hold_state, row) if hold_state is not None
+                       else legacy_hold)
         notes.append(format_recovery_message(
             row, captured_at=snapshot.get("captured_at"),
             available=inspection.get("queue_available") if row.get("journal") else True,
-            hold_active=snapshot.get("recovery_hold_active") is True))
+            hold_active=hold_active))
         if len(notes) == 3:
             break
     return notes

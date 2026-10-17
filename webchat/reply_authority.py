@@ -604,11 +604,13 @@ def correcting_status(text, conversation):
 
 
 def operational_reply(root, provider, text="", *, observation=None, redact=lambda value: value,
-                      recovery_hold_active=False):
+                      recovery_hold_active=False, recovery_hold_state=None):
     from status_observation import redact_snapshot, snapshot_digest
     started = time.time()
     snap = redact_snapshot(build_live_status_snapshot(root, now=started), redact)
-    if recovery_hold_active:
+    if recovery_hold_state is not None:
+        snap["recovery_hold_state"] = recovery_hold_state
+    elif recovery_hold_active:
         snap["recovery_hold_active"] = True
     finished = time.time()
     content = format_operational_reply(snap, provider, text)
@@ -672,7 +674,7 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
     from resource_inventory import question as resource_question
     if not reference and not resource_question(text) and (live_status_question(text,conversation) or correcting_status(text, conversation)):
         return operational_reply(root, answer["provider"], text, observation=observation, redact=redact,
-                                 recovery_hold_active=bool(scopes))
+                                 recovery_hold_state=state)
     else:
         from dispatch_receipts import claims_dispatch, dispatch_prose, reference_context, NO_DISPATCH
         # Once operational routing is resolved, guides and other requested

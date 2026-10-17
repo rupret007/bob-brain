@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import recovery_wording
+from chat_intent import apply_turn, blocked_scopes, new_state
 from live_status_snapshot import _queue_jobs
 from recovery_wording import format_recovery_message, recovery_messages
 from reply_authority import enforce, format_operational_reply, operational_reply
@@ -243,7 +244,64 @@ class RecoveryWordingTests(unittest.TestCase):
         snap["queue_jobs"] = _queue_jobs(records, set())
         answer = recovery_messages(snap)[0]
         self.assertNotIn("A saved result is recorded", answer)
+        self.assertIn("Failure is recorded; no result evidence is included in this snapshot", answer)
+        self.assertNotIn("The outcome and chat delivery are unknown", answer)
         self.assert_observational(answer)
+
+    def test_non_live_or_missing_state_lane_requires_fresh_activity_timestamp(self):
+        stale = dict(lane(), state="finished", last_activity_at=NOW - 86401)
+        answer = format_recovery_message(stale, captured_at=CAPTURED)
+        self.assertIn("Current outcome is unknown", answer)
+        self.assertNotIn("Open the saved result", answer)
+        missing_state = dict(lane(), state=None, last_activity_at=NOW - 86401)
+        answer = format_recovery_message(missing_state, captured_at=CAPTURED)
+        self.assertIn("Current outcome is unknown", answer)
+        live = dict(lane(), state="running", last_activity_at=NOW - 86401)
+        answer = format_recovery_message(live, captured_at=CAPTURED)
+        self.assertIn("Open the saved result", answer)
+
+    def test_deduplication_preserves_distinct_unknown_ids_and_scopes_screen_to_lane_collector(self):
+        snap = snapshot()
+        snap["queue_jobs"]["failed"] = [
+            dict(job(), job_id=None),
+            dict(job(), job_id=None, updated_at=NOW - 1),
+        ]
+        notes = recovery_messages(snap)
+        self.assertEqual(len(notes), 2)
+        snap["queue_jobs"]["failed"] = [
+            dict(job(), job_id=None, screen="lane-p23", source="conductor"),
+        ]
+        snap["bob_lanes"] = {"finished_recent": [lane()]}
+        notes = recovery_messages(snap)
+        self.assertEqual(len(notes), 2)
+        self.assertIn("Lane `lane-p23`", notes[0])
+        snap = snapshot(job())
+        snap["queue_jobs"]["failed"].append(dict(job(), job_id="job-p23", screen="lane-p23",
+                                                   source="lane_collector"))
+        notes = recovery_messages(snap)
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0].count("`job-p23`"), 1)
+
+    def test_project_scoped_hold_applies_by_row_project_not_query_text(self):
+        state = new_state()
+        apply_turn(state, "hold Web Bob", "fixture-hold-webbob")
+        snap = snapshot(job(project="Coach"))
+        snap["recovery_hold_state"] = state
+        coach_note = recovery_messages(snap)[0]
+        self.assertNotIn("The saved hold remains in place", coach_note)
+        snap = snapshot(job(project="Web Bob"))
+        snap["recovery_hold_state"] = state
+        held_note = recovery_messages(snap)[0]
+        self.assertIn("The saved hold remains in place", held_note)
+        snap = snapshot(job(project="Coach"))
+        snap["recovery_hold_state"] = state
+        snap["queue_jobs"]["failed"].append(dict(job(project="Web Bob"), job_id="held-job"))
+        notes = recovery_messages(snap)
+        held = next(note for note in notes if "`held-job`" in note)
+        coach = next(note for note in notes if "`job-p23`" in note)
+        self.assertIn("The saved hold remains in place", held)
+        self.assertNotIn("The saved hold remains in place", coach)
+        self.assertFalse(blocked_scopes(state, ["Coach"]))
 
     def test_integration_uses_one_saved_snapshot_and_one_step_per_job(self):
         for snap in (snapshot(job()),
@@ -261,7 +319,6 @@ class RecoveryWordingTests(unittest.TestCase):
                     self.assertEqual(answer, format_operational_reply(observation["snapshot"], "server", question))
 
     def test_enforce_preserves_saved_hold_in_replayable_status_receipt(self):
-        from chat_intent import apply_turn, new_state
         state = new_state()
         apply_turn(state, "hold all work", "fixture-hold")
         self.assertTrue(state["holds"])
@@ -273,7 +330,7 @@ class RecoveryWordingTests(unittest.TestCase):
                              conversation, observation=observation)
         self.assertIn("The saved hold remains in place", answer)
         self.assertTrue(state["holds"])
-        self.assertTrue(observation["snapshot"]["recovery_hold_active"])
+        self.assertEqual(observation["snapshot"]["recovery_hold_state"], state)
         self.assertEqual(answer, format_operational_reply(observation["snapshot"], "server", "status"))
         self.assert_observational(answer)
 
