@@ -8,15 +8,15 @@ Missing/invalid release policy, malformed configuration, or a mismatching health
 draft or receipt protocol fails closed. Saved legacy drafts cannot send under a
 protocol-2 policy.
 
-The pinned Andrea revision `2b1ef79d55d74fddcf748cb227e6f5a746843ce8` does not
-provide the evidence below. **Protocol-2 confirmation is therefore blocked with
-that pin.** Local drafting remains available. Updating Web Bob alone does not
-restore protocol-2 sending. The real-pin positive contract probe must remain red
-until Andrea implements this contract and a reviewed pin replaces it; the offline
-negative probe is not release qualification.
+The pinned Andrea revision `6f1030f9d1b8a8c973ccd3ef4c5cf148669179d1` implements
+this binding in `src/web-bob-request-scope.ts` and `src/web-bob-bridge.ts`.
+Its `docs/WEB_BOB_BRIDGE.md` specifies `protocol: 2` for owner approval and
+`deliveryProtocol: 1` for receipt inspection. These are separate versions;
+requiring delivery protocol 2 would reject this reviewed pin. Protocol-1
+approval responses remain refused under the release policy.
 
-Andrea must add `requestDigest` (64 lowercase SHA-256 hex characters) to successful
-protocol-2 draft responses and to every confirm/cancel/status receipt. This is
+Andrea includes `requestDigest` (64 lowercase SHA-256 hex characters) in successful
+protocol-2 draft responses and in every confirm/cancel/status receipt. This is
 separate from the existing `digest` of Andrea's normalized action.
 
 Compute `requestDigest` from the immutable original Web Bob scope, before Andrea

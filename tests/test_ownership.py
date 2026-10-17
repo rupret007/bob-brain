@@ -192,6 +192,10 @@ except GateError:
                 self.claim(ttl=ttl)
         with self.assertRaises(gate.GateError):
             Executor("andrea", "unknown")
+        with self.assertRaises(gate.GateError):
+            Executor("andrea", "83623dd8")
+        pin = json.loads((Path(__file__).resolve().parents[1] / "release/andrea-bridge.json").read_text())
+        self.assertEqual(ANDREA_RELEASE, pin["sha"])
         self.assertEqual(Executor("andrea", ANDREA_RELEASE).gate.owner, "andrea")
 
     def test_malformed_legacy_records_deny_even_when_expired_or_released(self):

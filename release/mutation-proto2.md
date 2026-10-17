@@ -14,10 +14,10 @@ source was restored byte-for-byte after each mutation and verified by SHA-256.
 ```sh
 PYTHONPATH=webchat python3 -m unittest test_texting.AndreaProtocolTests
 PATH=/opt/homebrew/opt/node@22/bin:$PATH python3 release/bridge_probe.py \
-  --andrea ../andrea-webbob-older-thread-1002 --output /tmp/webbob-proto2-probe.json
+  --andrea ../andrea-webbob-consent1015-1017 --output /tmp/webbob-proto2-probe.json
 ```
 
-The probe verifies Andrea pin `2b1ef79d55d74fddcf748cb227e6f5a746843ce8`
+The current probe verifies Andrea pin `6f1030f9d1b8a8c973ccd3ef4c5cf148669179d1`
 and its compiled artifact hash. It first runs the unmodified worker and verifies
 disabled owner delivery. For the positive path, a temporary copy of that worker
 installs Andrea's `OwnerChallengeDelivery` test seam; only Andrea mints the
@@ -30,7 +30,7 @@ optional browser skip. Installed the matching Chromium/WebKit runtimes and set
 `BOB_PLAYWRIGHT_MODULE` to the existing shared package for the final run;
 no tests were removed, weakened or disabled.
 
-Final verification: `python3 -m unittest discover -s webchat` passed all 3,165
+Historical verification (before the requestDigest binding changes; not qualification of the current pin): `python3 -m unittest discover -s webchat` passed all 3,165
 tests in 283.473 seconds with zero skips. The 15 focused protocol/legacy client
 tests also passed. The real-pin probe passed its 49 injected negative cases,
 approval rejection checks, and one synthetic send with receipt recovery;

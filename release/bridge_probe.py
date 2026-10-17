@@ -53,7 +53,7 @@ def sample_draft():
 def negative_contract(bridge, health, draft, receipt):
     """Inject malformed responses at each client boundary, without network writes."""
     checked = 0
-    for invalid in (0, 3, '2', True, 1.0, 2.0, None, [], {}):
+    for invalid in (0, 1, 3, '2', True, 1.0, 2.0, None, [], {}):
         bad = {**health, 'protocol': invalid}
         with patch.object(bridge, 'call', return_value=bad) as call:
             try: bridge.status()
@@ -63,7 +63,7 @@ def negative_contract(bridge, health, draft, receipt):
             assert all(c.args[0] == 'health' for c in call.call_args_list)
         checked += 1
     for bad in ({k:v for k,v in health.items() if k != 'protocol'}, [], {},
-                {**health, 'deliveryProtocol': True}, {**health, 'instinctReadOnly': 1}):
+                {**health, 'deliveryProtocol': True}, {**health, 'deliveryProtocol': 2}, {**health, 'instinctReadOnly': 1}):
         with patch.object(bridge, 'call', return_value=bad):
             try: bridge.status()
             except TextingError: pass
@@ -74,13 +74,17 @@ def negative_contract(bridge, health, draft, receipt):
     prepared = dict(ok=True, **{k:remote[k] for k in ('draftId','digest','actionId')}, expiresAt=(time.time()+299)*1000, requestDigest=remote['requestDigest'])
     for bad in ([], {}, {**prepared, 'challenge': 'wbtxt-'+'0'*64},
                 {**prepared, 'approvalToken': 'wbtxt-'+'0'*64}, {**prepared, 'expiresAt': True},
-                {**prepared, 'state': 'approval_unavailable'}, {**prepared, 'digest': 'bad'}):
+                {**prepared, 'state': 'approval_unavailable'},
+                {k:v for k,v in prepared.items() if k != 'requestDigest'},
+                {**prepared, 'requestDigest': '0'*64}, {**prepared, 'protocol': 1}, {**prepared, 'digest': 'bad'}):
         with patch.object(bridge, 'call', side_effect=[health, bad]):
             assert bridge.prepare(draft) is None, 'Malformed approval response accepted'
         checked += 1
     bad_receipts = [None, [], {}, {**receipt, 'unknown': True}, {**receipt, 'ok': 1},
                     {**receipt, 'digest': '0'*64}, {**receipt, 'state': 'unknown'},
-                    {**receipt, 'delivery': None}, {**receipt, 'deliveryRefreshUnavailable': 'false'}]
+                    {**receipt, 'delivery': None}, {**receipt, 'protocol': 1},
+                    {k:v for k,v in receipt.items() if k != 'requestDigest'},
+                    {**receipt, 'requestDigest': '0'*64}, {**receipt, 'deliveryProtocol': 2}, {**receipt, 'deliveryRefreshUnavailable': 'false'}]
     for key in ('protocol', 'deliveryProtocol'):
         bad_receipts.extend({**receipt, key:v} for v in (0, 3, '2', True, 1.0, None))
     bad_receipts.extend({**receipt, 'delivery': {**receipt['delivery'], key:v}}
@@ -103,8 +107,8 @@ def negative_contract(bridge, health, draft, receipt):
     return checked
 
 
-def offline_negative_contract():
-    """Validate the negative matrix without starting servers or Andrea workers."""
+def offline_contract_fixture():
+    """Protocol-2 responses from the pinned Andrea wire contract."""
     bridge = Andrea('http://127.0.0.1:4316', 'synthetic-offline-token', expected_protocol=2)
     value = sample_draft()
     binding = Andrea.scope_digest(Andrea.scope(value))
@@ -117,10 +121,26 @@ def offline_negative_contract():
     receipt['delivery'] = dict(state='delivered', error=0, checkedAt=time.time()*1000,
                                deliveredAt=None, fresh=True,
                                **{k: receipt[k] for k in ('messageGuid', 'actionId', 'digest')})
+    return bridge, health, value, receipt
+
+
+def offline_negative_contract():
+    """Validate the negative matrix without starting servers or Andrea workers."""
+    bridge, health, value, receipt = offline_contract_fixture()
     assert bridge.delivery_receipt(value, receipt) == 'delivered'
     return dict(all_pass=True, scope='offline synthetic negative contract',
                 negative_contract_cases=negative_contract(bridge, health, value, receipt),
                 real_texts_sent=0, worker_dispatches=0)
+
+
+def failed_owner_delivery_contract(bridge, draft, failed):
+    """Failed independent owner delivery cannot authorize a send."""
+    failure_id = {'bridgeDraftId': failed['summary']['bridgeDraftId'],
+                  'requestDigest': Andrea.scope_digest(Andrea.scope(draft))}
+    assert bridge.call('status', failure_id)['state'] == 'approval_unavailable'
+    try: bridge.call('confirm', {**failure_id, 'approvalToken': failed['approvalToken']})
+    except TextingError as exc: assert exc.status == 409
+    else: raise AssertionError('Failed owner delivery authorized a send')
 
 
 def probe(andrea):
@@ -177,13 +197,10 @@ def probe(andrea):
                 # Failed independent delivery does not confer authority, even on
                 # a token that reached the test owner inbox before failure.
                 (private/'owner-delivery-fails').touch()
-                assert bridge.prepare(sample_draft()) is None
+                failed_draft = sample_draft()
+                assert bridge.prepare(failed_draft) is None
                 failed = json.loads((private/'owner-inbox.json').read_text())
-                failure_id = {'bridgeDraftId': failed['summary']['bridgeDraftId']}
-                assert bridge.call('status', failure_id)['state'] == 'approval_unavailable'
-                try: bridge.call('confirm', {**failure_id, 'approvalToken': failed['approvalToken']})
-                except TextingError as exc: assert exc.status == 409
-                else: raise AssertionError('Failed owner delivery authorized a send')
+                failed_owner_delivery_contract(bridge, failed_draft, failed)
                 assert not (private/'provider-count.json').exists()
                 (private/'owner-delivery-fails').unlink()
                 # This failed attempt performed one exact-recipient read.
@@ -223,6 +240,19 @@ def probe(andrea):
                 assert owner['summary']['contentHash'] == pending['bridge']['digest']
                 assert owner['summary']['text'] == card['body']
                 confirmation = 'yes ' + owner['approvalToken']
+                # Every protocol-2 operation binds the immutable original request.
+                # Rejected checks must neither revoke nor consume the real approval.
+                for route in ('confirm', 'cancel', 'status'):
+                    for request_digest, status in ((None, 400), ('0'*64, 403)):
+                        payload = {'bridgeDraftId': pending['bridge']['draftId']}
+                        if request_digest is not None:
+                            payload['requestDigest'] = request_digest
+                        if route == 'confirm':
+                            payload['approvalToken'] = owner['approvalToken']
+                        try: bridge.call(route, payload)
+                        except TextingError as exc: assert exc.status == status
+                        else: raise AssertionError('Unbound protocol-2 operation accepted')
+                assert not (private/'provider-count.json').exists()
                 # The legacy approval shape is rejected by the real ingress.
                 try: bridge.call('confirm', {**bridge.bound_payload(pending), 'confirmation': confirmation})
                 except TextingError as exc: assert exc.status == 400
@@ -275,7 +305,7 @@ def probe(andrea):
                 assert saved['_texting']['drafts'][card['id']]['state'] == 'delivered'
                 assert not mock.sends and not mock.unexpected_writes and not chat.providers.calls
                 return dict(all_pass=True, scope='real Python Chat -> Andrea HTTP -> durable SQLite/core action -> synthetic provider',
-                            protocol=2, negative_contract_cases=negative_cases,
+                            protocol=2, deliveryProtocol=1, negative_contract_cases=negative_cases,
                             disabled_and_failed_owner_delivery_blocked=True,
                             approval_received_only_via_test_owner_adapter=True,
                             synthetic_provider_posts=1, real_texts_sent=0, worker_dispatches=0,
