@@ -1,11 +1,18 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sqlite3
 import tempfile
+import threading
 import unittest
 from zoneinfo import ZoneInfo
 
-from webbob.reminders import CHICAGO, MAX_PENDING_PER_OWNER, ReminderError, ReminderStore
+from webbob.reminders import (
+    CHICAGO,
+    MAX_PENDING_PER_OWNER,
+    MAX_PENDING_PER_STORE,
+    ReminderError,
+    ReminderStore,
+)
 
 UTC = ZoneInfo("UTC")
 OWNER = "jeff"
@@ -65,6 +72,19 @@ class ReminderStoreTests(unittest.TestCase):
             self.assertNotIsInstance(ctx.exception, OverflowError)
             self.assertIs(type(ctx.exception), ReminderError)
 
+    def test_extreme_aware_due_times_raise_reminder_error(self):
+        for due in (
+            "9999-12-31T23:59:59-12:00",
+            "0001-01-01T00:00:00+14:00",
+            datetime(9999, 12, 31, 23, 59, tzinfo=timezone(timedelta(hours=-12))),
+        ):
+            with self.assertRaises(ReminderError):
+                self.store.create("x", due)
+
+    def test_far_future_cap_enforced(self):
+        with self.assertRaises(ReminderError):
+            self.store.create("x", "2100-01-01T00:00:00")
+
     def test_per_owner_pending_cap(self):
         base = datetime(2027, 1, 1, 9, 0, tzinfo=CHICAGO)
         for i in range(MAX_PENDING_PER_OWNER):
@@ -79,6 +99,30 @@ class ReminderStoreTests(unittest.TestCase):
         with self.assertRaises(ReminderError):
             other.cancel(created["id"])
         self.assertEqual(self.store.cancel(created["id"])["state"], "cancelled")
+
+    def test_owner_normalized_nfkc_casefold_ascii(self):
+        created = self.store.create("Jeff private", "2027-01-02T09:00:00")
+        for owner in ("Jeff", "JEFF", "jeff ", "ｊｅｆｆ", "jeff\u200b"):
+            view = ReminderStore(self.path, owner, clock=self.clock)
+            self.assertEqual(len(view.list()), 1)
+            self.assertEqual(view.get(created["id"])["id"], created["id"])
+        self.assertEqual(created["owner"], OWNER)
+
+    def test_invalid_owner_rejected(self):
+        for owner in ("", "  ", None, 0, b"jeff", "j\u0435ff"):
+            with self.assertRaises(ReminderError):
+                ReminderStore(self.path, owner, clock=self.clock)
+
+    def test_store_wide_pending_cap(self):
+        base = datetime(2027, 1, 1, 9, 0, tzinfo=CHICAGO)
+        owners = MAX_PENDING_PER_STORE // MAX_PENDING_PER_OWNER
+        for o in range(owners):
+            st = ReminderStore(self.path, f"o{o}", clock=self.clock)
+            for i in range(MAX_PENDING_PER_OWNER):
+                st.create(f"r{i}", base + timedelta(minutes=i))
+        overflow = ReminderStore(self.path, "overflow", clock=self.clock)
+        with self.assertRaises(ReminderError):
+            overflow.create("one too many", base)
 
     def test_owner_column_persisted(self):
         self.store.create("x", "2027-01-02T09:00:00")
@@ -131,14 +175,51 @@ class ReminderStoreTests(unittest.TestCase):
         due = datetime(2026, 3, 7, 12, 0, tzinfo=CHICAGO)
         reminder = self.store.create("Once only", due)
         first = self.store.collect_due()
-        self.assertEqual(self.store.get(reminder["id"])["state"], "pending")
+        self.assertEqual(self.store.get(reminder["id"])["state"], "delivering")
         second = self.store.collect_due()
         self.assertEqual([r["id"] for r in first], [reminder["id"]])
-        self.assertEqual([r["id"] for r in second], [reminder["id"]])
+        self.assertEqual(second, [])
         self.store.mark_fired(reminder["id"])
         self.assertEqual(self.store.collect_due(), [])
         row = ReminderStore(self.path, OWNER, clock=self.clock).get(reminder["id"])
         self.assertEqual(row["state"], "fired")
+
+    def test_concurrent_collectors_never_both_claim_same_reminder(self):
+        due = datetime(2026, 3, 7, 12, 0, tzinfo=CHICAGO)
+        reminder = self.store.create("deliver", due)
+        batches = []
+        barrier = threading.Barrier(2)
+
+        def worker():
+            barrier.wait()
+            store = ReminderStore(self.path, OWNER, clock=self.clock)
+            batches.append(store.collect_due())
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        claimed = [r["id"] for batch in batches for r in batch]
+        self.assertEqual(claimed.count(reminder["id"]), 1)
+
+    def test_crash_after_collect_leaves_uncertain_not_resent(self):
+        due = datetime(2026, 3, 7, 12, 0, tzinfo=CHICAGO)
+        reminder = self.store.create("crash", due)
+        self.assertEqual(len(self.store.collect_due()), 1)
+        again = ReminderStore(self.path, OWNER, clock=self.clock).collect_due()
+        self.assertEqual(again, [])
+        self.assertEqual(self.store.get(reminder["id"])["state"], "uncertain")
+        self.assertEqual(
+            ReminderStore(self.path, OWNER, clock=self.clock).collect_due(), []
+        )
+
+    def test_mark_fired_rejects_cancelled_reminder(self):
+        due = datetime(2026, 3, 7, 12, 30, tzinfo=CHICAGO)
+        reminder = self.store.create("x", due)
+        self.store.cancel(reminder["id"])
+        with self.assertRaises(ReminderError):
+            self.store.mark_fired(reminder["id"])
 
     def test_cancel_prevents_firing(self):
         due = datetime(2026, 3, 7, 12, 30, tzinfo=CHICAGO)
@@ -155,6 +236,14 @@ class ReminderStoreTests(unittest.TestCase):
         with self.assertRaises(ReminderError):
             ReminderStore(link, OWNER, clock=self.clock)
 
+    def test_symlink_parent_directory_rejected(self):
+        real = Path(self.tmp.name) / "realdir"
+        real.mkdir()
+        linkdir = Path(self.tmp.name) / "linkdir"
+        linkdir.symlink_to(real)
+        with self.assertRaises(ReminderError):
+            ReminderStore(linkdir / "reminders.sqlite", OWNER, clock=self.clock)
+
     def test_naive_clock_rejected(self):
         with self.assertRaises(ReminderError):
             ReminderStore(
@@ -166,6 +255,10 @@ class ReminderStoreTests(unittest.TestCase):
     def test_body_length_enforced(self):
         with self.assertRaises(ReminderError):
             self.store.create("x" * 2001, "2027-01-02T09:00:00")
+
+    def test_empty_body_rejected(self):
+        with self.assertRaises(ReminderError):
+            self.store.create("", "2027-01-02T09:00:00")
 
     def test_store_file_permissions(self):
         mode = self.path.stat().st_mode & 0o777

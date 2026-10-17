@@ -3,11 +3,13 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
+import unicodedata
 import uuid
 from zoneinfo import ZoneInfo
 
 CHICAGO = ZoneInfo("America/Chicago")
 MAX_PENDING_PER_OWNER = 100
+MAX_PENDING_PER_STORE = 3000
 _LATEST_DUE_UTC = datetime(2099, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
 
 
@@ -20,7 +22,11 @@ class ReminderStore:
         self.path = Path(path)
         self.owner = self._validate_owner(owner)
         self.clock = clock or (lambda: datetime.now(CHICAGO))
-        if not self.path.parent.is_dir() or self.path.is_symlink():
+        if (
+            not self.path.parent.is_dir()
+            or self.path.is_symlink()
+            or self.path.parent.is_symlink()
+        ):
             raise ReminderError("reminder store unavailable")
         with self.db() as db:
             db.execute(
@@ -31,14 +37,26 @@ class ReminderStore:
                 due_utc REAL NOT NULL,
                 state TEXT NOT NULL)"""
             )
+            db.execute(
+                "UPDATE reminders SET state='uncertain' WHERE owner=? AND state='delivering'",
+                (self.owner,),
+            )
         self.path.chmod(0o600)
         self._now_utc()
 
     @staticmethod
     def _validate_owner(owner):
-        if not isinstance(owner, str) or not owner.strip():
+        if not isinstance(owner, str):
             raise ReminderError("owner required")
-        return owner
+        normalized = unicodedata.normalize("NFKC", owner)
+        normalized = "".join(
+            ch for ch in normalized if unicodedata.category(ch) != "Cf"
+        )
+        normalized = "".join(ch for ch in normalized if not ch.isspace())
+        normalized = normalized.casefold()
+        if not normalized or not normalized.isascii():
+            raise ReminderError("owner required")
+        return normalized
 
     @contextmanager
     def db(self):
@@ -75,12 +93,16 @@ class ReminderStore:
             if fold0.timestamp() != fold1.timestamp():
                 raise ReminderError("ambiguous or nonexistent local time in Chicago")
             due_at = due_at.replace(tzinfo=CHICAGO)
+            try:
+                due_utc = due_at.astimezone(timezone.utc)
+            except (OverflowError, OSError, ValueError) as exc:
+                raise ReminderError("invalid due time") from exc
         else:
-            due_at = due_at.astimezone(CHICAGO)
-        try:
-            due_utc = due_at.astimezone(timezone.utc)
-        except (OverflowError, OSError, ValueError) as exc:
-            raise ReminderError("invalid due time") from exc
+            try:
+                due_at = due_at.astimezone(CHICAGO)
+                due_utc = due_at.astimezone(timezone.utc)
+            except (OverflowError, OSError, ValueError) as exc:
+                raise ReminderError("invalid due time") from exc
         if due_utc > _LATEST_DUE_UTC:
             raise ReminderError("due time too far in the future")
         return due_utc
@@ -121,6 +143,11 @@ class ReminderStore:
             raise ReminderError("due time must be in the future")
         reminder_id = str(uuid.uuid4())
         with self.db() as db:
+            store_pending = db.execute(
+                "SELECT COUNT(*) AS n FROM reminders WHERE state='pending'",
+            ).fetchone()["n"]
+            if store_pending >= MAX_PENDING_PER_STORE:
+                raise ReminderError("reminder limit reached")
             pending = db.execute(
                 "SELECT COUNT(*) AS n FROM reminders WHERE owner=? AND state='pending'",
                 (self.owner,),
@@ -139,9 +166,10 @@ class ReminderStore:
     def list(self):
         with self.db() as db:
             rows = db.execute(
-                "SELECT * FROM reminders WHERE state='pending' ORDER BY due_utc"
+                "SELECT * FROM reminders WHERE owner=? AND state='pending' ORDER BY due_utc",
+                (self.owner,),
             ).fetchall()
-        return [self._row(row) for row in self._owned(rows)]
+        return [self._row(row) for row in rows]
 
     def get(self, reminder_id):
         with self.db() as db:
@@ -163,15 +191,30 @@ class ReminderStore:
         now_utc = self._now_utc().timestamp()
         with self.db() as db:
             rows = db.execute(
-                "SELECT * FROM reminders WHERE state='pending' AND due_utc <= ? ORDER BY due_utc",
-                (now_utc,),
+                """SELECT * FROM reminders WHERE owner=? AND state='pending'
+                   AND due_utc <= ? ORDER BY due_utc""",
+                (self.owner, now_utc),
             ).fetchall()
-        return [self._row(row) for row in self._owned(rows)]
+            claimed = []
+            for row in rows:
+                updated = db.execute(
+                    "UPDATE reminders SET state='delivering' WHERE id=? AND state='pending'",
+                    (row["id"],),
+                )
+                if updated.rowcount == 1:
+                    fresh = db.execute(
+                        "SELECT * FROM reminders WHERE id=?", (row["id"],)
+                    ).fetchone()
+                    claimed.append(fresh)
+        return [self._row(row) for row in claimed]
 
     def mark_fired(self, reminder_id):
         with self.db() as db:
             row = self._fetch_owned(db, reminder_id)
-            if row["state"] in ("fired", "cancelled"):
-                raise ReminderError("only pending reminders may be marked fired")
-            db.execute("UPDATE reminders SET state='fired' WHERE id=?", (row["id"],))
+            if row["state"] != "delivering":
+                raise ReminderError("only delivering reminders may be marked fired")
+            db.execute(
+                "UPDATE reminders SET state='fired' WHERE id=? AND owner=? AND state='delivering'",
+                (reminder_id, self.owner),
+            )
         return self.get(reminder_id)
