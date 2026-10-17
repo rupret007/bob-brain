@@ -420,7 +420,7 @@ class Syntax(unittest.TestCase):
         rows = [l.split("\t") for l in (ROOT / "MANIFEST.tsv").read_text().splitlines()[1:] if l.strip()]
         listed = {r[0] for r in rows}
         ignore = {"MANIFEST.tsv", "README.md", "DEPLOY.md"}
-        actual = {str(p.relative_to(ROOT)) for p in ROOT.rglob("*") if p.is_file() and "tools" not in p.parts and p.name not in ignore}
+        actual = {str(p.relative_to(ROOT)) for p in ROOT.rglob("*") if p.is_file() and "tools" not in p.parts and "__pycache__" not in p.parts and p.name not in ignore}
         self.assertEqual(sorted(actual - listed), [], "files missing from MANIFEST.tsv")
         self.assertEqual(sorted(listed - actual), [], "MANIFEST.tsv lists missing files")
 
