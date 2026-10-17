@@ -40,27 +40,58 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       await page.waitForURL(config.url + '/');
       await page.locator('#message:enabled').waitFor();
       await overviewStarted;
+      async function submit(message) {
+        return page.evaluate(async message => {
+          const session = await (await fetch('/api/session')).json();
+          const response = await fetch('/api/messages', {method: 'POST', headers: {
+            'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf},
+            body: JSON.stringify({conversation_id: localStorage.getItem('bob.conversation'),
+              message, request_id: crypto.randomUUID()})});
+          if (response.status !== 202) throw new Error('Synthetic reminder could not be created');
+          return response.json();
+        }, message);
+      }
+      async function reminderCount(body) {
+        return page.evaluate(async body => {
+          const data = await (await fetch('/api/reminders')).json();
+          return data.reminders.filter(row => row.body === body).length;
+        }, body);
+      }
+      function confirmation(value) {
+        const content = value.messages.at(-1).content;
+        const match = content.match(/Reply `(yes wbrem-[0-9a-f]{32})`/);
+        assert(match, content);
+        return match[1];
+      }
       const body = engine + ' cold start reminder ' + Date.now();
       const started = Date.now();
-      await page.evaluate(async body => {
-        const session = await (await fetch('/api/session')).json();
-        const response = await fetch('/api/messages', {method: 'POST', headers: {
-          'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf},
-          body: JSON.stringify({conversation_id: localStorage.getItem('bob.conversation'),
-            message: 'remind me to ' + body + ' in 1 second', request_id: crypto.randomUUID()})});
-        if (response.status !== 202) throw new Error('Synthetic reminder could not be created');
-      }, body);
+      // Exercise the draft path; explicit personal intervals save directly.
+      const initialDraft = await submit('create a reminder to ' + body + ' in 1 second');
+      assert.equal(await reminderCount(body), 0, 'A reminder draft must not schedule a notification');
+      await submit(confirmation(initialDraft));
       // This is a server-created update, not a composer request that can invoke
       // its own reply polling. The normal chat poll must already be running.
-      await page.locator('.message.assistant').filter({hasText: 'Reminder: ' + body}).waitFor({timeout: 6000});
+      // Wait for the due notice itself. A case-insensitive substring would also
+      // match the earlier 'Draft reminder: ...' message (strict-mode race).
+      await page.locator('.message.assistant .body').filter({
+        hasText: new RegExp('^Reminder: ' + body + ' \\(due ')}).waitFor({timeout: 6000});
+      const dueNotice = page.locator('.message.assistant .body').filter({
+        hasText: new RegExp('^Reminder: ' + body + ' \\(due [^)]+\\)\\.$')});
+      await dueNotice.waitFor({timeout: 6000});
+      assert.equal(await dueNotice.count(), 1, 'The live update must be a real due notification');
       const appearedAfterMs = Date.now() - started;
       assert.equal(await page.locator('#offline-banner').isVisible(), false);
       assert.equal(await page.locator('#message').isEnabled(), true);
       const overview = page.waitForResponse(r => new URL(r.url()).pathname === '/api/overview');
       release();
       assert.equal((await overview).status(), 200);
-      // The synthetic reminder is accepted by the real server, but its HTTP
-      // acknowledgment is held. The UI must regain control without replaying it.
+      // Draft first, then hold the exact confirmation's HTTP acknowledgment.
+      // The UI must regain control without replaying the accepted mutation.
+      const pendingBody = engine + ' recovery reminder ' + Date.now();
+      const pendingRequest = 'create a reminder to ' + pendingBody + ' in 10 minutes';
+      const pendingDraft = await submit(pendingRequest);
+      assert.equal(await reminderCount(pendingBody), 0, 'The pending reminder needs separate consent');
+      const pendingText = confirmation(pendingDraft);
       const requests = [];
       let releasePost;
       const postHeld = new Promise(resolve => { releasePost = resolve; });
@@ -72,8 +103,6 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
         await route.fulfill({response}).catch(() => {});
       };
       await page.route('**/api/messages', intercept);
-      const pendingBody = engine + ' accepted once despite lost acknowledgment ' + Date.now();
-      const pendingText = 'remind me to ' + pendingBody + ' in 10 minutes';
       const timeoutScreenshot = engine + '-post-timeout.png';
       try {
         await page.evaluate(() => { window.__shortPostTimeout = true; });

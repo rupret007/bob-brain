@@ -956,7 +956,9 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         changed=asserted_permission_change(part)
         effect=unsupported_effect(part)
         invented_hold = (not scopes and PRODUCT_HOLD_AUTHORSHIP.search(part))
-        valid=not effect and not changed and not invented_hold and (not HOLD_CLAIM.search(plain(part)) or
+        from grounded_state import diagnostics_require_release
+        diag_release = diagnostics_require_release(part)
+        valid=not effect and not changed and not invented_hold and not diag_release and (not HOLD_CLAIM.search(plain(part)) or
                 held_scope_question(part) or saved_hold_reference(part) or record_hold)
         independent,governor=dependency.consider(part,valid,offset=offset,taint=bool(effect or changed))
         # Independent list items and headings are judged on their own. Other
@@ -985,7 +987,9 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         decisions.append(receipt(part,offset=offset,accepted=bool(accepted),
             reason='unsupported_effect' if effect else
                 ('dependent_on_rejected_effect' if pending_effect else 'dependent_on_unresolved_reference') if dependent else
-                'unsupported_permission_change' if changed else 'supported_reference_or_nonclaim' if accepted else 'unbound_hold_claim',
+                'unsupported_permission_change' if changed else
+                'diagnostics_require_hold_release' if diag_release else
+                'supported_reference_or_nonclaim' if accepted else 'unbound_hold_claim',
             subject=record_subject,bindings=bindings))
         decisions[-1].update(context_record=context_record,context_source_bindings=bindings.get(context_record,[]))
         decisions[-1]['prospective_governor_start']=governor

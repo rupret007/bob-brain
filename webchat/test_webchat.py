@@ -45,6 +45,9 @@ class FakeProviders:
 
 class Fixture(unittest.TestCase):
     def setUp(self):
+        notifier = patch('reminders.notify_macos', return_value=True)
+        self.reminder_notifier = notifier.start()
+        self.addCleanup(notifier.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.folder = self.root / "conductor/webchat"
@@ -72,6 +75,38 @@ class Fixture(unittest.TestCase):
 
 
 class StateTests(Fixture):
+    def test_create_reminder_for_2am_confirms_with_defaults(self):
+        from reminders import ZONE
+        from task_dispatch import task_queue
+        self.chat.reminders.clock = lambda: datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
+        with patch('app.parse_work', side_effect=AssertionError('Reminder entered coding queue')):
+            result = self.chat.submit(self.identifier, 'Create a reminder for 2am to go to bed', str(uuid.uuid4()))
+        from consent_fixture import confirm_chat
+        self.assertFalse(self.chat.reminders.listing())
+        reply = confirm_chat(self, self.chat, self.identifier, result['messages'][-1])
+        self.assertEqual(reply['provider'], 'reminders')
+        self.assertIn('Reminder saved: go to bed', reply['content'])
+        self.assertIn('Oct 10, 2026 at 02:00 AM CDT', reply['content'])
+        self.assertNotIn('?', reply['content'])
+        row, = self.chat.reminders.listing()
+        self.assertEqual(row['body'], 'go to bed')
+        self.assertIsNone(row['interval_seconds'])
+        self.assertEqual(row['due_at'], datetime(2026, 10, 10, 2, tzinfo=ZONE).timestamp())
+        self.assertFalse(self.fake.calls)
+        self.assertFalse(task_queue.tasks(self.root))
+        self.reminder_notifier.assert_not_called()
+
+    def test_direct_action_does_not_bypass_or_release_saved_hold(self):
+        import copy
+        self.chat.submit(self.identifier, 'Hold all work', str(uuid.uuid4()))
+        before = copy.deepcopy(self.chat.get(self.identifier)['intent_state'])
+        result = self.chat.submit(self.identifier, 'Create a reminder for 2am to go to bed', str(uuid.uuid4()))
+        self.assertIn('On hold:', result['messages'][-1]['content'])
+        self.assertEqual(self.chat.get(self.identifier)['intent_state'], before)
+        self.assertFalse(self.chat.reminders.listing())
+        self.assertFalse(self.fake.calls)
+        self.reminder_notifier.assert_not_called()
+
     def test_chat_alignment_uses_one_consistent_live_observation(self):
         first = dict(webchat_round=71, marker='first observation')
         second = dict(webchat_round=72, marker='later observation')

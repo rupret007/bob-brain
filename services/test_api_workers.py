@@ -61,6 +61,9 @@ class APIWorkerTests(unittest.TestCase):
     def repo(self):
         repo = self.root / "repo"
         repo.mkdir(exist_ok=True)
+        # macOS tmp dirs live under /var -> /private/var; dispatch_worker stores the
+        # canonical (resolved) repo path, so the fixture must use the canonical path too.
+        repo = repo.resolve()
         workspaces.git(repo, "init", "-b", "main")
         (repo / "queue.py").write_text("def enqueue(job):\n    return job\n")
         (repo / "keys.env").write_text("GEMINI_API_KEY=fixture-must-not-be-sent\n")

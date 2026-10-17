@@ -304,11 +304,14 @@ def permission_block(root, row):
                       if re.search(r'\b' + r'\s*'.join(map(re.escape, name.split())) + r'\b',
                                    row.get('prompt', ''), re.I)]
         for scope, hold in holds.items():
+            deploy = hold.get('action_scope') == 'deploy'
+            if deploy and row.get('prompt') and not re.search(r'\bdeploy(?:s|ments|ment|ing)?\b', row['prompt'], re.I):
+                continue
             if scope == 'all':
                 if not scopes or any(name not in hold.get('released_projects', []) for name in scopes):
-                    return 'New work is on hold'
+                    return 'Deploys are on hold' if deploy else 'New work is on hold'
             elif not scopes or scope in scopes:
-                return scope + ' is on hold'
+                return scope + (' deploys are on hold' if deploy else ' is on hold')
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return 'Saved conversation permissions are unavailable'
     return None

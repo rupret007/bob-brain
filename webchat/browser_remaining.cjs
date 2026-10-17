@@ -68,10 +68,30 @@ const playwright = require(process.env.BOB_PLAYWRIGHT_MODULE || 'playwright');
       await page.setViewportSize({width: 390, height: 844});
       await notes.scrollIntoViewIfNeeded();
       await page.screenshot({path: path.join(config.output, engine + '-saved-memory.png'), animations: 'disabled'});
-      const saved = await say('remind me to ' + body + ' in 1 second');
+      // Exercise the draft path; explicit personal intervals save directly.
+      const savedDraft = await say('create a reminder to ' + body + ' in 1 second');
+      const savedApproval = savedDraft.messages.at(-1).content.match(/Reply `(yes wbrem-[0-9a-f]{32})`/);
+      assert(savedApproval, savedDraft.messages.at(-1).content);
+      const beforeSaved = await (await context.request.get(config.url + '/api/reminders')).json();
+      assert.equal(beforeSaved.reminders.filter(row => row.body === body).length, 0,
+        'A reminder draft must not schedule a notification');
+      const saved = await say(savedApproval[1]);
       assert.equal(saved.messages.at(-1).provider, 'reminders');
-      await page.locator('.message.assistant').filter({hasText: 'Reminder: ' + body}).waitFor({timeout: 8000});
-      const repeating = await say('remind me every 1 minute to ' + engine + ' stretch');
+      // Wait for the due notice itself. A case-insensitive substring would also
+      // match the earlier 'Draft reminder: ...' message (strict-mode race).
+      await page.locator('.message.assistant .body').filter({
+        hasText: new RegExp('^Reminder: ' + body + ' \\(due ')}).waitFor({timeout: 8000});
+      const dueNotice = page.locator('.message.assistant .body').filter({
+        hasText: new RegExp('^Reminder: ' + body + ' \\(due [^)]+\\)\\.$')});
+      await dueNotice.waitFor({timeout: 8000});
+      assert.equal(await dueNotice.count(), 1, 'The live update must be a real due notification');
+      const repeatingDraft = await say('create a reminder every 1 minute to ' + engine + ' stretch');
+      const repeatingApproval = repeatingDraft.messages.at(-1).content.match(/Reply `(yes wbrem-[0-9a-f]{32})`/);
+      assert(repeatingApproval, repeatingDraft.messages.at(-1).content);
+      const beforeRepeating = await (await context.request.get(config.url + '/api/reminders')).json();
+      assert.equal(beforeRepeating.reminders.filter(row => row.body === engine + ' stretch').length, 0,
+        'A recurring reminder draft must not schedule a notification');
+      const repeating = await say(repeatingApproval[1]);
       const id = repeating.messages.at(-1).content.match(/ID ([0-9a-f]{16})/)[1];
       await page.locator('[data-bottom="ops"]').click();
       await page.locator('#reminder-cards').getByText(engine + ' stretch', {exact: true}).waitFor();

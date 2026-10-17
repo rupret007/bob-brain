@@ -150,10 +150,14 @@ def _deliver(root, text, answer, conversation, *, observation, redact):
     from reply_authority import enforce
     from reply_guard import repair_hollow_progress
     import claim_evidence
+    from grounded_state import conversation_evidence
     contract = current(conversation)
     raw = answer['content']
     prior_answers='\n\n'.join(m.get('content','') for m in conversation.get('messages',[])[:-1]
                               if m.get('role')=='assistant' and m.get('content'))
+    evidence = conversation_evidence(conversation,
+                                    projection=contract.get('resource_projection') if contract else None,
+                                    source=text, prior=prior_answers)
     if contract and contract['kind']=='catchup' and contract['user_sha256']==digest(text):
         import catchup_contract
         try:
@@ -218,7 +222,7 @@ def _deliver(root, text, answer, conversation, *, observation, redact):
                 scope='Bounded protected-conclusion checks; not general semantic certification')
         commentary = packet['commentary'].strip()
         if commentary:
-            commentary, findings = claim_evidence.deliver(commentary, source=text)
+            commentary, findings = claim_evidence.deliver(commentary, source=text, evidence=evidence)
             if findings:
                 conversation['messages'][-1]['claim_review'] = dict(partial=True,
                     findings=claim_findings + findings, scope='Bounded protected-conclusion checks')
@@ -230,7 +234,7 @@ def _deliver(root, text, answer, conversation, *, observation, redact):
         return visible, dict(accepted=True, kind='writing', label='Draft',
                              text=artifact, sha256=digest(artifact), source=source, commentary=commentary,
                              claims_partial=bool(conversation['messages'][-1].get('claim_review')))
-    bounded, findings = claim_evidence.deliver(raw, source=text, prior=prior_answers)
+    bounded, findings = claim_evidence.deliver(raw, source=text, prior=prior_answers, evidence=evidence)
     if findings:
         conversation['messages'][-1]['claim_review'] = dict(partial=True, findings=findings,
             scope='Bounded protected-conclusion checks; not general semantic certification')

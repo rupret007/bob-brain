@@ -86,7 +86,13 @@ def apply_turn(state, text, request_id):
             return None
     if HOLD.match(normalized) and not LIFT.match(normalized):
         for scope in names or ["all"]:
-            state["holds"][scope] = dict(request_id=request_id, reason=directive, released_projects=[])
+            row = dict(request_id=request_id, reason=directive, released_projects=[])
+            if re.match(r'^(?:hold(?: off)?|pause)\s+(?:on\s+)?(?:any |all |the )?'
+                        r'deploy(?:s|ments|ment|ing)?(?:\s+(?:for|on|until)\b|$)', directive, re.I):
+                row['action_scope'] = 'deploy'
+            # A narrower request must not erase an existing whole-project hold.
+            if state['holds'].get(scope, {}).get('action_scope') == 'deploy' or scope not in state['holds'] or 'action_scope' not in row:
+                state["holds"][scope] = row
         state["last_permission"] = dict(action="hold", request_id=request_id)
         return "hold"
     if RELEASE.match(normalized) or LIFT.match(normalized) or PUSH.match(normalized):
@@ -94,8 +100,9 @@ def apply_turn(state, text, request_id):
             state["project_order"] = names
         if names:
             for name in names:
-                state["holds"].pop(name, None)
-            if "all" in state["holds"]:
+                if not (PUSH.match(normalized) and state['holds'].get(name, {}).get('action_scope') == 'deploy'):
+                    state["holds"].pop(name, None)
+            if "all" in state["holds"] and not (PUSH.match(normalized) and state['holds']['all'].get('action_scope') == 'deploy'):
                 released = state["holds"]["all"]["released_projects"]
                 released.extend(name for name in names if name not in released)
         else:
@@ -120,19 +127,25 @@ def state_for(conversation):
     return state
 
 
-def blocked_scopes(state, names):
+def blocked_scopes(state, names, *, action_text=None):
     blocked = []
     for scope, hold in state["holds"].items():
+        deploy = hold.get('action_scope') == 'deploy'
+        if deploy and action_text and not re.search(r'\bdeploy(?:s|ments|ment|ing)?\b', action_text, re.I):
+            continue
         if scope == "all":
             if not names or any(name not in hold["released_projects"] for name in names):
-                blocked.append("new work")
+                blocked.append("deploys" if deploy else "new work")
         elif not names or scope in names:
-            blocked.append(scope)
+            blocked.append(scope + ' deploys' if deploy else scope)
     return blocked
 
 
 def hold_reply(scopes):
-    return "On hold: " + ", ".join(scopes) + ". Say go or resume when you're ready."
+    reply = "On hold: " + ", ".join(scopes) + ". Say go or resume when you're ready."
+    if any(scope.endswith('deploys') for scope in scopes):
+        reply += ' I haven’t checked or paused any external deployment automation.'
+    return reply
 
 
 def project_targets(text, state):

@@ -76,6 +76,14 @@ an unrelated topic, then request a return applying that correction. Write criter
 as explicit checks, not claims that a candidate passes. Inspect whether allowance
 and extra-usage settings permit admission; never promise that these checks prevent
 charges. Keep live generation conditional on budget admission and allowance checks.
+A proposed evidence snapshot, save, hold or route is not a completed receipt: do
+not claim one was previously prepared, saved, issued or used unless this turn
+includes that supporting receipt.
+Assert saved-record, hold-request-ID, configured-route, provider, or other
+product-state facts only from a server-side save receipt, retrieval result, route
+registry, or provider record in this turn's context; otherwise say the fact is
+proposed or unknown. Do not invent a revision, hold request ID, configured
+adapter/executor, or last-reply provider.
 Owner facts from the saved project record are recorded in the saved project record
 (not live-verified); do not present them as live-verified or as something the user
 just said.
@@ -83,6 +91,35 @@ Return JSON only, without fences or trailing commentary.
 '''
 
 FACT_TOKEN = re.compile(r'\[fact:([a-z0-9_.]+)\]')
+# Advice never executes. Completed snapshot/save/hold/route wording is a
+# fabricated receipt unless this turn actually recorded one.
+PREPARED_SNAPSHOT = re.compile(
+    r'\b(?:previously|already|earlier)\s+prepared\s+(?:an?\s+|the\s+|this\s+)?'
+    r'(?:bounded\s+|owner[- ]provided\s+|missing\s+)?(?:evidence\s+)?snapshot\b|'
+    r'\b(?:the|an|this|that)\s+(?:previously\s+|already\s+)?'
+    r'(?:prepared|saved|recorded|stored)\s+(?:bounded\s+)?'
+    r'(?:evidence\s+)?snapshot\b|'
+    r'\b(?:evidence\s+)?snapshot\s+(?:has been|have been|was|were|is already|are already)\s+'
+    r'(?:prepared|saved|recorded|stored|captured)\b|'
+    r"\b(?:I|we)(?:['’]ve|\s+have)?\s+(?:(?:just|already|now|previously)\s+)?"
+    r'(?:prepared|saved|recorded|stored|captured)\b.{0,40}\b(?:evidence\s+)?snapshot\b',
+    re.I)
+SAVE_OR_HOLD_RECEIPT = re.compile(
+    r'\bsave\s+receipt\b|'
+    r'\bhold\s+id(?:s|entifier)?\b|'
+    r"\b(?:I|we)(?:['’]ve|\s+have)?\s+(?:(?:just|already|now)\s+)?"
+    r'(?:issued|filed|recorded|saved|generated)\b.{0,40}\b(?:save\s+)?receipt\b|'
+    r"\b(?:I|we)(?:['’]ve|\s+have)?\s+(?:(?:just|already|now)\s+)?"
+    r'(?:registered|saved|placed|filed|issued)\b.{0,40}\bhold(?:\s+id)?\b',
+    re.I)
+LIVE_ROUTE_CLAIM = re.compile(
+    r"\b(?:I|we)(?:['’]ve|\s+have)?\s+(?:(?:just|already|now)\s+)?"
+    r'(?:routed|switched|sent|handed)\b.{0,50}\b(?:to|onto)\s+'
+    r'(?:codex|claude|cursor|gemini|minimax)\b|'
+    r'\b(?:codex|claude|cursor|gemini|minimax)\s+'
+    r'(?:is|has been)\s+(?:now\s+|currently\s+)?'
+    r'(?:the\s+)?(?:active|selected|signed[- ]in|handling|answering)\b',
+    re.I)
 
 
 def facts(inventory, *, missing=False):
@@ -148,7 +185,7 @@ def model_evidence(projection):
             'authority':'Evidence for advice only; neither provider selection nor execution authorization.'}
 
 
-def safe_reasoning(text, *, context=''):
+def safe_reasoning(text, *, context='', evidence=None):
     """Bounded assertion checks; evidence links cannot excuse adjacent claims.
 
     This is not a proof of arbitrary factual correctness. Questions, proposals
@@ -158,7 +195,7 @@ def safe_reasoning(text, *, context=''):
     from claim_scope import clauses, disposition
     from claim_evidence import violations
     prose=FACT_TOKEN.sub('',text)
-    if not safe_artifact(prose) or violations(prose):return False
+    if not safe_artifact(prose) or violations(prose, evidence=evidence):return False
     if context:
         from dispatch_receipts import claims_dispatch
         if claims_dispatch(prose,context=context):return False
@@ -172,6 +209,14 @@ def safe_reasoning(text, *, context=''):
                 return False
         for match in observed.finditer(clause):
             if not disposition(statement,match.start(),match.end(),match[0]):return False
+        for match in (*PREPARED_SNAPSHOT.finditer(clause), *SAVE_OR_HOLD_RECEIPT.finditer(clause),
+                      *LIVE_ROUTE_CLAIM.finditer(clause)):
+            if not disposition(statement,match.start(),match.end(),match[0]):
+                return False
+        from grounded_state import unsourced_matches
+        for match, _kind in unsourced_matches(clause, evidence):
+            if not disposition(statement,match.start(),match.end(),match[0]):
+                return False
     return True
 
 
@@ -288,6 +333,11 @@ def feasible_reasoning(text, projection):
                         re.match(r'^\s*(?:(?:active|running)\s+)?(?:(?:for|to)\s+'
                                  r'(?:(?!\b(?:and|but|yet|while|then)\b)[^,;.!?]){1,50}?)?\s*(?:only\s+)?'+condition,suffix,re.I))
                 if not denied and not future:return False
+        if projection.get('unavailable') and (
+                PREPARED_SNAPSHOT.search(clause) or SAVE_OR_HOLD_RECEIPT.search(clause)
+                or LIVE_ROUTE_CLAIM.search(clause)):
+            if not re.search(r"\b(?:not|never|cannot|can't|don't|no)\b",clause,re.I):
+                return False
         if 'keep_current' not in projection.get('allowed_steps',STEPS):
             keep=re.search(r'\b(?:keep|continue|retain|maintain|use|using|run|running)\b'
                            r'[^,!?]{0,50}\b(?:current|qualified|existing)\b[^,!?]{0,30}'
@@ -321,6 +371,7 @@ def compose_blocks(blocks, known, projection, prior=''):
     content=[];tokens=[];rejected=[];pending=False;retained_reasoning=False
     context='\n\n'.join(b['reasoning'] for b in blocks if isinstance(b,dict) and isinstance(b.get('reasoning'),str))
     skipped_fact=False
+    selected=[]
     for index,block in enumerate(blocks):
         if not isinstance(block,dict) or len(block)!=1:
             raise ValueError('Invalid answer block schema')
@@ -329,6 +380,7 @@ def compose_blocks(blocks, known, projection, prior=''):
             if not isinstance(fid,str) or fid not in known:
                 raise ValueError('Unknown answer fact')
             tokens.append(fid)
+            selected.append(fid)
             if known[fid] in content:
                 continue
             if already_delivered(known[fid], prior):
@@ -339,12 +391,15 @@ def compose_blocks(blocks, known, projection, prior=''):
             prose=block['reasoning']
             if not isinstance(prose,str) or not 1<=len(prose)<=2500 or '[fact:' in prose:
                 raise ValueError('Invalid reasoning block')
+            from grounded_state import conversation_evidence
+            evidence=conversation_evidence(projection=projection, prior=prior, selected=selected,
+                                          trusted_facts=[known[t] for t in selected if t in known])
             retained,units,pending=select(prose,
-                lambda part:safe_reasoning(part,context=context) and feasible_reasoning(part,projection),state=dependency)
+                lambda part:safe_reasoning(part,context=context,evidence=evidence) and feasible_reasoning(part,projection),state=dependency)
             if any(not unit['accepted'] for unit in units):
                 from claim_evidence import violations
                 rejected.append(dict(index=index,reason='unsupported_assertion',sha256=hashlib.sha256(prose.encode()).hexdigest(),
-                                     claim_findings=violations(prose),units=units))
+                                     claim_findings=violations(prose, evidence=evidence),units=units))
             if retained.strip():
                 content.append(qualify_route_restatement(retained.strip(), prior));retained_reasoning=True
         else:
@@ -391,8 +446,10 @@ ROUTE_QUALIFIED = re.compile(
 ROUTE_NOTE = 'That listing is configured in Web Bob’s route registry; availability and sign-in are not verified.'
 
 
-def qualify_route_restatement(text, prior=''):
+def qualify_route_restatement(text, prior='', *, registry=True):
     """Carry configured-not-verified on each turn that restates a route claim."""
+    if not registry and 'configured route registry' not in (prior or '').lower():
+        return text
     if not text or not ROUTE_MENTION.search(text) or ROUTE_QUALIFIED.search(text):
         return text
     if ROUTE_NOTE.lower() in text.lower():
@@ -493,14 +550,17 @@ def render(raw, projection, *, root=None, prior=''):
         if not blocked:
             if not tokens or any(t not in known for t in tokens) or '[fact:' in FACT_TOKEN.sub('',value['answer']):
                 raise ValueError('Ungrounded answer composition')
-            if not safe_reasoning(value['answer']) or not feasible_reasoning(value['answer'],projection):
+            from grounded_state import conversation_evidence
+            citation_evidence=conversation_evidence(projection=projection, prior=prior,
+                selected=tokens, trusted_facts=[known[t] for t in tokens if t in known])
+            if not safe_reasoning(value['answer'], evidence=citation_evidence) or not feasible_reasoning(value['answer'],projection):
                 # Keep the legacy citation format's complete independent
                 # reasoning, using the same dependency checks as block format.
                 # Mask citations in place; they cannot stitch rejected prose
                 # into a fact or establish a rejected premise.
                 from answer_fragments import select
                 prose=FACT_TOKEN.sub(lambda m:' '*len(m[0]),value['answer'])
-                retained,units,_=select(prose,lambda part:safe_reasoning(part,context=prose) and feasible_reasoning(part,projection))
+                retained,units,_=select(prose,lambda part:safe_reasoning(part,context=prose,evidence=citation_evidence) and feasible_reasoning(part,projection))
                 if not retained.strip():raise ValueError('Ungrounded answer composition')
                 content,tokens,rejected,retained_reasoning=compose_blocks([*[dict(fact=t) for t in dict.fromkeys(tokens)],
                     dict(reasoning=prose)],known,projection,prior)

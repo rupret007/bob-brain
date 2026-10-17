@@ -158,6 +158,65 @@ class MemoryGapTests(GapFixture):
 
 
 class WebSearchGapTests(GapFixture):
+    def setUp(self):
+        super().setUp()
+        # Catch a routing regression before it can escape the mocked adapter.
+        guard = patch('urllib.request.OpenerDirector.open', side_effect=AssertionError('Network forbidden'))
+        guard.start()
+        self.addCleanup(guard.stop)
+
+    def test_explicit_lookup_preserves_release_search_contract_and_saved_receipt(self):
+        answer = dict(answer='Python is a programming language.', source='https://www.python.org/')
+        with patch('app.web_search', return_value=answer) as search, \
+                patch('app.parse_work', side_effect=AssertionError('Lookup entered coding route')):
+            for command in ('look up', 'search the web for', 'please look up', 'could you search web for'):
+                request_id = str(uuid.uuid4())
+                text = command + ' Python programming language'
+                result = self.chat.submit(self.identifier, text, request_id)
+                reply = result['messages'][-1]
+                self.assertEqual(reply['provider'], 'state')
+                self.assertEqual(reply['status'], 'done')
+                self.assertIn(answer['answer'], reply['content'])
+                self.assertIn(answer['source'], reply['content'])
+                search.assert_called_with('Python programming language')
+                count = search.call_count
+                self.assertEqual(self.chat.submit(self.identifier, text, request_id)['messages'][-1], reply)
+                self.assertEqual(search.call_count, count)
+            self.assertEqual(search.call_count, 4)
+            self.chat.close()
+            self.chat = Chat(self.folder, self.root, self.fake)
+            self.assertEqual(self.chat.submit(self.identifier, text, request_id)['messages'][-1], reply)
+            self.assertEqual(search.call_count, 4)
+
+    def test_explicit_lookup_holds_and_failures_never_claim_a_supported_answer(self):
+        with patch('app.web_search', side_effect=URLError('offline')) as search:
+            self.submit('Hold all work')
+            held = self.submit('look up Python programming language')['messages'][-1]
+            self.assertIn('On hold:', held['content'])
+            search.assert_not_called()
+            self.identifier = self.chat.new_conversation()['id']
+            failed = self.submit('look up Python programming language')['messages'][-1]
+            self.assertIn('unconfirmed', failed['content'])
+            self.assertNotIn('Source:', failed['content'])
+            search.assert_called_once_with('Python programming language')
+
+    def test_default_morning_lookup_uses_same_mockable_search_adapter(self):
+        with patch('app.web_search', return_value=dict(
+                answer='Python is a programming language.', source='https://www.python.org/')) as search:
+            from consent_fixture import confirm_chat
+            draft = self.submit('every morning do look up Python programming language')['messages'][-1]
+            self.assertFalse(self.chat.reminders.listing())
+            confirm_chat(self, self.chat, self.identifier, draft)
+            row, = self.chat.reminders.listing()
+            search.assert_not_called()
+            with patch.object(self.chat.reminders, 'clock', return_value=row['due_at']):
+                self.chat.deliver_reminders()
+                self.chat.deliver_reminders()
+            reply = self.chat.history(self.identifier)['messages'][-1]
+            self.assertIn('Python is a programming language.', reply['content'])
+            self.assertIn('https://www.python.org/', reply['content'])
+            search.assert_called_once_with('Python programming language')
+
     def test_mets_score_triggers_search_with_source_link(self):
         with patch(
             "app.web_search",
@@ -260,6 +319,28 @@ class CaptureApiTests(GapFixture):
 
 
 class UnitTests(unittest.TestCase):
+    def test_shared_search_transport_keeps_local_lookup_boundaries(self):
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = json.dumps(dict(
+            AbstractText='Python is a language.', AbstractURL='https://www.python.org/')).encode()
+        with patch('bob_gaps.urllib.request.build_opener') as factory:
+            factory.return_value.open.return_value = response
+            result = web_search('Python & format=xml')
+        self.assertEqual(result['answer'], 'Python is a language.')
+        self.assertEqual(result['source'], 'https://www.python.org/')
+        self.assertEqual(factory.call_args.args[0].proxies, {})
+        with self.assertRaises(ValueError):
+            factory.call_args.args[1].redirect_request(None)
+        transport = factory.return_value.open
+        transport.assert_called_once()
+        request = transport.call_args.args[0]
+        self.assertTrue(request.full_url.startswith('https://api.duckduckgo.com/?q=Python+%26+format%3Dxml&'))
+        self.assertEqual(request.get_method(), 'GET')
+        self.assertIsNone(request.data)
+        self.assertEqual(transport.call_args.kwargs['timeout'], 10)
+        response.read.assert_called_once_with(1024 * 1024 + 1)
+
     def test_search_rejects_oversized_and_nonobject_responses(self):
         for body in (b'x' * (1024 * 1024 + 1), b'[]'):
             response = MagicMock()

@@ -602,8 +602,14 @@ def remaining_replay(client, cid, root, *, real=False):
         checks.append(dict(check='authenticated reminder listing; no reminder created or fired by replay',passed=True,scope='live read only'))
     else:
         import uuid
+        def schedule(prompt):
+            _, draft = submit(client, cid, prompt)
+            match = re.search(r'Reply `(yes wbrem-[0-9a-f]{32})`', draft['content'])
+            require(draft.get('provider') == 'reminders' and match is not None and
+                    'Reminder saved' not in draft['content'], 'Reminder did not require separate confirmation')
+            return submit(client, cid, match[1])[1]
         body = 'Web Bob local reminder replay ' + uuid.uuid4().hex[:8]
-        _, saved = submit(client, cid, 'remind me to ' + body + ' in 1 second')
+        saved = schedule('remind me to ' + body + ' in 1 second')
         require(saved.get('provider') == 'reminders' and 'Reminder saved' in saved['content'], 'Reminder was not saved')
         deadline = time.monotonic() + 10
         while True:
@@ -614,7 +620,7 @@ def remaining_replay(client, cid, root, *, real=False):
             require(time.monotonic() < deadline, 'Due reminder did not reach chat through the background loop')
             time.sleep(.2)
         require(len(notices) == 1, 'Duplicate reminder delivery')
-        _, repeated = submit(client, cid, 'remind me every 1 minute to ' + body + ' recurring')
+        repeated = schedule('remind me every 1 minute to ' + body + ' recurring')
         match = re.search(r'ID ([0-9a-f]{16})', repeated['content'])
         require(match is not None, 'Recurring reminder did not save')
         identifier = match[1]
@@ -776,7 +782,7 @@ def staging(root, sha, feature):
         (private / 'conductor').mkdir(exist_ok=True)
         (private / 'conductor/SOLO-WORKER').touch()
         chat = Chat(private / 'conductor/webchat', private, StagingProviders(),
-                    texting=Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token)))
+                    texting=Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token, expected_protocol=1)))
         if ORDER.index(feature) >= ORDER.index('remaining'):
             band = private / 'bin/band_messages_watch_run.py'
             band.parent.mkdir()

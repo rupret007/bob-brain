@@ -150,9 +150,10 @@ def try_music_coach_reply(text: str) -> str | None:
         )
     if "capo" in lower:
         return (
-            "Capo: match the singer’s comfortable range — write shapes in friendly keys (G, C, D) and include the capo fret when sharing the chords here. "
-            "Same chord names on paper; the sounding key shifts up. "
-            "Record which fret you used in notes for the handback."
+            "A capo is a clamp you put across the strings of a guitar. It raises the pitch, "
+            "so you can play familiar chord shapes in a higher key without changing your fingering. "
+            "Each fret raises the sound by one semitone: a G shape with a capo on the second fret sounds like A. "
+            "It is handy for matching a song to your singing range."
         )
     if re.search(r"\b(dynamic|breakdown|build[- ]?up|drop)\b", lower):
         if not music_ctx:

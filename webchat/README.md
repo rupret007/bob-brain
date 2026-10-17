@@ -597,21 +597,47 @@ Instinct identities learned from the verified mapping are retained in that priva
 ### Personal reminders and read-only teammates
 
 Use `remind me to check the oven in 10 minutes`, `remind me to call Sam on
-2026-10-01 at 14:00`, `my reminders`, or `cancel reminder ID`. Local dates use
-America/Chicago; ambiguous daylight-saving times need an explicit ISO UTC offset.
+2026-10-01 at 14:00`, `create a reminder for 2am to go to bed`, or `set a timer
+for 10 minutes`. Create, set, set up, and schedule accept reminder, timer, and
+alarm requests directly, before coding-job routing. They default to one occurrence;
+an unlabeled timer uses “Timer” as its body. Use `my reminders` / `my timers` and
+`cancel reminder ID` / `cancel timer ID` to inspect or cancel them. Local dates use
+America/Chicago; an undated clock time means its next occurrence, shown with the
+resolved date in the saved receipt. Unclear dates and ambiguous daylight-saving
+times are not guessed; daylight-saving transitions need an explicit ISO UTC offset.
 `remind me every 2 hours to stretch` (or `set a routine every 2 hours to stretch`)
 creates an interval notification, never an executable job. An interval day is
 24 hours, not a calendar-day clock rule. The store permits 200 pending reminders
 and retains bounded completed history; the saved chat keeps delivered notices.
 
+Direct interval requests save immediately only for recognized complete tasks,
+such as `stretch`, `call mom`, `call room 204`, `take my pills`, and `drink water`.
+Unrecognized wording, extra clauses, references to reminders or saving, and all
+mixed letter/digit body tokens (including ticket IDs) produce a draft requiring
+a separate exact `yes wbrem-…` message. Even ordinary tasks outside the supported
+forms require confirmation.
+One-shot intervals accept `mins` and `hrs`; recurring abbreviations still draft.
+
 Reminders use Web Bob's existing one-second background loop; they do not start
-job-runner or another scheduler. Delivery is only a message in the originating
-chat and a Jobs entry. Closed browsers see it when reopened; server downtime
+job-runner or another scheduler. Delivery saves a message in the originating
+chat and a Jobs entry. OS notifications are disabled by default, including for
+pending reminders restored after an upgrade. To authorize best-effort local alerts,
+the owner can set `BOB_REMINDER_MACOS_NOTIFICATIONS=1` for the production server
+entry point. Tests and staging must explicitly inject a fake notifier; constructing
+`Chat` never enables OS notifications, even with that environment variable set.
+When authorized, delivery attempts a local macOS notification using `osascript`.
+The Mac must be awake with Web Bob running in a user session; macOS notification
+permission and Focus settings control whether the alert is displayed. A successful
+script exit is not proof that the user saw an alert. Closed browsers see the saved
+chat message when reopened; server downtime
 catches up on return. Active voice/model turns defer delivery until idle.
 A durable notification identity prevents duplicate messages after a crash between
 chat persistence and store acknowledgement. Missed recurring intervals produce
-one catch-up notice, not a burst. No OS push, email, SMS or calendar integration
-is claimed. A reminder's body is plain text, never a command to execute.
+one catch-up notice, not a burst. OS alerts are best effort: failure does not undo
+chat delivery, and a crash after the firing-state write may lose that OS alert.
+Reminders do not send phone push, iMessage-to-self, email, SMS, or calendar events.
+A reminder's body is plain text, never a command to execute. Tests inject the
+notification hook or mock `subprocess.run`; they never display real alerts.
 
 `Karen QA status` reports the saved `wt-webjam-polish/PRE_KAREN_QA.md` with its
 source and save time; it never implies a new independent review or contacts her.
@@ -632,3 +658,118 @@ or oversized files are inspectable but not removable through this control.
 Management and review stay out of model chat history; removal requires typed Chat
 with Auto selected. Tests use private synthetic notes; live release replay only
 inspects and refuses unbound approvals without deleting owner notes.
+
+### Google Calendar (direct, owner-confirmed actions)
+
+Use `show my calendar today`, `what's on my calendar tomorrow?`, `calendar this
+week`, `calendar next 7 days`, or `calendar on 2026-10-12`. Without a window,
+Calendar reads the next seven days starting at local midnight. Reads show actual
+Google responses, at most 100 events, and explicitly report a truncated page.
+Failures never become invented events or an empty-calendar claim.
+
+Use `create a calendar event Dentist tomorrow at 2pm for 30 minutes` or
+`create a calendar event for 2am to go to bed`. Defaults are the authorized user's
+primary calendar, America/Chicago, one hour, one occurrence, private visibility,
+and no event alerts. Review the stored draft and reply with its exact
+`yes wbcal-…` token in the same conversation within one hour. `cancel wbcal-…`
+cancels an unsubmitted draft. A new draft replaces that conversation's prior
+unsubmitted draft. Titles and explicit times are required; ambiguous dates and
+DST clock changes need a clearer time (ISO timestamps with offsets work).
+Attendee/invitation and recurring-event requests are unsupported. Creates never
+include attendees and request `sendUpdates=none`.
+
+Calendar uses an existing authorized-user OAuth JSON file with `client_id`,
+`client_secret`, and `refresh_token`, readable only by its owner (mode 0600).
+Set `BOB_GOOGLE_CALENDAR_CREDENTIALS` in the server's environment to its path,
+or use `~/.config/webbob/google-calendar.json`. An existing
+`~/.config/gcloud/application_default_credentials.json` is also checked if the
+Web Bob file is absent. The user grant must permit Calendar reads and event
+writes (for example the Google Calendar `calendar.events` OAuth scope), and
+Calendar API access must be enabled for that OAuth client. No service-account
+credentials, connector-session credentials, or paid model calls are used.
+Missing/invalid credentials or denied access return `needs auth`; this feature
+does not start a login flow or queue a coding job. Credentials are never printed,
+changed, or stored in chat. OAuth refresh and Google HTTPS calls occur only for
+an explicit read or an approved create, with no automatic retries.
+
+Drafts and consumed confirmations are stored privately under `calendar/` in the
+webchat data folder. They survive restarts; the consumed receipt is persisted
+before the API call. Only a matching Google event confirmation produces a
+created receipt. A timeout, uncertain response, or interrupted receipt write
+stays unconfirmed and cannot replay the create. Check Google Calendar before
+making another draft after an uncertain result. Calendar creates respect saved
+global and project holds. The separate reminder and BlueBubbles text-read paths
+are unchanged; outbound texts still require their existing exact draft approval.
+Tests inject Calendar and messaging clients and never call real services.
+
+### Local tasks, web lookups, and morning routines
+
+These commands run directly in the chat process, before coding-job routing:
+
+| Request | Behavior |
+| --- | --- |
+| `read file ~/Documents/notes.txt` | Read a UTF-8 file, at most 64 KiB. |
+| `list files in ~/Documents` | List up to 200 visible names. |
+| `create file ~/Documents/note.txt: hello` | Create a new private file, without replacing an existing file. |
+| `write file ~/Documents/note.txt: replacement` | Create if absent; otherwise save an overwrite draft showing the replacement. |
+| `delete file ~/Documents/note.txt` | Save a deletion draft; directories cannot be deleted. |
+| `run terminal: pwd` / `terminal: date` | Show the local-task directory (home) or current America/Chicago time. |
+| `terminal: cat ~/Documents/notes.txt` / `terminal: ls ~/Documents` | Use the same bounded file read/list operations. |
+| `search the web for Python` / `look up Python` | Fetch a DuckDuckGo instant answer and its source URL. |
+| `every morning do read file ~/Documents/notes.txt` | Read that file each morning and save the result in this chat. |
+| `every morning at 8am do look up Python` | Run the same fixed web lookup each morning. |
+| `every morning remind me to stretch` | Save a notification-only morning reminder. |
+
+Terminal commands are implemented through the bounded local file/time operations;
+there is no shell, executable launch, pipes, redirection, or general command runner.
+Paths must be absolute under the owner's home or start with `~/`; quote paths
+containing spaces if using terminal syntax. Dot/private configuration paths,
+Library, Applications, Web Bob's code/data folders, runtime roots, configured
+accounting roots, symlinks, hard links, and special files are excluded. Runtime
+policy protection is rechecked before execution, including saved confirmations
+and routines; invalid policy blocks local file operations. No directory creation,
+recursive operations, or file execution is supported. The server needs ordinary
+OS permission to access the selected files.
+Credential/key filenames are excluded even in visible directories. Reads (including
+terminal `cat` and scheduled reads) refuse the entire result before returning or
+persisting content when it contains credential fields, private-key blocks, or
+recognized token/authentication patterns, including CSV headers and XML tags.
+Creates and replacements also reject credential content; overwrites and deletes
+inspect existing content both when drafting and immediately before the effect.
+Confirmation cannot override credential protection. This conservative check can reject
+credential examples; it cannot identify arbitrary unlabelled secrets in prose.
+
+Overwrite/delete drafts require a separate exact `yes wblocal-…` in the same chat
+within one hour. `cancel wblocal-…` cancels a draft. A newer destructive draft
+replaces the older one. Confirmation checks the file identity and content against
+the saved draft; a changed file needs a new draft. Private receipts in
+`local-tasks/` survive restarts. A consumed confirmation is stored before any file
+change, and success is recorded only after the operation completes. An interrupted
+or failed operation remains unconfirmed and is never automatically replayed. Check
+the actual file before retrying with a new request. Receipt storage is bounded to
+1,000 requests / 4 MiB and fails visibly when full.
+Production file operations and routine path validation run in a separate process
+with a five-second deadline, including receipt I/O. Receipt locks wait at most one
+second. A timeout kills the worker and reports an unverified result; any consumed
+confirmation remains non-replayable. Test file adapters are explicitly injected.
+
+The web adapter uses one HTTPS GET endpoint, with a ten-second timeout, bounded
+response, no proxies or redirects, and no page-following, credentials or paid API.
+Only the requested query is sent to DuckDuckGo. Instant answers are limited and may
+be absent; an empty response or transport failure never becomes an invented answer.
+File contents and search excerpts are returned as data and never executed as commands.
+
+Morning routines share the existing reminder store and one-second scheduler.
+They default to 9am America/Chicago; explicit morning times support 3am–11:59am.
+The local clock stays fixed across daylight-saving changes. `my routines` lists
+saved schedules and `cancel routine ID` cancels one. After downtime, a routine
+runs once and advances to the next morning. Busy chats defer execution. At most
+one routine action runs per tick so owner hold/cancel turns can run between lookups. Saved
+global/project holds are checked both at registration and each run; only an
+explicit owner resume releases them. Each occurrence has a durable receipt, so
+a crash before its chat message is saved does not repeat the action. Results go
+to the originating chat without OS alerts; notification-only reminders retain
+their best-effort macOS notification only with the owner opt-in above. The Mac must be awake with Web Bob
+running. Writes, deletes, calendar writes and sends cannot run unattended; sends
+retain the existing separate draft and explicit approval flow. Tests inject a
+temporary home, network adapter, Calendar/messaging clients and notification hook.

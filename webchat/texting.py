@@ -17,6 +17,7 @@ import re
 import secrets
 import sqlite3
 import time
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,6 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 CONFIRM_SECONDS = 300
+SUPPORTED_PROTOCOLS = {1, 2}
 MAX_RESPONSE = 2 * 1024 * 1024
 HELP = ("I can read recent texts and keep replies as drafts. Try ‘texts’, "
         "‘read texts from Alex’, ‘summarize texts from Alex’, or "
@@ -91,6 +93,15 @@ def local_url(value):
     return value.rstrip("/")
 
 
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
 def request_json(base, path, *, data=None, headers=None, timeout=5):
     # No environment proxies, redirects, retries, or URL supplied by a chat.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
@@ -102,7 +113,7 @@ def request_json(base, path, *, data=None, headers=None, timeout=5):
             raw = response.read(MAX_RESPONSE + 1)
         if len(raw) > MAX_RESPONSE:
             raise TextingError("The messaging response was too large. Try a smaller thread.")
-        result = json.loads(raw)
+        result = json.loads(raw, object_pairs_hook=unique_object)
         if not isinstance(result, dict):
             raise ValueError("expected object")
         return result
@@ -170,7 +181,19 @@ class BlueBubbles:
 
 class Andrea:
     """Dedicated owner bridge; never use Andrea's read/control credentials."""
-    def __init__(self, base=None, token=None):
+    def __init__(self, base=None, token=None, *, expected_protocol=None):
+        self._seen_ids = set()
+        self._ids_lock = threading.Lock()
+        self._ids_path = None
+        if expected_protocol is None:
+            try:
+                pin = Path(__file__).resolve().parents[1] / 'release/andrea-bridge.json'
+                expected_protocol = json.loads(pin.read_text(), object_pairs_hook=unique_object)['protocol']
+                if not self.supported_protocol(expected_protocol):
+                    raise ValueError("unsupported release protocol")
+            except (OSError, ValueError, KeyError, TypeError):
+                expected_protocol = None  # Missing release policy never enables legacy.
+        self.expected_protocol = expected_protocol
         self.base, self.token = base or "http://127.0.0.1:4316", token or ""
         if base is None and token is None:
             config_path = os.environ.get("BOB_ANDREA_WEBBOB_CONFIG")
@@ -179,13 +202,38 @@ class Andrea:
                     path = Path(config_path)
                     if not path.is_absolute() or path.is_symlink() or path.stat().st_mode & 0o077 or path.stat().st_size > 24000:
                         raise ValueError("private config required")
-                    cfg = json.loads(path.read_text())
+                    cfg = json.loads(path.read_text(), object_pairs_hook=unique_object)
                     self.base = local_url(cfg["url"])
                     if not isinstance(cfg["token"], str) or len(cfg["token"]) < 32:
                         raise ValueError("dedicated token required")
                     self.token = cfg["token"]
+                    if 'protocol' in cfg:
+                        self.expected_protocol = cfg['protocol']
                 except (OSError, ValueError, KeyError, TypeError, TextingError):
                     self.token = ""
+
+    def bind_state(self, folder):
+        # A unique remote ID remains spent across conversations and restarts.
+        self._ids_path = Path(folder) / 'andrea-draft-ids.sqlite3'
+
+    def claim_remote_id(self, identifier):
+        with self._ids_lock:
+            if identifier in self._seen_ids:
+                return False
+            if self._ids_path is not None:
+                try:
+                    with closing(sqlite3.connect(self._ids_path)) as db:
+                        self._ids_path.chmod(0o600)
+                        with db:
+                            db.execute('CREATE TABLE IF NOT EXISTS seen (id TEXT PRIMARY KEY)')
+                            db.execute('INSERT INTO seen VALUES (?)', (identifier,))
+                except (OSError, sqlite3.Error):
+                    return False
+            self._seen_ids.add(identifier)
+            return True
+
+    def expected(self, protocol):
+        return self.supported_protocol(self.expected_protocol) and protocol == self.expected_protocol
 
     def call(self, route, payload=None):
         return request_json(self.base, "/web-bob/v1/" + route, data=payload,
@@ -210,29 +258,109 @@ class Andrea:
     def scope_digest(scope):
         return hashlib.sha256(json.dumps(scope, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 
+    @staticmethod
+    def supported_protocol(value):
+        return type(value) is int and value in SUPPORTED_PROTOCOLS
+
+    @staticmethod
+    def number(value):
+        if type(value) not in (int, float):
+            return False
+        try:
+            return math.isfinite(value)
+        except OverflowError:
+            return False
+
+    @staticmethod
+    def hex_id(value):
+        return isinstance(value, str) and re.fullmatch(r'[a-f0-9]{64}', value) is not None
+
+    @classmethod
+    def shape(cls, result, required, optional=(), protocol=None):
+        # Protocol is negotiated by health. Routes do not normally repeat it;
+        # an explicit conflicting/unknown declaration must never be ignored.
+        return (isinstance(result, dict) and set(required) <= result.keys() and
+                result.keys() <= set(required) | set(optional) | ({'protocol'} if protocol is not None else set()) and
+                ('protocol' not in result or cls.supported_protocol(result['protocol']) and
+                 (protocol is None or result['protocol'] == protocol)))
+
+    @classmethod
+    def health_valid(cls, result):
+        return (cls.shape(result, ('ok', 'service', 'protocol', 'instinctReadOnly'),
+                          ('connected', 'paused', 'sha', 'deliveryProtocol')) and
+                cls.supported_protocol(result['protocol']) and result['ok'] is True and
+                result['service'] == 'andrea-web-bob' and result['instinctReadOnly'] is True and
+                ('sha' not in result or result['sha'] is None or
+                 isinstance(result['sha'], str) and re.fullmatch(r'[a-f0-9]{40}', result['sha'])) and
+                ('deliveryProtocol' not in result or type(result['deliveryProtocol']) is int and
+                 result['deliveryProtocol'] == 1) and
+                (result['protocol'] == 1 or
+                 {'sha', 'connected', 'paused', 'deliveryProtocol'} <= result.keys() and
+                 type(result.get('connected')) is bool and type(result.get('paused')) is bool and
+                 result.get('deliveryProtocol') == 1))
+
+    @classmethod
+    def remote_valid(cls, draft):
+        remote = draft.get('bridge')
+        if not isinstance(remote, dict):
+            return False
+        # Records saved before negotiation was introduced are protocol 1 only.
+        protocol = remote.get('protocol', 1)
+        return (cls.supported_protocol(protocol) and cls.hex_id(remote.get('draftId')) and
+                cls.hex_id(remote.get('digest')) and isinstance(remote.get('actionId'), str) and
+                bool(remote['actionId'].strip()) and
+                remote.get('localDigest' if protocol == 2 else 'digest') == cls.scope_digest(cls.scope(draft)) and
+                (protocol != 2 or remote.get('requestDigest') == cls.scope_digest(cls.scope(draft))))
+
+    @classmethod
+    def bound_payload(cls, draft):
+        remote = draft['bridge']
+        return {'bridgeDraftId': remote['draftId'], 'requestDigest': remote['requestDigest']} if remote.get('protocol', 1) == 2 else {
+            **cls.scope(draft), 'bridgeDraftId': remote['draftId']}
+
     def prepare(self, draft):
         if not self.token:
             return None
         scope = self.scope(draft)
         try:
+            health = self.call('health')
+            if (not self.health_valid(health) or not self.expected(health['protocol']) or
+                    type(health.get('connected')) is not bool or type(health.get('paused')) is not bool):
+                return None
+            protocol = health['protocol']
             result = self.call("draft", scope)
         except TextingError:
             return None  # No send endpoint is called while preparing a draft.
-        if (result.get("ok") is not True or result.get("digest") != self.scope_digest(scope) or
-                not re.fullmatch(r"[a-f0-9]{64}", str(result.get("draftId", ""))) or
-                not re.fullmatch(r"wbtxt-[a-f0-9]{32}", str(result.get("challenge", ""))) or
-                not isinstance(result.get("actionId"), str) or not result["actionId"] or
-                not isinstance(result.get("expiresAt"), (int, float)) or
+        required = ('ok', 'digest', 'draftId', 'actionId', 'expiresAt')
+        if protocol == 1:
+            required += ('challenge',)
+        else:
+            required += ('requestDigest',)
+        if (not self.shape(result, required, protocol=protocol) or
+                result.get("ok") is not True or not self.hex_id(result.get('digest')) or
+                not self.hex_id(result.get('draftId')) or
+                (protocol == 2 and result.get('requestDigest') != self.scope_digest(scope)) or
+                (protocol == 1 and (result['digest'] != self.scope_digest(scope) or
+                 not isinstance(result['challenge'], str) or
+                 not re.fullmatch(r"wbtxt-[a-f0-9]{32}", result['challenge']))) or
+                not isinstance(result.get("actionId"), str) or not result["actionId"].strip() or
+                not self.number(result.get('expiresAt')) or
                 not time.time() * 1000 < result["expiresAt"] <= (time.time() + CONFIRM_SECONDS + 5) * 1000):
             return None
+        if protocol == 2:
+            # requestDigest must come from Andrea's immutable stored request,
+            # independently of its normalized action digest. Never synthesize it.
+            if not self.claim_remote_id(result['draftId']):
+                return None
+            return {**result, 'protocol': 2, 'localDigest': self.scope_digest(scope)}
         return result
 
     def cancel(self, draft):
-        remote = draft.get("bridge")
-        if not remote or not self.token:
+        if not self.token or not self.remote_valid(draft) or not self.expected(draft['bridge'].get('protocol', 1)):
             return
         try:
-            self.call("cancel", {**self.scope(draft), "bridgeDraftId": remote["draftId"]})
+            result = self.call('cancel', self.bound_payload(draft))
+            return self.receipt_valid(draft, result)
         except TextingError:
             pass  # Local consent is revoked regardless; the remote challenge expires.
 
@@ -240,8 +368,7 @@ class Andrea:
         if not self.token:
             return "Andrea Web Bob bridge access is not configured. Delivery is blocked."
         result = self.call("health")
-        if (result.get("service") != "andrea-web-bob" or result.get("protocol") != 1 or
-                result.get("ok") is not True or result.get("instinctReadOnly") is not True):
+        if not self.health_valid(result) or not self.expected(result['protocol']):
             raise TextingError("Andrea did not return a recognized owner-bridge response. Delivery is blocked.")
         if result.get("paused") is not False or result.get("connected") is not True:
             return "Andrea’s Web Bob bridge is reachable, but outbound messaging is paused or unavailable. Delivery is blocked."
@@ -250,67 +377,115 @@ class Andrea:
     def deliver(self, draft, confirmation, request_id):
         """Return correlated transport state, False for rejection, or None if unknown."""
         remote = draft.get("bridge")
-        if not self.token or not remote:
+        if not self.token or not self.remote_valid(draft) or not self.expected(draft['bridge'].get('protocol', 1)):
             return False
-        scope = self.scope(draft)
-        if remote["digest"] != self.scope_digest(scope):
-            return False
+        if remote.get('protocol', 1) == 2:
+            approval = re.fullmatch(r'yes (wbtxt-[a-f0-9]{64})', confirmation) if isinstance(confirmation, str) else None
+            if not approval:
+                return False
+            # Only forward the owner's separately supplied token. Andrea owns
+            # the approval timestamp, 30-second dispatch TTL and single use.
+            payload = {**self.bound_payload(draft), 'approvalToken': approval[1]}
+        else:
+            payload = {**self.bound_payload(draft), 'confirmation': confirmation,
+                       'confirmationRequestId': request_id, 'approvedAt': draft['approved_at'] * 1000}
         try:
-            result = self.call("confirm", {**scope, "bridgeDraftId": remote["draftId"],
-                "confirmation": confirmation, "confirmationRequestId": request_id,
-                "approvedAt": draft["approved_at"] * 1000})
+            result = self.call('confirm', payload)
         except TextingError as exc:
             # Auth or an absent endpoint rejects the handoff. A lost response or
             # server error may follow delivery, so it cannot prove "not sent".
             return False if exc.status in (400, 401, 403, 404, 405, 409, 413, 415) else None
         return self.delivery_receipt(draft, result)
 
-    @staticmethod
-    def delivery_receipt(draft, result):
+    @classmethod
+    def receipt_valid(cls, draft, result):
+        if not cls.remote_valid(draft):
+            return False
         remote = draft['bridge']
-        guid = result.get("messageGuid")
-        correlated = (result.get("ok") is True and result.get("state") in DELIVERY_STATES and
-            result.get("draftId") == remote["draftId"] and result.get("digest") == remote["digest"] and
-            result.get("actionId") == remote["actionId"] and isinstance(guid, str) and guid.strip())
-        if not correlated:
-            return None
-        # Version-one bridge receipts attest only submission/action correlation.
-        if result.get('deliveryProtocol') != 1:
-            return 'submitted'
+        protocol = remote.get('protocol', 1)
+        required = ('ok', 'draftId', 'digest', 'actionId', 'state') + (('requestDigest',) if protocol == 2 else ())
+        if (not cls.shape(result, required,
+                          ('messageGuid', 'deliveryProtocol', 'delivery', 'deliveryRefreshUnavailable'), protocol) or
+                result['ok'] is not True or
+                (protocol == 2 and result['requestDigest'] != remote['requestDigest']) or
+                any(result[k] != remote[k] for k in ('draftId', 'digest', 'actionId')) or
+                not isinstance(result['state'], str) or
+                result['state'] not in (*DELIVERY_STATES, 'pending', 'cancelled', 'expired',
+                                        'superseded', 'awaiting_delivery', 'approval_unavailable') or
+                ('deliveryRefreshUnavailable' in result and type(result['deliveryRefreshUnavailable']) is not bool)):
+            return False
+        guid = result.get('messageGuid')
+        if ('messageGuid' in result and (not isinstance(guid, str) or not guid.strip()) or
+                result['state'] in ('submitted', 'sent', 'delivered', 'delivery_failed') and not guid or
+                result['state'] not in DELIVERY_STATES and 'messageGuid' in result):
+            return False
+        if 'deliveryProtocol' not in result:
+            # Recognized historical protocol-1 receipts prove submission only.
+            return protocol == 1 and 'delivery' not in result
+        if type(result['deliveryProtocol']) is not int or result['deliveryProtocol'] != 1:
+            return False
         evidence = result.get('delivery')
-        if result['state'] != 'submitted':
-            if (not isinstance(evidence, dict) or evidence.get('state') != result['state'] or
-                    type(evidence.get('checkedAt')) not in (int, float) or
-                    not math.isfinite(evidence['checkedAt']) or evidence['checkedAt'] <= 0):
-                return None
-            error = evidence.get('error')
-            if (result['state'] in ('sent', 'delivered') and (type(error) is not int or error != 0) or
-                    result['state'] == 'delivery_failed' and (type(error) is not int or error <= 0)):
-                return None
-        return result['state']
+        if evidence is None:
+            return (protocol == 1 and result['state'] == 'submitted' or
+                    'delivery' in result and guid is None and result['state'] not in
+                    ('submitted', 'sent', 'delivered', 'delivery_failed'))
+        if (not guid or result['state'] not in DELIVERY_STATES or
+                not cls.shape(evidence, ('state', 'error', 'checkedAt'),
+                          ('deliveredAt', 'fresh', 'messageGuid', 'actionId', 'digest', 'refreshedAt')) or
+                evidence['state'] != result['state'] or
+                ('fresh' in evidence and type(evidence['fresh']) is not bool) or
+                ('refreshedAt' in evidence and
+                 (not cls.number(evidence['refreshedAt']) or evidence['refreshedAt'] <= 0))):
+            return False
+        if protocol == 2 and (not {'deliveredAt', 'fresh', 'messageGuid', 'actionId', 'digest'} <= evidence.keys() or
+                              any(evidence[k] != result.get(k) for k in ('messageGuid', 'actionId', 'digest'))):
+            return False
+        for key in ('messageGuid', 'actionId', 'digest'):
+            if key in evidence and evidence[key] != result.get(key):
+                return False
+        checked = evidence['checkedAt']
+        if not (result['state'] == 'submitted' and checked is None):
+            if not cls.number(checked) or checked <= 0:
+                return False
+        error = evidence['error']
+        if error is not None and (type(error) is not int or error < 0):
+            return False
+        if (result['state'] in ('sent', 'delivered') and (type(error) is not int or error != 0) or
+                result['state'] == 'submitted' and error not in (None, 0) or
+                result['state'] == 'delivery_failed' and (type(error) is not int or error <= 0)):
+            return False
+        delivered = evidence.get('deliveredAt')
+        if delivered is not None and (not cls.number(delivered) or delivered <= 0):
+            return False
+        return True
+
+    @classmethod
+    def delivery_receipt(cls, draft, result):
+        if not cls.receipt_valid(draft, result):
+            return None
+        guid = result.get('messageGuid')
+        if result['state'] not in DELIVERY_STATES or not isinstance(guid, str) or not guid.strip():
+            return None
+        return result['state'] if 'deliveryProtocol' in result else 'submitted'
 
     def check_delivery(self, draft):
-        """Inspect consumed consent without confirming again; revoke any unconsumed handoff.
-
-        Andrea's bound cancel route returns the same durable receipt for consumed
-        drafts. For a still-pending handoff it atomically cancels consent, including
-        a confirm handler still waiting on recipient validation. It cannot dispatch.
-        """
-        remote = draft.get('bridge')
-        if not self.token or not remote or remote['digest'] != self.scope_digest(self.scope(draft)):
+        """Revoke unconsumed consent, then inspect the original receipt; never resend."""
+        if not self.token or not self.remote_valid(draft) or not self.expected(draft['bridge'].get('protocol', 1)):
             return None
+        payload = self.bound_payload(draft)
         try:
-            result = self.call('cancel', {**self.scope(draft), 'bridgeDraftId': remote['draftId']})
+            result = self.call('cancel', payload)
         except TextingError:
-            return None  # A failed inspection says nothing about delivery.
-        if (result.get('ok') is True and result.get('state') == 'cancelled' and
-                all(result.get(k) == remote[k] for k in ('draftId', 'digest', 'actionId'))):
+            return None
+        if not self.receipt_valid(draft, result):
+            return None
+        if result['state'] == 'cancelled':
             return False
         try:
-            result = self.call('status', {**self.scope(draft), 'bridgeDraftId': remote['draftId']})
+            result = self.call('status', payload)
         except TextingError:
             return None
-        if result.get('deliveryRefreshUnavailable'):
+        if not self.receipt_valid(draft, result) or result.get('deliveryRefreshUnavailable'):
             return None
         return self.delivery_receipt(draft, result)
 
@@ -323,6 +498,48 @@ def fingerprint(draft):
 
 def label(chat):
     return str(chat.get("displayName") or chat.get("name") or chat.get("guid") or "Unnamed thread")
+
+
+def recipient_name(query):
+    """Normalize conversational wrappers, never an exact transport identifier."""
+    name = re.sub(r'^the\s+', '', query.strip(), flags=re.I)
+    return re.sub(r'\s+(?:group(?:\s+chat)?|chat|thread)$', '', name, flags=re.I).casefold()
+
+
+def message_body(body, *, natural=False):
+    """Remove trailing instructions to Bob, leaving quoted/literal text alone."""
+    hold = (r"(?:please\s+)?(?:don['’]t send(?: it)?(?: yet| for now)?|"
+            r"do not send(?: it)?(?: yet| for now)?|hold off (?:on )?sending(?: it)?(?: for now)?|"
+            r"(?:just )?(?:keep|save) (?:it|this) as a draft(?: for now)?|"
+            r"show me first|for now)")
+    # Require a clause boundary: 'We need a drummer for now' is message content.
+    pattern = r'(?:\s*[,;.!—–]\s*|\s+(?:but|and)\s+)(?:(?:but|and)\s+)?' + hold + r'[.!\s]*$'
+    cleaned = body.strip()
+    while True:
+        shortened = re.sub(pattern, '', cleaned, flags=re.I).rstrip()
+        if shortened == cleaned:
+            break
+        cleaned = shortened
+    if cleaned and (natural or cleaned != body.strip()) and not cleaned.startswith(('"', '“', "'", '‘')):
+        cleaned = cleaned[0].upper() + cleaned[1:]
+        if cleaned[-1] not in '.!?':
+            cleaned += '.'
+    return cleaned
+
+
+def compose_body(clean, compose):
+    """Polish indirect requests; explicit colon/quoted bodies stay literal."""
+    natural = bool(re.match(r'tell\s', clean, re.I) or
+                   re.search(r' (?:saying|that) $', clean[:compose.start(2)], re.I))
+    body = message_body(compose[2], natural=natural)
+    if not natural or body.startswith(('"', '“', "'", '‘')):
+        return body
+    cta = ''
+    if re.search(r'\bsetlist\b', body, re.I):
+        cta = ' Please share your song picks.'
+    elif re.search(r'\b(?:moved|moving|rescheduled|late)\b', body, re.I):
+        cta = ' Let me know if that creates a conflict.'
+    return ('Hey! ' + body + cta) if not re.match(r'(?:hi|hey|hello)\b', body, re.I) else body + cta
 
 
 def recipient(chat):
@@ -387,7 +604,7 @@ class Texting:
                     card['state'] = 'read_only'
             if card["state"] == "pending" and (draft["epoch"] != self.epoch or self.clock() >= draft["expires_at"]):
                 card["state"] = "expired"
-            card["confirm_message"] = "yes " + draft["token"] if card["state"] == "pending" and not card.get('read_only') else None
+            card["confirm_message"] = "yes " + draft["token"] if card["state"] == "pending" and draft.get("token") and not card.get('read_only') else None
             message["text_draft"] = card
         return value
 
@@ -415,9 +632,10 @@ class Texting:
             self.instinct.observe(exact)
             if not exact:
                 raise TextingError("No matching thread for that exact thread ID. Nothing was sent.")
-        matches = exact or [c for c in chats if label(c).casefold() == query.casefold() or
+        name = recipient_name(query)
+        matches = exact or [c for c in chats if recipient_name(label(c)) == name or
                            query in [p.get("address") for p in (c.get("participants") or []) if isinstance(p, dict)]]
-        matches = matches or [c for c in chats if query.casefold() in label(c).casefold()]
+        matches = matches or [c for c in chats if name and name in recipient_name(label(c))]
         if not matches:
             raise TextingError("No matching thread in the 200 most recent threads. Try ‘texts’ and use an exact thread ID.")
         if len(matches) != 1:
@@ -425,7 +643,7 @@ class Texting:
             raise TextingError("Several threads match. Use an exact thread ID; I won’t choose a recipient for you.\n" + choices)
         return matches[0]
 
-    def draft(self, conversation, target, body, actor, request_id):
+    def draft(self, conversation, target, body, actor, request_id, *, held=False):
         if not actor:
             raise TextingError("Log in again before preparing a confirmation-bound text draft.")
         if not body.strip() or len(body) > 4000:
@@ -446,14 +664,24 @@ class Texting:
             bridge = self.andrea.prepare(draft)
             if bridge:
                 draft["bridge"] = {k: bridge[k] for k in ("draftId", "digest", "actionId")}
-                draft["token"] = bridge["challenge"]
+                if bridge.get('protocol') == 2:
+                    draft['bridge'].update(protocol=2, localDigest=bridge['localDigest'], requestDigest=bridge['requestDigest'])
+                    draft['token'] = None  # Only Andrea's independent owner path has the approval.
+                else:
+                    draft["token"] = bridge["challenge"]
                 draft["expires_at"] = min(draft["expires_at"], bridge["expiresAt"] / 1000)
         draft["fingerprint"] = fingerprint(draft)
         state["drafts"][identifier] = draft
         state["active"] = identifier
         conversation["messages"][-1]["text_draft_id"] = identifier
         from instinct import READ_ONLY
-        return READ_ONLY if draft.get('read_only') else "Draft ready for review. Nothing sent."
+        return (READ_ONLY if draft.get('read_only') else
+                f"Draft to {target.get('name') or target.get('guid', 'this recipient')}" +
+                (" (not sent)" if held else "") + f":\n\n{body}\n\n" +
+                ("Review Andrea’s separately delivered owner approval for this exact draft, then reply "
+                 "`yes` followed by that approval token here to send."
+                 if draft.get('bridge', {}).get('protocol') == 2 else
+                 ("When ready, reply " if held else "Reply ") + f"`yes {draft['token']}` to send."))
 
     def confirm(self, conversation, text, actor, request_id, persist):
         state = conversation.get("_texting", {})
@@ -465,7 +693,9 @@ class Texting:
         consumed = consumed_delivery_reply(draft)
         if consumed:
             return consumed
-        match = re.fullmatch(r"yes (wbtxt-[0-9a-f]{32})", text, re.I)
+        protocol2 = draft and draft.get('bridge', {}).get('protocol') == 2
+        match = (re.fullmatch(r"yes (wbtxt-[0-9a-f]{64})", text) if protocol2 else
+                 re.fullmatch(r"yes (wbtxt-[0-9a-f]{32})", text, re.I))
         if not draft or not match:
             if text.lower().startswith("yes wbtxt-"):
                 self.invalidate(conversation)
@@ -483,7 +713,7 @@ class Texting:
         # must review the card and submit its exact token in a later request.
         if (not actor or not hmac.compare_digest(actor, draft["actor"]) or
                 request_id == draft["request_id"] or draft["conversation_id"] != conversation["id"] or
-                not hmac.compare_digest(match[1], draft["token"]) or
+                (not protocol2 and not hmac.compare_digest(match[1], draft["token"])) or
                 not hmac.compare_digest(fingerprint(draft), draft["fingerprint"])):
             return "Nothing sent. This yes does not match the exact draft and login that presented it. Review a fresh draft."
         # Save consumed consent before any handoff. Never replay on restart/error.
@@ -529,6 +759,16 @@ class Texting:
         return (delivery_reply(draft) + ' Checked the original message; nothing was resent.'
                 if isinstance(delivered, str) else 'Not sent. Andrea cancelled the unconsumed handoff; nothing was resent.')
 
+    @staticmethod
+    def confirmation_requested(conversation, clean):
+        state = conversation.get("_texting", {})
+        active = state.get("drafts", {}).get(state.get("active"))
+        text_context = active and (active["state"] in ("pending", "editing", "read_only") or
+            len(conversation["messages"]) >= 3 and conversation["messages"][-3].get("texting"))
+        command = clean.casefold().rstrip(".?!")
+        return bool(re.match(r"^yes\s+wbtxt-", clean, re.I) or
+                    (text_context and command in ("yes", "ok", "send it", "send it now", "send now", "go", "do it")))
+
     def handle(self, conversation, text, actor, request_id, persist, redact):
         state = conversation.get("_texting", {})
         active = state.get("drafts", {}).get(state.get("active"))
@@ -540,16 +780,15 @@ class Texting:
         if self.instinct.handle(conversation, clean, actor, request_id, persist, redact):
             return True
         command = clean.casefold().rstrip(".?!")
-        text_context = active and (active["state"] in ("pending", "editing", "read_only") or
-            len(conversation["messages"]) >= 3 and conversation["messages"][-3].get("texting"))
         # Bare approvals are routed here for token guidance only; confirm() still
         # requires the entire message to match the exact yes + token format.
-        confirmation = re.match(r"^yes\s+wbtxt-", clean, re.I) or (text_context and command in ("yes", "ok", "send it", "send it now", "send now", "go", "do it"))
+        confirmation = self.confirmation_requested(conversation, clean)
         edit = re.fullmatch(r"(edit|cancel) text draft ([0-9a-f]{16})", clean, re.I)
         check_delivery = re.fullmatch(r"check text delivery ([0-9a-f]{16})", clean, re.I)
         replace = re.fullmatch(r"replace text draft ([0-9a-f]{16}) to (.+?):\s*([\s\S]+)", clean, re.I)
         compose = re.fullmatch(r"(?:draft|write|compose|send) (?:a )?(?:text|reply|sms|message)(?: reply)? to (.+?)(?::\s*| saying )([\s\S]+)", clean, re.I)
-        compose = compose or re.fullmatch(r"text (.+?):\s*([\s\S]+)", clean, re.I)
+        compose = compose or re.fullmatch(r"text (.+?)(?::\s*| that )([\s\S]+)", clean, re.I)
+        compose = compose or re.fullmatch(r"tell (.+?\s+(?:group(?:\s+chat)?|chat|thread))\s+([\s\S]+)", clean, re.I)
         read = re.fullmatch(r"(read|show|summari[sz]e) (?:the )?(?:recent )?(?:texts?|messages?|imessages?|sms|thread) (?:from |with |in |for )?(.+)", clean, re.I)
         listing = command in ("texts", "list texts", "show texts", "recent texts", "show recent texts", "list recent texts", "summarize recent texts", "summarize texts")
         # Incomplete texting commands only — not colloquial chat like “text me when you're free”.
@@ -594,10 +833,12 @@ class Texting:
                     query, body = replace[2], replace[3]
                 else:
                     query, body = compose[1], compose[2]
+                    body = compose_body(clean, compose)
                 target = recipient(self.resolve(query.strip()))
                 if redact(json.dumps(target, ensure_ascii=False)) != json.dumps(target, ensure_ascii=False):
                     raise TextingError("The thread details contain sensitive credentials; no draft was prepared.")
-                content = self.draft(conversation, target, body, actor, request_id)
+                held = bool(compose and message_body(compose[2]) != compose[2].strip())
+                content = self.draft(conversation, target, body, actor, request_id, held=held)
             else:
                 self.invalidate(conversation)
                 if listing:
@@ -626,6 +867,13 @@ class Texting:
                     content = HELP
         except TextingError as exc:
             content = str(exc)
+            # Recipient errors must reach the owner unchanged. Only transport
+            # failures can keep a generic draft; thread names in ambiguity
+            # choices are untrusted and cannot select this fallback.
+            if compose and not replace and re.search(r'not configured|unavailable', content.partition('\n')[0], re.I):
+                from personal_drafts import save_draft
+                content = save_draft(conversation, request_id, 'text', compose[1], compose_body(clean, compose),
+                                     content + ' The draft remains pending until the recipient and transport are verified.')
         answer["content"] = redact(content)
         # Every handled turn is saved once here. Confirmations also persist consumed
         # consent before delivery so an interrupted receipt cannot authorize a replay.

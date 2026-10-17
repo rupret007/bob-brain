@@ -1,0 +1,678 @@
+nice: setpriority: Operation not permitted
+...........................................
+======================================================================
+ERROR: test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; after I give the green light.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 165, in test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; let me see it first.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 165, in test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; AFTER I GIVE THE GREEN LIGHT.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 165, in test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; after I give the green-light.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 165, in test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; once I give a green light.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 165, in test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; when I give you the green light.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 165, in test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; pending the green light.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 165, in test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; green light required.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 165, in test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; after I give the go-ahead.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 165, in test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; once I give you the go ahead.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 165, in test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; let me see this first.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 165, in test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; LET ME SEE IT FIRST.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 165, in test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; let me see the result first.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 165, in test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; let me look at it first.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 165, in test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; let me check it first.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 165, in test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; let me inspect it first.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 165, in test_ledger_B10_deferred_and_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B5_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='just show me a preview')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 282, in test_ledger_B5_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B5_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='preview only')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 282, in test_ledger_B5_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B5_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='PREVIEW ONLY')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 282, in test_ledger_B5_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B5_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='preview first')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 282, in test_ledger_B5_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B5_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='a preview please')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 282, in test_ledger_B5_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B5_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='send me a preview')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 282, in test_ledger_B5_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B5_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='I need a preview')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 282, in test_ledger_B5_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B5_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='let me preview it')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 282, in test_ledger_B5_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B5_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='preview this')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 282, in test_ledger_B5_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B5_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='preview-only')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 282, in test_ledger_B5_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B5_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='for preview')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 282, in test_ledger_B5_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B5_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='show the preview')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 282, in test_ledger_B5_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B5_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='give me a preview')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 282, in test_ledger_B5_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B5_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='preview before proceeding')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 282, in test_ledger_B5_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B5_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='run this as a dry run')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 282, in test_ledger_B5_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B5_preview_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='I need to review it first')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 282, in test_ledger_B5_preview_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; draft only.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 214, in test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint=', provided I agree.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 214, in test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; DRAFT ONLY.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 214, in test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; draft-only.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 214, in test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; just a draft.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 214, in test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; keep this as a draft.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 214, in test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; draft it first.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 214, in test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint='; for drafting.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 214, in test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint=', if I agree.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 214, in test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint=', when I agree.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 214, in test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint=', once I agree.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 214, in test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint=', subject to my agreement.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 214, in test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint=', agreement required.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 214, in test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint=', PROVIDED I AGREE.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 214, in test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint=', provided I accept.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 214, in test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+======================================================================
+ERROR: test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat (test_cap_ledger.CapabilityLedgerTests) (constraint=', conditional on my decision.')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/test_cap_ledger.py", line 214, in test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat
+    chat.submit(cid, 'yes', str(uuid.uuid4()))
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/app.py", line 725, in submit
+    personal = personal_draft_turn(self, conversation, text, request_id)
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 112, in handle
+    and not pending(chat, conversation, include_texting=False, include_work=False)):
+  File "/Users/jeffstory/Documents/bob-overnight-inject/workspaces/webbob-h2h-fixes/webchat/personal_drafts.py", line 19, in pending
+    with lock() as rows:
+AttributeError: __enter__
+
+----------------------------------------------------------------------
+Ran 46 tests in 5.441s
+
+FAILED (errors=48)

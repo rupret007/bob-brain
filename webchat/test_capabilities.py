@@ -22,10 +22,40 @@ class CapabilityTests(Fixture):
                     self.assertEqual(answer['provider'], 'capabilities')
                     self.assertEqual(answer['status'], 'done')
                     self.assertFalse(answer['attempts'])
+                    self.assertEqual(answer['content'], reply(question + '?', self.root))
                     self.assertEqual(self.ask(question + '?', request), result)
         self.assertFalse(self.fake.calls)
         self.assertFalse(task_queue.tasks(self.root))
         self.assertFalse(self.chat.get(self.identifier).get('_texting', {}).get('audit'))
+
+    def test_capability_content_survives_save_and_restart_in_each_dispatch_mode(self):
+        for mode in (None, 'MAINTENANCE', 'SOLO-WORKER'):
+            with self.subTest(mode=mode):
+                marker = self.root / 'conductor' / mode if mode else None
+                if marker:
+                    marker.touch()
+                try:
+                    for prompt in ('Can you send texts?', 'What can you do?', 'Can you start workers?'):
+                        request = str(uuid.uuid4())
+                        expected = reply(prompt, self.root)
+                        result = self.ask(prompt, request)
+                        answer = result['messages'][-1]
+                        self.assertEqual(answer['provider'], 'capabilities')
+                        self.assertEqual(answer['content'], expected)
+                        self.assertFalse(answer['attempts'])
+                        self.chat.save(self.chat.get(self.identifier))
+                        result = self.chat.public(self.chat.get(self.identifier))
+                        restored = type(self.chat)(self.folder, self.root, self.fake)
+                        try:
+                            self.assertEqual(restored.history(self.identifier)['messages'][-1], answer)
+                            self.assertEqual(restored.submit(self.identifier, prompt, request), result)
+                        finally:
+                            restored.close()
+                finally:
+                    if marker:
+                        marker.unlink()
+        self.assertFalse(self.fake.calls)
+        self.assertFalse(task_queue.tasks(self.root))
 
     def test_requests_and_quoted_questions_are_not_intercepted(self):
         for text in ('Can you send texts to Alex: On my way', 'Can you remind me to stretch in 10 minutes?',
@@ -82,7 +112,7 @@ class CapabilityTests(Fixture):
         mock = MockMessaging(self.root)
         self.addCleanup(mock.close)
         mock.enable_web_bob_send = True
-        self.chat.texting = Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token))
+        self.chat.texting = Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token, expected_protocol=1))
         self.chat.texting.instinct.bind_state(self.folder)
         card = self.ask('draft reply to Alex Morgan: Do not send this.')['messages'][-1]['text_draft']
         self.ask('Can you send texts?')

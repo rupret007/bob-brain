@@ -28,7 +28,7 @@ class TextingTests(unittest.TestCase):
         self.now = [1790535600.0]
         self.providers = OfflineProviders()
         self.texting = Texting(BlueBubbles(self.mock.config_db),
-                              Andrea(self.mock.base, self.mock.token), clock=lambda: self.now[0])
+                              Andrea(self.mock.base, self.mock.token, expected_protocol=1), clock=lambda: self.now[0])
         self.folder = self.root / "conductor/webchat"
         self.chat = Chat(self.folder, self.root, self.providers, texting=self.texting)
         self.identifier = self.chat.new_conversation()["id"]
@@ -338,7 +338,7 @@ class TextingTests(unittest.TestCase):
         self.say(draft["confirm_message"])
         self.assertEqual(len(self.private()["audit"]), 1)
         self.assertEqual(self.providers.calls, [])
-        self.assertEqual(len(self.mock.calls), 3)  # draft lookup, refreshed read-only identities, Andrea probe
+        self.assertEqual(len(self.mock.calls), 4)  # draft lookup, refreshed identities, Andrea health and draft
         self.assertIn(("POST", "/web-bob/v1/draft"), self.mock.calls)
         self.assertNotIn(("POST", "/web-bob/v1/confirm"), self.mock.calls)
 
@@ -367,7 +367,7 @@ class TextingTests(unittest.TestCase):
         self.assertIn("expired", self.say(draft["confirm_message"])["messages"][-1]["content"])
         draft = self.draft()
         restored = Chat(self.folder, self.root, self.providers,
-            texting=Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token), clock=lambda: self.now[0]))
+            texting=Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token, expected_protocol=1), clock=lambda: self.now[0]))
         try:
             value = restored.submit(self.identifier, draft["confirm_message"], str(uuid.uuid4()), actor=self.actor)
             self.assertIn("expired", value["messages"][-1]["content"])
@@ -462,7 +462,7 @@ class TextingTests(unittest.TestCase):
         self.assertEqual(self.private()["drafts"][draft["id"]]["state"], "delivery_unconfirmed")
         self.assertIsNone(self.private()["drafts"][draft["id"]]["token"])
         restored = Chat(self.folder, self.root, self.providers,
-                       texting=Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token)))
+                       texting=Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token, expected_protocol=1)))
         try:
             history = restored.history(self.identifier)
             self.assertIn("delivery is unconfirmed", history["messages"][-1]["content"])
@@ -486,7 +486,7 @@ class TextingTests(unittest.TestCase):
         self.assertIn('Delivery remains unconfirmed', repeated['messages'][-1]['content'])
         self.assertNotIn('Nothing sent.', repeated['messages'][-1]['content'])
         restored = Chat(self.folder, self.root, self.providers,
-                       texting=Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token)))
+                       texting=Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token, expected_protocol=1)))
         try:
             history = restored.history(self.identifier)
             cards = [m["text_draft"] for m in history["messages"] if m.get("text_draft")]
@@ -561,7 +561,7 @@ class TextingTests(unittest.TestCase):
         self.say(card['confirm_message'])
         self.chat.close()
         self.chat = Chat(self.folder, self.root, self.providers, texting=Texting(
-            BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token)))
+            BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token, expected_protocol=1)))
         # Any authenticated owner session may inspect a persisted receipt;
         # it supplies no send authority and cannot reuse the old confirmation.
         check = self.chat.history(self.identifier)['messages'][-3]['text_draft']['check_delivery_message']
@@ -812,6 +812,196 @@ class TextingTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(3)
+
+
+
+class AndreaProtocolTests(unittest.TestCase):
+    """Both wire versions; unrecognized data never becomes send authority/evidence."""
+
+    def setUp(self):
+        from test_andrea_bridge import draft
+        self.value = draft()
+        self.client = Andrea('http://127.0.0.1:4316', 'fixture-only-token')
+
+    def health(self, protocol):
+        return dict(ok=True, service='andrea-web-bob', protocol=protocol, sha=None,
+                    connected=True, paused=False, instinctReadOnly=True, deliveryProtocol=1)
+
+    def response(self, protocol):
+        result = dict(ok=True, draftId='b'*64, actionId='action-123',
+                      digest=Andrea.scope_digest(Andrea.scope(self.value)) if protocol == 1 else 'd'*64,
+                      expiresAt=(time.time()+299)*1000)
+        if protocol == 1:
+            result['challenge'] = 'wbtxt-' + 'c'*32
+        else:
+            result['requestDigest'] = Andrea.scope_digest(Andrea.scope(self.value))
+        return result
+
+    def bind(self, protocol):
+        self.client = Andrea('http://127.0.0.1:4316', 'fixture-only-token', expected_protocol=protocol)
+        with patch.object(self.client, 'call', side_effect=[self.health(protocol), self.response(protocol)]):
+            remote = self.client.prepare(self.value)
+        self.assertIsNotNone(remote)
+        self.value['bridge'] = {k: remote[k] for k in ('draftId', 'digest', 'actionId')}
+        if protocol == 2:
+            self.value['bridge'].update(protocol=2, localDigest=remote['localDigest'], requestDigest=remote['requestDigest'])
+        return remote
+
+    def receipt(self, state='sent', protocol=2):
+        remote = self.value['bridge']
+        result = dict(ok=True, state=state, deliveryProtocol=1, messageGuid='receipt-123',
+                      **{k: remote[k] for k in ('draftId', 'digest', 'actionId')})
+        if remote.get('protocol') == 2:
+            result['requestDigest'] = remote['requestDigest']
+        result['delivery'] = dict(state=state, error=4 if state == 'delivery_failed' else 0,
+                                  deliveredAt=time.time()*1000 if state == 'delivered' else None,
+                                  checkedAt=time.time()*1000, fresh=True,
+                                  **{k: result[k] for k in ('messageGuid', 'actionId', 'digest')})
+        return result
+
+    def test_protocol_1_and_2_positive_routes_and_exact_request_shapes(self):
+        for protocol in (1, 2):
+            with self.subTest(protocol=protocol):
+                remote = self.bind(protocol)
+                with patch.object(self.client, 'call', return_value=self.health(protocol)):
+                    self.assertIn('confirm it separately', self.client.status())
+                if protocol == 2:
+                    self.assertNotIn('challenge', remote)
+                    self.assertNotIn('approvalToken', remote)
+                approval = 'yes wbtxt-' + 'c'*(64 if protocol == 2 else 32)
+                receipt = self.receipt()
+                with patch.object(self.client, 'call', return_value=receipt) as call:
+                    self.assertEqual(self.client.deliver(self.value, approval, 'confirm-123'), 'sent')
+                    payload = call.call_args.args[1]
+                    if protocol == 2:
+                        self.assertEqual(payload, dict(bridgeDraftId=remote['draftId'], requestDigest=remote['requestDigest'], approvalToken=approval[4:]))
+                    else:
+                        self.assertEqual(payload['confirmation'], approval)
+                        self.assertEqual(payload['actor'], self.value['actor'])
+                    self.assertTrue(self.client.cancel(self.value))
+                    self.assertEqual(self.client.check_delivery(self.value), 'sent')
+                    self.assertEqual([c.args[0] for c in call.call_args_list], ['confirm', 'cancel', 'cancel', 'status'])
+                    for c in call.call_args_list[1:]:
+                        self.assertNotIn('approvalToken', c.args[1])
+                        if protocol == 2:
+                            self.assertEqual(c.args[1], dict(bridgeDraftId=remote['draftId'], requestDigest=remote['requestDigest']))
+                for state in ('submitted', 'sent', 'delivered', 'delivery_failed', 'delivery_unconfirmed'):
+                    self.assertEqual(self.client.delivery_receipt(self.value, self.receipt(state)), state)
+                cancelled = {k: v for k, v in receipt.items() if k != 'messageGuid'}
+                cancelled.update(state='cancelled', delivery=None)
+                with patch.object(self.client, 'call', return_value=cancelled) as call:
+                    self.assertIs(self.client.check_delivery(self.value), False)
+                    self.assertEqual(call.call_count, 1)
+
+    def test_unknown_health_protocols_and_malformed_health_block_drafts(self):
+        for invalid in (0, 3, '2', True, False, 1.0, 2.0, None, [], {}):
+            health = self.health(invalid)
+            self.assert_health_blocked(health)
+        for key in self.health(2):
+            health = self.health(2); del health[key]
+            self.assert_health_blocked(health)
+        for protocol in (1, 2):
+            for key, bad in [('ok', 1), ('service', 'control'), ('instinctReadOnly', 1),
+                             ('deliveryProtocol', True), ('deliveryProtocol', 2), ('sha', 12), ('unknown', True)]:
+                self.assert_health_blocked({**self.health(protocol), key: bad})
+        for bad in (None, [], 'ok', True):
+            self.assert_health_blocked(bad)
+
+    def assert_health_blocked(self, health):
+        with self.subTest(health=health), patch.object(self.client, 'call', return_value=health) as call:
+            with self.assertRaises(TextingError):
+                self.client.status()
+            self.assertIsNone(self.client.prepare(self.value))
+            self.assertTrue(all(c.args[0] == 'health' for c in call.call_args_list))
+
+    def test_malformed_draft_and_approval_shapes_fail_closed(self):
+        for protocol in (1, 2):
+            self.client.expected_protocol = protocol
+            base = self.response(protocol)
+            invalid = [None, [], {}, {**base, 'extra': 1}]
+            invalid += [{k: v for k, v in base.items() if k != key} for key in base]
+            invalid += [{**base, key: bad} for key, bad in [
+                ('ok', 1), ('draftId', 1), ('digest', 'bad'), ('actionId', []), ('actionId', ' '),
+                ('expiresAt', True), ('expiresAt', float('nan')), ('expiresAt', float('inf')), ('expiresAt', 10**400),
+                ('expiresAt', 0), ('expiresAt', (time.time()+999)*1000)]]
+            invalid += [{**base, 'protocol': v} for v in (0, 3, '2', True, 1.0, None)]
+            if protocol == 2:
+                invalid += [{**base, key: 'wbtxt-'+'c'*64} for key in ('challenge', 'approvalToken', 'confirmation')]
+                invalid += [{**base, 'state': 'approval_unavailable'}]
+            else:
+                invalid += [{**base, 'challenge': 'wbtxt-'+'c'*64}, {**base, 'digest': 'd'*64}]
+            for result in invalid:
+                with self.subTest(protocol=protocol, shape=result), patch.object(
+                        self.client, 'call', side_effect=[self.health(protocol), result]):
+                    self.assertIsNone(self.client.prepare(self.value))
+        self.bind(2)
+        for approval in (None, '', 'yes', 'yes wbtxt-'+'c'*32, 'yes wbtxt-'+'C'*64,
+                         'yes wbtxt-'+'c'*65, 'yes wbtxt-'+'c'*64+' ', 'wbtxt-'+'c'*64):
+            with self.subTest(approval_shape=type(approval)), patch.object(self.client, 'call') as call:
+                self.assertIs(self.client.deliver(self.value, approval, 'confirm-123'), False)
+                call.assert_not_called()
+
+    def test_unknown_protocol_and_malformed_receipts_fail_every_route(self):
+        for protocol in (1, 2):
+            self.bind(protocol)
+            receipt = self.receipt()
+            invalid = [None, [], {}, {**receipt, 'extra': 1}]
+            invalid += [{k: v for k, v in receipt.items() if k != key}
+                        for key in ('ok', 'draftId', 'digest', 'actionId', 'state')]
+            invalid += [{**receipt, key: bad} for key, bad in [
+                ('ok', 1), ('draftId', 'e'*64), ('digest', 'e'*64), ('actionId', 'wrong'),
+                ('state', []), ('state', 'unknown'), ('messageGuid', None), ('messageGuid', ''),
+                ('messageGuid', 1), ('deliveryRefreshUnavailable', 'false')]]
+            invalid += [{**receipt, 'protocol': v} for v in (0, 3, '2', True, 1.0, None)]
+            invalid += [{**receipt, 'deliveryProtocol': v} for v in (0, 2, 3, '1', True, 1.0, None)]
+            invalid += [{**receipt, 'delivery': bad} for bad in (None, [], {}, True)]
+            invalid += [{**receipt, 'delivery': {**receipt['delivery'], key: bad}} for key, bad in [
+                ('state', 'delivered'), ('checkedAt', True), ('checkedAt', float('nan')), ('checkedAt', 10**400),
+                ('checkedAt', 0), ('error', True), ('error', 4), ('fresh', 1),
+                ('deliveredAt', float('inf')), ('messageGuid', 'wrong'), ('digest', 'wrong'),
+                ('actionId', 'wrong'), ('refreshedAt', True), ('extra', 1), ('protocol', 1)]]
+            for result in invalid:
+                with self.subTest(protocol=protocol, malformed=result):
+                    self.assertIsNone(self.client.delivery_receipt(self.value, result))
+                    with patch.object(self.client, 'call', return_value=result) as call:
+                        self.assertIsNone(self.client.deliver(self.value, 'yes wbtxt-'+'c'*(64 if protocol==2 else 32), 'confirm-123'))
+                        self.assertFalse(self.client.cancel(self.value))
+                        self.assertIsNone(self.client.check_delivery(self.value))
+                        self.assertNotIn('status', [c.args[0] for c in call.call_args_list])
+                    with patch.object(self.client, 'call', side_effect=[receipt, result]):
+                        self.assertIsNone(self.client.check_delivery(self.value))
+            for bad in (0, 3, '2', True, 1.0, None):
+                self.value['bridge']['protocol'] = bad
+                with patch.object(self.client, 'call') as call:
+                    self.assertIs(self.client.deliver(self.value, 'yes wbtxt-'+'c'*64, 'confirm-123'), False)
+                    self.assertIsNone(self.client.cancel(self.value))
+                    self.assertIsNone(self.client.check_delivery(self.value))
+                    self.assertIsNone(self.client.delivery_receipt(self.value, receipt))
+                    call.assert_not_called()
+
+    def test_protocol2_requires_local_binding_and_complete_delivery_evidence(self):
+        self.bind(2)
+        receipt = self.receipt('delivered')
+        # Andrea may attest isDelivered without a provider delivery timestamp.
+        receipt['delivery']['deliveredAt'] = None
+        self.assertEqual(self.client.delivery_receipt(self.value, receipt), 'delivered')
+        for key in ('fresh', 'deliveredAt', 'messageGuid', 'actionId', 'digest'):
+            bad = copy.deepcopy(receipt); del bad['delivery'][key]
+            self.assertIsNone(self.client.delivery_receipt(self.value, bad))
+        for key in ('delivery', 'deliveryProtocol'):
+            bad = copy.deepcopy(receipt); del bad[key]
+            self.assertIsNone(self.client.delivery_receipt(self.value, bad))
+        for state in ('approval_unavailable', 'awaiting_delivery', 'expired', 'superseded', 'pending'):
+            result = {k: v for k, v in receipt.items() if k != 'messageGuid'}
+            result.update(state=state, delivery=None)
+            with patch.object(self.client, 'call', return_value=result):
+                self.assertIsNone(self.client.check_delivery(self.value))
+                self.assertIsNone(self.client.deliver(self.value, 'yes wbtxt-'+'c'*64, 'confirm-123'))
+        self.value['body'] += 'changed'
+        with patch.object(self.client, 'call') as call:
+            self.assertIs(self.client.deliver(self.value, 'yes wbtxt-'+'c'*64, 'confirm-123'), False)
+            self.assertIsNone(self.client.check_delivery(self.value))
+            call.assert_not_called()
 
 
 if __name__ == "__main__":

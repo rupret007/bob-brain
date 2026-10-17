@@ -321,7 +321,8 @@ class IntentTests(Fixture):
 
     def test_missing_project_context_asks_without_creating_generic_max_tasks(self):
         receipt = self.submit(PUSH)["messages"][-1]
-        self.assertEqual(receipt["content"], "Which projects should I work on?")
+        self.assertIn("Which projects should I focus on", receipt["content"])
+        self.assertIn("time and spending limits", receipt["content"])
         self.assertFalse(queue.tasks(self.root))
 
     def test_push_without_targets_preserves_saved_permissions(self):
@@ -331,13 +332,15 @@ class IntentTests(Fixture):
                 self.submit(hold)
                 before = self.chat.history(self.identifier)["intent_state"]
                 receipt = self.submit(PUSH)["messages"][-1]
-                self.assertEqual(receipt["content"], "Which projects should I work on?")
+                self.assertIn("Which projects should I focus on", receipt["content"])
+                self.assertIn("time and spending limits", receipt["content"])
                 self.reload()
                 self.assertEqual(self.chat.history(self.identifier)["intent_state"], before)
                 self.submit("Prioritize Web Bob")
                 before = self.chat.history(self.identifier)["intent_state"]
                 receipt = self.submit("Push everything to the max except Web Bob")["messages"][-1]
-                self.assertEqual(receipt["content"], "Which projects should I work on?")
+                self.assertIn("Which projects should I focus on", receipt["content"])
+                self.assertIn("time and spending limits", receipt["content"])
                 self.reload()
                 self.assertEqual(self.chat.history(self.identifier)["intent_state"], before)
                 self.assertFalse(queue.tasks(self.root))

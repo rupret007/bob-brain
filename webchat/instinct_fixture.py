@@ -2,6 +2,7 @@
 import uuid
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import Mock
 
 from app import Chat
 from texting import Andrea, BlueBubbles, Texting
@@ -33,10 +34,12 @@ class InstinctFixture:
         self.mock.enable_web_bob_send = True
         self.now = NOW
         self.providers = OfflineProviders()
-        self.texting = Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token),
+        self.texting = Texting(BlueBubbles(self.mock.config_db), Andrea(self.mock.base, self.mock.token, expected_protocol=1),
                               clock=lambda: self.now)
         self.texting.instinct.chat_guid = ""
-        self.chat = Chat(self.root / "conductor/webchat", self.root, self.providers, texting=self.texting)
+        self.reminder_notifier = Mock(return_value=True)
+        self.chat = Chat(self.root / "conductor/webchat", self.root, self.providers, texting=self.texting,
+                         reminder_notifier=self.reminder_notifier)
         self.identifier = self.chat.new_conversation()["id"]
         self.cookie = "bob_session=" + self.chat.login(self.chat.password)
         self.session = self.chat.authenticate(self.cookie)

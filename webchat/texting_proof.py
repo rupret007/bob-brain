@@ -38,7 +38,7 @@ def main():
         mock = MockMessaging(root)
         mock.enable_web_bob_send = False
         providers = OfflineProviders()
-        texting = Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token))
+        texting = Texting(BlueBubbles(mock.config_db), Andrea(mock.base, mock.token, expected_protocol=1))
         chat = Chat(root / "conductor/webchat", root, providers, texting=texting)
         server = Server(("127.0.0.1", 0), chat)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

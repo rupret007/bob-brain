@@ -39,9 +39,11 @@ def selected():
 
 
 def outcome(passed, scope):
+    """Label included-check success explicitly; deferred voice keeps all_pass false."""
     if scope is None:
         return dict(all_pass=bool(passed))
     return dict(all_pass=False, scope_passed=bool(passed), qualification_scope=scope,
+                qualification_status='SCOPED_PASS' if passed else 'FAIL',
                 live_voice=dict(VOICE))
 
 

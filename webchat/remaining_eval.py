@@ -1,11 +1,19 @@
 """Natural task acceptance over isolated local data; never invokes a real worker."""
 import json
+import re
 from pathlib import Path
 import uuid
 
 from instinct_fixture import InstinctFixture
 from task_dispatch import task_queue
 from texting import Texting
+
+
+def approve_reminder(fixture, draft):
+    """Exercise the same separate, token-bound consent turn as a chat user."""
+    token = re.search(r'Reply `(yes wbrem-[0-9a-f]{32})`', draft['content'])
+    assert token is not None, draft
+    return fixture.answer(token[1])
 
 
 def run_eval():
@@ -15,11 +23,14 @@ def run_eval():
     with InstinctFixture() as f:
         f.chat.reminders.clock = lambda: f.now
         rid = str(uuid.uuid4())
-        first = f.answer('remind me to check the oven in 10 minutes', request_id=rid)
+        # Exercise the draft path; explicit personal intervals save directly.
+        first = f.answer('create a reminder to check the oven in 10 minutes', request_id=rid)
         check('create structured reminder without model', first['provider'] == 'reminders' and not f.providers.calls)
+        assert not f.chat.reminders.listing(), 'A draft must not schedule a reminder'
+        first = approve_reminder(f, first)
         check('receipt states delivery scope', 'no text, email or job' in first['content'])
         check('private durable reminder store', f.chat.reminders.path.is_file() and f.chat.reminders.path.stat().st_mode & 0o777 == 0o600)
-        f.answer('remind me to check the oven in 10 minutes', request_id=rid)
+        f.answer('create a reminder to check the oven in 10 minutes', request_id=rid)
         check('duplicate request creates one reminder', len(f.chat.reminders.listing()) == 1)
         check('list finds pending reminder', 'check the oven' in f.answer('my reminders')['content'])
         f.chat.deliver_reminders()
@@ -30,7 +41,7 @@ def run_eval():
         f.chat.deliver_reminders()
         notices = [m for m in f.chat.history(f.identifier)['messages'] if m.get('reminder_notice')]
         check('due notice is delivered once', len(notices) == 1 and f.chat.reminders.listing()[0]['state'] == 'fired')
-        f.answer('remind me every 1 minute to stretch')
+        approve_reminder(f, f.answer('create a reminder every 1 minute to stretch'))
         row = next(r for r in f.chat.reminders.listing() if r['state'] == 'pending')
         check('routine is stored as notification interval', row['interval_seconds'] == 60)
         f.now += 600

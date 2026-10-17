@@ -106,6 +106,8 @@ QUALIFICATIONS = {
     'diagnostic_cause': 'A missing result does not identify its cause from what’s available here. Match the request and source across save, stored state, access, retrieval and rendering.',
     'operational_state': "I can’t confirm live queue, task, or process state from what’s available here.",
     'lifecycle_absence': 'External execution, inspection, verification and dispatch remain unverified without supporting evidence; missing receipts do not prove they never occurred.',
+    'unsourced_state': 'That saved, configured, provider, or hold-state fact is proposed or unknown without a supporting server receipt, route registry, or provider record.',
+    'diagnostics_require_release': 'Diagnostic reasoning does not require a hold release.',
 }
 LIFECYCLE_ABSENCE = re.compile(
     r'\b(?:execution|inspection|verification|dispatch)\s+'
@@ -293,9 +295,12 @@ def contradictory_exclusions(content):
         offset += len(line)
 
 
-def violations(content, *, source='', trusted_facts=(), artifact=False):
+def violations(content, *, source='', trusted_facts=(), artifact=False, evidence=None):
     from claim_scope import clauses, disposition, DIRECTIVE
+    from grounded_state import state_findings
     findings = list(contradictory_exclusions(content)) if not artifact else []
+    findings.extend(state_findings(content, source=source, trusted_facts=trusted_facts,
+                                   evidence=evidence, artifact=artifact))
     trusted = {_plain(value).strip() for value in trusted_facts}
     quoted = _quoted_source(content, source)
     technical_artifact = bool(TECHNICAL.search(content + '\n' + source))
@@ -692,10 +697,14 @@ def scrub_unretrieved_links(text, *, source='', trusted_facts=()):
 
 
 def strip_journal_cursors(text):
-    text = JOURNAL_CURSOR.sub('', text)
-    text = _collapse_interior_spaces(text)
-    text = re.sub(r' ?([,;:]){2,}', r'\1', text)
-    return re.sub(r' ?,$', '', text, flags=re.M)
+    def clean_line(line):
+        stripped, count = JOURNAL_CURSOR.subn('', line)
+        if not count:
+            return line
+        stripped = _collapse_interior_spaces(stripped)
+        stripped = re.sub(r' ?([,;:]){2,}', r'\1', stripped)
+        return re.sub(r' ?,$', '', stripped)
+    return '\n'.join(clean_line(line) for line in text.split('\n'))
 
 
 def rewrite_unsourced_file_observations(text):
@@ -760,13 +769,17 @@ def _repair_completion_headings(text):
     return ''.join(sections)
 
 
-def finish_delivery(text, *, source='', trusted_facts=()):
+def finish_delivery(text, *, source='', trusted_facts=(), preserve_writing=False):
     """Final user-facing cleanup: no leaked tags, empty labels, or unretrieved links."""
     text = (text or '').replace('[Unverified claim withheld]', '')
     text = scrub_unretrieved_links(text, source=source, trusted_facts=trusted_facts)
     if not _user_asked_cursors(source):
         text = strip_journal_cursors(text)
     text = rewrite_unsourced_file_observations(text)
+    # Complete writing with no rejected claims needs no fragment/list repair.
+    # In particular, a greeting or sign-off ending in a comma is intentional.
+    if preserve_writing:
+        return text.strip()
     text = drop_empty_labels(text)
     text = _repair_completion_headings(text)
     text = drop_orphan_fragments(text)
@@ -808,7 +821,7 @@ def _qualify_once(text, categories, prior=''):
     return (text + '\n\n' if text else '') + ' '.join(notes)
 
 
-def deliver(content, *, source='', trusted_facts=(), artifact=False, prior=''):
+def deliver(content, *, source='', trusted_facts=(), artifact=False, prior='', evidence=None):
     """Preserve independent content and drop unsupported claims cleanly.
 
     This is a partial answer, not a silent certification or a repaired model
@@ -816,9 +829,11 @@ def deliver(content, *, source='', trusted_facts=(), artifact=False, prior=''):
     Resource packets retain their stricter dependency handling. Guard notes
     are natural prose, never bracketed tags, and appear at most once.
     """
-    findings = violations(content, source=source, trusted_facts=trusted_facts, artifact=artifact)
+    findings = violations(content, source=source, trusted_facts=trusted_facts,
+                         artifact=artifact, evidence=evidence)
     if not findings:
-        return finish_delivery(content, source=source, trusted_facts=trusted_facts), []
+        return finish_delivery(content, source=source, trusted_facts=trusted_facts,
+                               preserve_writing=artifact), []
     # A rejected embedded claim must not leave half a parenthesis or table row.
     # Preserve original claim receipts; these are presentation replacement spans.
     from reported_records import containers

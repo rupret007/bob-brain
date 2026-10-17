@@ -407,7 +407,7 @@ class TaskDispatch:
                 return self.intent_reply(conversation, 'Resuming the original saved report assignment; its owner, inputs and one-attempt limit are unchanged.', reconcile=True)
         state = state_for(conversation)
         names = project_targets(description, state)
-        scopes = blocked_scopes(state, names)
+        scopes = blocked_scopes(state, names, action_text=description)
         if scopes:
             conversation["held_job"] = dict(prompt=description, worker=worker)
             if attempt_limit is not None:
@@ -478,7 +478,7 @@ class TaskDispatch:
         if project_batch:
             intent["project_batch"] = True
         held = conversation.get("held_job")
-        if held and not blocked_scopes(state, project_targets(held["prompt"], state)):
+        if held and not blocked_scopes(state, project_targets(held["prompt"], state), action_text=held["prompt"]):
             conversation.pop("held_job", None)
         message.update(status="done", content="Saving your task for a worker…", dispatch_intent=intent)
         self.save(conversation)
@@ -498,7 +498,7 @@ class TaskDispatch:
                     if not intent or message.get("task_id") or message.get("group_id"):
                         continue
                     state = state_for(value)
-                    scopes = blocked_scopes(state, intent.get("assignment_projects", project_targets(intent["prompt"], state)))
+                    scopes = blocked_scopes(state, intent.get("assignment_projects", project_targets(intent["prompt"], state)), action_text=intent["prompt"])
                     if scopes:
                         content = hold_reply(scopes)
                         if message["content"] != content:
