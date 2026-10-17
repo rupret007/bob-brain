@@ -8,9 +8,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from api_call import split_transport, decode_transport
-from chat_media import public_attachment, store_media
+from chat_media import public_attachment
 from providers import Providers, Redactor
-from test_chat_media import png_fixture
+from test_chat_media import png_fixture, store_media_offline
 
 
 class MediaTransportTests(unittest.TestCase):
@@ -120,7 +120,7 @@ class MediaTransportTests(unittest.TestCase):
                     cid = str(uuid.uuid4())
                     msg = {'role': 'user', 'status': 'done', 'content': 'Before\n---BOB_VISION_JSON---\nAfter'}
                     if name != 'text':
-                        meta = store_media(root, png_fixture(), name + '.png', conversation_id=cid, redact=provider.redact)
+                        meta = store_media_offline(root, png_fixture(), name + '.png', conversation_id=cid, redact=provider.redact)
                         msg['attachments'] = [public_attachment(meta)]
                     prompt = provider.prompt({'id': cid, 'messages': [msg]})
                     gate.wait(timeout=5)
@@ -149,7 +149,7 @@ class MediaTransportTests(unittest.TestCase):
             root = Path(tmp)
             provider = Providers(root, Redactor(root, 'fixture-password'))
             cid = str(uuid.uuid4())
-            meta = store_media(root, png_fixture(), 'photo.png', conversation_id=cid, redact=provider.redact)
+            meta = store_media_offline(root, png_fixture(), 'photo.png', conversation_id=cid, redact=provider.redact)
             conversation = {'id': cid, 'preferred_provider': 'minimax', 'messages': [
                 {'role': 'user', 'status': 'done', 'content': 'Describe this', 'attachments': [public_attachment(meta)]}]}
             bundle = {'text': 'File could not be read.', 'vision': [{'mime': 'image/jpeg', 'data_base64': 'YQ=='}],

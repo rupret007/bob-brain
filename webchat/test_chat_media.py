@@ -47,6 +47,15 @@ def pdf_objects(objects):
     return data + f'trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
 
 
+def store_media_offline(root, data, name, *, conversation_id, redact):
+    """Persist attachments in tests without requiring a local tesseract install."""
+    kind = media.classify_suffix(Path(name).suffix.lower())
+    if kind == 'image' and not shutil.which('tesseract'):
+        with patch.object(media, 'scan_image', return_value=''):
+            return media.store_media(root, data, name, conversation_id=conversation_id, redact=redact)
+    return media.store_media(root, data, name, conversation_id=conversation_id, redact=redact)
+
+
 def scanned_pdf_fixture(pages=4, width=300):
     """A tiny image-only PDF with synthetic HELLO pixels, no fonts or text layer."""
     glyphs = ['10001 10001 10001 11111 10001 10001 10001',
@@ -88,10 +97,16 @@ class ChatMediaTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def store(self, data=b'hello', name='notes.txt'):
-        return media.store_media(self.root, data, name, conversation_id=self.cid, redact=self.redact)
+        return store_media_offline(self.root, data, name, conversation_id=self.cid, redact=self.redact)
 
     def enrich(self, metas, **kwargs):
         return media.enrich_for_model(self.root, metas, redact=self.redact, **kwargs)
+
+    def test_image_store_without_tesseract_stubs_local_ocr(self):
+        with patch.object(media.shutil, 'which', return_value=None):
+            stored = store_media_offline(self.root, png_fixture(), 'dot.png',
+                                         conversation_id=self.cid, redact=self.redact)
+        self.assertEqual(stored['kind'], 'image')
 
     def test_store_validate_and_private_permissions(self):
         stored = self.store(png_fixture(), 'dot.PNG')
