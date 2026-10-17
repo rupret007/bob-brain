@@ -1,4 +1,5 @@
 #!/bin/bash
+# 2026-10-16 22:31 CT arch review: local-webjam-24h-1010 removed from the delete list. It is the live WebJam 24h driver folder (STOP flag, driver.sh, relaunch planned), not an archive; the 22:00 run deleted it and it was restored from Hoser.
 # Delete Mini originals already copied+verified to Hoser (Jeff OK'd 2026-10-16 9:20 PM CT).
 # Per item: Hoser mounted, checksum dry-run vs Hoser (only known skipped symlinks allowed), video also
 # size-matched in NucBox backup, nothing open (lsof). Any failure = skip that item. rm -r never follows symlinks.
@@ -16,7 +17,7 @@ add(){ for p in "${@:2}"; do [ -e "$p" ] && ITEMS+=("$1|$p"); done; }
 shopt -s nullglob
 add video "Rad Dad Story of Us/output" "Rad Dad Story of Us/qa" "Manic Music Video/output" "Manic Music Video/qa"
 add video "Oui Cest Fou Music Video/output/"Oui_Cest_Fou_R[123]_* "Oui Cest Fou Music Video/output/Oui_Cest_Fou_R4_1080p_pre-peakfix.mp4" "Oui Cest Fou Music Video/output/Oui_Cest_Fou_R4_Portrait_Chorus1_1080x1920_pre-peakfix.mp4"
-for d in local-webjam-24h-1010 local-webjam-conflicts-1013 local-cursor-codex-leftovers-1005 local-cursor-polish-1006; do add archives "Documents/bob-overnight-inject/$d"; done
+for d in local-webjam-conflicts-1013 local-cursor-codex-leftovers-1005 local-cursor-polish-1006; do add archives "Documents/bob-overnight-inject/$d"; done
 for d in andrea-webbob-20260929-040929 andrea-webbob-20260929-044257 andrea-webbob-primary-1002-20261002-143843 andrea-webbob-primary-1002-20261002-145801; do add webbob-releases ".andrea/webbob-releases/$d"; done
 add webbob-releases ".andrea/quarantine"
 add backups "Documents/ChatGPT/Storyland Fantasy/data/backups" "Documents/ChatGPT/Storyland Fantasy/data/"*-before.json "Documents/ChatGPT/Storyland Fantasy/data/"*-before.json.gz
