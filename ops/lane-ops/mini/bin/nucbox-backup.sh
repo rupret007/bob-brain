@@ -28,7 +28,7 @@ if [ "$mode" = work ] || [ "$mode" = all ]; then
   for s in "$HOME/Documents/bob-overnight-inject" "$HOME/bin" "$HOME/Oui Cest Fou Music Video" "$HOME/Manic Music Video" "$HOME/Rad Dad Story of Us"; do run "$s" work; done
   run "$HOME/.config/bob-live" config
   # repos with unpushed commits or uncommitted changes (pushed work is already on GitHub)
-  find "$HOME" "$HOME/Documents" "$HOME/Music" "$HOME/lane-wt.noindex" "$HOME/.openclaw" -maxdepth 3 -name .git -not -path '*/node_modules/*' \
+  find "$HOME" "$HOME/Documents" "$HOME/lane-wt.noindex" "$HOME/.openclaw" -maxdepth 3 -name .git -not -path '*/node_modules/*' -not -path "$HOME/Music/*" \
      -not -path "$HOME/Library/*" -not -path "$HOME/.cursor/*" -not -path "$HOME/.codex/*" -not -path "$HOME/Documents/bob-overnight-inject/*" 2>/dev/null | sort -u |
   while read -r g; do r=$(dirname "$g")
     u=$(git -C "$r" log --branches --not --remotes --oneline 2>/dev/null | wc -l); c=$(git -C "$r" status --porcelain 2>/dev/null | wc -l)

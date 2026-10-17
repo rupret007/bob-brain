@@ -6,7 +6,7 @@ J=$1; R=$2; PR=$3; W=~/work/gem-ctx-$J; rc=0
 extra=$(cat)
 rm -rf $W; gh repo clone $R $W -- --depth 60 --no-single-branch -q >/dev/null 2>&1 || exit 4
 cd $W
-emit(){ [ -f "$1" ] || return; echo "--- FILE $1 ---"; head -c 60000 "$1"; echo; }
+emit(){ [ -f "$1" ] || return; echo "--- FILE $1 ---"; head -c 200000 "$1"; echo; }
 if [ -n "$PR" ]; then
   gh pr checkout $PR >/dev/null 2>&1 || { git fetch -q --depth 60 origin pull/$PR/head:gem-pr-$PR && git checkout -q gem-pr-$PR; } || rc=5
   echo "--- FILE PR-$PR.diff ---"; gh pr diff $PR 2>/dev/null | head -c 80000; echo

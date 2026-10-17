@@ -1,4 +1,5 @@
 #!/bin/zsh
+# v6.5 (22:22 CT 10/16): Codex can run on NucBox (Windows CLI gpt-6-astra); CODEX_HOST=auto prefers Nuc when nuc_codex_ok; TGT_codex unchanged
 # v5.3 (17:58 CT 10/16): high/xhigh -> Codex; Codex refused -> Cursor composer-2.5 fallback; never gpt-5.3-codex-high/gemini/claude via Cursor (usage limit until 10/21)
 # v5.2 (17:40 CT 10/16): gemini -> gemini-lane.sh (direct Google API); claude -> claude -p on Mini (TGT 1, mini_ok, Karen reserve)
 # Lane refill v5 (17:25 CT 10/16): provider/tier routing via lane-route.conf; see MAXPUSH notes.
@@ -27,7 +28,7 @@ SSH="ssh -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=30 -i $HOME
 freeg(){ df -k / | awk "NR==2{printf \"%d\",\$4/1048576}"; }
 l5(){ sysctl -n vm.loadavg | awk '{printf "%d",$3}'; }
 nc(){ ps -Ao comm,args | awk '$1 ~ /codex$/ && / exec /' | wc -l | tr -d ' '; }
-is_active(){ screen -ls 2>/dev/null | grep -qE "lane-(q|codex|cursor|gemini|claude|minimax)-$1[[:space:]]"; }
+is_active(){ screen -ls 2>/dev/null | grep -qE "lane-(q|codex|codex-nuc|cursor|gemini|claude|minimax)-$1[[:space:]]"; }
 
 PF=~/lane-wt/logs/.fill.pid   # v6.1 singleton: orphaned loops caused double starts
 if [[ -f $PF ]] && op=$(cat $PF) && [[ $op != $$ ]] && ps -p $op -o args= 2>/dev/null | grep -q fill.sh; then echo "$(date) fill: another loop pid $op running; exit" >> $L; exit 0; fi
@@ -35,7 +36,7 @@ echo $$ > $PF
 echo "$(date) fill v5 start (continuous; low-water=$LOW)" >> $L
 
 while true; do
-  . ~/lane-wt/logs/lane-route.conf   # grok 10/16: re-read targets every loop (no restart needed for tuning)
+  . ~/lane-wt/logs/lane-route.sh      # v6.5: re-read helpers+conf every loop (CODEX_HOST, nuc_codex_ok)
   python3 "$NWGUARD" >/dev/null 2>>$L || echo "$(date) fill-nw-guard failed rc=$?" >> $L
 
   f=$(freeg)
@@ -77,9 +78,9 @@ while true; do
     p=$(job_provider $c); t=$(job_tier $c)
     # v5.3 (until Cursor reset 10/21): high/xhigh always route to Codex; if Codex is refused, fall back to Cursor composer now (no waiting)
     [[ $t == high || $t == xhigh ]] && [[ $p != minimax ]] && p=codex
-    if [[ $p == codex ]] && ! { (( $(running codex) < TGT_codex )) && mini_ok && codex_cap_ok && codex_pace_ok $t; }; then
+    if [[ $p == codex ]] && ! codex_start_ok $t; then
       [[ ${CODEX_REFUSED_FALLBACK:-cursor} == cursor ]] || continue
-      echo "$(date) fill codex refused for $c (tier=$t ${MINI_STATE:-}) -> cursor $CURSOR_MODEL fallback" >> $L
+      echo "$(date) fill codex refused for $c (tier=$t host=${CODEX_HOST:-auto} ${MINI_STATE:-}) -> cursor $CURSOR_MODEL fallback" >> $L
       p=cursor
     fi
     eval "tg=\${TGT_$p:-0}"
@@ -120,9 +121,18 @@ while true; do
   case $prov in
     codex)
       eff=$CODEX_CHEAP_EFFORT; [[ $tier == high ]] && eff=$CODEX_HIGH_EFFORT; [[ $tier == xhigh ]] && eff=xhigh
-      w=~/lane-wt/q-$j; mkdir -p $w
-      screen -dmS lane-codex-$j zsh -c "cd $w && codex exec -c model_reasoning_effort=$eff --skip-git-repo-check -C $w \"\$(cat ~/lane-wt/logs/q-$j.prompt)\" </dev/null > $LOG 2>&1; $FIN"
-      printf "%s\t%s\tcodex\t%s\tstart\n" "$(date +%F\ %T)" $j $eff >> $CODEX_LOG;;
+      chost=$(codex_host_pick 2>/dev/null || echo mini)
+      if [[ $chost == nuc ]]; then
+        ${=SSH} "mkdir -p ~/work/results ~/work/q-$j && cat > ~/work/results/q-$j.prompt" < ~/lane-wt/logs/q-$j.prompt
+        screen -dmS lane-codex-nuc-$j zsh -c "$SSH 'bash -l ~/nuc-tools/lane-run-codex.sh q-$j $eff' > $LOG 2>&1; $FIN"
+        printf "%s\t%s\tcodex-nuc\t%s\tstart\n" "$(date +%F\ %T)" $j $eff >> $CODEX_LOG
+        echo "$(date) fill codex host=nuc model=${CODEX_MODEL:-gpt-6-astra} effort=$eff job=$j" >> $L
+      else
+        w=~/lane-wt/q-$j; mkdir -p $w
+        screen -dmS lane-codex-$j zsh -c "cd $w && codex exec -c model_reasoning_effort=$eff --skip-git-repo-check -C $w \"\$(cat ~/lane-wt/logs/q-$j.prompt)\" </dev/null > $LOG 2>&1; $FIN"
+        printf "%s\t%s\tcodex\t%s\tstart\n" "$(date +%F\ %T)" $j $eff >> $CODEX_LOG
+        echo "$(date) fill codex host=mini effort=$eff job=$j" >> $L
+      fi;;
     gemini)
       screen -dmS lane-gemini-$j zsh -c "~/lane-wt/logs/gemini-lane.sh $j > $LOG 2>&1; $FIN";;
     claude)

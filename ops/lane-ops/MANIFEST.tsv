@@ -9,10 +9,13 @@ mini/lane-wt-logs/fill.sh	mini	~/lane-wt/logs/fill.sh
 mini/lane-wt-logs/gemini-direct.py	mini	~/lane-wt/logs/gemini-direct.py
 mini/lane-wt-logs/gemini-feed.py	mini	~/lane-wt/logs/gemini-feed.py
 mini/lane-wt-logs/gemini-lane.sh	mini	~/lane-wt/logs/gemini-lane.sh
+mini/lane-wt-logs/lane-result.sh	mini	~/lane-wt/logs/lane-result.sh
 mini/lane-wt-logs/lane-route.conf	mini	~/lane-wt/logs/lane-route.conf
 mini/lane-wt-logs/lane-route.sh	mini	~/lane-wt/logs/lane-route.sh
 mini/lane-wt-logs/nuc-lane.sh	mini	~/lane-wt/logs/nuc-lane.sh
-mini/bin/claim-gate.py.live	mini	~/Documents/bob-overnight-inject/bin/claim-gate.py
+mini/lane-wt-logs/test-lane-result.sh	mini	~/lane-wt/logs/test-lane-result.sh
+mini/lane-wt-logs/wt-noindex.sh	mini	~/lane-wt/logs/wt-noindex.sh
+mini/bin/claim-gate.py	mini	~/Documents/bob-overnight-inject/bin/claim-gate.py
 mini/bin/lane-guard.sh	mini	~/bin/lane-guard.sh
 mini/bin/mini-offload-delete-when-backed-up.sh	mini	~/bin/mini-offload-delete-when-backed-up.sh
 mini/bin/mini-offload-delete.sh	mini	~/bin/mini-offload-delete.sh
