@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from webbob.ai_capacity import sanitize_capacity_snapshot, validate_document
 from webbob.backup import validate as validate_backup
 from webbob.fallback import fallback_notice
-from webbob.ownership import GateError, norm_id, toks
+from webbob.ownership import Gate, GateError, norm_id, toks
 from webbob.parity_gate import CAPABILITIES, RECOVERY, GoLiveDenied, ParityGate
 from webbob.phone_access import REQUIRED, evaluate_phone_access
 from webbob.pr_ops import DraftPublisher, GateDenied, ReviewGate
@@ -28,6 +28,7 @@ from webbob.workspace import Drafts, Workspace, WorkspaceError
 
 BOUNDARIES = (0xE0000, 0xE0001, 0xE007F)
 NEIGHBORS = (0xE0080, 0xDFFFF)
+SURROGATES = (0xD800, 0xDB40, 0xDC01, 0xDFFF)
 
 
 def samples(points):
@@ -117,6 +118,39 @@ class UnicodeTagTests(unittest.TestCase):
             with self.subTest(point=hex(point)):
                 with self.assertRaises(ContextError):
                     safe_fact("Chicago" + chr(point))
+
+    def _assert_safe_fact_context_error(self, body, message_fragment):
+        with self.assertRaises(Exception) as caught:
+            safe_fact(body)
+        self.assertIsInstance(caught.exception, ContextError)
+        self.assertIn(message_fragment, str(caught.exception).lower())
+
+    def test_lone_surrogates_rejected_with_context_error(self):
+        for point in SURROGATES:
+            char = chr(point)
+            with self.subTest(point=hex(point)):
+                self._assert_safe_fact_context_error("Release notes ready" + char, "surrogate")
+        self._assert_safe_fact_context_error("Release notes ready\udb40\udc01", "surrogate")
+
+    def test_tag_rejection_uses_context_error(self):
+        self._assert_safe_fact_context_error("Release notes ready" + chr(0xE0001), "unicode tag")
+
+    def test_u_e0080_allowed_in_facts(self):
+        body = "Release notes ready" + chr(0xE0080)
+        self.assertEqual(safe_fact(body), body)
+
+    def test_ownership_claim_rejects_tag_before_coordination(self):
+        claims = self.root / "claims"
+        claims.mkdir()
+        with patch("webbob.ownership.CLAIMS", str(claims)):
+            tag = chr(0xE0001)
+            with self.assertRaises(GateError) as caught:
+                Gate("karen").claim(
+                    "rupret007/bob-brain", "work-one",
+                    ["repo:rupret007/bob-brain/webbob/text_validation.py"],
+                    branch="draft/example", title="title" + tag)
+            self.assertIn("Unicode tag", str(caught.exception))
+            self.assertEqual(list(claims.glob("*.json")), [])
 
     def test_neighbors_remain_valid_at_free_text_boundaries(self):
         # Existing ASCII-only identity schemas retain their own restrictions.

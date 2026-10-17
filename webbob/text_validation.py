@@ -13,8 +13,12 @@ def reject_unicode_tags(value, error=ValueError):
     while pending:
         item = pending.pop()
         if isinstance(item, str):
-            if any("\U000e0000" <= char <= "\U000e007f" for char in item):
-                raise error("Unicode tag characters forbidden")
+            for char in item:
+                code = ord(char)
+                if 0xE0000 <= code <= 0xE007F:
+                    raise error("Unicode tag characters forbidden")
+                if 0xD800 <= code <= 0xDFFF:
+                    raise error("UTF-16 surrogate code units forbidden")
         elif isinstance(item, (dict, list, tuple, set, frozenset)):
             if id(item) in seen:
                 continue
