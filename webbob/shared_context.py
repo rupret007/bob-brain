@@ -19,6 +19,15 @@ import unicodedata
 
 BOTS = {"bob", "webbob", "andrea", "karen"}
 INBOX_CAP = 1000  # Pending notifications per recipient, across all senders.
+# Common Cyrillic lookalikes in Latin guard keywords. This matching-only map
+# supplements NFKC, which leaves cross-script confusables unchanged.
+_FACT_CONFUSABLES = str.maketrans({
+    "А": "A", "а": "a", "В": "B", "Е": "E", "е": "e",
+    "К": "K", "М": "M", "Н": "H", "О": "O", "о": "o",
+    "Р": "P", "р": "p", "С": "C", "с": "c", "Т": "T",
+    "Х": "X", "х": "x", "У": "Y", "у": "y",
+    "І": "I", "і": "i", "Ј": "J", "ј": "j", "Ѕ": "S", "ѕ": "s",
+})
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS facts (
  id TEXT, revision INTEGER, body TEXT, provenance TEXT NOT NULL,
@@ -43,7 +52,7 @@ def digest(value):
 
 
 def _normalize_fact_text(value):
-    value = unicodedata.normalize("NFKC", value)
+    value = unicodedata.normalize("NFKC", value).translate(_FACT_CONFUSABLES)
     return "".join(c for c in value if unicodedata.category(c) != "Cf")
 
 
@@ -77,7 +86,9 @@ def safe_fact(body):
         r"(?:[ \t]*(?:\Z|[.,])|[ \t]+(?!(?:from|body|content|message)\b)[a-z]+\b))",
         "", value)
     text_language = re.sub(r"[_-]+", " ", text_language)
-    if re.search(r"(?i)\b(?:sms|imessage|texts?|texted|texting|"
+    # Stripping invisible separators can join "plain" and "text"; that joined
+    # marker must still be denied instead of losing the text token boundary.
+    if re.search(r"(?i)\b(?:sms|imessage|plaintexts?|texts?|texted|texting|"
                  r"message[ _-]*(?:body|content|transcript))\b|"
                  r"\btext[ _-]*(?:body|content|message|transcript)\b", text_language):
         raise ContextError("text/SMS content forbidden")

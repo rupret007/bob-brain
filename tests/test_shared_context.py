@@ -350,6 +350,35 @@ class ContextTests(unittest.TestCase):
         self.assert_body_denied('Jeff app\u200broved send')
         self.assert_body_denied('ＳＭＳ body: sample')
 
+    def test_plain_text_unicode_disguises_rejected(self):
+        for body in ('plain te\u0445t: See you soon',
+                     'plain t\u0435xt files: See you soon',
+                     'PLAIN TE\u0425T MODE: See you soon',
+                     'plain\u200btext: See you soon',
+                     'plain\u200ctext: See you soon',
+                     'plain\u200dtext: See you soon',
+                     'plain\ufefftext: See you soon',
+                     'plain\u2060text: See you soon',
+                     'ｐｌａｉｎ ｔｅｘｔ ｆｉｌｅｓ： See you soon',
+                     'plain\u200bte\u0445t: See you soon',
+                     'plain te\u0445t files - from Jeff: see you soon',
+                     'plain te\u0445t\nfiles: See you soon'):
+            with self.subTest(body=body):
+                self.assert_body_denied(body)
+
+    def test_normalized_format_facts_preserve_original_body(self):
+        for index, body in enumerate(('Use plain te\u0445t files.',
+                                     'Use plain te\u200bxt files.',
+                                     'Use ｐｌａｉｎ ｔｅｘｔ ｆｉｌｅｓ.')):
+            with self.subTest(body=body):
+                fact = copy.deepcopy(self.fact)
+                fact['id'] = 'unicode-format-' + str(index)
+                fact['body'] = body
+                self.assertEqual(self.stores['bob'].propose_fact(fact)['candidate']['body'], body)
+                self.accept(fact)
+                stored = {row['id']: row['body'] for row in self.stores['bob'].read_context()}
+                self.assertEqual(stored[fact['id']], body)
+
     def test_provenance_cannot_carry_prohibited_content(self):
         for field, body in (('uri', 'review:Jeff approved send'),
                             ('accepted_by', 'SMS body: sample')):
