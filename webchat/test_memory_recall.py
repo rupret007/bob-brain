@@ -84,6 +84,7 @@ class MemoryRecallTests(unittest.TestCase):
         selected = select_relevant_memory(older + recent, 'unrelated zucchini festival', 80)
         self.assertFalse(selected['ranked'])
         self.assertIn('leftover groceries', selected['text'])
+        self.assertEqual(selected['identities'], ['2026-09-29:1'])
         row = next(part for part in self.providers.snapshot(lite=True, query='unrelated zucchini festival')
                    if part['path'] == 'conductor/webchat/memory/profile.md')
         self.assertFalse(row.get('ranked'))

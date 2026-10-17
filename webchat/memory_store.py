@@ -143,7 +143,8 @@ def select_relevant_memory(text, query, budget):
     matched = [item for item in hits if item[0] > 0]
     if not matched:
         clipped = recency_clip(text, budget)
-        return dict(text=clipped, identities=[fact['identity'] for fact in dated_facts(clipped)], ranked=False)
+        k = len(dated_facts(clipped))
+        return dict(text=clipped, identities=[fact['identity'] for fact in facts[-k:]] if k else [], ranked=False)
     matched.sort(key=lambda item: (-item[0], -item[1]))
     chosen, used = [], 0
     for _, _, fact in matched:
@@ -154,7 +155,8 @@ def select_relevant_memory(text, query, budget):
         used += size
     if not chosen:
         clipped = recency_clip(text, budget)
-        return dict(text=clipped, identities=[fact['identity'] for fact in dated_facts(clipped)], ranked=False)
+        k = len(dated_facts(clipped))
+        return dict(text=clipped, identities=[fact['identity'] for fact in facts[-k:]] if k else [], ranked=False)
     chosen.sort(key=lambda fact: fact['index'])
     return dict(text=''.join(fact['text'] for fact in chosen),
                 identities=[fact['identity'] for fact in chosen], ranked=True)
