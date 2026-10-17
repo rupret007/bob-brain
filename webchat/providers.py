@@ -733,20 +733,22 @@ class Providers:
             and (conversation_id in self.overlay_roots or conversation_id in self.overlay_pins)
         )
 
-    def _read_parts(self, rows, root=None):
+    def _read_parts(self, rows, root=None, query=None):
         base = root or self.root
         parts = []
         for relative, limit, tail in rows:
             path = base / relative
             try:
                 if relative == 'conductor/webchat/memory/profile.md':
-                    from memory_store import read_memory
+                    from memory_store import read_memory, select_relevant_memory
                     memory = read_memory(base, budget=limit * 4)
-                    value = memory['text']
+                    selected = select_relevant_memory(memory['text'], query, limit) if tail else dict(
+                        text=memory['text'][:limit], ranked=False)
+                    value = selected['text']
                     stamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(memory['modified']))
-                    clipped = memory['truncated'] or len(value) > limit
-                    value = value[-limit:] if tail else value[:limit]
-                    parts.append({"path": relative, "modified": stamp, "truncated": clipped, "text": self.redact(value)})
+                    clipped = memory['truncated'] or len(memory['text']) > limit
+                    parts.append({"path": relative, "modified": stamp, "truncated": clipped,
+                                  "text": self.redact(value), "ranked": bool(selected.get('ranked'))})
                     continue
                 value = path.read_text()
                 stamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(path.stat().st_mtime))
@@ -757,10 +759,10 @@ class Providers:
                 parts.append({"path": relative, "unavailable": True})
         return parts
 
-    def snapshot(self, lite=False, conversation_id=None):
+    def snapshot(self, lite=False, conversation_id=None, query=None):
         now = time.monotonic()
         overlay = self._overlay_active(conversation_id)
-        if not overlay:
+        if not overlay and not query:
             if lite:
                 if self._snapshot_cache_lite and now - self._snapshot_cache_lite_at < 2.0:
                     return self._snapshot_cache_lite
@@ -797,7 +799,7 @@ class Providers:
                 ("conductor/state/INBOX.md", 2000, False),
                 ("conductor/webchat/MUSIC-HANDOFF.md", 2500, False),
             )
-        parts = self._read_parts(rows, root=ctx)
+        parts = self._read_parts(rows, root=ctx, query=query)
         try:
             from handback import compact_digest
 
@@ -834,7 +836,7 @@ class Providers:
                                   "text": self.redact(text)})
             except OSError:
                 pass
-        if not overlay:
+        if not overlay and not query:
             if lite:
                 self._snapshot_cache_lite, self._snapshot_cache_lite_at = parts, now
             else:
@@ -935,7 +937,15 @@ class Providers:
         # project handoffs, operational logs, or the owner's entire profile.
         # The operational snapshot is cached across conversations. Never append
         # private user excerpts or attachments into that shared list.
-        snapshots = [] if answer_context else list(self.snapshot(lite=fast, conversation_id=conversation.get("id")))
+        snapshots = [] if answer_context else list(self.snapshot(lite=fast, conversation_id=conversation.get("id"), query=last_user))
+        if answer_context:
+            # Ordinary answers omit the operational dump, but a keyword-ranked
+            # slice can still replace an irrelevant private-memory tail.
+            for part in self._read_parts(
+                    (("conductor/webchat/memory/profile.md", 8000 if fast else 16000, True),),
+                    root=self.context_root(conversation.get("id")), query=last_user):
+                if part.get("ranked") and part.get("text"):
+                    snapshots.append(part)
         from project_context import projection as project_projection, RULES as PROJECT_RULES
         project = conversation['_project_snapshot'] if '_project_snapshot' in conversation else project_projection(
             self.context_root(conversation.get('id')), conversation, last_user)
