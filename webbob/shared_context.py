@@ -69,11 +69,14 @@ def safe_fact(body):
             continue
         if credential.search(_normalize_fact_text(decoded.decode("utf-8", errors="ignore"))):
             raise ContextError("credential-like content forbidden")
-    # Exempt "plain text" only as a format reference: it must be followed directly
-    # by a format word (files, format, mode). Anything else ("Plain text: ...",
-    # "plain text - ...", "Plain text (from Jeff): ...", "plain text message")
-    # is treated like any other text marker, as on main.
-    text_language = re.sub(r"(?i)\bplain\s+text(?=\s+(?:files?|formats?|mode)\b)", "", language)
+    # A format word must finish the phrase or continue with an ordinary word,
+    # never a payload delimiter/label or a newline. Check before replacing
+    # hyphens so a delimiter such as "files - from Jeff" cannot disappear.
+    text_language = re.sub(
+        r"(?i)\bplain[\s_-]+text(?=[ \t]+(?:files?|formats?|mode)\b"
+        r"(?:[ \t]*(?:\Z|[.,])|[ \t]+(?!(?:from|body|content|message)\b)[a-z]+\b))",
+        "", value)
+    text_language = re.sub(r"[_-]+", " ", text_language)
     if re.search(r"(?i)\b(?:sms|imessage|texts?|texted|texting|"
                  r"message[ _-]*(?:body|content|transcript))\b|"
                  r"\btext[ _-]*(?:body|content|message|transcript)\b", text_language):

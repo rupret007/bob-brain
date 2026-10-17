@@ -269,6 +269,43 @@ class ContextTests(unittest.TestCase):
             with self.subTest(body=body):
                 self.assert_body_denied(body)
 
+    def test_plain_text_format_labels_rejected(self):
+        for body in ('plain text files: See you soon',
+                     'Plain text format — See you soon',
+                     'plain text mode: hey call me',
+                     'Plain text files - from Jeff: see you soon',
+                     'plain text format (from Jeff): see you',
+                     'plain text\nfiles: See you soon'):
+            with self.subTest(body=body):
+                self.assert_body_denied(body)
+
+    def test_plain_text_format_exemption_requires_phrase_boundary(self):
+        for word in ('file', 'files', 'format', 'formats', 'mode'):
+            for suffix in (': See you soon', '=See you soon', '(from Jeff): see you',
+                           '- See you soon', '– See you soon', '— See you soon',
+                           '"See you soon"', 'from Jeff: see you', 'body: see you',
+                           'content: see you', 'message: see you', '\nSee you soon'):
+                for space in ('', ' ', '\t'):
+                    body = 'plain text ' + word + space + suffix
+                    # Bare adjacent words do not form a format word either.
+                    with self.subTest(body=body):
+                        self.assert_body_denied(body)
+            for newline in ('\n', '\r', '\r\n', '\u2028', '\u2029'):
+                with self.subTest(word=word, newline=newline):
+                    self.assert_body_denied('plain text' + newline + word + '.')
+
+    def test_plain_text_format_phrase_endings_allowed(self):
+        index = 0
+        for word in ('file', 'files', 'format', 'formats', 'mode'):
+            for suffix in ('', '.', ', UTF-8 encoded.', ' only.', ' storage.', '\t only.'):
+                body = 'Use plain text ' + word + suffix
+                with self.subTest(body=body):
+                    fact = copy.deepcopy(self.fact)
+                    fact['id'] = 'ending-' + str(index)
+                    fact['body'] = body
+                    self.accept(fact)
+                    index += 1
+
     def test_plain_text_format_facts_preserve_original_body(self):
         for index, body in enumerate(('Store configs as plain text files.',
                                      'Use the plain text format.',
