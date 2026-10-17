@@ -8,6 +8,7 @@ import re
 import secrets
 
 from webbob.shared_context import ContextError, safe_fact
+from webbob.text_validation import reject_unicode_tags
 
 CONFIG_FIELDS = {"timezone", "release_sha", "model_caps_microdollars", "routines_paused"}
 
@@ -17,6 +18,7 @@ def canonical(value):
 
 
 def validate(facts, config):
+    reject_unicode_tags((facts, config))
     if not isinstance(config, dict) or set(config) != CONFIG_FIELDS:
         raise ValueError("only explicitly nonsecret config fields may be backed up")
     if config["timezone"] != "America/Chicago" or not re.fullmatch(r"[a-f0-9]{40}", config["release_sha"]):

@@ -10,6 +10,8 @@ import argparse, fcntl, json, os, re, subprocess, sys, time, datetime as dt
 import contextlib, hashlib, secrets
 from pathlib import Path
 
+from webbob.text_validation import reject_unicode_tags
+
 ROOT = os.environ.get("CLAIM_GATE_ROOT")
 CLAIMS = os.environ.get("CLAIM_GATE_CLAIMS") or (os.path.join(ROOT, "coord", "claims") if ROOT else None)
 GH = os.environ.get("CLAIM_GATE_GH", "gh")
@@ -24,6 +26,7 @@ def out(kind, code, **kw):
     sys.exit(code)
 
 def toks(t):
+    reject_unicode_tags(t, GateError)
     t = re.sub(r"^\s*\[?[A-Z]+[0-9]+\]?[:\s-]+", "", t or "")  # drop item-id prefix like "W03:"
     return {w for w in re.findall(r"[a-z0-9]+", t.lower()) if w not in STOP and len(w) > 2}
 
@@ -31,7 +34,9 @@ def jacc(a, b):
     if not a or not b: return 0.0
     return len(a & b) / float(min(len(a), len(b))) if min(len(a), len(b)) >= 3 else len(a & b) / float(len(a | b))
 
-def norm_id(s): return re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-")
+def norm_id(s):
+    reject_unicode_tags(s, GateError)
+    return re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-")
 
 def gh_open_prs(repo):
     r = subprocess.run([GH, "pr", "list", "-R", repo, "--state", "open", "-L", "500",
@@ -61,6 +66,7 @@ def read_records():
             raise GateError("unsafe claim record")
         try:
             j = json.loads(path.read_text())
+            reject_unicode_tags(j)
             if not isinstance(j, dict):
                 raise ValueError()
             for key in ("owner", "status", "expires"):
@@ -229,6 +235,7 @@ class Gate:
         self.owner = owner
 
     def claim(self, repo, work_id, resources, ttl=240, branch="", title="", check=None):
+        reject_unicode_tags((repo, work_id, resources, branch, title), GateError)
         if not re.fullmatch(r"[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+", repo) or not norm_id(work_id):
             raise GateError("invalid work identity")
         repo, work_id = repo.lower(), norm_id(work_id)

@@ -3,9 +3,11 @@ import math
 import time
 
 from webbob.fallback_copy import GROK_CONTINUE_MESSAGE, unavailable_sentence
+from webbob.text_validation import reject_unicode_tags
 
 
 def fallback_notice(health, now=None, freshness=120):
+    reject_unicode_tags(health)
     now = time.time() if now is None else now
     health = health if isinstance(health, dict) else {}
     unavailable, unknown = [], []

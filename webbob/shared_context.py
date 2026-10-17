@@ -17,6 +17,8 @@ import sqlite3
 import time
 import unicodedata
 
+from webbob.text_validation import reject_unicode_tags
+
 BOTS = {"bob", "webbob", "andrea", "karen"}
 INBOX_CAP = 1000  # Pending notifications per recipient, across all senders.
 # Common Cyrillic lookalikes in Latin guard keywords. This matching-only map
@@ -52,6 +54,7 @@ def digest(value):
 
 
 def _normalize_fact_text(value):
+    reject_unicode_tags(value, ContextError)
     value = unicodedata.normalize("NFKC", value).translate(_FACT_CONFUSABLES)
     return "".join(c for c in value
                    if unicodedata.category(c) != "Cf"
@@ -144,6 +147,7 @@ def safe_fact(body):
 
 
 def validate_fact(fact):
+    reject_unicode_tags(fact, ContextError)
     if set(fact) != {"id", "body", "classification", "audience", "provenance"}:
         raise ContextError("unexpected fact fields")
     if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,79}", fact["id"]):

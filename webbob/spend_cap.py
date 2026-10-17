@@ -8,6 +8,8 @@ from typing import Optional
 import unicodedata
 from zoneinfo import ZoneInfo
 
+from webbob.text_validation import reject_unicode_tags
+
 LOW_QUOTA_REMAINING_PCT = 5
 
 # Providers whose remaining_pct is measured by ai-capacity.sh; quota guard applies.
@@ -39,6 +41,7 @@ CAPACITY_PROVIDER_ALIASES = {
 
 
 def _normalize_provider(name: str) -> str:
+    reject_unicode_tags(name)
     return unicodedata.normalize("NFKC", name).casefold().strip()
 
 
@@ -48,6 +51,7 @@ def _quota_policy_hint(model: str) -> str:
 
 
 def match_capacity_row(model: str, rows: list) -> Optional[dict]:
+    reject_unicode_tags(rows)
     hint = _quota_policy_hint(model)
     if not hint or not isinstance(rows, list):
         return None
@@ -70,6 +74,7 @@ def _remaining_trusted(remaining) -> bool:
 
 def provider_quota_check(model: str, capacity_doc: Optional[dict]) -> dict:
     """Fail closed for measured providers when quota cannot be trusted; exempt unmeasured."""
+    reject_unicode_tags(capacity_doc)
     hint = _quota_policy_hint(model)
     # Measured policy wins even if a name is accidentally added to an exemption.
     if hint not in MEASURED_QUOTA_PROVIDERS:
@@ -165,6 +170,7 @@ def provider_quota_check(model: str, capacity_doc: Optional[dict]) -> dict:
 
 class SpendCap:
     def __init__(self, path, caps, clock=None, capacity_snapshot=None):
+        reject_unicode_tags(caps)
         if not caps or any(not isinstance(k, str) or type(v) is not int or not 0 <= v < 10**12 for k, v in caps.items()):
             raise ValueError("explicit model caps in integer microdollars required")
         self.path, self.caps = Path(path), dict(caps)
@@ -211,6 +217,7 @@ class SpendCap:
         return self._capacity_snapshot
 
     def reserve(self, call_id, model, maximum_cost):
+        reject_unicode_tags((call_id, model))
         if model not in self.caps or not isinstance(call_id, str) or not 1 <= len(call_id) <= 100:
             raise ValueError("known model and stable call ID required")
         if type(maximum_cost) is not int or not 0 < maximum_cost < 10**12:

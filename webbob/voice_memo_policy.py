@@ -4,6 +4,7 @@ import unicodedata
 
 from webbob.parity_gate import CAPABILITIES
 from webbob.shared_context import ContextError, safe_fact
+from webbob.text_validation import reject_unicode_tags
 
 _MEMO_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
@@ -24,6 +25,7 @@ def _normalize_payload_key(key):
     """
     if not isinstance(key, str):
         key = str(key)
+    reject_unicode_tags(key, VoiceMemoPolicyError)
     normalized = unicodedata.normalize("NFKC", key)
     normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Cf")
     normalized = "".join(ch for ch in normalized if not ch.isspace())
@@ -36,6 +38,7 @@ def _payload_key_forbidden(key):
 
 
 def validate_recall_metadata(record):
+    reject_unicode_tags(record, VoiceMemoPolicyError)
     if not isinstance(record, dict) or set(record) != RECALL_FIELDS:
         raise VoiceMemoPolicyError("voice recall may store metadata only")
     if record["transcription_status"] not in ("unavailable", "on_device_only", "not_requested"):
@@ -54,6 +57,7 @@ def _uses_recall_key_allowlist(record):
 
 
 def reject_voice_content(value):
+    reject_unicode_tags(value, VoiceMemoPolicyError)
     if isinstance(value, dict):
         recall_allowlist = _uses_recall_key_allowlist(value)
         for key in value:
