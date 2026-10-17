@@ -225,14 +225,17 @@ class MediaBudget:
         if remaining <= 0:
             raise ValueError("Media preparation timed out; try a smaller attachment.")
         try:
-            code, out, _ = run(args, cwd=Path(tempfile.gettempdir()),
-                               env=dict(os.environ, OMP_THREAD_LIMIT="1", OMP_NUM_THREADS="1"),
-                               cancel=self.cancel, timeout=min(timeout, remaining))
+            code, out, err = run(args, cwd=Path(tempfile.gettempdir()),
+                                 env=dict(os.environ, OMP_THREAD_LIMIT="1", OMP_NUM_THREADS="1"),
+                                 cancel=self.cancel, timeout=min(timeout, remaining))
         except Cancelled:
             raise
         except (ProviderError, OSError, subprocess.TimeoutExpired):
             raise ValueError("Media preparation failed or timed out; try a smaller attachment.") from None
         if code:
+            detail = "\n".join(part for part in (err, out) if part).strip()
+            if "password" in detail.lower():
+                raise ValueError("Password required")
             raise ValueError("Could not decode or read this attachment.")
         return out
 
