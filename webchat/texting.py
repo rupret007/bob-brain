@@ -189,6 +189,8 @@ class Andrea:
             try:
                 pin = Path(__file__).resolve().parents[1] / 'release/andrea-bridge.json'
                 expected_protocol = json.loads(pin.read_text(), object_pairs_hook=unique_object)['protocol']
+                if not self.supported_protocol(expected_protocol):
+                    raise ValueError("unsupported release protocol")
             except (OSError, ValueError, KeyError, TypeError):
                 expected_protocol = None  # Missing release policy never enables legacy.
         self.expected_protocol = expected_protocol
