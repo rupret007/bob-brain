@@ -1,6 +1,6 @@
 """Capability ledger regressions using a temporary home and offline adapters."""
 import json
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
 import fcntl
 import os
@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+import uuid
 from unittest.mock import Mock, patch
 
 import chat_intent
@@ -16,6 +17,217 @@ from local_tasks import LocalFiles, LocalTasks, LocalTaskError, LOCK_TIMEOUT, SE
 
 
 class CapabilityLedgerTests(unittest.TestCase):
+    @contextmanager
+    def isolated_chat(self, now=None):
+        from app import Chat
+        from reminders import ZONE
+        providers, texting, calendar, notifier = Mock(), Mock(), Mock(), Mock()
+        providers.timeouts = {}
+        providers.reply.side_effect = AssertionError('Unexpected provider call')
+        texting.handle.return_value = False
+        texting.public.side_effect = dict
+        calendar.handle.return_value = None
+        if now is None:
+            now = datetime(2026, 10, 11, 1, 47, tzinfo=ZONE).timestamp()
+        with tempfile.TemporaryDirectory(dir=self.root) as folder, \
+                patch('app.load_live_ops', return_value={}), \
+                patch('time.time', return_value=now):
+            root = Path(folder)
+            home = root / 'home'
+            (home / 'Documents').mkdir(parents=True)
+            actions = LocalTasks(root / 'local', files=LocalFiles(home, clock=lambda: now),
+                                 search=self.search, clock=lambda: now)
+            chat = Chat(root / 'webchat', root, providers, texting=texting,
+                        calendar=calendar, reminder_notifier=notifier, local_tasks=actions)
+            chat.reminders.clock = lambda: now
+            cid = chat.conversation_list()['conversations'][0]['id']
+            try:
+                yield chat, cid, home
+                providers.reply.assert_not_called()
+                notifier.assert_not_called()
+                self.search.assert_not_called()
+            finally:
+                chat.close()
+
+    def test_ledger_B7_draft_and_conditional_requests_never_schedule_through_chat(self):
+        from reminders import ZONE
+        now = datetime(2026, 10, 12, 13, tzinfo=ZONE).timestamp()
+        constraints = (
+            '; draft only.', ', provided I agree.',
+            '; DRAFT ONLY.', '; draft-only.', '; just a draft.',
+            '; keep this as a draft.', '; draft it first.', '; for drafting.',
+            ', if I agree.', ', when I agree.', ', once I agree.',
+            ', subject to my agreement.', ', agreement required.',
+            ', PROVIDED I AGREE.', ', provided I accept.',
+            ', conditional on my decision.',
+        )
+        prefixes = ('Create a reminder for 2am to go to bed',
+                    'Set a timer for 10 minutes to stretch',
+                    'remind me every 2 hours to stretch',
+                    'every morning remind me to stretch')
+        for prefix in prefixes:
+            for constraint in constraints:
+                with self.subTest(prefix=prefix, constraint=constraint), \
+                        self.isolated_chat(now=now) as (chat, cid, home):
+                    rows = []
+                    with patch.object(chat.reminders, 'locked', side_effect=lambda: nullcontext(rows)), \
+                            patch.object(chat.reminders, 'save') as save, \
+                            patch.object(chat.reminders, 'create', wraps=chat.reminders.create) as create:
+                        reply = chat.submit(cid, prefix + constraint, str(uuid.uuid4()))['messages'][-1]
+                        self.assertEqual(chat.reminders.listing(), [])
+                        create.assert_not_called()
+                        save.assert_not_called()
+                        self.assertEqual(reply['provider'], 'reminders')
+                        self.assertIn('Nothing was saved', reply['content'])
+                        self.assertNotIn('Reminder saved:', reply['content'])
+        for command, body, due in (
+                (prefixes[0], 'go to bed', datetime(2026, 10, 13, 2, tzinfo=ZONE).timestamp()),
+                (prefixes[1], 'stretch', now + 600)):
+            with self.subTest(control=command), self.isolated_chat(now=now) as (chat, cid, home):
+                reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
+                self.assertIn('Reminder saved:', reply['content'])
+                row, = chat.reminders.listing()
+                self.assertEqual((row['body'], row['state'], row['due_at']), (body, 'pending', due))
+
+    def test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat(self):
+        from reminders import ZONE
+        now = datetime(2026, 10, 12, 13, tzinfo=ZONE).timestamp()
+        constraints = (
+            '; draft only.', ', provided I agree.',
+            '; DRAFT ONLY.', '; draft-only.', '; just a draft.',
+            '; keep this as a draft.', '; draft it first.', '; for drafting.',
+            ', if I agree.', ', when I agree.', ', once I agree.',
+            ', subject to my agreement.', ', agreement required.',
+            ', PROVIDED I AGREE.', ', provided I accept.',
+            ', conditional on my decision.',
+        )
+        for constraint in constraints:
+            with self.subTest(constraint=constraint), self.isolated_chat(now=now) as (chat, cid, home):
+                target = home / 'Documents/proposal.txt'
+                command = 'Create file ~/Documents/proposal.txt: hello' + constraint
+                with patch.object(chat.local_tasks.files, 'execute',
+                                  return_value='File created: ' + str(target)) as execute:
+                    reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
+                    execute.assert_not_called()
+                    self.assertFalse(target.exists())
+                    self.assertEqual(reply['provider'], 'local-tasks')
+                    self.assertIn("I haven't created it yet", reply['content'])
+                    with chat.local_tasks.locked() as rows:
+                        row, = rows.values()
+                    self.assertEqual(row['state'], 'draft')
+                    self.assertEqual(row['expires'], now + 3600)
+                    self.assertIn('yes ' + row['token'], reply['content'])
+                    chat.submit(cid, 'yes', str(uuid.uuid4()))
+                    execute.assert_not_called()
+                    reply = chat.submit(cid, 'yes ' + row['token'], str(uuid.uuid4()))['messages'][-1]
+                    self.assertIn('File created:', reply['content'])
+                    execute.assert_called_once_with(row['spec'])
+                    self.assertEqual(row['spec']['content'], 'hello' + constraint)
+                    chat.submit(cid, 'yes ' + row['token'], str(uuid.uuid4()))
+                    execute.assert_called_once()
+        with self.isolated_chat(now=now) as (chat, cid, home):
+            target = home / 'Documents/proposal.txt'
+            with patch.object(chat.local_tasks.files, 'execute',
+                              return_value='File created: ' + str(target)) as execute:
+                reply = chat.submit(cid, 'Create file ~/Documents/proposal.txt: hello',
+                                    str(uuid.uuid4()))['messages'][-1]
+                self.assertIn('File created:', reply['content'])
+                execute.assert_called_once()
+                self.assertEqual(execute.call_args.args[0]['content'], 'hello')
+
+    def test_ledger_B4_review_and_dry_run_never_schedule_through_chat(self):
+        constraints = (
+            'but I need to review it first', 'but run this as a dry run',
+            'review first', 'REVIEW FIRST', 'for my review', 'needs reviewing',
+            'send it for review', 'review-only', 'let me review it',
+            'I want to review this', 'dry-run', 'DRY RUN', 'a dry run please',
+            'perform a dry-run first', 'dry run only', 'this is a dry run',
+        )
+        for constraint in constraints:
+            with self.subTest(constraint=constraint), self.isolated_chat() as (chat, cid, home):
+                reply = chat.submit(cid, 'Create a reminder for 2am to stretch, ' + constraint,
+                                    str(uuid.uuid4()))['messages'][-1]
+                self.assertEqual(chat.reminders.listing(), [])
+                self.assertEqual(reply['provider'], 'reminders')
+                self.assertIn('Nothing was saved', reply['content'])
+                self.assertNotIn('Reminder saved:', reply['content'])
+                reply = chat.submit(cid, 'remind me at 2am to stretch', str(uuid.uuid4()))['messages'][-1]
+                self.assertIn('Reminder saved:', reply['content'])
+                row, = chat.reminders.listing()
+                self.assertEqual((row['body'], row['state'], row['due_at']),
+                                 ('stretch', 'pending', self.clock() + 86400 + 780))
+
+    def test_ledger_B5_preview_creation_requires_exact_yes_through_chat(self):
+        constraints = (
+            'just show me a preview', 'preview only', 'PREVIEW ONLY',
+            'preview first', 'a preview please', 'send me a preview',
+            'I need a preview', 'let me preview it', 'preview this',
+            'preview-only', 'for preview', 'show the preview',
+            'give me a preview', 'preview before proceeding',
+            'run this as a dry run', 'I need to review it first',
+        )
+        for constraint in constraints:
+            with self.subTest(constraint=constraint), self.isolated_chat() as (chat, cid, home):
+                target = home / 'Documents/note.txt'
+                command = 'create file ~/Documents/note.txt: hello; ' + constraint
+                with patch.object(chat.local_tasks.files, 'execute',
+                                  wraps=chat.local_tasks.files.execute) as execute:
+                    reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
+                    self.assertFalse(target.exists())
+                    execute.assert_not_called()
+                    self.assertEqual(reply['provider'], 'local-tasks')
+                    self.assertIn("I haven't created it yet", reply['content'])
+                    with chat.local_tasks.locked() as rows:
+                        row, = rows.values()
+                    self.assertEqual(row['state'], 'draft')
+                    self.assertIn('yes ' + row['token'], reply['content'])
+                    chat.submit(cid, 'yes', str(uuid.uuid4()))
+                    self.assertFalse(target.exists())
+                    execute.assert_not_called()
+                    reply = chat.submit(cid, 'yes ' + row['token'], str(uuid.uuid4()))['messages'][-1]
+                    self.assertIn('File created:', reply['content'])
+                    self.assertEqual(target.read_text(), 'hello; ' + constraint)
+                    execute.assert_called_once()
+        with self.isolated_chat() as (chat, cid, home):
+            reply = chat.submit(cid, 'create file ~/Documents/note.txt: hello',
+                                str(uuid.uuid4()))['messages'][-1]
+            self.assertIn('File created:', reply['content'])
+            self.assertEqual((home / 'Documents/note.txt').read_text(), 'hello')
+
+    def test_ledger_B6_word_duration_qualifiers_need_clarification_through_chat(self):
+        qualifiers = (
+            'in two days', 'in one day', 'in three days', 'in four days',
+            'in five days', 'in six days', 'in seven days', 'in eight days',
+            'in nine days', 'in ten days', 'in eleven days', 'in twelve days',
+            'in twenty-one days', 'in a couple of days', 'in a few days',
+            'IN TWO DAYS', 'in two hours', 'in thirty minutes', 'in two weeks',
+            'in 2 days',
+        )
+        prefixes = ('Create a reminder for 2am to stretch',
+                    'remind me every 2 hours to stretch',
+                    'every morning remind me to stretch')
+        for prefix in prefixes:
+            for qualifier in qualifiers:
+                with self.subTest(prefix=prefix, qualifier=qualifier), \
+                        self.isolated_chat() as (chat, cid, home):
+                    reply = chat.submit(cid, prefix + ' ' + qualifier,
+                                        str(uuid.uuid4()))['messages'][-1]
+                    self.assertEqual(chat.reminders.listing(), [])
+                    self.assertEqual(reply['provider'], 'reminders')
+                    self.assertIn('extra date or time clause', reply['content'])
+                    self.assertIn('Nothing was saved', reply['content'])
+        from reminders import ZONE
+        for command, body, day in (
+                ('Create a reminder for 2am to stretch', 'stretch', 11),
+                ('Create a reminder for 2026-10-13 at 2am to stretch', 'stretch', 13),
+                ('Create a reminder for 2am to stretch in the garden', 'stretch in the garden', 11)):
+            with self.subTest(command=command), self.isolated_chat() as (chat, cid, home):
+                reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
+                self.assertIn('Reminder saved:', reply['content'])
+                row, = chat.reminders.listing()
+                self.assertEqual((row['body'], row['state'], row['due_at']),
+                                 (body, 'pending', datetime(2026, 10, day, 2, tzinfo=ZONE).timestamp()))
+
     B3_CONTENTS = (
         '<property name="password" value="SYNTHETIC_ONLY_123"/>',
         '<entry name="api_key">SYNTHETIC_ONLY_123</entry>',
