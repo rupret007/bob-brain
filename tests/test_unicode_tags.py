@@ -137,7 +137,11 @@ class UnicodeTagTests(unittest.TestCase):
 
     def test_u_e0080_allowed_in_facts(self):
         body = "Release notes ready" + chr(0xE0080)
-        self.assertEqual(safe_fact(body), body)
+        try:
+            result = safe_fact(body)
+        except ContextError:
+            self.fail("U+E0080 must be allowed in facts (outside Tags block)")
+        self.assertEqual(result, body)
 
     def test_ownership_claim_rejects_tag_before_coordination(self):
         claims = self.root / "claims"
