@@ -63,6 +63,8 @@ class TestIntegrityDetector(unittest.TestCase):
     def test_global_rewrites(self):
         cases = (
             ("defineProperty it", top("Object.defineProperty(globalThis, 'it', { value: () => {} });"), 'rebind'),
+            ("defineProperties expect", top("Object.defineProperties(globalThis, { expect: { value: () => ({ toBe() {} }) } });"), 'rebind'),
+            ("Reflect.defineProperty expect", top("Reflect.defineProperty(globalThis, 'expect', { value: () => ({ toBe() {} }) });"), 'rebind'),
             ("Reflect.set expect", top("Reflect.set(globalThis, 'expect', () => ({ toBe() {} }));"), 'rebind'),
             ("Object.assign it", top("Object.assign(globalThis, { it: () => {} });"), 'rebind'),
             ("vi.stubGlobal expect", top("vi.stubGlobal('expect', () => ({ toBe() {} }));"), 'rebind'),
@@ -74,9 +76,16 @@ class TestIntegrityDetector(unittest.TestCase):
     def test_exit_aliases(self):
         cases = (
             ("p.exit", top("const p = process;\np.exit(0);")),
+            ("p reassigned", top("let p;\np = process;\nbeforeAll(() => p.exit(0));")),
             ("destructured exit", top("const { exit } = process;\nbeforeAll(() => exit(0));")),
+            ("destructured exit alias", top("const { exit: e } = process;\nbeforeAll(() => e(0));")),
             ("require process exit", top("beforeAll(() => require('process').exit(0));")),
             ("reallyExit", top("beforeAll(() => process.reallyExit(0));")),
+            ("process.exit.call", top("beforeAll(() => process.exit.call(process, 0));")),
+            ("Reflect.apply exit", top("beforeAll(() => Reflect.apply(process.exit, process, [0]));")),
+            ("process.kill", top("beforeAll(() => process.kill(process.pid));")),
+            ("process.abort", top("beforeAll(() => process.abort());")),
+            ("exitCode alone", top("process.exitCode = 0;")),
         )
         for name, stmt in cases:
             self.assert_refused(name, stmt, 'process.exit')
@@ -99,11 +108,17 @@ class TestIntegrityDetector(unittest.TestCase):
     def test_dead_code_wrappers(self):
         wrappers = (
             ("if Math.random>2", wrap("      if (Math.random() > 2) {", "      }")),
+            ("if false", wrap("      if (false) {", "      }")),
             ("for empty", wrap("      for (const _ of []) {", "      }")),
+            ("for false", wrap("      for (; false; ) {", "      }")),
             ("while false var", wrap("      const no = false;\n      while (no) {", "      }")),
+            ("if false var", wrap("      const N = false;\n      if (N) {", "      }")),
             ("switch no match", wrap("      switch (1) { case 2:", "      }")),
+            ("switch 0 case 1", wrap("      switch (0) { case 1:", "      }")),
             ("catch expect", wrap("      try {\n        throw () => ({ toBe() {} });\n      } catch (expect) {", "      }"), 'rebind'),
             ("with expect", wrap("      with ({ expect: () => ({ toBe() {} }) }) {", "      }")),
+            ("async IIFE unawaited", before_expect(
+                "      (async () => {\n        await 0;\n" + EXP + "\n      })();")),
             ("class method", wrap("      class K { m() {", "      } }")),
             ("object method", wrap("      const o = { m() {", "      } };")),
             ("getter", wrap("      const o = { get m() {", "      } };")),
@@ -113,6 +128,19 @@ class TestIntegrityDetector(unittest.TestCase):
             reason = item[2] if len(item) > 2 else 'uncalled'
             with self.subTest(wrapper=name):
                 self.assert_refused(name, body, reason)
+
+    def test_karen151_weakening_lines(self):
+        self.assert_refused(
+            "afterEach hanging promise",
+            top("afterEach(() => new Promise(() => {}));"),
+            'early exit',
+        )
+        self.assert_refused("expect.assertions(0)", before_expect("      expect.assertions(0);"), 'tautolog')
+        self.assert_refused(
+            "it.each empty",
+            BASE.replace("  it('arrow'", "  it.each([])('none %s', () => {});\n  it('arrow'", 1),
+            'skip',
+        )
 
     def test_post_return_helper_call_refused(self):
         bypass = before_expect(

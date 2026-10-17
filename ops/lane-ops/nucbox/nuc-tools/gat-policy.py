@@ -569,8 +569,17 @@ JS_EXIT_METHODS = frozenset(('exit', 'reallyExit'))
 JS_ASSERTION_WORDS = frozenset(('expect', 'assert'))
 JS_REQUIRE_PROCESS_EXIT = re.compile(r"require\s*\(\s*['\"]process['\"]\s*\)\s*\.\s*(?:exit|reallyExit)\s*\(")
 JS_PROCESS_ALIAS_EXIT = re.compile(r"\b(?:const|let|var)\s+(\w+)\s*=\s*process\s*;")
-JS_DESTRUCT_PROCESS_EXIT = re.compile(r"\b(?:const|let|var)\s*\{\s*(exit|reallyExit)\s*\}\s*=\s*process\s*;")
+JS_PROCESS_REASSIGN = re.compile(r"\b(\w+)\s*=\s*process\s*;")
+JS_DESTRUCT_PROCESS_EXIT = re.compile(
+    r"\b(?:const|let|var)\s*\{\s*(exit|reallyExit)(?:\s*:\s*(\w+))?\s*\}\s*=\s*process\s*;")
 JS_DIRECT_EXIT_CALL = re.compile(r"\b(?:exit|reallyExit)\s*\(")
+JS_PROCESS_TERMINATE = re.compile(r"\bprocess\.(?:kill|abort)\s*\(")
+JS_EXIT_CODE_ASSIGN = re.compile(r"\bprocess\.exitCode\s*=")
+JS_EXIT_CALL_FORM = re.compile(r"\bprocess\.exit\.call\s*\(|\bReflect\.apply\s*\(\s*process\.exit\b")
+JS_ASSERTIONS_ZERO = re.compile(r"\bexpect\.assertions\s*\(\s*0\s*\)")
+JS_EACH_EMPTY = re.compile(r"\.each\s*\(\s*\[\s*\]\s*\)")
+JS_HOOK_HANGING_PROMISE = re.compile(
+    r"\b(?:beforeAll|beforeEach|afterAll|afterEach)\s*\(\s*(?:async\s*)?\([^)]*\)\s*=>\s*new\s+Promise\s*\(")
 
 
 def _js_string_value(node):
@@ -622,12 +631,18 @@ def _js_global_rewrite_reasons(tree, added, path):
             if not _js_added(nodes[max(0, i - 6):i + 1], added):
                 continue
             callee = nodes[i - 1]
-            if callee.text == 'defineProperty' and i >= 3 and nodes[i - 2].text in ('.', '?.') and nodes[i - 3].text == 'Object':
+            if callee.text == 'defineProperty' and i >= 3 and nodes[i - 2].text in ('.', '?.') and nodes[i - 3].text in ('Object', 'Reflect'):
                 args = [c for c in node.children if c.text != ',']
                 if len(args) >= 2 and args[0].text in JS_GLOBAL_RECEIVERS:
                     key = _js_string_value(args[1]) if args[1].kind == 'string' else None
                     if key in JS_PROTECTED_NAMES:
                         reasons.append(f'rebinds a global test/assertion name in {path}:{node.line}')
+            if callee.text == 'defineProperties' and i >= 3 and nodes[i - 2].text in ('.', '?.') and nodes[i - 3].text == 'Object':
+                args = [c for c in node.children if c.text != ',']
+                if args and args[0].text in JS_GLOBAL_RECEIVERS:
+                    for child in _js_walk(args[1] if len(args) > 1 else args[0]):
+                        if child.kind == 'word' and child.text in JS_PROTECTED_NAMES and child.line in added:
+                            reasons.append(f'rebinds a global test/assertion name in {path}:{child.line}')
             if callee.text == 'set' and i >= 3 and nodes[i - 2].text in ('.', '?.') and nodes[i - 3].text == 'Reflect':
                 args = [c for c in node.children if c.text != ',']
                 if len(args) >= 2 and args[0].text in JS_GLOBAL_RECEIVERS:
@@ -662,9 +677,12 @@ def _js_global_rewrite_reasons(tree, added, path):
 
 
 JS_DEAD_WRAPPER_OPEN = re.compile(
-    r'(?:if\s*\(\s*Math\.random\s*\(\s*\)\s*>\s*2\s*\)|if\s*\(\s*0\s*\)|for\s*\([^)]*\bof\s*\[\s*\]|while\s*\(\s*(?:false|0)\s*\)|switch\s*\(\s*1\s*\)\s*\{\s*case\s+2|with\s*\(|catch\s*\(\s*expect\s*\))',
+    r'(?:if\s*\(\s*Math\.random\s*\(\s*\)\s*>\s*2\s*\)|if\s*\(\s*(?:0|false)\s*\)|for\s*\([^)]*\bof\s*\[\s*\]|'
+    r'for\s*\(\s*;\s*false\s*;|while\s*\(\s*(?:false|0)\s*\)|switch\s*\(\s*0\s*\).*?\bcase\s+1\b|switch\s*\(\s*1\s*\).*?\bcase\s+2\b|'
+    r'with\s*\(|catch\s*\(\s*expect\s*\)|try\s*\{[^}]*\bthrow\b)',
     re.I,
 )
+JS_ASYNC_IIFE = re.compile(r'\(\s*async\s+(?:function|\()')
 JS_FALSY_CONST = re.compile(r'^\s*const\s+(\w+)\s*=\s*(?:false|0)\s*;')
 JS_UNCALLED_METHOD = re.compile(
     r'^\s*(?:class\s+\w+\s*\{[^}]*\b\w+\s*\([^)]*\)\s*\{|const\s+\w+\s*=\s*\{[^}]*(?:get\s+\w+\s*\([^)]*\)\s*\{|\w+\s*\([^)]*\)\s*\{))',
@@ -681,14 +699,20 @@ def _js_exit_line_reasons(text, added, path):
     for i, line in enumerate(lines, 1):
         if i not in added:
             continue
-        if JS_REQUIRE_PROCESS_EXIT.search(line) or re.search(r"\bprocess\.reallyExit\s*\(", line):
+        if (JS_REQUIRE_PROCESS_EXIT.search(line) or re.search(r"\bprocess\.reallyExit\s*\(", line)
+                or JS_PROCESS_TERMINATE.search(line) or JS_EXIT_CALL_FORM.search(line)):
+            reasons.append(f'adds process.exit in {path}:{i}')
+        if JS_EXIT_CODE_ASSIGN.search(line):
             reasons.append(f'adds process.exit in {path}:{i}')
         m = JS_PROCESS_ALIAS_EXIT.search(line)
         if m:
             aliases.add(m.group(1))
+        m = JS_PROCESS_REASSIGN.search(line)
+        if m:
+            aliases.add(m.group(1))
         m = JS_DESTRUCT_PROCESS_EXIT.search(line)
         if m:
-            destructured.add(m.group(1))
+            destructured.add(m.group(2) or m.group(1))
     for i, line in enumerate(lines, 1):
         if i not in added:
             continue
@@ -698,6 +722,27 @@ def _js_exit_line_reasons(text, added, path):
         for name in destructured:
             if re.search(rf"\b{name}\s*\(", line):
                 reasons.append(f'adds process.exit in {path}:{i}')
+    return reasons
+
+
+def _js_line_integrity_reasons(text, added, path):
+    """Added lines that weaken tests without touching assertion text directly."""
+    reasons = []
+    for i, line in enumerate(text.splitlines(), 1):
+        if i not in added:
+            continue
+        if JS_ASSERTIONS_ZERO.search(line):
+            reasons.append(f'adds a tautological assertion in {path}: {line.strip()[:80]}')
+        if JS_EACH_EMPTY.search(line):
+            reasons.append(f'adds a skip/only/xfail marker in {path}: {line.strip()[:80]}')
+        if JS_HOOK_HANGING_PROMISE.search(line):
+            reasons.append(f'adds an early exit to an existing test file {path} (needs human review): {line.strip()[:80]}')
+        if JS_ASYNC_IIFE.search(line) and re.search(r'\)\s*\(\s*\)\s*;?\s*$', line):
+            reasons.append(f'assertion in an uncalled function in {path}:{i} (invocation needs review)')
+        if JS_ASYNC_IIFE.search(line):
+            window = '\n'.join(text.splitlines()[i - 1:min(len(text.splitlines()), i + 8)])
+            if re.search(r'\)\s*\(\s*\)\s*;', window) and not re.search(r'\bawait\s+\(\s*async\b', window):
+                reasons.append(f'assertion in an uncalled function in {path}:{i} (invocation needs review)')
     return reasons
 
 
@@ -713,6 +758,10 @@ def _js_line_wrapper_reasons(text, added, path):
         dead_open = JS_DEAD_WRAPPER_OPEN.search(line)
         if not dead_open and re.search(r'^\s*while\s*\(\s*(\w+)\s*\)', line):
             var = re.search(r'while\s*\(\s*(\w+)\s*\)', line).group(1)
+            if var in falsy_vars:
+                dead_open = True
+        if not dead_open and re.search(r'^\s*if\s*\(\s*(\w+)\s*\)', line):
+            var = re.search(r'if\s*\(\s*(\w+)\s*\)', line).group(1)
             if var in falsy_vars:
                 dead_open = True
         if not dead_open:
@@ -1046,8 +1095,18 @@ def _js_assertion_function_reasons(tree, added, path):
             # A parenthesized function immediately followed by an argument list.
             if callee.text == '(':
                 for target, fn in enumerate(functions):
-                    if fn['anchor'] in callee.children:
-                        edges.append((owner(callee), target))
+                    if fn['anchor'] not in callee.children:
+                        continue
+                    anchor = fn['anchor']
+                    nodes_before = []
+                    for parent in _js_walk(tree):
+                        if anchor in parent.children:
+                            idx = parent.children.index(anchor)
+                            nodes_before = parent.children[:idx]
+                            break
+                    if any(n.text == 'async' for n in nodes_before[-3:]):
+                        continue
+                    edges.append((owner(callee), target))
 
     live = {None}
     while True:
@@ -1092,6 +1151,7 @@ def _js_return_reasons(f, contents):
         reasons.extend(_js_binding_reasons(tree, f.added_lines, path))
         reasons.extend(_js_global_rewrite_reasons(tree, f.added_lines, path))
         reasons.extend(_js_exit_line_reasons(new, f.added_lines, path))
+        reasons.extend(_js_line_integrity_reasons(new, f.added_lines, path))
         reasons.extend(_js_line_wrapper_reasons(new, f.added_lines, path))
         reasons.extend(_js_dead_context_assertion_reasons(tree, f.added_lines, path))
         reasons.extend(_js_assertion_function_reasons(tree, f.added_lines, path))
