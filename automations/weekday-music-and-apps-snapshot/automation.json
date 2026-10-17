@@ -1,0 +1,16 @@
+{
+  "name": "Weekday music and apps snapshot",
+  "prompt": "Run a weekday morning snapshot of Jeff Story's music and app projects, plus a short redacted text summary if Andrea/BlueBubbles is reachable.\n\nPrefer GitHub, except the song catalog: GitHub `rupret007/AI-Music-Vault` now has catalog v1.6 text (`50f85c9` / `61bbc78`). Working copy is still `~/Music/AI-Music-Vault`. Never commit or attach audio.\n\nLive set:\n- WebJam (`rupret007/webjam`, default master). Do not merge PR 14 unless he said yes. Studio Visit work may be in flight.\n- AI Music Vault / Fable catalog (local + private GitHub text).\n- Rad Dad public: RadDadSite including /tap and /qr (never delete tap), Rad-Dad-QR-Merch v9, rad-dad-show-night later (Sep 19).\n- TACTrack (private; Actions often billing-blocked).\n- Texts: Bob is the front door. Follow [Texts via Andrea](sand-workflow:texts-via-andrea). If BlueBubbles/Andrea can read, add 3–6 redacted bullets of overnight/recent texts in this chat only. If they are down, skip texts in one line. Never send a text from this routine.\n\nParked apps: mention only if they changed. Skip closet/hardware.\n\nSend a short chat: live lanes first, catalog, texts if any, what needs him, parked-only-if-changed. Do not start new work, merge, or push. If GitHub auth fails two runs in a row, pause and tell him.",
+  "schedule": "25 8 * * 1-5",
+  "triggerPresentation": {
+    "version": 1,
+    "trigger": {
+      "type": "cron",
+      "schedule": "25 8 * * 1-5"
+    }
+  },
+  "enabled": true,
+  "provenance": "user",
+  "createdAt": 1787286371560,
+  "lastRunAt": 1789479604996
+}
