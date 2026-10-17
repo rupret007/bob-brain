@@ -11,6 +11,7 @@ Strict rules (fail closed, Gemini patches):
   * no edits to package.json lines that define test scripts;
   * no added skip/only/todo markers anywhere (incl. skipIf/runIf, `pytestmark = pytest.mark.skip`,
     `pytest.importorskip`);
+  * added returns in existing JS/TS test files require the next non-blank line to close the block;
   * a patch that names no files is refused.
 --push rules (human-reviewed lanes; Karen still gates): skip markers and runner-config edits are refused as above,
 but a test-file line may be removed when the same line is added back elsewhere in the diff (a move, e.g. putting
@@ -70,9 +71,13 @@ JS_SKIP = re.compile(
 XFAIL_MARK = re.compile(r"\bexpectedFailure\b|\bxfail\b|\b__test__\s*=\s*False\b|\b__unittest_skip__\b|\bSkipTest\b"
                         r"|\bdef\s+load_tests\s*\(|\bpytestmark\b|\bcollect_ignore")
 TEST_SKIP_CALL = re.compile(r"\b(this|ctx|context|t)\s*\.\s*skip\s*\(")
-# early exits; `return <promise>` idioms common in JS tests (return expect(...)/new Promise/request(...)) stay allowed
+# Legacy return heuristics for push mode and other languages. Strict JS/TS checks use the following line instead.
 EARLY_EXIT = re.compile(r"(^\s*|[:;{)]\s*)(return\b(?!\s+(expect\b|new\s+Promise\b|Promise\.|request\s*\(|supertest\b|page\.|await\b))"
                         r"|sys\.exit\s*\(|os\._exit\s*\(|process\.exit\s*\()")
+JS_FILE = re.compile(r"\.[cm]?[jt]sx?$", re.I)
+# Fail closed on any return token, including inline or comment-separated statements.
+JS_RETURN = re.compile(r"\breturn\b")
+EXIT_CALL = re.compile(r"(^\s*|[:;{)]\s*)(sys\.exit\s*\(|os\._exit\s*\(|process\.exit\s*\()")
 DEAD_BRANCH = re.compile(r"^\s*(el)?(if|while)\s*\(?\s*(not\s+(True|1)|!\s*(true|1)|False|false|0|None|null|undefined|void 0)\s*\)?\s*[:{)]?\s*$"
                          r"|^\s*(el)?(if|while)\s*\(?\s*(False|false|0|None|null)\s*(and|&&)")
 TAUTOLOGY = re.compile(
@@ -153,6 +158,8 @@ class FileDiff:
         self.minus = self.plus = False
         self.hunks = 0
         self.lines = []             # (sign, text)
+        self.new_lines = {}         # new-file line number -> added/context text (never bridge hunk gaps)
+        self.added_lines = set()    # new-file line numbers of additions
 
     def paths(self):
         return sorted({p for p in (self.old, self.new) if p})
@@ -162,6 +169,7 @@ def parse_files(text):
     """Strictly parse a unified/git diff into [FileDiff]. Raises Malformed."""
     files, cur = [], None
     rem_old = rem_new = 0
+    new_lineno = 0
     state = "out"                   # out | hunk | binary
     prev_minus = False
     for n, line in enumerate(text.splitlines(), 1):
@@ -178,6 +186,11 @@ def parse_files(text):
                 rem_new -= 1; cur.lines.append(("+", body))
             else:
                 raise Malformed(f"line {n}: hunk shorter than its @@ header says")
+            if tag in (" ", "+"):
+                cur.new_lines[new_lineno] = body
+                if tag == "+":
+                    cur.added_lines.add(new_lineno)
+                new_lineno += 1
             if rem_old < 0 or rem_new < 0:
                 raise Malformed(f"line {n}: hunk body does not match its @@ counts")
             if rem_old == 0 and rem_new == 0:
@@ -247,6 +260,7 @@ def parse_files(text):
                 raise Malformed(f"line {n}: hunk without ---/+++ file header")
             rem_old = int(mh.group(2)) if mh.group(2) is not None else 1
             rem_new = int(mh.group(4)) if mh.group(4) is not None else 1
+            new_lineno = int(mh.group(3))
             cur.hunks += 1
             state = "hunk" if (rem_old or rem_new) else "out"
             continue
@@ -279,6 +293,27 @@ def _is_test(p):
 
 def _protected(p):
     return bool(p and (CI_OR_RUNNER.search(p) or TASK_FILE.search(p)))
+
+
+def _js_return_reasons(f, contents):
+    """Require visible evidence that each added return is the block's final statement."""
+    path = f.new
+    if f.status == "A" or not (_is_test(path) and JS_FILE.search(path)):
+        return []
+    new = contents.get(path, (None, None))[1]
+    lines = dict(enumerate(new.splitlines(), 1)) if new is not None else f.new_lines
+    reasons = []
+    for lineno in sorted(f.added_lines):
+        line = f.new_lines[lineno]
+        if not JS_RETURN.search(line):
+            continue
+        following = lineno + 1
+        while following in lines and not lines[following].strip():
+            following += 1
+        # Missing context fails closed. Only blank lines may intervene before the closing brace.
+        if not lines.get(following, "").lstrip().startswith("}"):
+            reasons.append(f"adds an early exit to an existing test file {path} (next non-blank line must close the block): {line.strip()[:80]}")
+    return reasons
 
 
 def _py_defs(text):
@@ -335,6 +370,8 @@ def check_files(files, push=False, warnings=None, contents=None):
     # Moves: a test-file line removed and added back (stripped) anywhere in the diff is not a deletion (push mode).
     added = Counter(l.strip() for f, p, sg, l in rows if sg == "+" and _is_test(p))
     for f in files:
+        if not push:
+            reasons.extend(_js_return_reasons(f, contents))
         for p in f.paths():
             if push and CI_FILE.search(p):
                 if warnings is not None:
@@ -383,7 +420,8 @@ def check_files(files, push=False, warnings=None, contents=None):
         py_known = path.endswith(".py") and path in contents
         if SHADOW_ASSIGN.search(line) and not py_known:   # with the file, the AST check below decides precisely
             reasons.append(f"rebinds or deletes a test name in {path} (needs human review): {line.strip()[:80]}")
-        if EARLY_EXIT.search(line) and f.status != "A" and not py_known:
+        exit_pattern = EXIT_CALL if not push and JS_FILE.search(path) else EARLY_EXIT
+        if exit_pattern.search(line) and f.status != "A" and not py_known:
             # can't tell a helper's return from an early exit in an existing test without the file -> human review
             reasons.append(f"adds an early exit to an existing test file {path} (needs human review): {line.strip()[:80]}")
     # Full-content Python checks (staged mode): shadowing re-definitions, early returns, dead branches inside tests.
@@ -461,7 +499,7 @@ def staged(repo, base="HEAD", head=None):
     contents = {}
     for f in files:
         key = f.new or f.old
-        if not (_is_test(key) or _is_test(f.old)) or not key.endswith(".py"):
+        if not (_is_test(key) or _is_test(f.old)) or not (key.endswith(".py") or JS_FILE.search(key)):
             continue
         old = _git(repo, "show", f"{base}:{f.old}").decode("utf-8", "replace") if f.old else None
         new = _git(repo, "show", f"{head or ''}:{f.new}").decode("utf-8", "replace") if f.new else None

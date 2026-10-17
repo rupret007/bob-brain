@@ -3,6 +3,7 @@
 Kept separate from test_lane_ops.py so each finding maps to one class here. Every test drives the real script
 (subprocess) or the real module (importlib), never a copy of its logic.
 """
+import difflib
 import importlib.util
 import json
 import os
@@ -343,6 +344,105 @@ class GatPolicyStaged(unittest.TestCase):
         r = subprocess.run([sys.executable, GAT, "--push", "--range", d, "HEAD~1", "HEAD"], capture_output=True, text=True)
         self.assertEqual(r.returncode, 3, r.stdout)
         self.assertIn("tautolog", r.stdout)
+
+
+class GatPolicyJSReturns(unittest.TestCase):
+    pol = load(NUC / "gat-policy.py", "gat_policy_js_returns")
+    PATHS = ("web/a.test.js", "web/a.spec.ts", "web/a.test.jsx", "web/a.spec.tsx",
+             "web/a.test.mjs", "web/a.spec.cts", "web/__tests__/a.js", "__tests__/a.ts")
+    RETURNS = ("return await 0;", "return expect(f()).resolves;", "return new Promise(r=>r());",
+               "return;", "return Promise.resolve(0);", "return request('/');",
+               "if (ready) /* inline */ return await 0;")
+
+    @staticmethod
+    def patch(path, old, new, context=3):
+        return "".join(difflib.unified_diff(old.splitlines(True), new.splitlines(True),
+                                          fromfile="a/" + path if old else "/dev/null",
+                                          tofile="b/" + path, n=context))
+
+    def test_added_returns_before_assertion_are_refused(self):
+        for path in self.PATHS:
+            for statement in self.RETURNS:
+                with self.subTest(path=path, statement=statement):
+                    new = JST.replace("  expect", "  " + statement + "\n  expect", 1)
+                    reasons = self.pol.check(self.patch(path, JST, new))
+                    self.assertTrue(any("early exit" in r for r in reasons), reasons)
+
+    def test_added_terminal_returns_are_allowed(self):
+        for path in self.PATHS:
+            for statement in self.RETURNS:
+                for blank in ("", "\n  \n"):
+                    with self.subTest(path=path, statement=statement, blank=blank):
+                        new = JST.replace("});", "  " + statement + "\n" + blank + "});")
+                        self.assertEqual(self.pol.check(self.patch(path, JST, new)), [])
+
+    def test_new_test_files_are_unaffected(self):
+        for path in self.PATHS:
+            for statement in self.RETURNS:
+                with self.subTest(path=path, statement=statement):
+                    new = JST.replace("  expect", "  " + statement + "\n  expect", 1)
+                    self.assertEqual(self.pol.check(self.patch(path, "", new)), [])
+
+    def test_unchanged_return_is_unaffected(self):
+        old = JST.replace("  expect", "  return await 0;\n  expect", 1)
+        new = old.replace("  expect", "  doWork();\n  expect", 1)
+        self.assertEqual(self.pol.check(self.patch("web/a.test.js", old, new)), [])
+
+    def test_missing_context_refuses_instead_of_guessing(self):
+        new = JST.replace("});", "  return await 0;\n});")
+        reasons = self.pol.check(self.patch("web/a.test.js", JST, new, context=0))
+        self.assertTrue(any("early exit" in r for r in reasons), reasons)
+
+    def test_comment_after_return_is_not_a_blank_line(self):
+        new = JST.replace("});", "  return await 0;\n  // keep checking\n});")
+        reasons = self.pol.check(self.patch("web/a.test.js", JST, new))
+        self.assertTrue(any("early exit" in r for r in reasons), reasons)
+
+    def test_separate_hunk_cannot_supply_closing_line(self):
+        old = JST.replace("});", "  doWork();\n" * 12 + "});")
+        new = old.replace("  expect", "  return await 0;\n  expect", 1) + "\n"
+        reasons = self.pol.check(self.patch("web/a.test.js", old, new, context=0))
+        self.assertTrue(any("early exit" in r for r in reasons), reasons)
+
+    def test_staged_and_range_use_full_content_after_blank_lines(self):
+        with tempfile.TemporaryDirectory() as repo:
+            subprocess.run(["git", "init", "-q", repo], check=True)
+            path = Path(repo) / "a.spec.ts"
+            old = JST.replace("});", "\n" * 8 + "});")
+            path.write_text(old)
+            subprocess.run(["git", "add", "a.spec.ts"], cwd=repo, check=True)
+            subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"],
+                           cwd=repo, check=True)
+            for statement in self.RETURNS:
+                for terminal in (False, True):
+                    with self.subTest(statement=statement, terminal=terminal):
+                        new = (old.replace("\n\n", "\n  " + statement + "\n\n", 1) if terminal else
+                               old.replace("  expect", "  " + statement + "\n  expect", 1))
+                        path.write_text(new)
+                        subprocess.run(["git", "add", "a.spec.ts"], cwd=repo, check=True)
+                        files, contents = self.pol.staged(repo)
+                        reasons = self.pol.check_files(files, contents=contents)
+                        self.assertEqual(bool(reasons), not terminal, reasons)
+                        if not terminal:
+                            self.assertTrue(any("early exit" in r for r in reasons), reasons)
+            subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "terminal return"],
+                           cwd=repo, check=True)
+            files, contents = self.pol.staged(repo, "HEAD~1", "HEAD")
+            self.assertEqual(self.pol.check_files(files, contents=contents), [])
+            path.write_text(old.replace("  expect", "  return await 0;\n  expect", 1))
+            subprocess.run(["git", "add", "a.spec.ts"], cwd=repo, check=True)
+            subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "early return"],
+                           cwd=repo, check=True)
+            files, contents = self.pol.staged(repo, "HEAD~2", "HEAD")
+            reasons = self.pol.check_files(files, contents=contents)
+            self.assertTrue(any("early exit" in r for r in reasons), reasons)
+            for name in ("new.test.js", "new.spec.ts", "__tests__/new.ts"):
+                new_path = Path(repo) / name
+                new_path.parent.mkdir(exist_ok=True)
+                new_path.write_text(JST.replace("  expect", "  return await 0;\n  expect", 1))
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            files, contents = self.pol.staged(repo)
+            self.assertEqual(self.pol.check_files(files, contents=contents), [])
 
 
 # --------------------------------------------------------------------------------------------- apply-edits mutations
