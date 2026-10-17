@@ -31,6 +31,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install component dependencies for merged test discovery
+        run: |
+          for requirements in requirements-*.txt; do
+            python -m pip install -r "$requirements"
+          done
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
