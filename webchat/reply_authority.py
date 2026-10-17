@@ -1,4 +1,5 @@
 """Server-owned operational statements; model prose cannot acknowledge effects."""
+import copy
 import re
 import time
 
@@ -438,6 +439,14 @@ def _casual_status(snap):
 
 
 def format_operational_reply(snap, provider="server", text=""):
+    """Render recovery notes from the same sample retained in the receipt."""
+    from recovery_wording import recovery_messages
+    answer = _format_operational_reply(snap, provider, text)
+    notes = recovery_messages(snap)
+    return answer + ("\n\n" + "\n".join(notes) if notes else "")
+
+
+def _format_operational_reply(snap, provider="server", text=""):
     """Live worker facts in casual sentences; diagnostics are opt-in."""
     counts, work, inspection = snap["queue_counts"], snap["work"], snap["inspection"]
     bob = snap.get("bob_lanes") or {}
@@ -595,10 +604,15 @@ def correcting_status(text, conversation):
                 observed.get('snapshot') and observed.get('snapshot_sha256')==snapshot_digest(observed['snapshot']))
 
 
-def operational_reply(root, provider, text="", *, observation=None, redact=lambda value: value):
+def operational_reply(root, provider, text="", *, observation=None, redact=lambda value: value,
+                      recovery_hold_active=False, recovery_hold_state=None):
     from status_observation import redact_snapshot, snapshot_digest
     started = time.time()
     snap = redact_snapshot(build_live_status_snapshot(root, now=started), redact)
+    if recovery_hold_state is not None:
+        snap["recovery_hold_state"] = redact_snapshot(copy.deepcopy(recovery_hold_state), redact)
+    elif recovery_hold_active:
+        snap["recovery_hold_active"] = True
     finished = time.time()
     content = format_operational_reply(snap, provider, text)
     if observation is not None:
@@ -660,7 +674,8 @@ def enforce(root, text, answer, conversation=None, *, observation=None, redact=l
         content = greeting_content(content)
     from resource_inventory import question as resource_question
     if not reference and not resource_question(text) and (live_status_question(text,conversation) or correcting_status(text, conversation)):
-        return operational_reply(root, answer["provider"], text, observation=observation, redact=redact)
+        return operational_reply(root, answer["provider"], text, observation=observation, redact=redact,
+                                 recovery_hold_state=state)
     else:
         from dispatch_receipts import claims_dispatch, dispatch_prose, reference_context, NO_DISPATCH
         # Once operational routing is resolved, guides and other requested
