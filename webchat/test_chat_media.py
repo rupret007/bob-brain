@@ -12,11 +12,12 @@ import time
 import unittest
 import uuid
 import zlib
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
 import chat_media as media
-from providers import Cancelled, ProviderError, Redactor
+from providers import Cancelled, ProviderError, Providers, Redactor
 
 
 def png_fixture():
@@ -32,14 +33,57 @@ def pdf_fixture(text='Offline PDF text'):
                b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1000 200] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
                b'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
                b'<< /Length ' + str(len(stream)).encode() + b' >>\nstream\n' + stream + b'\nendstream']
+    return pdf_objects(objects)
+
+
+def pdf_objects(objects):
     data, offsets = b'%PDF-1.4\n', [0]
     for index, body in enumerate(objects, 1):
         offsets.append(len(data))
         data += str(index).encode() + b' 0 obj\n' + body + b'\nendobj\n'
     xref = len(data)
-    data += b'xref\n0 6\n0000000000 65535 f \n'
+    data += f'xref\n0 {len(objects) + 1}\n0000000000 65535 f \n'.encode()
     data += b''.join(f'{offset:010d} 00000 n \n'.encode() for offset in offsets[1:])
-    return data + f'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
+    return data + f'trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
+
+
+def store_media_offline(root, data, name, *, conversation_id, redact):
+    """Persist attachments in tests without requiring a local tesseract install."""
+    kind = media.classify_suffix(Path(name).suffix.lower())
+    if kind == 'image' and not shutil.which('tesseract'):
+        with patch.object(media, 'scan_image', return_value=''):
+            return media.store_media(root, data, name, conversation_id=conversation_id, redact=redact)
+    return media.store_media(root, data, name, conversation_id=conversation_id, redact=redact)
+
+
+def scanned_pdf_fixture(pages=4, width=300):
+    """A tiny image-only PDF with synthetic HELLO pixels, no fonts or text layer."""
+    glyphs = ['10001 10001 10001 11111 10001 10001 10001',
+              '11111 10000 10000 11110 10000 10000 11111',
+              '10000 10000 10000 10000 10000 10000 11111',
+              '10000 10000 10000 10000 10000 10000 11111',
+              '01110 10001 10001 10001 10001 10001 01110']
+    pixels = bytearray(b'\xff' * 300 * 100)
+    for letter, glyph in enumerate(glyphs):
+        for y, row in enumerate(glyph.split()):
+            for x, ink in enumerate(row):
+                if ink == '1':
+                    for dy in range(6):
+                        start = (25 + y * 6 + dy) * 300 + 30 + letter * 36 + x * 6
+                        pixels[start:start + 6] = b'\0' * 6
+    compressed = zlib.compress(pixels)
+    stream = b'q 300 0 0 100 0 0 cm /Im0 Do Q'
+    objects = [b'<< /Type /Catalog /Pages 2 0 R >>',
+               ('<< /Type /Pages /Kids [' + ' '.join(f'{5+i} 0 R' for i in range(pages))
+                + f'] /Count {pages} >>').encode(),
+               b'<< /Type /XObject /Subtype /Image /Width 300 /Height 100 /ColorSpace /DeviceGray '
+               b'/BitsPerComponent 8 /Filter /FlateDecode /Length ' + str(len(compressed)).encode()
+               + b' >>\nstream\n' + compressed + b'\nendstream',
+               b'<< /Length ' + str(len(stream)).encode() + b' >>\nstream\n' + stream + b'\nendstream']
+    objects += [(f'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} 100] '
+                 '/Resources << /XObject << /Im0 3 0 R >> >> /Contents 4 0 R >>').encode()
+                for _ in range(pages)]
+    return pdf_objects(objects)
 
 
 class ChatMediaTests(unittest.TestCase):
@@ -53,10 +97,21 @@ class ChatMediaTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def store(self, data=b'hello', name='notes.txt'):
-        return media.store_media(self.root, data, name, conversation_id=self.cid, redact=self.redact)
+        return store_media_offline(self.root, data, name, conversation_id=self.cid, redact=self.redact)
 
     def enrich(self, metas, **kwargs):
         return media.enrich_for_model(self.root, metas, redact=self.redact, **kwargs)
+
+    def test_image_store_without_tesseract_stubs_local_ocr(self):
+        real_which = shutil.which
+
+        def which(name):
+            return None if name == 'tesseract' else real_which(name)
+
+        with patch.object(media.shutil, 'which', side_effect=which):
+            stored = store_media_offline(self.root, png_fixture(), 'dot.png',
+                                         conversation_id=self.cid, redact=self.redact)
+        self.assertEqual(stored['kind'], 'image')
 
     def test_store_validate_and_private_permissions(self):
         stored = self.store(png_fixture(), 'dot.PNG')
@@ -269,6 +324,215 @@ class ChatMediaTests(unittest.TestCase):
             bundle = self.enrich([pdf])
         self.assertIn('PDF text extraction is unavailable', bundle['warnings'][0])
         self.assertNotIn('%PDF', bundle['text'])
+
+    @contextmanager
+    def pdf_tools(self, *, pages=10, texts=None, status='ok', hook=None):
+        """Mock every decoder process while exercising the real budget and scanner."""
+        texts = iter(texts if texts is not None else ['safe OCR text'] * 3)
+        outputs = []
+
+        def run(args, **kwargs):
+            if len(args) > 3 and args[3].endswith('pdf_text.js'):
+                return 0, '\n\f', ''
+            if args[0].endswith('tesseract'):
+                value = next(texts)
+                if hook:
+                    hook('ocr', args, kwargs)
+                return 0, value, ''
+            self.assertTrue(args[3].endswith('pdf_scan.js'))
+            number = int(args[-2])
+            output = Path(args[-1])
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+            outputs.append(output)
+            output.write_bytes(png_fixture())
+            if hook:
+                hook('render', args, kwargs)
+            return 0, json.dumps({'status': status, 'page': number, 'pages': pages}), ''
+
+        with patch.object(media.sys, 'platform', 'darwin'), patch.object(media.shutil, 'which',
+                side_effect=lambda name: '/fake/' + name if name in ('osascript', 'tesseract') else None), \
+                patch('providers.run', side_effect=run) as child:
+            try:
+                yield child
+            finally:
+                self.assertTrue(all(not path.exists() for path in outputs))
+
+    def test_scanned_pdf_cap_labels_warning_and_no_vision(self):
+        pdf = self.store(scanned_pdf_fixture(), 'scan.pdf')
+        for count in (1, 3, 10):
+            with self.subTest(count=count), self.pdf_tools(pages=count) as child:
+                bundle = self.enrich([pdf])
+            sampled = min(count, 3)
+            self.assertEqual(bundle['vision'], [])
+            self.assertIn(f'processed {sampled} of {count} pages', bundle['warnings'][0])
+            self.assertIn('Partial coverage', bundle['text'])
+            self.assertEqual(bundle['text'].count('[Page '), sampled)
+            render = [c.args[0] for c in child.call_args_list if 'pdf_scan.js' in ' '.join(c.args[0])]
+            self.assertEqual([int(c[-2]) for c in render], list(range(1, sampled + 1)))
+            self.assertEqual(sum(c.args[0][0].endswith('tesseract') for c in child.call_args_list), sampled)
+            # Text extraction, every render and every OCR share the cancellation token.
+            self.assertEqual(len({id(c.kwargs['cancel']) for c in child.call_args_list}), 1)
+            if count > 3:
+                self.assertIn('Remaining pages were not read', bundle['text'])
+
+    def test_scanned_pdf_tools_missing_and_screening_required(self):
+        for platform, missing in [('darwin', 'osascript'), ('darwin', 'tesseract'), ('linux', '')]:
+            with self.subTest(platform=platform, missing=missing), \
+                    patch.object(media.sys, 'platform', platform), \
+                    patch.object(media.shutil, 'which', side_effect=lambda name: None if name == missing else name), \
+                    patch('providers.run') as child:
+                with self.assertRaisesRegex(ValueError, 'unavailable'):
+                    media.read_scanned_pdf(Path('scan.pdf'), media.MediaBudget(), self.redact)
+                child.assert_not_called()
+        with self.pdf_tools() as child:
+            with self.assertRaisesRegex(ValueError, 'screening is required'):
+                media.read_scanned_pdf(Path('scan.pdf'), media.MediaBudget(), None)
+            child.assert_not_called()
+
+    def test_scanned_pdf_helper_errors_fail_closed(self):
+        pdf = self.store(scanned_pdf_fixture(), 'scan.pdf')
+        for status, expected in [('locked', 'locked'), ('malformed', 'malformed'),
+                                 ('unavailable', 'unavailable'), ('oversized', 'too large'),
+                                 ('render_failed', 'rendered'), ('unknown', 'rendered')]:
+            with self.subTest(status=status), self.pdf_tools(status=status) as child:
+                bundle = self.enrich([pdf])
+            self.assertIn(expected, bundle['warnings'][0])
+            self.assertNotIn('[Page ', bundle['text'])
+            self.assertEqual(bundle['vision'], [])
+            self.assertFalse(any(c.args[0][0].endswith('tesseract') for c in child.call_args_list))
+
+    def test_scanned_pdf_empty_ocr_is_honest(self):
+        with self.pdf_tools(pages=1, texts=['']):
+            text, warning = media.read_scanned_pdf(Path('scan.pdf'), media.MediaBudget(), self.redact)
+        self.assertIn('[Page 1]\n(no text detected by local OCR)', text)
+        self.assertIn('1 of 1', warning)
+
+    def test_scanned_pdf_visible_secret_discards_all_pages_before_provider_input(self):
+        pdf = self.store(scanned_pdf_fixture(), 'scan.pdf')
+        secret = 'sk-' + 'q' * 25
+        for unsafe in (secret, ' '.join(secret), 'x' * 4500 + '\n' + secret):
+            with self.subTest(length=len(unsafe)), self.pdf_tools(texts=['safe first page', unsafe]) as child:
+                bundle = self.enrich([pdf])
+            serialized = json.dumps(bundle)
+            self.assertNotIn(secret, serialized)
+            self.assertNotIn(unsafe, serialized)
+            self.assertNotIn('safe first page', serialized)
+            self.assertIn('secret', bundle['warnings'][0])
+            self.assertEqual(bundle['vision'], [])
+            self.assertEqual(sum(c.args[0][0].endswith('tesseract') for c in child.call_args_list), 2)
+
+    def test_scanned_pdf_provider_transport_contains_only_screened_text(self):
+        stored = self.store(scanned_pdf_fixture(), 'scan.pdf')
+        secret = 'sk-' + 'r' * 25
+        conversation = {'id': self.cid, 'messages': [dict(role='user', status='done',
+                        content='Summarize this PDF.', attachments=[media.public_attachment(stored)])]}
+        captured = []
+
+        def provider_runner(args, **kwargs):
+            captured.append(json.loads(kwargs['prompt']))
+            return 0, 'Offline fixture answer.', ''
+
+        provider = Providers(self.root, self.redact, provider_runner)
+        for unsafe in (False, True):
+            with self.subTest(unsafe=unsafe), self.pdf_tools(pages=2,
+                    texts=['safe sampled text', secret if unsafe else 'second sampled page']), \
+                    patch.object(sys, 'path', [str(Path(__file__).resolve().parents[1] / 'state'), *sys.path]), \
+                    patch.object(provider, 'snapshot', return_value=[]):
+                prompt = provider.prompt(conversation)
+                provider.call('gemini', prompt, None, threading.Event())
+            payload = captured[-1]
+            serialized = json.dumps(payload)
+            self.assertEqual(payload['vision'], [])
+            self.assertNotIn(secret, serialized)
+            if unsafe:
+                self.assertNotIn('safe sampled text', serialized)
+                self.assertNotIn('[Page ', serialized)
+                self.assertIn('visible text appears to contain a secret', serialized)
+            else:
+                self.assertIn('[Page 1]', serialized)
+                self.assertIn('[Page 2]', serialized)
+                self.assertIn('safe sampled text', serialized)
+                self.assertIn('Partial coverage', serialized)
+                self.assertIn('processed 2 of 2 pages', provider.current_call.media_warnings[0])
+
+    def test_scanned_pdf_deadline_and_cancel_stop_before_more_work(self):
+        for phase in ('render', 'ocr'):
+            for mode in ('cancel', 'deadline'):
+                with self.subTest(phase=phase, mode=mode):
+                    budget = media.MediaBudget()
+
+                    def hook(at, args, kwargs):
+                        self.assertLessEqual(kwargs['timeout'], 5)
+                        if at == phase:
+                            if mode == 'cancel':
+                                budget.cancel.set()
+                            else:
+                                budget.deadline = time.monotonic() - 1
+
+                    with self.pdf_tools(hook=hook) as child:
+                        with self.assertRaises(Cancelled if mode == 'cancel' else ValueError):
+                            media.read_scanned_pdf(Path('scan.pdf'), budget, self.redact)
+                    self.assertEqual(child.call_count, 1 if phase == 'render' else 2)
+        for cancel in (False, True):
+            budget = media.MediaBudget(seconds=-1)
+            if cancel:
+                budget.cancel.set()
+            with self.pdf_tools() as child:
+                with self.assertRaises(Cancelled if cancel else ValueError):
+                    media.read_scanned_pdf(Path('scan.pdf'), budget, self.redact)
+                child.assert_not_called()
+
+    def test_scanned_pdf_process_failure_and_bad_response_are_sanitized(self):
+        secret = 'sk-' + 'z' * 25
+        for value in (secret, '[]', '{', '{"status":"ok","pages":0}',
+                      json.dumps({'status': secret}), '{"status":[],"pages":1}'):
+            with self.subTest(value_type=type(value).__name__), self.pdf_tools(), \
+                    patch('providers.run', return_value=(0, value, secret)):
+                with self.assertRaisesRegex(ValueError, 'could not be rendered') as error:
+                    media.read_scanned_pdf(Path('scan.pdf'), media.MediaBudget(), self.redact)
+                self.assertNotIn(secret, str(error.exception))
+        for failure in (ProviderError(kind='timeout'), OSError('private native path')):
+            with self.pdf_tools(), patch('providers.run', side_effect=failure):
+                with self.assertRaisesRegex(ValueError, 'failed or timed out'):
+                    media.read_scanned_pdf(Path('scan.pdf'), media.MediaBudget(), self.redact)
+
+    def test_scanned_pdf_oversized_output_is_not_ocrd(self):
+        def oversized(phase, args, kwargs):
+            if phase == 'render':
+                with Path(args[-1]).open('wb') as output:
+                    output.truncate(media.MAX_PDF_SCAN_BYTES + 1)
+        with self.pdf_tools(hook=oversized) as child:
+            with self.assertRaisesRegex(ValueError, 'could not be rendered'):
+                media.read_scanned_pdf(Path('scan.pdf'), media.MediaBudget(), self.redact)
+            self.assertEqual(child.call_count, 1)
+
+    def test_text_pdf_does_not_invoke_scan_fallback(self):
+        with patch.object(media.shutil, 'which', return_value='pdftotext'), \
+                patch.object(media.MediaBudget, 'run', return_value='native PDF text'), \
+                patch.object(media, 'read_scanned_pdf') as scan:
+            self.assertEqual(media.read_text_file(Path('text.pdf')), 'native PDF text')
+            scan.assert_not_called()
+
+    @unittest.skipUnless(sys.platform == 'darwin' and shutil.which('osascript') and shutil.which('tesseract'),
+                         'local macOS PDFKit/OCR tools unavailable')
+    def test_real_scanned_pdf_local_fixture_and_helper_bounds(self):
+        stored = self.store(scanned_pdf_fixture(), 'scan.pdf')
+        bundle = self.enrich([stored])
+        self.assertIn('processed 3 of 4 pages', bundle['warnings'][0])
+        self.assertEqual(bundle['vision'], [])
+        for number in (1, 2, 3):
+            self.assertIn(f'[Page {number}]\nHELLO', bundle['text'])
+        helper = Path(media.__file__).with_name('pdf_scan.js')
+        output = self.root / 'page.png'
+        path = self.root / stored['path']
+        for number, body, expected in [(4, scanned_pdf_fixture(), 'render_failed'),
+                                       (1, scanned_pdf_fixture(width=10000), 'oversized'),
+                                       (1, b'%PDF-1.4\nbroken', 'malformed')]:
+            path.write_bytes(body)
+            result = media.MediaBudget().run(['osascript', '-l', 'JavaScript', str(helper),
+                                              str(path), str(number), str(output)])
+            self.assertEqual(json.loads(result)['status'], expected)
+            self.assertFalse(output.exists())
 
     def test_store_requires_redact_callable(self):
         with self.assertRaisesRegex(ValueError, 'redact'):
