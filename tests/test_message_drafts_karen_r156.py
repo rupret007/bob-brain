@@ -8,7 +8,13 @@ from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
-from webbob.message_drafts import JeffDraftConsentVerifier, MessageDraftGate, MessageDraftError, present_draft
+from webbob.message_drafts import (
+    BobChatTransport,
+    JeffDraftConsentVerifier,
+    MessageDraftGate,
+    MessageDraftError,
+    present_draft,
+)
 
 
 class KarenR156ReproTests(unittest.IsolatedAsyncioTestCase):
@@ -21,6 +27,7 @@ class KarenR156ReproTests(unittest.IsolatedAsyncioTestCase):
         self.jeff = JeffDraftConsentVerifier(
             self.consent_path, "owner@example.org", "bob-chat", bob_chat="bob-chat"
         )
+        self.bob_chat = BobChatTransport()
 
         async def dispatch(ch, p):
             self.sent.append((ch, p))
@@ -39,7 +46,9 @@ class KarenR156ReproTests(unittest.IsolatedAsyncioTestCase):
 
     def approve(self, dr, *, message_id=None):
         message_id = message_id or f"jeff-msg-{uuid.uuid4().hex}"
-        self.jeff.ingest_bob_chat_message(message_id, "jeff", "yes")
+        self.bob_chat.record(
+            self.jeff, message_id, "yes", draft_id=dr["id"], draft_digest=dr["digest"]
+        )
         return self.jeff.issue(dr["id"], dr["digest"], message_id)
 
     async def test_r1_execute_without_trigger_kwarg_forbidden(self):
@@ -148,7 +157,7 @@ class KarenR156ReproTests(unittest.IsolatedAsyncioTestCase):
     def test_r10_forged_source_or_author_refused(self):
         d = self.gate.prepare("text", {"chat_guid": "andrea-guid-0001", "body": "x"})
         mid = "jeff-msg-forged-source-01"
-        self.jeff.ingest_bob_chat_message(mid, "jeff", "yes")
+        self.bob_chat.record(self.jeff, mid, "yes", draft_id=d["id"], draft_digest=d["digest"])
         with self.assertRaises(TypeError):
             self.jeff.issue(d["id"], d["digest"], "yes", source="jeff_chat")
         with self.assertRaises(MessageDraftError):

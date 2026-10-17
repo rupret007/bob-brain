@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 
 from webbob.message_drafts import (
     ALLOWED_SEND_TRIGGERS,
+    BobChatTransport,
     JeffDraftConsentVerifier,
     MessageDraftGate,
     MessageDraftError,
@@ -30,6 +31,7 @@ class MessageDraftGateTests(unittest.IsolatedAsyncioTestCase):
         self.jeff = JeffDraftConsentVerifier(
             self.consent_path, "owner@example.org", "bob-chat", bob_chat="bob-chat"
         )
+        self.bob_chat = BobChatTransport()
         self.sent = []
         self._execute_lock = threading.Lock()
         self.dispatch = AsyncMock(side_effect=self._record_dispatch)
@@ -59,7 +61,9 @@ class MessageDraftGateTests(unittest.IsolatedAsyncioTestCase):
 
     def approve(self, draft, *, text="yes", message_id=None):
         message_id = message_id or f"jeff-msg-{uuid.uuid4().hex}"
-        self.jeff.ingest_bob_chat_message(message_id, "jeff", text)
+        self.bob_chat.record(
+            self.jeff, message_id, text, draft_id=draft["id"], draft_digest=draft["digest"]
+        )
         return self.jeff.issue(draft["id"], draft["digest"], message_id)
 
     def test_present_shows_exact_draft_without_dispatch(self):
