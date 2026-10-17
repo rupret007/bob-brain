@@ -225,6 +225,7 @@ class KarenExactN4V3(unittest.TestCase):
             base = git('rev-parse', 'HEAD').stdout.strip()
             for name, variants, reason in EXACT_REPROS:
                 for new in variants:
+                    git('checkout', '--detach', '-q', base)
                     path.write_text(new)
                     git('add', 'a.test.js')
                     staged = ['--staged', repo]
@@ -233,6 +234,9 @@ class KarenExactN4V3(unittest.TestCase):
                     with self.subTest(repro=name, new=new, mode='staged'):
                         self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
                         self.assertIn(reason, result.stdout)
+                    if reason == 'mock':
+                        soft_staged = subprocess.run([sys.executable, str(POL), '--push', *staged],
+                                                     capture_output=True, text=True)
                     git('-c', 'user.name=Test', '-c', 'user.email=t@t', 'commit', '-qm', name)
                     result = subprocess.run([sys.executable, str(POL), '--range', repo, base, 'HEAD'],
                                             capture_output=True, text=True)
@@ -240,10 +244,11 @@ class KarenExactN4V3(unittest.TestCase):
                         self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
                         self.assertIn(reason, result.stdout)
                     if reason == 'mock':
-                        for args in (staged, ['--range', repo, base, 'HEAD']):
-                            with self.subTest(repro=name, new=new, push=args[0]):
-                                result = subprocess.run([sys.executable, str(POL), '--push', *args],
-                                                        capture_output=True, text=True)
+                        soft_range = subprocess.run([sys.executable, str(POL), '--push',
+                                                     '--range', repo, base, 'HEAD'],
+                                                    capture_output=True, text=True)
+                        for mode, result in (('staged', soft_staged), ('range', soft_range)):
+                            with self.subTest(repro=name, new=new, push=mode):
                                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                                 self.assertIn('GAT policy WARN:', result.stdout)
                                 self.assertIn('.mock', result.stdout)
@@ -261,10 +266,10 @@ class KarenExactN4V3(unittest.TestCase):
     def test_push_mock_warning_only_for_new_calls(self):
         for statement in ("jest.mock('./m');", "vi.mock('./m');"):
             old = before_expect('      ' + statement)
-            for new in (old + 'checkResult();\n',):
-                warnings = []
-                self.assertEqual(policy.check(patch(old, new), push=True, warnings=warnings), [])
-                self.assertEqual(warnings, [])
+            warnings = []
+            self.assertEqual(policy.check(patch(old, old + 'checkResult();\n'),
+                                          push=True, warnings=warnings), [])
+            self.assertEqual(warnings, [])
             for quoted in ('// ' + statement, '/* ' + statement + ' */',
                            'const text = "' + statement + '";'):
                 warnings = []

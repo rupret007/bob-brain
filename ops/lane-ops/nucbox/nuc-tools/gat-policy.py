@@ -21,6 +21,7 @@ Strict rules (fail closed, Gemini patches):
 but a test-file line may be removed when the same line is added back elsewhere in the diff (a move, e.g. putting
 `unittest.main()` at the end of the file). Removing an assertion, a test function or a whole test file is refused.
 CI workflow edits are reported as WARN (stdout, exit 0) so a lane can fix CI; pre-karen-check lists them for Karen.
+Added standalone jest.mock/vi.mock calls in test hunks also warn in --push mode; strict mode refuses them.
 v4 (Karen #151 N3/N4):
   * the diff is read STRICTLY: headers only outside hunks, @@ counts consumed exactly, so an added "++ x" line can
     no longer pose as a "+++ x" file header; malformed input (counts off, stray text) is refused;
@@ -80,6 +81,9 @@ TEST_SKIP_CALL = re.compile(r"\b(this|ctx|context|t)\s*\.\s*skip\s*\(")
 EARLY_EXIT = re.compile(r"(^\s*|[:;{)]\s*)(return\b(?!\s+(expect\b|new\s+Promise\b|Promise\.|request\s*\(|supertest\b|page\.|await\b))"
                         r"|sys\.exit\s*\(|os\._exit\s*\(|process\.exit\s*\()")
 JS_FILE = re.compile(r"\.[cm]?[jt]sx?$", re.I)
+# Advisory hunk check also works without full-file context in --push mode.
+# Strict mode additionally checks nested/computed calls with the structural parser.
+JS_MOCK_STATEMENT = re.compile(r"^\s*(?:jest|vi)\s*\.\s*mock\s*\(")
 EXIT_CALL = re.compile(r"(^\s*|[:;{)]\s*)(sys\.exit\s*\(|os\._exit\s*\(|process\.exit\s*\()")
 DEAD_BRANCH = re.compile(r"^\s*(el)?(if|while)\s*\(?\s*(not\s+(True|1)|!\s*(true|1)|False|false|0|None|null|undefined|void 0)\s*\)?\s*[:{)]?\s*$"
                          r"|^\s*(el)?(if|while)\s*\(?\s*(False|false|0|None|null)\s*(and|&&)")
@@ -953,6 +957,8 @@ def check_files(files, push=False, warnings=None, contents=None):
             reasons.append(f"adds a skip/only/xfail marker in {path}: {line.strip()[:80]}")
         if not test:
             continue
+        if push and JS_FILE.search(path) and JS_MOCK_STATEMENT.search(line) and warnings is not None:
+            warnings.append(f"adds jest.mock/vi.mock in {path} (needs human review): {line.strip()[:80]}")
         if TEST_SKIP_CALL.search(line):
             reasons.append(f"adds a runtime skip in {path}: {line.strip()[:80]}")
         if DEAD_BRANCH.search(line):
