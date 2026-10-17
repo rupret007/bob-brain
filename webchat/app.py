@@ -695,7 +695,7 @@ class Chat(TaskDispatch):
                 self.texting.invalidate(conversation)
                 return self.intent_reply(conversation, BUILD["short_sha"])
             from capabilities import reply as capability_reply
-            capability = capability_reply(text, self.root) if not public_attachments and worker is None else None
+            capability = capability_reply(text, self.root, intent_state=intent_state) if not public_attachments and worker is None else None
             if capability is not None:
                 self.texting.invalidate(conversation)
                 for key in ('pending_job', 'pending_job_id', 'pending_council', 'pending_council_id'):
