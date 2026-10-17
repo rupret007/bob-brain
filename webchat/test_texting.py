@@ -815,6 +815,39 @@ class TextingTests(unittest.TestCase):
 
 
 
+class AndreaConfigProtocolDowngradeWarnTests(unittest.TestCase):
+    def _write_config(self, folder, **fields):
+        path = Path(folder) / 'config.json'
+        payload = dict(url='http://127.0.0.1:4316', token='a' * 64, **fields)
+        path.write_text(json.dumps(payload))
+        path.chmod(0o600)
+        return path
+
+    def test_warns_when_config_protocol_downgrades_pinned_2_to_1(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = self._write_config(folder, protocol=1)
+            with patch.dict(os.environ, {'BOB_ANDREA_WEBBOB_CONFIG': str(path)}):
+                with self.assertLogs('texting', level='WARNING') as logs:
+                    client = Andrea()
+            self.assertEqual(client.expected_protocol, 1)
+            self.assertEqual(len(logs.records), 1)
+            message = logs.records[0].getMessage()
+            self.assertIn('1', message)
+            self.assertIn('2', message)
+            self.assertNotIn('a' * 64, message)
+            self.assertNotIn('127.0.0.1', message)
+
+    def test_no_warn_when_config_protocol_unchanged_or_absent(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for fields in ({'protocol': 2}, {}):
+                with self.subTest(fields=fields):
+                    path = self._write_config(folder, **fields)
+                    with patch.dict(os.environ, {'BOB_ANDREA_WEBBOB_CONFIG': str(path)}):
+                        with self.assertNoLogs('texting', level='WARNING'):
+                            client = Andrea()
+                    self.assertEqual(client.expected_protocol, 2)
+
+
 class AndreaProtocolTests(unittest.TestCase):
     """Both wire versions; unrecognized data never becomes send authority/evidence."""
 
