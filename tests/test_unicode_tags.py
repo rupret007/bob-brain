@@ -10,7 +10,10 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from webbob.ai_capacity import sanitize_capacity_snapshot, validate_document
 from webbob.backup import validate as validate_backup
+from webbob.fallback import fallback_notice
 from webbob.ownership import GateError, norm_id, toks
+from webbob.parity_gate import CAPABILITIES, RECOVERY, GoLiveDenied, ParityGate
+from webbob.phone_access import REQUIRED, evaluate_phone_access
 from webbob.pr_ops import DraftPublisher, GateDenied, ReviewGate
 from webbob.release_board import validate_release_record
 from webbob.restricted_fetch import FetchDenied, fetch_page, validate_url
@@ -80,6 +83,13 @@ class UnicodeTagTests(unittest.TestCase):
             ("capacity row matching", ValueError, lambda s: match_capacity_row("codex", [{"provider": s}])),
             ("capacity rendering", ValueError, lambda s: capacity_rows({"rows": [{"provider": s}]})),
             ("status rendering", ValueError, lambda s: status_rows({"bob": {"state": s}})),
+            ("fallback status", ValueError, lambda s: fallback_notice({"webbob": {"status": s}})),
+            ("phone evidence", ValueError, lambda s: evaluate_phone_access("a" * 40, {
+                name: {"sha": "a" * 40, "result": "PASS", "receipt": s} for name in REQUIRED})),
+            ("parity evidence", GoLiveDenied, lambda s: ParityGate(
+                lambda *_: True, lambda *_: True, lambda *_: True).require("a" * 40, {
+                    name: {"sha": "a" * 40, "result": "PASS", "receipt": s}
+                    for name in (*CAPABILITIES, *RECOVERY)}, "karen", "jeff")),
             ("claim identity", GateError, norm_id),
             ("claim title", GateError, toks),
             ("spend call ID", ValueError, lambda s: self.spend.reserve(s, "brave", 1)),
