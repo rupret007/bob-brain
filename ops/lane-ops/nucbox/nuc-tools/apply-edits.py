@@ -65,16 +65,29 @@ def _find_lines(hay_lines, needle_lines, norm):
     return hits
 
 
+def _exact_hits(content, search):
+    """Exact matches that start (and, without a trailing newline, end) on a line boundary. Karen #151: a plain
+    substring count let "x = 1" match inside "ax = 1" or "x = 10" and edit the middle of another line."""
+    hits, i = [], content.find(search)
+    while i != -1:
+        end = i + len(search)
+        if (i == 0 or content[i - 1] == "\n") and (search.endswith("\n") or end == len(content) or content[end] in "\r\n"):
+            hits.append(i)
+        i = content.find(search, i + 1)
+    return hits
+
+
 def replace_once(content, search, replace, label):
     if search == "":
         if content.strip():
             raise EditError(f"{label}: empty SEARCH on a file that already has content; quote the lines to replace")
         return replace
-    c = content.count(search)
-    if c == 1:
-        return content.replace(search, replace, 1)
-    if c > 1:
-        raise EditError(f"{label}: SEARCH matches {c} places; add more context")
+    hits = _exact_hits(content, search)
+    if len(hits) == 1:
+        i = hits[0]
+        return content[:i] + replace + content[i + len(search):]
+    if len(hits) > 1:
+        raise EditError(f"{label}: SEARCH matches {len(hits)} places; add more context")
     hay = content.splitlines(keepends=True)
     needle = search.splitlines(keepends=True)
     while needle and needle[-1].strip() == "":

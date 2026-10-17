@@ -24,11 +24,11 @@ while read -r lref lsha rref rsha; do
     base=$(git merge-base "$lsha" origin/HEAD 2>/dev/null || git merge-base "$lsha" origin/main 2>/dev/null || git merge-base "$lsha" origin/master 2>/dev/null)
     [ -n "$base" ] || { echo "LANE PRE-PUSH WARN: no merge base for new branch $rref; policy skipped" >&2; continue; }
   fi
-  p=$(mktemp); git diff "$base" "$lsha" > "$p"
-  if [ -s "$p" ]; then
-    python3 "$T/gat-policy.py" --push "$p" >&2 || { echo "LANE PRE-PUSH refused: test-weakening policy (above) for $rref" >&2; bad=1; }
+  # Karen #151 N3/N4: --range reads the commits with git itself (-M, --name-status -z, full contents), not a text
+  # patch that user diff config (noprefix, external diff, textconv) or header tricks could distort.
+  if [ "$base" != "$lsha" ]; then
+    python3 "$T/gat-policy.py" --push --range . "$base" "$lsha" >&2 || { echo "LANE PRE-PUSH refused: test-weakening policy (above) for $rref" >&2; bad=1; }
   fi
-  rm -f "$p"
 done <<< "$input"
 [ $bad = 0 ] || exit 1
 printf '%s\n' "$input" | "$(dirname "$0")/chain.sh" pre-push "$@"

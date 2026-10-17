@@ -38,13 +38,17 @@ class GatPolicy(unittest.TestCase):
     pol = load(NUC / "gat-policy.py", "gat_policy")
 
     def diff(self, path, lines):
-        return f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1,1 +1,1 @@\n" + "\n".join(lines) + "\n"
+        # Karen #151 N3: gat-policy now reads hunks strictly, so the @@ counts must match the body (a fixed
+        # "-1,1 +1,1" made every multi-line fixture malformed, i.e. refused for the wrong reason).
+        o = sum(1 for l in lines if l[:1] in "- ")
+        n = sum(1 for l in lines if l[:1] in "+ ")
+        return f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1,{o} +1,{n} @@\n" + "\n".join(lines) + "\n"
 
     def test_plain_source_change_allowed(self):
         self.assertEqual(self.pol.check(self.diff("src/app.ts", ["-const a = 1;", "+const a = 2;"])), [])
 
     def test_new_test_file_allowed(self):
-        d = "--- /dev/null\n+++ b/tests/test_new.py\n@@ -0,0 +1,2 @@\n+def test_x():\n+    assert 1\n"
+        d = "--- /dev/null\n+++ b/tests/test_new.py\n@@ -0,0 +1,2 @@\n+def test_x():\n+    assert f() == 1\n"
         self.assertEqual(self.pol.check(d), [])
 
     def test_deleting_test_line_refused(self):
@@ -306,7 +310,8 @@ class AutoqueueTrust(unittest.TestCase):
     def test_trusted(self):
         t = self.fa.trusted
         self.assertTrue(t({"author": {"login": "rupret007"}, "isCrossRepository": False}))
-        self.assertTrue(t({"author": {"login": "RUPRET007"}}))
+        self.assertTrue(t({"author": {"login": "RUPRET007"}, "isCrossRepository": False}))
+        self.assertFalse(t({"author": {"login": "rupret007"}}), "Karen #151 N6: a missing isCrossRepository is a fork")
         self.assertFalse(t({"author": {"login": "stranger"}, "isCrossRepository": False}))
         self.assertFalse(t({"author": {"login": "rupret007"}, "isCrossRepository": True}))
         self.assertFalse(t({}))

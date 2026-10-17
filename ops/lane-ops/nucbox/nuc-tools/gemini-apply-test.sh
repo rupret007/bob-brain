@@ -27,6 +27,13 @@ done
 [ -n "$AOK" ] || { cat /tmp/gat-$J.apply; echo "GAT apply-check-failed"; exit 3; }
 echo "GAT apply opts: ${AOPT:-none}"
 git apply --recount $AOPT $P || exit 3
+# Karen #151 N7: stage the patch NOW, before installs/tests run, and remember its tree. Only that tree is ever committed;
+# test output (snapshots, coverage, artifacts) can no longer ride along via `git add -A` after the tests.
+git add -A && GAT_TREE=$(git write-tree) || { echo "GAT stage-failed"; exit 3; }
+git diff --cached --quiet && { echo "GAT refuses: patch produced no change"; exit 3; }
+# Karen #151 N3/N4: the authoritative policy check reads what git actually staged (diff --cached -M, cross-checked with
+# --name-status -z, full file contents), so renames, deletes, binary/mode changes and header tricks are all seen.
+python3 ~/nuc-tools/gat-policy.py --staged . || { echo "GAT refuses: policy on the applied change (see lines above)"; exit 3; }
 rc=0
 if [ -f package.json ]; then
   if [ -f pnpm-lock.yaml ]; then corepack pnpm install --frozen-lockfile >/tmp/gat-$J.inst 2>&1; T="corepack pnpm test"; else npm ci --no-audit --no-fund >/tmp/gat-$J.inst 2>&1 || npm install --no-audit --no-fund >/tmp/gat-$J.inst 2>&1; T="npm test --silent"; fi
@@ -43,7 +50,12 @@ echo "GAT tests rc=$rc"
 if [ "$PUSH" = push ]; then
   # v3 B2 fence: never push after this lane lost its lease (lane-supervise stop / stale heartbeat)
   if [ -n "${LANE_NAME:-}" ]; then bash ~/nuc-tools/lane-supervise.sh ok "$LANE_NAME" || { echo "GAT push-fenced (lease lost)"; exit 5; }; fi
-  git add -A && git commit -qm "Gemini lane: $J (tests pass: $T)" && git push -q origin "HEAD:refs/heads/$BR" || { echo "GAT push-failed"; exit 5; }
+  # Karen #151 N7: tests must not have changed what was staged (index) or any tracked file; untracked output is
+  # never committed (no more `git add -A` after the tests), and the commit's tree must be exactly the checked one.
+  [ "$(git write-tree)" = "$GAT_TREE" ] || { echo "GAT refuses push: the index changed during tests"; exit 5; }
+  git diff --quiet || { echo "GAT refuses push: tests modified tracked files:"; git diff --name-only | head -20; exit 5; }
+  git commit -qm "Gemini lane: $J (tests pass: $T)" && [ "$(git rev-parse 'HEAD^{tree}')" = "$GAT_TREE" ] \
+    && git push -q origin "HEAD:refs/heads/$BR" || { echo "GAT push-failed"; exit 5; }
   echo "GAT pushed $BR $(git rev-parse HEAD)"
 fi
 exit 0

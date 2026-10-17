@@ -31,8 +31,10 @@ fi
 echo "gemini-lane $j repo=$repo pr=${pr:-none} mode=$mode $(date)"
 # lane-ops v2: PRs from outside authors or forks never reach Gemini or the cursor fallback (public repos; prompt injection)
 if [[ -n $pr ]]; then
-  who=$(gh pr view $pr -R $repo --json author,isCrossRepository -q '"\(.author.login) \(.isCrossRepository)"' 2>/dev/null)
-  [[ " ${LANE_TRUSTED_AUTHORS:-rupret007} " == *" ${who%% *} "* && ${who##* } == false ]] || { echo "BLOCKER untrusted or unknown PR author/fork ($who); not run"; exit 0; }
+  # Karen #151 N6: one trust rule with the Python side (gemini-feed.py: LANE_TRUSTED_AUTHORS comma-separated,
+  # case-insensitive; missing isCrossRepository = fork). gh failure / bad JSON fails closed.
+  who=$(gh pr view $pr -R $repo --json author,isCrossRepository 2>/dev/null)
+  print -r -- "$who" | python3 $L/gemini-feed.py --trusted-stdin || { echo "BLOCKER untrusted or unknown PR author/fork; not run"; exit 0; }
 fi
 [[ $mode == cursor ]] && { fallback "" "no PR / visual job"; exit; }
 # v6.3 (22:10 CT): clone/checkout/context on the NucBox (gemini-ctx.sh); only the HTTP call runs on the Mini (key stays on the Mini).

@@ -6,14 +6,21 @@ L = os.environ.get("LANE_LOG_DIR") or os.path.expanduser("~/lane-wt/logs"); Q = 
 REPOS = ["bob-brain", "StalemateSite", "Turdanoid", "webjam", "AdoptIQ", "StoryBoard", "rad-dad-show-night", "RadDadSite",
          "AI-Music-Vault", "TrailerParkDerby", "storyland-draft-and-season", "Storyland-Fantasy-Football", "StoryDesk", "Andrea_NanoBot"]
 SKIP = {("Turdanoid", 80), ("Turdanoid", 81)}   # held claims
-MAXADD = int(sys.argv[1]) if len(sys.argv) > 1 else 6
 GH = os.environ.get("GH", "gh")
 # lane-ops v2: public repos -> only same-repo PRs by trusted authors feed Gemini (their title/diff/comments reach the model,
 # and gemfix jobs push code). Per-PR cap stops the review->fix->new SHA->review loop from running unbounded.
 TRUSTED = {a.strip().lower() for a in os.environ.get("LANE_TRUSTED_AUTHORS", "rupret007").split(",") if a.strip()}
 FIX_CAP_PER_DAY = int(os.environ.get("GEMFIX_CAP_PER_DAY", "3"))
 def trusted(p):
-    return ((p.get("author") or {}).get("login") or "").lower() in TRUSTED and p.get("isCrossRepository") is not True
+    # Karen #151 N6: fail closed -- a missing/non-boolean isCrossRepository counts as a fork (it used to pass).
+    login = (p.get("author") or {}).get("login") if isinstance(p, dict) else None
+    return isinstance(login, str) and login.strip().lower() in TRUSTED and p.get("isCrossRepository") is False
+# `gemini-feed.py --trusted-stdin` : exit 0 iff the PR JSON on stdin (gh pr view --json author,isCrossRepository) is
+# trusted. gemini-lane.sh uses it so the shell lane and this feed share ONE rule (commas, case-insensitive).
+if sys.argv[1:2] == ["--trusted-stdin"]:
+    try: sys.exit(0 if trusted(json.load(sys.stdin)) else 1)
+    except (ValueError, AttributeError): sys.exit(1)
+MAXADD = int(sys.argv[1]) if len(sys.argv) > 1 else 6
 seen = set(open(SEEN).read().split()) if os.path.exists(SEEN) else set()
 q = open(Q).read().split() if os.path.exists(Q) else []
 add = []

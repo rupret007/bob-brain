@@ -419,7 +419,11 @@ class GatPolicyB6(unittest.TestCase):
     pol = load(NUC / "gat-policy.py", "gat_policy_v3")
 
     def diff(self, path, lines):
-        return f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1,1 +1,1 @@\n" + "\n".join(lines) + "\n"
+        # Karen #151 N3: gat-policy now reads hunks strictly, so the @@ counts must match the body (a fixed
+        # "-1,1 +1,1" made every multi-line fixture malformed, i.e. refused for the wrong reason).
+        o = sum(1 for l in lines if l[:1] in "- ")
+        n = sum(1 for l in lines if l[:1] in "+ ")
+        return f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1,{o} +1,{n} @@\n" + "\n".join(lines) + "\n"
 
     def test_missed_skip_patterns_now_refused(self):
         for line in ("+it.skipIf(isCI)('a', f)", "+describe.skipIf(x)('b', f)", "+test.skipIf(true)('c', f)",
@@ -446,7 +450,7 @@ class GatPolicyB6(unittest.TestCase):
 
     def test_push_mode_allows_moves_but_not_removed_assertions(self):
         move = self.diff("tests/test_a.py", ["-if __name__ == '__main__':", "-    unittest.main()", "+class Late(unittest.TestCase):",
-                                              "+    def test_y(self): self.assertTrue(1)", "+if __name__ == '__main__':", "+    unittest.main()"])
+                                              "+    def test_y(self): self.assertTrue(f())", "+if __name__ == '__main__':", "+    unittest.main()"])
         self.assertTrue(self.pol.check(move), "strict mode keeps refusing any test-line deletion")
         self.assertEqual(self.pol.check(move, push=True), [])
         self.assertTrue(self.pol.check(self.diff("tests/test_a.py", ["-        self.assertEqual(a, 1)", "+        pass"]), push=True))
