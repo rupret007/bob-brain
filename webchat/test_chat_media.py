@@ -362,14 +362,25 @@ class ChatMediaTests(unittest.TestCase):
 
     def test_pdf_password_required_distinct(self):
         stored = self.store(pdf_fixture('secret'), 'locked.pdf')
+        stderr = 'Syntax Warning: May not be a PDF file (continuing anyway)\nError: Password required'
         with patch.object(media.shutil, 'which', side_effect=self._pdftotext_only), \
-                patch.object(media.MediaBudget, 'run', side_effect=ValueError('Password required')):
+                patch.object(media, '_pdf_page_count', return_value=1), \
+                patch('providers.run', return_value=(1, '', stderr)):
             result = media.extract_pdf_text(self.root / stored['path'])
             self.assertEqual(result['status'], 'unavailable')
             self.assertEqual(result['reason'], 'password_required')
             bundle = self.enrich([stored])
         self.assertIn('Password-protected', bundle['text'])
         self.assertNotIn('secret', bundle['text'])
+
+    def test_media_budget_nonzero_exit_password_in_stderr(self):
+        budget = media.MediaBudget()
+        with patch('providers.run', return_value=(1, '', 'Error: Password required')):
+            with self.assertRaisesRegex(ValueError, 'Password required'):
+                budget.run(['pdftotext', 'locked.pdf', '-'])
+        with patch('providers.run', return_value=(1, '', 'corrupt file')):
+            with self.assertRaisesRegex(ValueError, 'Could not decode or read'):
+                budget.run(['pdftotext', 'broken.pdf', '-'])
 
     def test_pdf_character_cap_disclosure(self):
         stored = self.store(pdf_fixture('x' * 50), 'big.pdf')
