@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 from failover import atomic_text
 from actions_intent import reminder_request, routine_request, routine_intent
+from approval_language import approval_requested
 
 ZONE = ZoneInfo('America/Chicago')
 HELP = ('Try “remind me to check the oven in 10 minutes”, “remind me to call Sam on 2026-10-01 at 14:00”, '
@@ -110,9 +111,10 @@ def parse(text, now):
     stripped = text.strip().rstrip('.?!')
     # Constraints anywhere in a recognized request apply before any schedule
     # variant (including recurring reminders) is allowed to create a row.
-    if re.search(r"\b(?:do\s+not|don't|don’t|never)\s+(?:(?:actually|ever|just|yet|really)\s+)*(?:save|create|schedule|set|add)\b|"
+    if approval_requested(text) or re.search(r"\b(?:do\s+not|don't|don’t|never)\s+(?:(?:actually|ever|just|yet|really)\s+)*(?:save|create|schedule|set|add|execute)\b|"
                  r'\b(?:ask|confirm|check)(?:\s+with)?\s+me\s+(?:first|before)|'
                  r'\b(?:ask(?:\s+me)?|wait)\s+for\s+(?:my\s+)?(?:approval|confirmation|permission)\b|'
+                 r'\b(?:get|pending|after)\s+my\s+(?:approval|confirmation)\b|'
                  r'\b(?:if|unless|until|after|once|when)\s+I\s+(?:confirm|approve|say)\b|'
                  r'\b(?:wait|hold off)\s+(?:until|before)|\b(?:before|without)\s+my\s+(?:approval|confirmation)',
                  stripped, re.I):
@@ -155,10 +157,17 @@ def parse(text, now):
 def reminder_body(value):
     # A second time/date in the body may qualify or conflict with the matched
     # schedule. Ask before saving instead of silently treating it as prose.
+    month = (r'(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|'
+             r'aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)')
+    # Recognize quantity phrases conservatively without guessing their value
+    # (e.g. "two", "twenty-one", "a couple of"). Ask for one explicit schedule.
+    relative = r'in\s+(?:[\w-]+\s+)+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)'
     if re.search(r'\b(?:today|tomorrow|tonight|yesterday|noon|midnight|'
                  r'monday|tuesday|wednesday|thursday|friday|saturday|sunday|'
                  r'next\s+(?:week|month|year)|every\s+\w+|\d{4}-\d{2}-\d{2}|'
-                 r'at\s+\d{1,2}\b|in\s+' + DURATION + r'|' + CLOCK + r')\b', value, re.I):
+                 + month + r'\.?\s+\d{1,2}|\d{1,2}\s+' + month + r'|'
+                 r'\d{1,2}/\d{1,2}(?:/\d{2,4})?|'
+                 r'at\s+\d{1,2}\b|' + relative + r'|' + CLOCK + r')\b', value, re.I):
         raise ReminderError('The reminder has an extra date or time clause. Nothing was saved. '
                             'Please use one schedule, such as “create a reminder for tomorrow at 2am to go to bed”.')
     return value.strip()

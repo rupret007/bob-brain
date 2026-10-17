@@ -1,5 +1,6 @@
 """Capability ledger regressions using a temporary home and offline adapters."""
 import json
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
 import fcntl
 import os
@@ -8,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+import uuid
 from unittest.mock import Mock, patch
 
 import chat_intent
@@ -15,6 +17,404 @@ from local_tasks import LocalFiles, LocalTasks, LocalTaskError, LOCK_TIMEOUT, SE
 
 
 class CapabilityLedgerTests(unittest.TestCase):
+    @contextmanager
+    def isolated_chat(self, now=None):
+        from app import Chat
+        from reminders import ZONE
+        providers, texting, calendar, notifier = Mock(), Mock(), Mock(), Mock()
+        providers.timeouts = {}
+        providers.reply.side_effect = AssertionError('Unexpected provider call')
+        texting.handle.return_value = False
+        texting.public.side_effect = dict
+        calendar.handle.return_value = None
+        if now is None:
+            now = datetime(2026, 10, 11, 1, 47, tzinfo=ZONE).timestamp()
+        with tempfile.TemporaryDirectory(dir=self.root) as folder, \
+                patch('app.load_live_ops', return_value={}), \
+                patch('time.time', return_value=now):
+            root = Path(folder)
+            home = root / 'home'
+            (home / 'Documents').mkdir(parents=True)
+            actions = LocalTasks(root / 'local', files=LocalFiles(home, clock=lambda: now),
+                                 search=self.search, clock=lambda: now)
+            chat = Chat(root / 'webchat', root, providers, texting=texting,
+                        calendar=calendar, reminder_notifier=notifier, local_tasks=actions)
+            chat.reminders.clock = lambda: now
+            cid = chat.conversation_list()['conversations'][0]['id']
+            try:
+                yield chat, cid, home
+                providers.reply.assert_not_called()
+                notifier.assert_not_called()
+                self.search.assert_not_called()
+            finally:
+                chat.close()
+
+    def test_ledger_B7_draft_and_conditional_requests_never_schedule_through_chat(self):
+        from reminders import ZONE
+        now = datetime(2026, 10, 12, 13, tzinfo=ZONE).timestamp()
+        constraints = (
+            '; draft only.', ', provided I agree.',
+            '; DRAFT ONLY.', '; draft-only.', '; just a draft.',
+            '; keep this as a draft.', '; draft it first.', '; for drafting.',
+            ', if I agree.', ', when I agree.', ', once I agree.',
+            ', subject to my agreement.', ', agreement required.',
+            ', PROVIDED I AGREE.', ', provided I accept.',
+            ', conditional on my decision.',
+        )
+        prefixes = ('Create a reminder for 2am to go to bed',
+                    'Set a timer for 10 minutes to stretch',
+                    'remind me every 2 hours to stretch',
+                    'every morning remind me to stretch')
+        for prefix in prefixes:
+            for constraint in constraints:
+                with self.subTest(prefix=prefix, constraint=constraint), \
+                        self.isolated_chat(now=now) as (chat, cid, home):
+                    rows = []
+                    with patch.object(chat.reminders, 'locked', side_effect=lambda: nullcontext(rows)), \
+                            patch.object(chat.reminders, 'save') as save, \
+                            patch.object(chat.reminders, 'create', wraps=chat.reminders.create) as create:
+                        reply = chat.submit(cid, prefix + constraint, str(uuid.uuid4()))['messages'][-1]
+                        self.assertEqual(chat.reminders.listing(), [])
+                        create.assert_not_called()
+                        save.assert_not_called()
+                        self.assertEqual(reply['provider'], 'reminders')
+                        self.assertIn('Nothing was saved', reply['content'])
+                        self.assertNotIn('Reminder saved:', reply['content'])
+        for command, body, due in (
+                (prefixes[0], 'go to bed', datetime(2026, 10, 13, 2, tzinfo=ZONE).timestamp()),
+                (prefixes[1], 'stretch', now + 600)):
+            with self.subTest(control=command), self.isolated_chat(now=now) as (chat, cid, home):
+                reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
+                self.assertIn('Reminder saved:', reply['content'])
+                row, = chat.reminders.listing()
+                self.assertEqual((row['body'], row['state'], row['due_at']), (body, 'pending', due))
+
+    def test_ledger_B8_draft_and_conditional_creation_requires_exact_yes_through_chat(self):
+        from reminders import ZONE
+        now = datetime(2026, 10, 12, 13, tzinfo=ZONE).timestamp()
+        constraints = (
+            '; draft only.', ', provided I agree.',
+            '; DRAFT ONLY.', '; draft-only.', '; just a draft.',
+            '; keep this as a draft.', '; draft it first.', '; for drafting.',
+            ', if I agree.', ', when I agree.', ', once I agree.',
+            ', subject to my agreement.', ', agreement required.',
+            ', PROVIDED I AGREE.', ', provided I accept.',
+            ', conditional on my decision.',
+        )
+        for constraint in constraints:
+            with self.subTest(constraint=constraint), self.isolated_chat(now=now) as (chat, cid, home):
+                target = home / 'Documents/proposal.txt'
+                command = 'Create file ~/Documents/proposal.txt: hello' + constraint
+                with patch.object(chat.local_tasks.files, 'execute',
+                                  return_value='File created: ' + str(target)) as execute:
+                    reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
+                    execute.assert_not_called()
+                    self.assertFalse(target.exists())
+                    self.assertEqual(reply['provider'], 'local-tasks')
+                    self.assertIn("I haven't created it yet", reply['content'])
+                    with chat.local_tasks.locked() as rows:
+                        row, = rows.values()
+                    self.assertEqual(row['state'], 'draft')
+                    self.assertEqual(row['expires'], now + 3600)
+                    self.assertIn('yes ' + row['token'], reply['content'])
+                    chat.submit(cid, 'yes', str(uuid.uuid4()))
+                    execute.assert_not_called()
+                    reply = chat.submit(cid, 'yes ' + row['token'], str(uuid.uuid4()))['messages'][-1]
+                    self.assertIn('File created:', reply['content'])
+                    execute.assert_called_once_with(row['spec'])
+                    self.assertEqual(row['spec']['content'], 'hello' + constraint)
+                    chat.submit(cid, 'yes ' + row['token'], str(uuid.uuid4()))
+                    execute.assert_called_once()
+        with self.isolated_chat(now=now) as (chat, cid, home):
+            target = home / 'Documents/proposal.txt'
+            with patch.object(chat.local_tasks.files, 'execute',
+                              return_value='File created: ' + str(target)) as execute:
+                reply = chat.submit(cid, 'Create file ~/Documents/proposal.txt: hello',
+                                    str(uuid.uuid4()))['messages'][-1]
+                self.assertIn('File created:', reply['content'])
+                execute.assert_called_once()
+                self.assertEqual(execute.call_args.args[0]['content'], 'hello')
+
+    def test_ledger_B4_review_and_dry_run_never_schedule_through_chat(self):
+        constraints = (
+            'but I need to review it first', 'but run this as a dry run',
+            'review first', 'REVIEW FIRST', 'for my review', 'needs reviewing',
+            'send it for review', 'review-only', 'let me review it',
+            'I want to review this', 'dry-run', 'DRY RUN', 'a dry run please',
+            'perform a dry-run first', 'dry run only', 'this is a dry run',
+        )
+        for constraint in constraints:
+            with self.subTest(constraint=constraint), self.isolated_chat() as (chat, cid, home):
+                reply = chat.submit(cid, 'Create a reminder for 2am to stretch, ' + constraint,
+                                    str(uuid.uuid4()))['messages'][-1]
+                self.assertEqual(chat.reminders.listing(), [])
+                self.assertEqual(reply['provider'], 'reminders')
+                self.assertIn('Nothing was saved', reply['content'])
+                self.assertNotIn('Reminder saved:', reply['content'])
+                reply = chat.submit(cid, 'remind me at 2am to stretch', str(uuid.uuid4()))['messages'][-1]
+                self.assertIn('Reminder saved:', reply['content'])
+                row, = chat.reminders.listing()
+                self.assertEqual((row['body'], row['state'], row['due_at']),
+                                 ('stretch', 'pending', self.clock() + 86400 + 780))
+
+    def test_ledger_B5_preview_creation_requires_exact_yes_through_chat(self):
+        constraints = (
+            'just show me a preview', 'preview only', 'PREVIEW ONLY',
+            'preview first', 'a preview please', 'send me a preview',
+            'I need a preview', 'let me preview it', 'preview this',
+            'preview-only', 'for preview', 'show the preview',
+            'give me a preview', 'preview before proceeding',
+            'run this as a dry run', 'I need to review it first',
+        )
+        for constraint in constraints:
+            with self.subTest(constraint=constraint), self.isolated_chat() as (chat, cid, home):
+                target = home / 'Documents/note.txt'
+                command = 'create file ~/Documents/note.txt: hello; ' + constraint
+                with patch.object(chat.local_tasks.files, 'execute',
+                                  wraps=chat.local_tasks.files.execute) as execute:
+                    reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
+                    self.assertFalse(target.exists())
+                    execute.assert_not_called()
+                    self.assertEqual(reply['provider'], 'local-tasks')
+                    self.assertIn("I haven't created it yet", reply['content'])
+                    with chat.local_tasks.locked() as rows:
+                        row, = rows.values()
+                    self.assertEqual(row['state'], 'draft')
+                    self.assertIn('yes ' + row['token'], reply['content'])
+                    chat.submit(cid, 'yes', str(uuid.uuid4()))
+                    self.assertFalse(target.exists())
+                    execute.assert_not_called()
+                    reply = chat.submit(cid, 'yes ' + row['token'], str(uuid.uuid4()))['messages'][-1]
+                    self.assertIn('File created:', reply['content'])
+                    self.assertEqual(target.read_text(), 'hello; ' + constraint)
+                    execute.assert_called_once()
+        with self.isolated_chat() as (chat, cid, home):
+            reply = chat.submit(cid, 'create file ~/Documents/note.txt: hello',
+                                str(uuid.uuid4()))['messages'][-1]
+            self.assertIn('File created:', reply['content'])
+            self.assertEqual((home / 'Documents/note.txt').read_text(), 'hello')
+
+    def test_ledger_B6_word_duration_qualifiers_need_clarification_through_chat(self):
+        qualifiers = (
+            'in two days', 'in one day', 'in three days', 'in four days',
+            'in five days', 'in six days', 'in seven days', 'in eight days',
+            'in nine days', 'in ten days', 'in eleven days', 'in twelve days',
+            'in twenty-one days', 'in a couple of days', 'in a few days',
+            'IN TWO DAYS', 'in two hours', 'in thirty minutes', 'in two weeks',
+            'in 2 days',
+        )
+        prefixes = ('Create a reminder for 2am to stretch',
+                    'remind me every 2 hours to stretch',
+                    'every morning remind me to stretch')
+        for prefix in prefixes:
+            for qualifier in qualifiers:
+                with self.subTest(prefix=prefix, qualifier=qualifier), \
+                        self.isolated_chat() as (chat, cid, home):
+                    reply = chat.submit(cid, prefix + ' ' + qualifier,
+                                        str(uuid.uuid4()))['messages'][-1]
+                    self.assertEqual(chat.reminders.listing(), [])
+                    self.assertEqual(reply['provider'], 'reminders')
+                    self.assertIn('extra date or time clause', reply['content'])
+                    self.assertIn('Nothing was saved', reply['content'])
+        from reminders import ZONE
+        for command, body, day in (
+                ('Create a reminder for 2am to stretch', 'stretch', 11),
+                ('Create a reminder for 2026-10-13 at 2am to stretch', 'stretch', 13),
+                ('Create a reminder for 2am to stretch in the garden', 'stretch in the garden', 11)):
+            with self.subTest(command=command), self.isolated_chat() as (chat, cid, home):
+                reply = chat.submit(cid, command, str(uuid.uuid4()))['messages'][-1]
+                self.assertIn('Reminder saved:', reply['content'])
+                row, = chat.reminders.listing()
+                self.assertEqual((row['body'], row['state'], row['due_at']),
+                                 (body, 'pending', datetime(2026, 10, day, 2, tzinfo=ZONE).timestamp()))
+
+    B3_CONTENTS = (
+        '<property name="password" value="SYNTHETIC_ONLY_123"/>',
+        '<entry name="api_key">SYNTHETIC_ONLY_123</entry>',
+    ) + tuple('<item label="' + label + '">SYNTHETIC_ONLY_123</item>' for label in (
+        'PASSWORD', 'passwd', 'pwd', 'passphrase', 'secret', 'client_secret',
+        'token', 'bearer', 'api-key', 'apikey', 'access_key', 'private key',
+        'private_key', 'credential', 'credentials', 'auth',
+    )) + (
+        '{"name":"password","value":"SYNTHETIC_ONLY_123"}',
+        '["api_key", "SYNTHETIC_ONLY_123"]',
+        'password -> SYNTHETIC_ONLY_123',
+        '## passphrase\nSYNTHETIC_ONLY_123',
+        'SYNTHETIC_ONLY_123\n<!-- AUTH -->',
+        '<entry NAME=\'ToKeN\'>SYNTHETIC_ONLY_123</entry>',
+        'Remember to change your password tomorrow. SYNTHETIC_ONLY_123',
+    )
+
+    def test_ledger_B3_labels_in_any_syntax_refuse_entire_read(self):
+        for index, content in enumerate(self.B3_CONTENTS):
+            with self.subTest(content=content):
+                self.assert_secret_read_refused('Documents/export.txt', content,
+                                                ('SYNTHETIC_ONLY_123',), f'B3-read-{index}')
+        self.assertIn('pattern match', SECRET_REFUSAL)
+        self.assertIn('not a guarantee', SECRET_REFUSAL)
+
+    def test_ledger_B3_labelled_writes_never_echo_or_persist(self):
+        target = self.home / 'Documents/note.txt'
+        target.write_text('original')
+        for index, content in enumerate(self.B3_CONTENTS):
+            for kind, name in (('create', 'new.txt'), ('write', 'note.txt')):
+                with self.subTest(content=content, kind=kind):
+                    (target.parent / 'new.txt').unlink(missing_ok=True)
+                    target.write_text('original')
+                    command = f'{kind} file ~/Documents/{name}: {content}'
+                    with patch.object(self.actions, 'save') as save, \
+                            patch.object(self.files, 'execute', wraps=self.files.execute) as execute:
+                        reply = self.actions.handle(command, 'chat', f'B3-{kind}-{index}', self.state)
+                        self.assertEqual(reply, SECRET_REFUSAL)
+                        self.assertNotIn('SYNTHETIC_ONLY_123', reply)
+                        save.assert_not_called()
+                        execute.assert_not_called()
+                    self.assertFalse((target.parent / 'new.txt').exists())
+                    self.assertEqual(target.read_text(), 'original')
+                    with self.assertRaises(LocalTaskError):
+                        self.files.execute(dict(kind=kind, path=str(target.parent / name), content=content))
+                    # Previously saved draft previews must also use the guard.
+                    with self.assertRaises(LocalTaskError):
+                        self.actions.receipt(dict(state='draft', token='wblocal-' + 'a' * 32,
+                                                  spec=dict(kind=kind, path=str(target), content=content)))
+        with self.actions.locked() as rows:
+            self.assertEqual(rows, {})
+
+    def test_ledger_B3_benign_xml_json_and_text_still_read(self):
+        target = self.home / 'Documents/export.txt'
+        for index, content in enumerate((
+                '<property name="title" value="Morning notes"/>',
+                '<entry name="color">blue</entry>',
+                '{"title":"Morning notes","tasks":["water plants"]}',
+                'Remember to water the plants tomorrow.')):
+            with self.subTest(content=content):
+                target.write_text(content)
+                self.assertEqual(safe_read(content.encode()), content)
+                self.assertEqual(self.actions.handle('read file ~/Documents/export.txt', 'chat',
+                                                     f'B3-benign-{index}', self.state),
+                                 'File read: ' + str(target) + '\n' + content)
+
+    def test_ledger_B3_read_does_not_leak_into_chat_or_memory(self):
+        import uuid
+        from app import Chat
+        target = self.home / 'Documents/export.xml'
+        target.write_text(self.B3_CONTENTS[0])
+        providers, texting, calendar = Mock(), Mock(), Mock()
+        providers.timeouts = {}
+        providers.reply.side_effect = AssertionError('Unexpected provider call')
+        texting.handle.return_value = False
+        texting.public.side_effect = dict
+        calendar.handle.return_value = None
+        chat_root = self.root / 'B3-chat'
+        with patch('app.load_live_ops', return_value={}):
+            chat = Chat(chat_root / 'webchat', chat_root, providers, texting=texting,
+                        calendar=calendar, local_tasks=self.actions)
+            self.addCleanup(chat.close)
+            cid = chat.conversation_list()['conversations'][0]['id']
+            result = chat.submit(cid, 'read file ~/Documents/export.xml', str(uuid.uuid4()))
+        self.assertEqual(result['messages'][-1]['content'], SECRET_REFUSAL)
+        self.assertNotIn('SYNTHETIC_ONLY_123', json.dumps(result))
+        for folder in (chat_root, self.actions.folder):
+            for path in folder.rglob('*'):
+                if path.is_file():
+                    self.assertNotIn(b'SYNTHETIC_ONLY_123', path.read_bytes(), str(path))
+        providers.reply.assert_not_called()
+
+    def test_ledger_B2_approval_language_never_saves_or_schedules(self):
+        from reminders import Reminders, ReminderError, parse
+        constraints = (
+            'but ask me whether to schedule it first', 'only with my permission',
+            'CONFIRM with me', 'approval needed', 'permission needed', 'with consent',
+            'ask first', 'ask whether this is ready', 'ask before proceeding',
+            'check with me', 'my ok is needed', 'my okay is needed',
+            'my go-ahead is needed', 'my say-so is needed', 'say go to proceed',
+            'say yes to proceed', 'say ok to proceed', 'wait for me',
+            'wait until tomorrow', 'hold off', 'not yet', "don't do this yet",
+            'until I return', 'before you proceed', 'before saving', 'before creating',
+            'before writing', 'before scheduling', 'only if ready', 'only after review',
+            'only when ready', 'only with my agreement',
+        )
+        refusal = 'Nothing was saved. Send a new reminder request when you want it scheduled.'
+        for index, constraint in enumerate(constraints):
+            for prefix in ('create a reminder for 2am to stretch',
+                           'remind me at 2am to stretch',
+                           'remind me every 2 hours to stretch',
+                           'every morning remind me to stretch'):
+                with self.subTest(constraint=constraint, prefix=prefix):
+                    command = prefix + ', ' + constraint
+                    folder = self.root / f'B2-{index}'
+                    reminders = Reminders(folder, clock=self.clock)
+                    with patch.object(reminders, 'save', wraps=reminders.save) as save, \
+                            patch.object(reminders, 'create', wraps=reminders.create) as create:
+                        self.assertEqual(reminders.handle(command, 'chat', command), refusal)
+                        save.assert_not_called()
+                        create.assert_not_called()
+                    with self.assertRaisesRegex(ReminderError, 'Nothing was saved'):
+                        parse(command, self.clock())
+                    self.assertEqual(Reminders(folder, clock=self.clock).listing(), [])
+
+    def test_ledger_B2_plain_reminder_still_schedules(self):
+        from reminders import Reminders
+        reminders = Reminders(self.root / 'B2-plain', clock=self.clock)
+        self.assertIn('Reminder saved:', reminders.handle(
+            'remind me at 2am to stretch', 'chat', 'plain'))
+        row, = reminders.listing()
+        self.assertEqual(row['body'], 'stretch')
+        self.assertEqual(row['state'], 'pending')
+
+    def test_ledger_B1_approval_language_requires_saved_exact_yes(self):
+        constraints = (
+            'but first ask for my confirmation', 'only after I approve',
+            'CONFIRM with me', 'approval needed', 'with permission', 'with consent',
+            'ask me whether to proceed', 'ask first', 'ask whether this is ready',
+            'ask before proceeding', 'check with me', 'my ok is needed',
+            'my okay is needed', 'my go-ahead is needed', 'my say-so is needed',
+            'say go to proceed', 'say yes to proceed', 'say ok to proceed',
+            'wait for me', 'wait until tomorrow', 'hold off', 'not yet',
+            "don't do this yet", 'until I return', 'before you proceed',
+            'before saving', 'before creating', 'before writing', 'before scheduling',
+            'only if ready', 'only when ready', 'only with my agreement',
+        )
+        target = self.home / 'Documents/note.txt'
+        for index, constraint in enumerate(constraints):
+            with self.subTest(constraint=constraint):
+                target.unlink(missing_ok=True)
+                command = 'create file ~/Documents/note.txt: hello, ' + constraint
+                actions = LocalTasks(self.root / f'B1-{index}', files=self.files, clock=self.clock)
+                with patch.object(self.files, 'execute', wraps=self.files.execute) as execute:
+                    reply = actions.handle(command, 'chat', 'request', self.state)
+                    self.assertFalse(target.exists())
+                    execute.assert_not_called()
+                    self.assertIn("I haven't created it yet", reply)
+                    with actions.locked() as rows:
+                        row, = rows.values()
+                    self.assertEqual(row['state'], 'draft')
+                    self.assertRegex(row['token'], r'^wblocal-[0-9a-f]{32}$')
+                    self.assertIn('yes ' + row['token'], reply)
+                    restored = LocalTasks(self.root / f'B1-{index}', files=self.files, clock=self.clock)
+                    self.assertEqual(restored.handle(command, 'chat', 'request', self.state), reply)
+                    restored.handle('yes', 'chat', 'bare-yes', self.state)
+                    self.assertFalse(target.exists())
+                    result = restored.handle('yes ' + row['token'], 'chat', 'confirmed', self.state)
+                    self.assertIn('File created:', result)
+                    self.assertEqual(target.read_text(), 'hello, ' + constraint)
+                    restored.handle('yes ' + row['token'], 'chat', 'replay', self.state)
+                    execute.assert_called_once()
+                target.unlink()
+
+    def test_ledger_B1_plain_create_and_destructive_approval_controls(self):
+        target = self.home / 'Documents/note.txt'
+        self.assertIn('File created:', self.actions.handle(
+            'create file ~/Documents/note.txt: hello', 'chat', 'plain', self.state))
+        self.assertEqual(target.read_text(), 'hello')
+        for index, command in enumerate((
+                'write file ~/Documents/note.txt: replacement, with my consent',
+                'delete file ~/Documents/note.txt, only with my permission')):
+            with self.subTest(command=command), patch.object(self.files, 'execute') as execute:
+                self.actions.handle(command, 'chat', f'B1-control-{index}', self.state)
+                execute.assert_not_called()
+                self.assertEqual(target.read_text(), 'hello')
+
     def setUp(self):
         # Load the real secret patterns without invoking git for build metadata.
         with patch('subprocess.check_output', side_effect=OSError('Offline build metadata')):
@@ -76,6 +476,106 @@ class CapabilityLedgerTests(unittest.TestCase):
         client.listing.assert_not_called()
         client.create.assert_not_called()
 
+    def test_ledger_F22_qualification_allpass_false_despite_scoped_pass(self):
+        import hashlib
+        from release import qualification_scope as scope
+
+        def evidence(name, value):
+            path = self.root / name
+            path.write_text(json.dumps(value))
+            return dict(path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+
+        admission = evidence('admission.json', dict(id='F22', adopted=True))
+        steer = evidence('steer.json', dict(authority_source='Owner defers live voice.',
+                                           limits_unchanged=True, clock_unchanged=True))
+        ref = evidence('scope.json', dict(schema=1, continuation_id='F22', scope_name='nonvoice',
+                                         deferred_checks=scope.DEFERRED,
+                                         admission=admission, owner_steer=steer))
+        self.assertEqual(scope.validate(ref), ref)
+        groups = ('webchat', 'services', 'reviews', 'release', 'bridge-contract', 'eval',
+                  'browser', 'media-browser', 'voice-js', 'instinct-browser',
+                  'remaining-browser', 'cold-browser', 'startup-recovery-browser',
+                  'voice-availability-browser', 'jobs-results-browser', 'memory-removal-browser',
+                  'project-handoffs-browser', 'reply-lifecycle-browser', 'test_job_results_js',
+                  'test_quiet_hours_js', 'test_startup_recovery')
+        for attempt in ('attempt-0001', 'attempt-0002'):
+            with self.subTest(attempt=attempt):
+                results = {name: dict(exit=0, skipped=0) for name in groups}
+                included_pass = all(r['exit'] == 0 and r['skipped'] == 0 for r in results.values())
+                record = dict(sha='899c2a5fc5f5', results=results, staging=dict(all_pass=True),
+                              **scope.outcome(included_pass, ref))
+                path = self.root / attempt / 'checks.json'
+                path.parent.mkdir()
+                path.write_text(json.dumps(record))
+                loaded = json.loads(path.read_text())
+                self.assertEqual(len(loaded['results']), 21)
+                self.assertTrue(loaded['staging']['all_pass'])
+                self.assertFalse(loaded['all_pass'])
+                self.assertTrue(loaded['scope_passed'])
+                self.assertEqual(loaded['live_voice'], scope.VOICE)
+                self.assertTrue(scope.historical_passed(loaded))
+                self.assertFalse(scope.passed(loaded))
+                self.assertFalse(scope.passed(loaded, dict(ref, sha256='0' * 64)))
+                self.assertEqual(loaded.get('qualification_status'), 'SCOPED_PASS')
+
+        for bad_receipt in (dict(exit=1, skipped=0), dict(exit=0, skipped=1)):
+            with self.subTest(receipt=bad_receipt):
+                results['webchat'] = bad_receipt
+                failed = scope.outcome(all(r['exit'] == 0 and r['skipped'] == 0
+                                          for r in results.values()), ref)
+                self.assertEqual(failed['qualification_status'], 'FAIL')
+                self.assertFalse(failed['all_pass'])
+                self.assertFalse(failed['scope_passed'])
+                self.assertFalse(scope.historical_passed(failed))
+        self.assertEqual(scope.outcome(True, None), dict(all_pass=True))
+        self.assertEqual(scope.outcome(False, None), dict(all_pass=False))
+        Path(steer['path']).write_text('{}')
+        with self.assertRaisesRegex(RuntimeError, 'evidence changed'):
+            scope.historical_passed(loaded)
+
+    def test_ledger_A1L6_legacy_remind_me_bypasses_hold(self):
+        import copy
+        import uuid
+        from app import Chat
+        from reminders import ZONE
+        from task_dispatch import task_queue
+
+        commands = (
+            'remind me in 10 minutes to check the oven',
+            'remind me to call Sam on 2026-10-01 at 14:00',
+            'remind me every 2 hours to stretch',
+        )
+        for index, (hold, scope) in enumerate((('Hold all work', 'new work'),
+                                               ('Hold Web Bob', 'Web Bob'))):
+            for number, command in enumerate(commands):
+                with self.subTest(hold=hold, command=command):
+                    root = self.root / f'A1L6-{index}-{number}'
+                    providers, texting, calendar = Mock(), Mock(), Mock()
+                    providers.timeouts = {}
+                    providers.reply.side_effect = AssertionError('Unexpected provider call')
+                    texting.handle.return_value = False
+                    texting.public.side_effect = dict
+                    calendar.handle.return_value = None
+                    with patch('app.load_live_ops', return_value={}):
+                        chat = Chat(root / 'webchat', root, providers, texting=texting,
+                                    calendar=calendar, local_tasks=self.actions)
+                        self.addCleanup(chat.close)
+                        chat.reminders.clock = lambda: datetime(2026, 9, 29, 9, tzinfo=ZONE).timestamp()
+                        cid = chat.conversation_list()['conversations'][0]['id']
+                        chat.submit(cid, hold, str(uuid.uuid4()))
+                        before = copy.deepcopy(chat.get(cid)['intent_state'])
+                        self.assertEqual(chat_intent.blocked_scopes(before, chat_intent.projects(command)),
+                                         [scope])
+                        with patch.object(chat.reminders, 'create', wraps=chat.reminders.create) as create:
+                            result = chat.submit(cid, command, str(uuid.uuid4()))
+                            self.assertEqual(result['messages'][-1]['content'],
+                                             chat_intent.hold_reply([scope]))
+                            create.assert_not_called()
+                        self.assertEqual(chat.reminders.listing(), [])
+                        self.assertEqual(chat.get(cid)['intent_state'], before)
+                        self.assertEqual(task_queue.tasks(root), {})
+                        providers.reply.assert_not_called()
+
     def test_ledger_F10_reminder_ignores_wait_for_approval_phrasing(self):
         from reminders import Reminders, ReminderError, ZONE, parse
         now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
@@ -94,6 +594,42 @@ class CapabilityLedgerTests(unittest.TestCase):
                 self.assertEqual(str(raised.exception), refusal)
                 self.assertEqual(Reminders(folder, clock=lambda: now).listing(), [])
 
+    def test_ledger_F10r6_reminder_ignores_get_my_approval_first_and_pending_confirmation(self):
+        from reminders import Reminders, ReminderError, ZONE, parse
+        now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
+        refusal = 'Nothing was saved. Send a new reminder request when you want it scheduled.'
+        for index, constraint in enumerate(('get my approval first', 'pending my confirmation.')):
+            with self.subTest(constraint=constraint):
+                command = 'Create a reminder for 2am to go to bed, but ' + constraint
+                reminders = Reminders(self.root / ('F10r6-' + str(index)), clock=lambda: now)
+                rows = []
+                with patch.object(reminders, 'locked', side_effect=lambda: nullcontext(rows)), \
+                        patch.object(reminders, 'save') as save:
+                    self.assertEqual(reminders.handle(command, 'chat', 'request'), refusal)
+                    save.assert_not_called()
+                    self.assertEqual(reminders.listing(), [])
+                with self.assertRaises(ReminderError) as raised:
+                    parse(command, now)
+                self.assertEqual(str(raised.exception), refusal)
+
+    def test_ledger_F10r6r7_reminder_ignores_only_after_my_approval_and_do_not_execute_yet(self):
+        from reminders import Reminders, ReminderError, ZONE, parse
+        now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
+        refusal = 'Nothing was saved. Send a new reminder request when you want it scheduled.'
+        for index, constraint in enumerate(('only after my approval', 'do not execute this yet.')):
+            with self.subTest(constraint=constraint):
+                command = 'Create a reminder for 2am to go to bed, but ' + constraint
+                reminders = Reminders(self.root / ('F10r6r7-' + str(index)), clock=lambda: now)
+                rows = []
+                with patch.object(reminders, 'locked', side_effect=lambda: nullcontext(rows)), \
+                        patch.object(reminders, 'save') as save:
+                    self.assertEqual(reminders.handle(command, 'chat', 'request'), refusal)
+                    save.assert_not_called()
+                    self.assertEqual(reminders.listing(), [])
+                with self.assertRaises(ReminderError) as raised:
+                    parse(command, now)
+                self.assertEqual(str(raised.exception), refusal)
+
     def test_ledger_F11_file_create_ignores_confirm_constraint(self):
         from local_tasks import parse
         command = 'create file ~/Documents/new.txt: hello\nDo not create this file until I confirm.'
@@ -111,6 +647,60 @@ class CapabilityLedgerTests(unittest.TestCase):
         self.assertEqual(str(raised.exception), refusal)
         with self.actions.locked() as rows:
             self.assertEqual(rows, {})
+        self.search.assert_not_called()
+
+    def test_ledger_F11r6_file_create_ignores_only_if_confirm_and_ask_me_phrasings(self):
+        from local_tasks import parse
+        refusal = 'No file changed. Send a new file request when you want it performed.'
+        for index, constraint in enumerate(('only if I confirm.', 'ask me before saving it.',
+                                             'do not actually create it.')):
+            with self.subTest(constraint=constraint):
+                command = 'create file ~/Documents/review-note.txt: hello, but ' + constraint
+                target = self.home / 'Documents/review-note.txt'
+                files = Mock(spec=LocalFiles)
+                files.prepare.side_effect = lambda spec: spec
+                files.execute.return_value = 'File created: ' + str(target)
+                actions = LocalTasks(self.root / ('F11r6-' + str(index)), files=files,
+                                     search=self.search, clock=self.clock)
+                with patch.object(actions, 'save') as save:
+                    reply = actions.handle(command, 'chat', 'request', self.state)
+                    self.assertEqual(reply, refusal)
+                    files.prepare.assert_not_called()
+                    files.execute.assert_not_called()
+                    save.assert_not_called()
+                self.assertFalse(target.exists())
+                with self.assertRaises(LocalTaskError) as raised:
+                    parse(command)
+                self.assertEqual(str(raised.exception), refusal)
+                with actions.locked() as rows:
+                    self.assertEqual(rows, {})
+        self.search.assert_not_called()
+
+    def test_ledger_F11r6r7_file_create_ignores_get_my_approval_and_do_not_execute_yet(self):
+        from local_tasks import parse
+        refusal = 'No file changed. Send a new file request when you want it performed.'
+        for index, constraint in enumerate(('get my approval first.', 'only after my approval.',
+                                             'do not execute this yet.')):
+            with self.subTest(constraint=constraint):
+                command = 'create file ~/Documents/review-note.txt: hello, but ' + constraint
+                target = self.home / 'Documents/review-note.txt'
+                files = Mock(spec=LocalFiles)
+                files.prepare.side_effect = lambda spec: spec
+                files.execute.return_value = 'File created: ' + str(target)
+                actions = LocalTasks(self.root / ('F11r6r7-' + str(index)), files=files,
+                                     search=self.search, clock=self.clock)
+                with patch.object(actions, 'save') as save:
+                    reply = actions.handle(command, 'chat', 'request', self.state)
+                    self.assertEqual(reply, refusal)
+                    files.prepare.assert_not_called()
+                    files.execute.assert_not_called()
+                    save.assert_not_called()
+                self.assertFalse(target.exists())
+                with self.assertRaises(LocalTaskError) as raised:
+                    parse(command)
+                self.assertEqual(str(raised.exception), refusal)
+                with actions.locked() as rows:
+                    self.assertEqual(rows, {})
         self.search.assert_not_called()
 
     def test_ledger_F12_reminder_ignores_do_not_save_yet(self):
@@ -183,6 +773,48 @@ class CapabilityLedgerTests(unittest.TestCase):
                         operation()
                     self.assertEqual(str(raised.exception), refusal)
                 self.assertEqual(Reminders(folder, clock=lambda: now).listing(), [])
+
+    def test_ledger_F15r6_named_month_and_slash_date_swallowed(self):
+        from reminders import Reminders, ReminderError, ZONE, parse, reminder_body
+        now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
+        refusal = ('The reminder has an extra date or time clause. Nothing was saved. '
+                   'Please use one schedule, such as “create a reminder for tomorrow at 2am to go to bed”.')
+        for index, date in enumerate(('October 11', '10/11')):
+            with self.subTest(date=date):
+                body = 'go to bed on ' + date
+                command = 'Create a reminder for 2am to ' + body
+                reminders = Reminders(self.root / ('F15r6-' + str(index)), clock=lambda: now)
+                rows = []
+                with patch.object(reminders, 'locked', side_effect=lambda: nullcontext(rows)), \
+                        patch.object(reminders, 'save') as save:
+                    self.assertEqual(reminders.handle(command, 'chat', 'request'), refusal)
+                    save.assert_not_called()
+                    self.assertEqual(reminders.listing(), [])
+                for operation in (lambda: parse(command, now), lambda: reminder_body(body)):
+                    with self.assertRaises(ReminderError) as raised:
+                        operation()
+                    self.assertEqual(str(raised.exception), refusal)
+
+    def test_ledger_F15r6r7_abbreviated_and_day_first_month_date_swallowed(self):
+        from reminders import Reminders, ReminderError, ZONE, parse, reminder_body
+        now = datetime(2026, 10, 10, 1, 47, tzinfo=ZONE).timestamp()
+        refusal = ('The reminder has an extra date or time clause. Nothing was saved. '
+                   'Please use one schedule, such as “create a reminder for tomorrow at 2am to go to bed”.')
+        for index, date in enumerate(('Oct 11', '11 October.')):
+            with self.subTest(date=date):
+                body = 'go to bed, on ' + date
+                command = 'Create a reminder for 2am to ' + body
+                reminders = Reminders(self.root / ('F15r6r7-' + str(index)), clock=lambda: now)
+                rows = []
+                with patch.object(reminders, 'locked', side_effect=lambda: nullcontext(rows)), \
+                        patch.object(reminders, 'save') as save:
+                    self.assertEqual(reminders.handle(command, 'chat', 'request'), refusal)
+                    save.assert_not_called()
+                    self.assertEqual(reminders.listing(), [])
+                for operation in (lambda: parse(command, now), lambda: reminder_body(body)):
+                    with self.assertRaises(ReminderError) as raised:
+                        operation()
+                    self.assertEqual(str(raised.exception), refusal)
 
     def test_ledger_F16_trailing_timezone_qualifier_swallowed(self):
         from reminders import Reminders, ReminderError, ZONE, parse
@@ -397,6 +1029,35 @@ class CapabilityLedgerTests(unittest.TestCase):
             with self.subTest(extension=extension):
                 self.assert_secret_read_refused('Downloads/export.' + extension, content,
                                                 (secret,), 'F3-' + extension)
+
+    def test_ledger_F3r6_xml_plist_keyvalue_credential_disclosed(self):
+        secret = 'synthetic-review-secret'
+        for index, key in enumerate(('password', 'refresh_token', 'api_key')):
+            with self.subTest(key=key):
+                content = ('<?xml version="1.0"?><plist version="1.0"><dict><key>' + key +
+                           '</key><string>' + secret + '</string></dict></plist>')
+                # Keep the real prepare/execute/safe_read path while supplying
+                # file bytes through the adapter's mocked read boundary.
+                with patch.object(self.files, 'snapshot', return_value=({}, content.encode('utf-8'))):
+                    self.assert_secret_read_refused('Documents/export.plist', content,
+                                                    (secret,), 'F3r6-' + str(index))
+        ordinary = '<plist><dict><key>title</key><string>Review note</string></dict></plist>'
+        self.assertEqual(safe_read(ordinary.encode('utf-8')), ordinary)
+
+    def test_ledger_F3r6r7_xml_attribute_labelled_credential_disclosed(self):
+        secret = 'synthetic-review-secret'
+        contents = (
+            '<?xml version="1.0"?><properties><entry key="password">' + secret + '</entry></properties>',
+            '<config><add key="password" value="' + secret + '" /></config>',
+        )
+        for index, content in enumerate(contents):
+            with self.subTest(content=content):
+                # Exercise real prepare/execute/safe_read with mocked file reads.
+                with patch.object(self.files, 'snapshot', return_value=({}, content.encode('utf-8'))):
+                    self.assert_secret_read_refused('Documents/export.xml', content,
+                                                    (secret,), 'F3r6r7-' + str(index))
+        ordinary = '<config><add key="title" value="Review note" /></config>'
+        self.assertEqual(safe_read(ordinary.encode('utf-8')), ordinary)
 
     def test_ledger_F4_netrc_credential_record_disclosed(self):
         secret = 'SYNTHETIC-ONLY'

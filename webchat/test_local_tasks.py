@@ -296,7 +296,7 @@ class SecretReadTests(LocalFixture):
             self.files.execute(prepared)
 
     def test_ordinary_text_and_json_remain_readable(self):
-        for content in ('Remember to change your password tomorrow.',
+        for content in ('Remember to water the plants tomorrow.',
                         '{"title": "Morning notes", "tasks": ["water plants"]}'):
             self.file.write_text(content)
             self.assertIn(content, self.say('read file ~/Documents/note.txt'))
