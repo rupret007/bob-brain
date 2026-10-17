@@ -1,11 +1,14 @@
 """Reminder persistence, time interpretation and real Chat delivery boundaries."""
 import concurrent.futures
+from contextlib import contextmanager
+import copy
 from datetime import datetime
 import json
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import time
+import threading
 import unittest
 from unittest.mock import Mock, patch
 import uuid
@@ -238,6 +241,287 @@ class ReminderTests(unittest.TestCase):
         self.assertEqual(self.store.path.read_text(), 'invalid')
 
 
+class RoutineControlTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.now = datetime(2026, 10, 10, 7, tzinfo=ZONE).timestamp()
+        self.store = Reminders(self.root, clock=lambda: self.now)
+        self.row = self.store.create('chat', 'routine', 'Private action body',
+                                     datetime(2026, 10, 10, 9, tzinfo=ZONE).timestamp(),
+                                     86400, daily_time='09:00', action='look up fixture')
+        self.identifier = self.row['id']
+        self.deliver = Mock(return_value=True)
+        self.notify = Mock()
+
+    def control(self, command, cid='chat', identifier=None):
+        return self.store.handle(f'{command} routine {identifier or self.identifier}', cid, str(uuid.uuid4()))
+
+    def saved(self):
+        return next(r for r in self.store.listing() if r['id'] == self.identifier)
+
+    def test_pause_before_due_survives_restart_and_lists_separately(self):
+        active = self.store.create('chat', 'other', 'Still active', self.now + 60)
+        reply = self.control('pause')
+        self.assertIn('Paused routine ' + self.identifier, reply)
+        self.assertNotIn(self.row['body'], reply)
+        self.assertEqual(self.saved(), dict(self.row, state='paused', paused_at=self.now))
+        self.now += 4 * 86400
+        self.store = Reminders(self.root, clock=lambda: self.now)
+        # Cancel the unrelated one-shot to isolate execution suppression.
+        self.store.cancel(active['id'], 'chat')
+        self.store.deliver_due(self.deliver, self.notify)
+        self.deliver.assert_not_called()
+        self.notify.assert_not_called()
+        reply = self.store.handle('list routines', 'chat', 'list')
+        self.assertIn('Paused routines (no runs while paused):', reply)
+        self.assertIn(self.identifier, reply)
+        self.assertNotIn(stamp(self.row['due_at']), reply)
+        self.assertNotIn(active['id'], reply)
+
+    def test_resume_skips_missed_runs_and_retains_occurrence_identity(self):
+        self.now = self.row['due_at']
+        self.store.deliver_due(self.deliver)
+        prior_notice = self.deliver.call_args.args[1]
+        self.control('pause')
+        paused = self.saved()
+        self.now += 5 * 86400 + 3600
+        reply = self.control('resume')
+        resumed = self.saved()
+        self.assertIn('Resumed routine ' + self.identifier, reply)
+        self.assertIn('Missed runs will not be replayed', reply)
+        self.assertEqual(resumed['due_at'], datetime(2026, 10, 16, 9, tzinfo=ZONE).timestamp())
+        for key in ('id', 'action', 'body', 'daily_time', 'interval_seconds', 'occurrences', 'last_fired_at'):
+            self.assertEqual(resumed[key], paused[key])
+        self.assertNotIn('paused_at', resumed)
+        self.deliver.reset_mock()
+        self.store.deliver_due(self.deliver)
+        self.deliver.assert_not_called()
+        self.now = resumed['due_at']
+        self.store.deliver_due(self.deliver)
+        expected = uuid.uuid5(uuid.NAMESPACE_URL, 'reminder-notice:' + self.identifier + ':1').hex
+        self.assertEqual(self.deliver.call_args.args[1], expected)
+        self.assertNotEqual(expected, prior_notice)
+
+    def test_repeated_controls_do_not_write_or_move_the_schedule(self):
+        self.control('pause')
+        paused = self.saved()
+        self.now += 60
+        with patch.object(self.store, 'save', side_effect=AssertionError('No-op wrote storage')):
+            self.assertIn('already paused', self.control('pause'))
+        self.assertEqual(self.saved(), paused)
+        self.control('resume')
+        resumed = self.saved()
+        self.now += 3 * 86400
+        with patch.object(self.store, 'save', side_effect=AssertionError('No-op wrote storage')):
+            self.assertIn('already scheduled', self.control('resume'))
+        self.assertEqual(self.saved(), resumed)
+        self.control('pause')
+        self.assertEqual(self.saved()['paused_at'], self.now)
+        self.assertEqual(len(self.store.listing()), 1)
+
+    def test_resume_before_at_and_after_daily_time_and_dst(self):
+        cases = (
+            (datetime(2026, 10, 10, 8, tzinfo=ZONE), datetime(2026, 10, 10, 9, tzinfo=ZONE)),
+            (datetime(2026, 10, 10, 9, tzinfo=ZONE), datetime(2026, 10, 11, 9, tzinfo=ZONE)),
+            (datetime(2026, 10, 31, 9, tzinfo=ZONE), datetime(2026, 11, 1, 9, tzinfo=ZONE)),
+            (datetime(2027, 3, 13, 9, tzinfo=ZONE), datetime(2027, 3, 14, 9, tzinfo=ZONE)),
+            (datetime(2027, 3, 14, 10, tzinfo=ZONE), datetime(2027, 3, 15, 9, tzinfo=ZONE)),
+        )
+        for now, due in cases:
+            with self.subTest(now=now):
+                self.control('pause')
+                self.now = now.timestamp()
+                reply = self.control('resume')
+                self.assertEqual(self.saved()['due_at'], due.timestamp())
+                self.assertGreater(self.saved()['due_at'], self.now)
+                self.assertIn(stamp(due.timestamp()), reply)
+        # Existing morning grammar deliberately excludes DST gap/fold hours.
+        reply = self.store.handle('every morning at 2:30am do look up fixture', 'chat', 'gap')
+        self.assertIn('3:00am through 11:59am', reply)
+        self.assertEqual(len(self.store.listing()), 1)
+
+    def test_interval_resume_preserves_phase_without_catchup(self):
+        row = self.store.create('chat', 'interval', 'Stretch', self.now + 60, 60)
+        self.control('pause', identifier=row['id'])
+        self.now += 3700
+        self.control('resume', identifier=row['id'])
+        resumed = next(r for r in self.store.listing() if r['id'] == row['id'])
+        self.assertEqual(resumed['due_at'], row['due_at'] + 61 * 60)
+        self.assertEqual(resumed['occurrences'], 0)
+        self.assertGreater(resumed['due_at'], self.now)
+
+    def test_cross_chat_controls_and_listing_do_not_disclose_or_mutate(self):
+        for command in ('pause', 'resume', 'cancel'):
+            reply = self.control(command, cid='other')
+            self.assertIn('No ', reply)
+            for private in (self.row['body'], self.row['action'], '09:00'):
+                self.assertNotIn(private, reply)
+            self.assertEqual(self.saved(), self.row)
+        self.assertNotIn(self.identifier, self.store.handle('my routines', 'other', 'list'))
+        self.control('pause')
+        self.assertNotIn(self.identifier, self.store.handle('my routines', 'other', 'list-paused'))
+
+    def test_cancel_paused_cannot_be_resumed_and_one_shots_are_not_routines(self):
+        self.control('pause')
+        self.assertEqual(self.control('cancel'), 'Reminder cancelled.')
+        for command in ('pause', 'resume'):
+            self.assertIn('is cancelled', self.control(command))
+        one_shot = self.store.create('chat', 'timer', 'Timer', self.now + 1)
+        for command in ('pause', 'resume'):
+            self.assertIn('No routine', self.control(command, identifier=one_shot['id']))
+        self.store.cancel(one_shot['id'])
+        self.now += 86400
+        self.store.deliver_due(self.deliver)
+        self.deliver.assert_not_called()
+
+    def test_failed_persistence_never_confirms_pause_or_resume(self):
+        for command in ('pause', 'resume'):
+            with self.subTest(command=command):
+                if command == 'resume':
+                    self.control('pause')
+                before = self.saved()
+                with patch.object(self.store, 'save', side_effect=OSError('disk full')):
+                    reply = self.control(command)
+                self.assertIn('requested change was not saved', reply)
+                self.assertNotIn(command.capitalize() + 'd routine', reply)
+                self.assertEqual(self.saved(), before)
+                self.now = before['due_at']
+                self.deliver.reset_mock()
+                self.store.deliver_due(self.deliver)
+                self.assertEqual(self.deliver.call_count, 1 if command == 'pause' else 0)
+
+    def test_write_then_error_is_unconfirmed_and_readback_retry_is_noop(self):
+        save = self.store.save
+        def write_then_fail(rows):
+            save(rows)
+            raise OSError('after replacement')
+        for command, state, no_op in (('pause', 'paused', 'already paused'),
+                                     ('resume', 'pending', 'already scheduled')):
+            with self.subTest(command=command):
+                with patch.object(self.store, 'save', side_effect=write_then_fail):
+                    reply = self.control(command)
+                self.assertIn('unconfirmed', reply)
+                self.assertNotIn(command.capitalize() + 'd routine', reply)
+                self.store = Reminders(self.root, clock=lambda: self.now)
+                self.assertEqual(self.saved()['state'], state)
+                self.assertIn(no_op, self.control(command))
+
+    def test_unreadable_write_outcome_and_unavailable_storage_stay_unconfirmed(self):
+        for command in ('pause', 'resume'):
+            if command == 'resume':
+                self.control('pause')
+            read = Path.read_text
+            calls = []
+            def readback(path, *args, **kwargs):
+                calls.append(path)
+                if len(calls) > 1:
+                    raise OSError('unreadable')
+                return read(path, *args, **kwargs)
+            with patch.object(self.store, 'save', side_effect=OSError('unknown')), \
+                    patch.object(Path, 'read_text', readback):
+                reply = self.control(command)
+            self.assertIn('unconfirmed', reply)
+            self.assertNotIn('was not saved', reply)
+            with patch.object(self.store, 'locked', side_effect=OSError('unavailable')):
+                self.assertIn('no successful change was verified', self.control(command))
+
+    def test_pause_wins_before_tick_execution_lock(self):
+        self.now = self.row['due_at']
+        arrived, proceed = threading.Event(), threading.Event()
+        locked = self.store.locked
+        @contextmanager
+        def delayed_tick_lock():
+            if threading.current_thread().name.startswith('tick'):
+                arrived.set()
+                if not proceed.wait(3):
+                    raise AssertionError('Tick was not released')
+            with locked() as rows:
+                yield rows
+        with patch.object(self.store, 'locked', delayed_tick_lock), \
+                concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix='tick') as pool:
+            tick = pool.submit(self.store.deliver_due, self.deliver)
+            try:
+                self.assertTrue(arrived.wait(3))
+                self.assertIn('Paused routine', self.control('pause'))
+            finally:
+                proceed.set()
+            tick.result(timeout=3)
+        self.deliver.assert_not_called()
+        self.assertEqual(self.saved()['state'], 'paused')
+
+    def test_already_running_tick_finishes_before_pause_and_receipt_names_delivery(self):
+        self.now = self.row['due_at']
+        started, finish, pause_started = threading.Event(), threading.Event(), threading.Event()
+        notices = []
+        def execute(row, notice):
+            notices.append(notice)
+            started.set()
+            if not finish.wait(3):
+                raise AssertionError('Action was not released')
+            return True
+        def pause():
+            pause_started.set()
+            return self.control('pause')
+        with concurrent.futures.ThreadPoolExecutor(2) as pool:
+            tick = pool.submit(self.store.deliver_due, execute)
+            try:
+                self.assertTrue(started.wait(3))
+                control = pool.submit(pause)
+                self.assertTrue(pause_started.wait(3))
+                with self.assertRaises(concurrent.futures.TimeoutError):
+                    control.result(timeout=.05)
+            finally:
+                finish.set()
+            tick.result(timeout=3)
+            reply = control.result(timeout=3)
+        self.assertIn('does not undo an action that started before the pause', reply)
+        self.assertIn('Last recorded delivery:', reply)
+        self.assertIn(notices[0], reply)
+        self.assertEqual(self.saved()['occurrences'], 1)
+        self.now += 86400
+        self.store.deliver_due(self.deliver)
+        self.deliver.assert_not_called()
+
+    def test_pause_after_ambiguous_delivery_never_claims_no_action_ran(self):
+        self.now = self.row['due_at']
+        with patch.object(self.store, 'save', side_effect=OSError('after action')):
+            with self.assertRaises(OSError):
+                self.store.deliver_due(self.deliver)
+        self.deliver.assert_called_once()
+        reply = self.control('pause')
+        self.assertIn('does not undo an action that started before the pause', reply)
+        self.assertNotIn('Last recorded delivery:', reply)
+        self.assertNotIn('no action ran', reply)
+        self.deliver.reset_mock()
+        self.now += 86400
+        self.store.deliver_due(self.deliver)
+        self.deliver.assert_not_called()
+
+    def test_concurrent_ticks_after_resume_deliver_only_one_occurrence(self):
+        self.control('pause')
+        self.now += 3 * 86400
+        self.control('resume')
+        self.now = self.saved()['due_at']
+        with concurrent.futures.ThreadPoolExecutor(4) as pool:
+            ticks = [pool.submit(self.store.deliver_due, self.deliver) for _ in range(4)]
+            for tick in ticks:
+                tick.result(timeout=3)
+        self.deliver.assert_called_once()
+        self.assertEqual(self.saved()['occurrences'], 1)
+
+    def test_paused_routines_count_toward_capacity_and_are_never_pruned(self):
+        self.control('pause')
+        paused = self.saved()
+        self.store.save([dict(paused, id=str(i)) for i in range(200)])
+        with self.assertRaisesRegex(ReminderError, 'limit'):
+            self.store.create('chat', 'new', 'New', self.now + 60)
+        self.store.save([paused] + [dict(self.row, id=str(i), state='cancelled') for i in range(399)])
+        self.store.create('chat', 'new', 'New', self.now + 60)
+        self.assertEqual(self.saved(), paused)
+
+
 class ReminderChatTests(unittest.TestCase):
     def setUp(self):
         notifier = patch('reminders.notify_macos', return_value=True)
@@ -408,6 +692,150 @@ class ReminderChatTests(unittest.TestCase):
         self.assertIn('Reminder:', self.chat.history(self.cid)['messages'][-1]['content'])
         self.assertFalse(task_queue.tasks(self.root))
         self.assertFalse(self.providers.calls)
+
+
+class RoutineControlChatTests(unittest.TestCase):
+    def setUp(self):
+        from texting import Texting
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.now = datetime(2026, 10, 10, 7, tzinfo=ZONE).timestamp()
+        self.providers = OfflineProviders()
+        self.actions = Mock()
+        self.actions.validate_routine.side_effect = lambda text: text
+        self.actions.handle.side_effect = lambda *args, **kwargs: 'Fixture read result' if kwargs.get('routine') else None
+        self.notify = Mock()
+        self.calendar = Mock()
+        self.calendar.handle.return_value = None
+        self.texting = Texting(Mock(), Mock(), clock=lambda: self.now)
+        for target in ('urllib.request.OpenerDirector.open', 'socket.getaddrinfo', 'socket.socket',
+                       'subprocess.run', 'reminders.notify_macos', 'app.parse_work'):
+            guard = patch(target, side_effect=AssertionError('Unexpected side effect: ' + target))
+            guard.start()
+            self.addCleanup(guard.stop)
+        self.chat = self.new_chat()
+        self.cid = self.chat.new_conversation()['id']
+        self.say('every morning do look up fixture')
+        self.row, = self.chat.reminders.listing()
+
+    def new_chat(self):
+        chat = Chat(self.root / 'chat', self.root, self.providers, texting=self.texting,
+                    reminder_notifier=self.notify, calendar=self.calendar, local_tasks=self.actions)
+        chat.reminders.clock = lambda: self.now
+        self.addCleanup(chat.close)
+        return chat
+
+    def say(self, text, cid=None, request_id=None):
+        return self.chat.submit(cid or self.cid, text, request_id or str(uuid.uuid4()), actor='owner')['messages'][-1]
+
+    def control(self, command, **kwargs):
+        return self.say(command + ' routine ' + self.row['id'], **kwargs)
+
+    def assert_no_external_effects(self):
+        self.assertFalse(self.providers.calls)
+        self.assertFalse(task_queue.tasks(self.root))
+        self.texting.andrea.deliver.assert_not_called()
+        self.notify.assert_not_called()
+
+    def test_chat_pause_restart_resume_and_list_routes_are_deterministic(self):
+        self.say('every morning do look up another fixture')
+        reply = self.control('pause')
+        self.assertEqual(reply['provider'], 'reminders')
+        self.assertIn('Paused routine', reply['content'])
+        self.assertFalse(self.chat.get(self.cid)['intent_state']['holds'])
+        listed = self.say('my routines')['content']
+        active, paused = listed.split('Paused routines')
+        self.assertIn('look up another fixture', active)
+        self.assertIn(self.row['id'], paused)
+        self.assertNotIn(self.row['id'], active)
+        other = next(r for r in self.chat.reminders.listing() if r['id'] != self.row['id'])
+        self.say('cancel routine ' + other['id'])
+        self.chat.close()
+        self.chat = self.new_chat()
+        self.now = self.row['due_at'] + 2 * 86400 + 60
+        self.chat.deliver_reminders()
+        self.actions.handle.assert_not_called()
+        resumed = self.control('resume')
+        self.assertEqual(resumed['provider'], 'reminders')
+        self.assertIn('Resumed routine', resumed['content'])
+        self.chat.deliver_reminders()
+        self.actions.handle.assert_not_called()
+        row = next(r for r in self.chat.reminders.listing() if r['id'] == self.row['id'])
+        self.now = row['due_at']
+        self.chat.deliver_reminders()
+        self.chat.deliver_reminders()
+        self.actions.handle.assert_called_once()
+        self.assertTrue(self.actions.handle.call_args.kwargs['routine'])
+        self.assertIn('Fixture read result', self.chat.history(self.cid)['messages'][-1]['content'])
+        self.assert_no_external_effects()
+
+    def test_global_hold_survives_pause_resume_restart_and_due_tick(self):
+        self.say('Hold all work')
+        held = copy.deepcopy(self.chat.get(self.cid)['intent_state'])
+        self.control('pause')
+        resumed = self.control('resume')
+        self.assertIn('Saved holds still apply', resumed['content'])
+        self.assertEqual(self.chat.get(self.cid)['intent_state'], held)
+        self.chat.close()
+        self.chat = self.new_chat()
+        self.now = self.row['due_at'] + 86400
+        self.actions.handle.reset_mock()
+        self.chat.deliver_reminders()
+        self.actions.handle.assert_not_called()
+        self.assertEqual(self.chat.get(self.cid)['intent_state'], held)
+        self.assertEqual(self.chat.reminders.listing()[0]['occurrences'], 0)
+        self.assert_no_external_effects()
+
+    def test_chat_cross_conversation_control_cancel_and_listing(self):
+        other = self.chat.new_conversation()['id']
+        for command in ('pause', 'resume', 'cancel'):
+            reply = self.control(command, cid=other)
+            self.assertEqual(reply['provider'], 'reminders')
+            self.assertIn('No ', reply['content'])
+            self.assertNotIn(self.row['body'], reply['content'])
+        self.assertNotIn(self.row['id'], self.say('my routines', cid=other)['content'])
+        self.assertEqual(self.chat.reminders.listing()[0], self.row)
+        self.assert_no_external_effects()
+
+    def test_retry_of_same_chat_request_does_not_toggle_state(self):
+        request = str(uuid.uuid4())
+        paused = self.control('pause', request_id=request)
+        self.control('resume')
+        before = copy.deepcopy(self.chat.history(self.cid))
+        self.control('pause', request_id=request)
+        self.assertEqual(self.chat.history(self.cid), before)
+        self.assertEqual(self.chat.reminders.listing()[0]['state'], 'pending')
+        self.assertIn('Paused routine', paused['content'])
+        self.assertEqual(len(self.chat.reminders.listing()), 1)
+        self.assert_no_external_effects()
+
+    def test_control_receipts_exclude_action_body_and_failures_stay_honest(self):
+        # Synthetic stored content only; controls never execute or echo it.
+        marker = 'SYNTHETIC-PRIVATE-ACTION-CONTENT'
+        with self.chat.reminders.locked() as rows:
+            rows[0]['body'] = marker
+            rows[0]['action'] = marker
+            self.chat.reminders.save(rows)
+        for command in ('pause', 'resume'):
+            with patch.object(self.chat.reminders, 'save', side_effect=OSError('disk full')):
+                reply = self.control(command)
+            self.assertIn('requested change was not saved', reply['content'])
+            self.assertNotIn(marker, reply['content'])
+            saved = self.control(command)
+            self.assertNotIn(marker, saved['content'])
+            self.assertEqual(saved['provider'], 'reminders')
+        self.actions.handle.assert_not_called()
+        self.assert_no_external_effects()
+
+    def test_malformed_controls_do_not_change_global_hold_or_enter_model_lane(self):
+        for command in ('pause routine', 'resume routine bad-id', 'pause routine ' + self.row['id'] + ' then resume all'):
+            reply = self.say(command)
+            self.assertEqual(reply['provider'], 'reminders')
+            self.assertIn('Nothing changed', reply['content'])
+            self.assertFalse(self.chat.get(self.cid)['intent_state']['holds'])
+        self.assertEqual(self.chat.reminders.listing()[0], self.row)
+        self.assert_no_external_effects()
 
 
 class MacNotificationTests(unittest.TestCase):
