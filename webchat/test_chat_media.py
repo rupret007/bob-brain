@@ -103,7 +103,12 @@ class ChatMediaTests(unittest.TestCase):
         return media.enrich_for_model(self.root, metas, redact=self.redact, **kwargs)
 
     def test_image_store_without_tesseract_stubs_local_ocr(self):
-        with patch.object(media.shutil, 'which', return_value=None):
+        real_which = shutil.which
+
+        def which(name):
+            return None if name == 'tesseract' else real_which(name)
+
+        with patch.object(media.shutil, 'which', side_effect=which):
             stored = store_media_offline(self.root, png_fixture(), 'dot.png',
                                          conversation_id=self.cid, redact=self.redact)
         self.assertEqual(stored['kind'], 'image')
