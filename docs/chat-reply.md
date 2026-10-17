@@ -9,12 +9,11 @@ States:
 
 - `queued` — registered, not yet sent
 - `in_flight` — transport dispatched; concurrent callers wait until the lease expires
-- `failed_retry` — last attempt raised `ReplyNotSentError`; `next_retry_at` gates the next try
-- `delivered` — receipt stored (or `uncertain:<reply_id>` when the message may already be visible)
+- `failed_retry` — last attempt raised `ReplyNotSentError` or the transport hung past the send timeout; `next_retry_at` gates the next try
+- `uncertain` — the message may already be visible; receipt is `uncertain:<reply_id>` and no further send is attempted
+- `delivered` — transport returned a non-empty receipt
 - `failed` — bounded `ReplyNotSentError` attempts exhausted
 
-Retry policy: only `ReplyNotSentError` schedules another attempt. Timeouts, proxy errors, and
-other ambiguous failures mark `delivered` with an `uncertain:` receipt so a visible message is
-never duplicated. Stale `in_flight` rows (lease elapsed) are recovered on the next `deliver`.
+Retry policy: only `ReplyNotSentError` and send timeouts (before the adapter runs) schedule another attempt. Adapter failures that may have posted, empty receipts, stale `in_flight` leases, and `CancelledError` surface `uncertain` so a visible message is never duplicated.
 
 Runtime wiring into Web Bob chat remains integration work on a later branch.

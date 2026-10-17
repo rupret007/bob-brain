@@ -63,8 +63,7 @@ class ChatReplyTests(unittest.IsolatedAsyncioTestCase):
 
     def test_deliver_passes_reply_id_to_transport(self):
         source = inspect.getsource(ChatReplyJournal.deliver)
-        after_send = source.split("send(")[1][:24]
-        self.assertIn("reply_id", after_send)
+        self.assertIn("guarded_send(reply_id, body)", source)
 
     async def test_transient_not_sent_surfaces_failed_retry_then_backoff(self):
         send = AsyncMock(side_effect=[ReplyNotSentError("offline"), "transport:ok"])
@@ -149,7 +148,7 @@ class ChatReplyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["state"], "in_flight")
         send.assert_not_awaited()
 
-    async def test_stale_in_flight_recovers_on_deliver(self):
+    async def test_stale_in_flight_surfaces_uncertain_without_resend(self):
         self.journal.prepare("reply-3", "y")
         with self.journal.db() as db:
             db.execute(
@@ -158,8 +157,9 @@ class ChatReplyTests(unittest.IsolatedAsyncioTestCase):
             )
         send = AsyncMock(return_value="transport:recovered")
         result = await self.journal.deliver("reply-3", "y", send, now=999_999.0)
-        self.assertEqual(result["state"], "delivered")
-        send.assert_awaited_once_with("reply-3", "y")
+        self.assertEqual(result["state"], "uncertain")
+        self.assertEqual(result["receipt"], "uncertain:reply-3")
+        send.assert_not_awaited()
 
     async def test_uncertain_transport_failure_does_not_retry_visible_reply(self):
         visible = []
@@ -173,10 +173,10 @@ class ChatReplyTests(unittest.IsolatedAsyncioTestCase):
             return "transport:ok"
 
         first = await self.journal.deliver("reply-1", "hello Jeff", send_delivered_then_timeout, now=0.0)
-        self.assertEqual(first["state"], "delivered")
-        self.assertTrue(first["receipt"].startswith("uncertain:"))
+        self.assertEqual(first["state"], "uncertain")
+        self.assertEqual(first["receipt"], "uncertain:reply-1")
         second = await self.journal.deliver("reply-1", "hello Jeff", ok, now=999_999.0)
-        self.assertEqual(second["state"], "delivered")
+        self.assertEqual(second["state"], "uncertain")
         self.assertEqual(len(visible), 1)
 
     async def test_proxy_error_after_commit_treated_as_delivered_without_resend(self):
@@ -187,10 +187,10 @@ class ChatReplyTests(unittest.IsolatedAsyncioTestCase):
             raise RuntimeError("502 Bad Gateway from proxy after upstream commit")
 
         first = await self.journal.deliver("reply-1", "hello Jeff", send_5xx_after_commit, now=0.0)
-        self.assertEqual(first["state"], "delivered")
+        self.assertEqual(first["state"], "uncertain")
         send = AsyncMock(return_value="transport:dup")
         again = await self.journal.deliver("reply-1", "hello Jeff", send, now=999_999.0)
-        self.assertEqual(again["state"], "delivered")
+        self.assertEqual(again["state"], "uncertain")
         self.assertEqual(len(visible), 1)
         send.assert_not_awaited()
 
@@ -212,11 +212,18 @@ class ChatReplyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(visible), 1)
         self.assertEqual(sum(r["state"] == "delivered" for r in results), 1)
 
-    async def test_empty_transport_receipt_rejected(self):
-        send = AsyncMock(return_value="")
-        result = await self.journal.deliver("reply-1", "body", send, now=1.0)
-        self.assertEqual(result["state"], "failed_retry")
-        self.assertEqual(send.await_count, 1)
+    async def test_empty_transport_receipt_surfaces_uncertain_without_resend(self):
+        visible = []
+
+        async def post_empty_receipt(reply_id, body):
+            visible.append(body)
+            return ""
+
+        first = await self.journal.deliver("reply-1", "body", post_empty_receipt, now=1.0)
+        self.assertEqual(first["state"], "uncertain")
+        replay = await self.journal.deliver("reply-1", "body", AsyncMock(return_value="transport:late"), now=999.0)
+        self.assertEqual(replay["state"], "uncertain")
+        self.assertEqual(len(visible), 1)
 
     async def test_hung_transport_times_out(self):
         async def hang(reply_id, body):
@@ -227,8 +234,8 @@ class ChatReplyTests(unittest.IsolatedAsyncioTestCase):
             result = await self.journal.deliver("reply-1", "body", hang, now=1.0)
             elapsed = asyncio.get_event_loop().time() - started
         self.assertLess(elapsed, 2.0)
-        self.assertEqual(result["state"], "delivered")
-        self.assertTrue(result["receipt"].startswith("uncertain:"))
+        self.assertEqual(result["state"], "failed_retry")
+        self.assertIsNone(result["receipt"])
 
     async def test_restart_preserves_delivered_receipt_without_resend(self):
         send = AsyncMock(return_value="transport:persist")
@@ -248,6 +255,44 @@ class ChatReplyTests(unittest.IsolatedAsyncioTestCase):
     def test_store_file_permissions(self):
         mode = self.path.stat().st_mode & 0o777
         self.assertEqual(mode, 0o600)
+
+    def test_symlink_reply_store_rejected(self):
+        link = self.path.parent / "linked.sqlite"
+        link.symlink_to(self.path)
+        with self.assertRaises(ChatReplyError):
+            ChatReplyJournal(link, self.CONV)
+
+    async def test_chat_reply_error_after_post_surfaces_uncertain_without_retry(self):
+        visible = []
+
+        async def post_then_error(reply_id, body):
+            visible.append(body)
+            raise ChatReplyError("adapter validation")
+
+        first = await self.journal.deliver("reply-1", "body", post_then_error, now=1.0)
+        self.assertEqual(first["state"], "uncertain")
+        self.assertNotEqual(first["state"], "failed_retry")
+        send = AsyncMock(return_value="transport:late")
+        again = await self.journal.deliver("reply-1", "body", send, now=999.0)
+        self.assertEqual(again["state"], "uncertain")
+        self.assertEqual(len(visible), 1)
+        send.assert_not_awaited()
+
+    async def test_cancelled_error_surfaces_uncertain_and_propagates(self):
+        visible = []
+
+        async def post_cancel(reply_id, body):
+            visible.append(body)
+            raise asyncio.CancelledError()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await self.journal.deliver("reply-1", "body", post_cancel, now=1.0)
+        self.assertEqual(self.journal.status("reply-1")["state"], "uncertain")
+        send = AsyncMock(return_value="transport:late")
+        again = await self.journal.deliver("reply-1", "body", send, now=999.0)
+        self.assertEqual(again["state"], "uncertain")
+        self.assertEqual(len(visible), 1)
+        send.assert_not_awaited()
 
 
 if __name__ == "__main__":

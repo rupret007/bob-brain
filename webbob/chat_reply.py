@@ -74,12 +74,25 @@ class ChatReplyJournal:
         return {"id": row["id"], "state": row["state"], "receipt": row["receipt"],
                 "attempts": row["attempts"], "next_retry_at": row["next_retry_at"]}
 
-    def _mark_uncertain_delivered(self, reply_id, now):
+    def _mark_uncertain(self, reply_id, now):
         receipt = f"uncertain:{reply_id}"
         with self.db() as db:
             db.execute(
-                "UPDATE replies SET state='delivered', receipt=?, next_retry_at=NULL, updated_at=? WHERE id=?",
+                "UPDATE replies SET state='uncertain', receipt=?, next_retry_at=NULL, updated_at=? WHERE id=?",
                 (receipt, now, reply_id),
+            )
+            row = self._row(db, reply_id)
+        return self._snapshot(row)
+
+    def _mark_send_timeout(self, reply_id, attempts, now):
+        delay = retry_delay(attempts)
+        next_at = now + delay
+        terminal = attempts >= MAX_ATTEMPTS
+        state = "failed" if terminal else "failed_retry"
+        with self.db() as db:
+            db.execute(
+                """UPDATE replies SET state=?, receipt=NULL, next_retry_at=?, updated_at=? WHERE id=?""",
+                (state, None if terminal else next_at, now, reply_id),
             )
             row = self._row(db, reply_id)
         return self._snapshot(row)
@@ -115,11 +128,19 @@ class ChatReplyJournal:
         self.prepare(reply_id, body)
         with self.db() as db:
             row = self._row(db, reply_id)
-            if row["state"] == "delivered":
+            if row["state"] in ("delivered", "uncertain"):
                 return self._snapshot(row)
             if row["state"] == "failed":
                 return self._snapshot(row)
             if row["state"] == "in_flight" and now < row["updated_at"] + IN_FLIGHT_LEASE_SECONDS:
+                return self._snapshot(row)
+            if row["state"] == "in_flight":
+                receipt = f"uncertain:{reply_id}"
+                db.execute(
+                    "UPDATE replies SET state='uncertain', receipt=?, next_retry_at=NULL, updated_at=? WHERE id=?",
+                    (receipt, now, reply_id),
+                )
+                row = self._row(db, reply_id)
                 return self._snapshot(row)
             if row["state"] == "failed_retry" and row["next_retry_at"] is not None and now < row["next_retry_at"]:
                 return self._snapshot(row)
@@ -130,10 +151,22 @@ class ChatReplyJournal:
             attempts = row["attempts"] + 1
             db.execute("UPDATE replies SET state='in_flight', attempts=?, updated_at=? WHERE id=?",
                        (attempts, now, reply_id))
+        effect_may_be_visible = False
+
+        async def guarded_send(rid, payload):
+            nonlocal effect_may_be_visible
+            try:
+                return await send(rid, payload)
+            except asyncio.CancelledError:
+                raise
+            except BaseException:
+                effect_may_be_visible = True
+                raise
+
         try:
-            receipt = await asyncio.wait_for(send(reply_id, body), SEND_TIMEOUT_SECONDS)
+            receipt = await asyncio.wait_for(guarded_send(reply_id, body), SEND_TIMEOUT_SECONDS)
             if not isinstance(receipt, str) or not receipt:
-                raise ChatReplyError("transport receipt required")
+                return self._mark_uncertain(reply_id, now)
         except ReplyNotSentError:
             delay = retry_delay(attempts)
             next_at = now + delay
@@ -145,16 +178,18 @@ class ChatReplyJournal:
                 row = self._row(db, reply_id)
             return self._snapshot(row)
         except ChatReplyError:
-            delay = retry_delay(attempts)
-            next_at = now + delay
-            state = "failed_retry" if attempts < MAX_ATTEMPTS else "failed"
-            with self.db() as db:
-                db.execute("""UPDATE replies SET state=?, receipt=NULL, next_retry_at=?, updated_at=? WHERE id=?""",
-                           (state, None if state == "failed" else next_at, now, reply_id))
-                row = self._row(db, reply_id)
-            return self._snapshot(row)
+            return self._mark_uncertain(reply_id, now)
+        except asyncio.CancelledError:
+            self._mark_uncertain(reply_id, now)
+            raise
+        except asyncio.TimeoutError:
+            if effect_may_be_visible:
+                return self._mark_uncertain(reply_id, now)
+            return self._mark_send_timeout(reply_id, attempts, now)
         except Exception:
-            return self._mark_uncertain_delivered(reply_id, now)
+            if effect_may_be_visible:
+                return self._mark_uncertain(reply_id, now)
+            return self._mark_send_timeout(reply_id, attempts, now)
         with self.db() as db:
             db.execute("UPDATE replies SET state='delivered', receipt=?, next_retry_at=NULL, updated_at=? WHERE id=?",
                        (receipt, now, reply_id))

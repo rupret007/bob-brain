@@ -23,7 +23,15 @@ class ChatReplyMutationGate(unittest.TestCase):
                     self.fail(f"{mutation['name']}: expected one match, found {count}")
                 TARGET.write_text(orig.replace(mutation["old"], mutation["new"], 1))
                 proc = subprocess.run(
-                    [sys.executable, "-m", "unittest", "tests.test_chat_reply", "tests.test_chat_reply_karen_repro", "-q"],
+                    [
+                        sys.executable,
+                        "-m",
+                        "unittest",
+                        "tests.test_chat_reply",
+                        "tests.test_chat_reply_karen_repro",
+                        "tests.test_chat_reply_p158_karen",
+                        "-q",
+                    ],
                     cwd=REPO_ROOT,
                     capture_output=True,
                     text=True,

@@ -1,5 +1,5 @@
 [
-{"name":"N1 delivered guard off","old":"            if row[\"state\"] == \"delivered\":\n                return self._snapshot(row)","new":"            pass"},
+{"name":"N1 delivered guard off","old":"            if row[\"state\"] in (\"delivered\", \"uncertain\"):\n                return self._snapshot(row)","new":"            pass"},
 {"name":"N2 in_flight lease guard off","old":"            if row[\"state\"] == \"in_flight\" and now < row[\"updated_at\"] + IN_FLIGHT_LEASE_SECONDS:\n                return self._snapshot(row)","new":"            pass"},
 {"name":"N3 failed guard off","old":"            if row[\"state\"] == \"failed\":\n                return self._snapshot(row)","new":"            pass"},
 {"name":"N4 backoff gate off","old":" and now < row[\"next_retry_at\"]","new":" and False"},
@@ -8,9 +8,9 @@
 {"name":"N7 body-digest reuse check off","old":"if prior[\"body_digest\"] != digest:","new":"if False:"},
 {"name":"N8 conversation ownership off","old":"if row[\"conversation\"] != self.conversation:","new":"if False:"},
 {"name":"N9 receipt type check off","old":"if not isinstance(receipt, str) or not receipt:","new":"if False:"},
-{"name":"N10 terminal never","old":"terminal = attempts >= MAX_ATTEMPTS","new":"terminal = False"},
+{"name":"N10 terminal never","old":"        except ReplyNotSentError:\n            delay = retry_delay(attempts)\n            next_at = now + delay\n            terminal = attempts >= MAX_ATTEMPTS","new":"        except ReplyNotSentError:\n            delay = retry_delay(attempts)\n            next_at = now + delay\n            terminal = False"},
 {"name":"N11 MAX_ATTEMPTS 10","old":"MAX_ATTEMPTS = 3","new":"MAX_ATTEMPTS = 10"},
-{"name":"N12 no timeout","old":"await asyncio.wait_for(send(reply_id, body), SEND_TIMEOUT_SECONDS)","new":"await send(reply_id, body)"},
+{"name":"N12 no timeout","old":"await asyncio.wait_for(guarded_send(reply_id, body), SEND_TIMEOUT_SECONDS)","new":"await guarded_send(reply_id, body)"},
 {"name":"N13 id regex any","old":"r\"[a-zA-Z0-9_.:-]{1,100}\"","new":"r\"(?s).*\""},
 {"name":"N14 body len unbounded","old":"len(body) > 32_000","new":"False"}
 ]

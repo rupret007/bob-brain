@@ -35,8 +35,8 @@ class KarenR158Repro(unittest.TestCase):
                 journal = ChatReplyJournal(Path(tempfile.mkdtemp()) / "r.sqlite", "bob-chat:conv-1")
                 a = await journal.deliver("reply-1", "hello Jeff", first_send, now=0)
                 b = await journal.deliver("reply-1", "hello Jeff", ok, now=a["next_retry_at"] or 999_999)
-                self.assertEqual(a["state"], "delivered", name)
-                self.assertEqual(b["state"], "delivered", name)
+                self.assertEqual(a["state"], "uncertain", name)
+                self.assertEqual(b["state"], "uncertain", name)
                 self.assertEqual(len(visible), 1, name)
 
             visible.clear()
@@ -62,11 +62,11 @@ class KarenR158Repro(unittest.TestCase):
             with journal.db() as db:
                 db.execute("UPDATE replies SET state='in_flight', attempts=1, updated_at=0 WHERE id='reply-3'")
             r = await journal.deliver("reply-3", "y", ok, now=999_999)
-            self.assertEqual(r["state"], "delivered")
-            self.assertEqual(len(visible), 1)
+            self.assertEqual(r["state"], "uncertain")
+            self.assertEqual(len(visible), 0)
 
-            fragment = inspect.getsource(chat_reply.ChatReplyJournal.deliver).split("send(")[1][:20]
-            self.assertIn("reply_id", fragment)
+            source = inspect.getsource(chat_reply.ChatReplyJournal.deliver)
+            self.assertIn("guarded_send(reply_id, body)", source)
 
         asyncio.run(main())
 
