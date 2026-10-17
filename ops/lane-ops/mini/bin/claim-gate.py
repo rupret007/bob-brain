@@ -6,6 +6,13 @@ Usage:
                        [--files a,b] [--branch BR] [--pr N] [--ttl-min 180]
   claim-gate.py pre-pr --repo OWNER/R --work-id ID --title T --owner O --branch BR [--files a,b]
   claim-gate.py release --repo OWNER/R --work-id ID --owner O [--status DONE] [--pr URL]
+  claim-gate.py release --claim FILE --owner O [--status DONE]      (lane-ops v2: release one exact claim)
+  claim-gate.py renew   --claim FILE --owner O                      (lane-ops v2: heartbeat a lease)
+
+Leases (lane-ops v2): `claim --lease-s N` adds heartbeat + lease_s to the claim. A leased claim stops
+blocking work N seconds after its last heartbeat even if its TTL is hours away, so a killed lane (screen
+quit, kill -9, reboot) frees its work in minutes, not hours. lane-lease.sh renews and releases for you.
+Claims without lease_s behave exactly as before.
 
 Exit codes (callers MUST treat anything but 0 as "do not start / do not open a PR"):
   0  CLAIMED / OK_TO_CREATE
@@ -61,6 +68,21 @@ def gh_pr(repo, n):
     if r.returncode != 0: raise RuntimeError("gh pr view failed: " + r.stderr.strip()[:300])
     return json.loads(r.stdout)
 
+def lease_dead(j, at=None):
+    """True when a leased claim's heartbeat is older than its lease (legacy claims never lease-expire)."""
+    try:
+        lease = float(j.get("lease_s") or 0)
+    except (TypeError, ValueError):
+        return False
+    if lease <= 0:
+        return False
+    try:
+        hb = dt.datetime.fromisoformat(j.get("heartbeat") or j.get("created") or "1970-01-01T00:00:00+00:00")
+    except (TypeError, ValueError):
+        return True
+    if hb.tzinfo is None: hb = hb.replace(tzinfo=dt.timezone.utc)
+    return ((at or now()) - hb).total_seconds() > lease
+
 def latest_by_key():
     best = {}
     for f in glob.glob(os.path.join(CLAIMS, "*.json")):
@@ -77,7 +99,7 @@ def live_claims():
         try: e = dt.datetime.fromisoformat(j.get("expires", "1970-01-01T00:00:00+00:00"))
         except Exception: continue
         if e.tzinfo is None: e = e.replace(tzinfo=dt.timezone.utc)
-        if e < now() or str(j.get("status", "")).upper() in DONE: continue
+        if e < now() or str(j.get("status", "")).upper() in DONE or lease_dead(j): continue
         j["_file"] = f; out_.append(j)
     return out_
 
@@ -121,6 +143,8 @@ def write_claim(a, status, files, extra=None):
              files=sorted(files), pr_target=str(a.pr or ""), status=status,
              expires=(now() + dt.timedelta(minutes=a.ttl_min)).isoformat(), next_handoff=a.owner,
              evidence=[], created=now().isoformat())
+    if getattr(a, "lease_s", 0):
+        j.update(lease_s=int(a.lease_s), heartbeat=now().isoformat())
     if extra: j.update(extra)
     p = os.path.join(CLAIMS, "gate-%s-%s-%s-%s.json" % (norm_id(a.repo.split("/")[-1]), norm_id(a.work_id)[:60], norm_id(a.owner), ts))
     tmp = p + ".tmp"; json.dump(j, open(tmp, "w")); os.rename(tmp, p)
@@ -165,21 +189,54 @@ def cmd_prepr(a):
             if why: out("SKIP", 10, reason="open PR: " + why, pr=p["number"], title=p["title"])
         out("OK_TO_CREATE", 0)
 
+def own_claim(a):
+    """Load --claim FILE; it must live in CLAIMS and belong to --owner."""
+    path = os.path.realpath(a.claim)
+    if os.path.dirname(path) != os.path.realpath(CLAIMS) or not path.endswith(".json"):
+        out("BLOCKED", 3, reason="claim file is not in the claims folder")
+    j = json.load(open(path))
+    if j.get("owner") != a.owner: out("BLOCKED", 3, reason="claim belongs to %s, not %s" % (j.get("owner"), a.owner))
+    return path, j
+
+def rewrite(path, j):
+    tmp = path + ".tmp"; json.dump(j, open(tmp, "w")); os.rename(tmp, path)
+
+def cmd_renew(a):
+    with Lock():
+        path, j = own_claim(a)
+        if str(j.get("status", "")).upper() in DONE: out("BLOCKED", 3, reason="claim already %s" % j.get("status"))
+        if lease_dead(j): out("BLOCKED", 3, reason="lease already expired; claim again")
+        j["heartbeat"] = now().isoformat()
+        rewrite(path, j)
+        out("RENEWED", 0, claim=path, heartbeat=j["heartbeat"])
+
 def cmd_release(a):
+    if a.claim:
+        with Lock():
+            path, j = own_claim(a)
+            j.update(status=a.status, released=now().isoformat())
+            rewrite(path, j)
+            out("RELEASED", 0, claim=path)
+    if not (a.repo and a.work_id): out("BLOCKED", 3, reason="release needs --claim or --repo and --work-id")
     with Lock():
         f = write_claim(a, a.status, set(), dict(pr=a.pr_url or ""))
         out("RELEASED", 0, claim=f)
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["claim", "pre-pr", "release"])
-    ap.add_argument("--repo", required=True); ap.add_argument("--work-id", required=True)
+    ap.add_argument("cmd", choices=["claim", "pre-pr", "release", "renew"])
+    ap.add_argument("--repo", default=""); ap.add_argument("--work-id", default="")
+    ap.add_argument("--claim", default=""); ap.add_argument("--lease-s", type=int, default=0)
     ap.add_argument("--title", default=""); ap.add_argument("--owner", required=True)
     ap.add_argument("--lane", default=""); ap.add_argument("--files", default="")
     ap.add_argument("--branch", default=""); ap.add_argument("--pr", default="")
     ap.add_argument("--pr-url", default=""); ap.add_argument("--status", default="DONE")
     ap.add_argument("--ttl-min", type=int, default=180)
     a = ap.parse_args()
+    if a.cmd == "renew" or (a.cmd == "release" and a.claim):
+        if not a.claim: out("BLOCKED", 3, reason="--claim required")
+        {"renew": cmd_renew, "release": cmd_release}[a.cmd](a)
+    if not a.repo or not a.work_id: out("BLOCKED", 3, reason="--repo and --work-id required")
     if a.cmd != "release" and not a.title and not a.pr: out("BLOCKED", 3, reason="--title or --pr required")
     if "/" not in a.repo: out("BLOCKED", 3, reason="--repo must be OWNER/NAME")
     {"claim": cmd_claim, "pre-pr": cmd_prepr, "release": cmd_release}[a.cmd](a)

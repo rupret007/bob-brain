@@ -31,7 +31,12 @@ nc(){ ps -Ao comm,args | awk '$1 ~ /codex$/ && / exec /' | wc -l | tr -d ' '; }
 is_active(){ screen -ls 2>/dev/null | grep -qE "lane-(q|codex|codex-nuc|cursor|gemini|claude|minimax)-$1[[:space:]]"; }
 
 PF=~/lane-wt/logs/.fill.pid   # v6.1 singleton: orphaned loops caused double starts
-if [[ -f $PF ]] && op=$(cat $PF) && [[ $op != $$ ]] && ps -p $op -o args= 2>/dev/null | grep -q fill.sh; then echo "$(date) fill: another loop pid $op running; exit" >> $L; exit 0; fi
+# lane-ops v2: atomic singleton. The pidfile check above was check-then-write, so two loops started together both won
+# (5 loops ran at once on 10/16). zsystem flock holds an OS lock for the life of this shell; the kernel drops it when
+# the loop dies (no stale lock), and zsh closes the fd on exec so screen children never inherit it.
+zmodload zsh/system || { echo "$(date) fill: zsh/system unavailable; refusing to start without a lock" >> $L; exit 1; }
+FILL_LOCK=${FILL_LOCK:-~/lane-wt/logs/.fill.lock}; : >> $FILL_LOCK
+if ! zsystem flock -t 0 -f FILL_LOCK_FD $FILL_LOCK 2>/dev/null; then echo "$(date) fill: another loop holds $FILL_LOCK (pid $(cat $PF 2>/dev/null)); exit" >> $L; exit 0; fi
 echo $$ > $PF
 echo "$(date) fill v5 start (continuous; low-water=$LOW)" >> $L
 
@@ -115,8 +120,11 @@ while true; do
   fi
 
   LOG=~/lane-wt/logs/q-$j.log
-  claimf=$(print -r -- "$lease_out" | python3 -c 'import json,sys;print(json.loads(sys.stdin.read()).get("claim",""))' 2>/dev/null)
+  claimf=$(print -r -- "$lease_out" | python3 -c 'import json,sys;print(json.loads(sys.stdin.read().strip().splitlines()[-1]).get("claim",""))' 2>/dev/null)   # lane-ops v2: last JSON line (log lines before it broke the parse -> claim never released)
   REL=""; [[ -n $claimf && $claimf == */coord/claims/* ]] && REL="; mv -f '$claimf' ~/Documents/bob-overnight-inject/coord/claims-released/ 2>/dev/null"   # v6.1: release claim when the lane exits
+  # lane-ops v2: hold the claim as a heartbeat lease for the life of the screen; lane-lease.sh releases it on any exit
+  # (incl. screen -X quit). The old mv-on-exit (REL) only ran on a clean exit, so killed lanes held claims for 5 h.
+  LW=(); [[ -n $REL && -x ~/lane-wt/logs/lane-lease.sh ]] && { LW=(~/lane-wt/logs/lane-lease.sh $claimf - --); REL=""; }
   FIN="echo EXIT \$? \$(date) >> $LOG; ~/lane-wt/logs/lane-result.sh $LOG $j$REL"   # v6.4 recover RESULT
   case $prov in
     codex)
@@ -124,26 +132,26 @@ while true; do
       chost=$(codex_host_pick 2>/dev/null || echo mini)
       if [[ $chost == nuc ]]; then
         ${=SSH} "mkdir -p ~/work/results ~/work/q-$j && cat > ~/work/results/q-$j.prompt" < ~/lane-wt/logs/q-$j.prompt
-        screen -dmS lane-codex-nuc-$j zsh -c "$SSH 'bash -l ~/nuc-tools/lane-run-codex.sh q-$j $eff' > $LOG 2>&1; $FIN"
+        screen -dmS lane-codex-nuc-$j $LW zsh -c "$SSH 'bash -l ~/nuc-tools/lane-run-codex.sh q-$j $eff' > $LOG 2>&1; $FIN"
         printf "%s\t%s\tcodex-nuc\t%s\tstart\n" "$(date +%F\ %T)" $j $eff >> $CODEX_LOG
         echo "$(date) fill codex host=nuc model=${CODEX_MODEL:-gpt-6-astra} effort=$eff job=$j" >> $L
       else
         w=~/lane-wt/q-$j; mkdir -p $w
-        screen -dmS lane-codex-$j zsh -c "cd $w && codex exec -c model_reasoning_effort=$eff --skip-git-repo-check -C $w \"\$(cat ~/lane-wt/logs/q-$j.prompt)\" </dev/null > $LOG 2>&1; $FIN"
+        screen -dmS lane-codex-$j $LW zsh -c "cd $w && codex exec -c model_reasoning_effort=$eff --skip-git-repo-check -C $w \"\$(cat ~/lane-wt/logs/q-$j.prompt)\" </dev/null > $LOG 2>&1; $FIN"
         printf "%s\t%s\tcodex\t%s\tstart\n" "$(date +%F\ %T)" $j $eff >> $CODEX_LOG
         echo "$(date) fill codex host=mini effort=$eff job=$j" >> $L
       fi;;
     gemini)
-      screen -dmS lane-gemini-$j zsh -c "~/lane-wt/logs/gemini-lane.sh $j > $LOG 2>&1; $FIN";;
+      screen -dmS lane-gemini-$j $LW zsh -c "~/lane-wt/logs/gemini-lane.sh $j > $LOG 2>&1; $FIN";;
     claude)
       w=~/lane-wt/q-$j; mkdir -p $w
-      screen -dmS lane-claude-$j zsh -c "cd $w && /opt/homebrew/bin/claude -p --model sonnet --permission-mode acceptEdits --allowedTools 'Read,Edit,Write,Glob,Grep,Bash(git:*),Bash(gh:*),Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(pytest:*),Bash(python3:*)' \"\$(cat ~/lane-wt/logs/q-$j.prompt)\" </dev/null > $LOG 2>&1; $FIN";;
+      screen -dmS lane-claude-$j $LW zsh -c "cd $w && /opt/homebrew/bin/claude -p --model sonnet --permission-mode acceptEdits --allowedTools 'Read,Edit,Write,Glob,Grep,Bash(git:*),Bash(gh:*),Bash(npm:*),Bash(npx:*),Bash(node:*),Bash(pytest:*),Bash(python3:*)' \"\$(cat ~/lane-wt/logs/q-$j.prompt)\" </dev/null > $LOG 2>&1; $FIN";;
     cursor)
       m=$CURSOR_MODEL   # v5.3: only composer-2.5 is usable on Cursor until 10/21
       ${=SSH} "mkdir -p ~/work/results && cat > ~/work/results/q-$j.prompt" < ~/lane-wt/logs/q-$j.prompt
-      screen -dmS lane-$prov-$j zsh -c "$SSH 'bash -l ~/nuc-tools/lane-run-q.sh q-$j $m' > $LOG 2>&1; $FIN";;
+      screen -dmS lane-$prov-$j $LW zsh -c "$SSH 'bash -l ~/nuc-tools/lane-run-q.sh q-$j $m' > $LOG 2>&1; $FIN";;
     minimax)
-      screen -dmS lane-minimax-$j zsh -c "~/Documents/bob-overnight-inject/bin/review-tip-minimax.sh ~/lane-wt/logs/q-$j.prompt ~/lane-wt/logs/q-$j.minimax.md > $LOG 2>&1; cat ~/lane-wt/logs/q-$j.minimax.md >> $LOG 2>/dev/null; echo 'RESULT minimax-critique' >> $LOG; $FIN";;
+      screen -dmS lane-minimax-$j $LW zsh -c "~/Documents/bob-overnight-inject/bin/review-tip-minimax.sh ~/lane-wt/logs/q-$j.prompt ~/lane-wt/logs/q-$j.minimax.md > $LOG 2>&1; cat ~/lane-wt/logs/q-$j.minimax.md >> $LOG 2>/dev/null; echo 'RESULT minimax-critique' >> $LOG; $FIN";;
   esac
   printf "%s\t%s\t%s\t%s\n" "$(date +%F\ %T)" $j $prov $tier >> ~/lane-wt/logs/provider-usage.tsv
   echo "$(date +%s) $j" >> ~/lane-wt/logs/.fill-started-recent

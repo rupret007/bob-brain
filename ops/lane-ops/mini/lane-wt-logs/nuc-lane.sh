@@ -12,8 +12,17 @@ echo "LANE provider=$PROV tier=$TIER model=$M effort=$EFF" >>$L; printf "%s\t%s\
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=30 -i $HOME/.ssh/nuc_ed25519 -p 2222 rupret@nuc-wsl"
 [ -n "$WAIT" ] && while screen -ls | grep -q "\.$WAIT[[:space:]]"; do sleep 30; done
 LANE_TAG=cursor-$N; [ "$PROV" = codex ] && LANE_TAG=codex-$N
-for i in 1 2 3 4 5 6; do python3 $G claim --repo rupret007/$R --work-id $W ${PRNUM:+--pr $PRNUM} --title "$N" --owner grok-exec-games-1616 --lane $LANE_TAG --ttl-min 300 >>$L 2>&1; rc=$?; [ $rc = 3 ] && { sleep 300; continue; }; break; done
+for i in 1 2 3 4 5 6; do python3 $G claim --repo rupret007/$R --work-id $W ${PRNUM:+--pr $PRNUM} --title "$N" --owner grok-exec-games-1616 --lane $LANE_TAG --ttl-min 300 --lease-s ${LANE_LEASE_S:-900} >$L.claim 2>&1; rc=$?; cat $L.claim >>$L; [ $rc = 3 ] && { sleep 300; continue; }; break; done
 case $rc in 0|11) ;; *) echo "CLAIM rc=$rc, not starting" >>$L; exit;; esac
+# lane-ops v2: heartbeat the lease while this lane runs and release it on every exit path (was: held for the full
+# 300-min TTL after the lane finished, which blocked follow-up work for ~5 h on 10/16).
+CF=$(python3 -c 'import json,sys;print(json.loads(open(sys.argv[1]).read().strip().splitlines()[-1]).get("claim",""))' $L.claim 2>/dev/null)
+if [ -n "$CF" ]; then
+  ( while sleep ${LANE_LEASE_EVERY:-300}; do python3 $G renew --claim "$CF" --owner grok-exec-games-1616 >/dev/null 2>&1 || exit 0; done ) & RP=$!
+  ST=FAILED
+  trap 'kill $RP 2>/dev/null; python3 $G release --claim "$CF" --owner grok-exec-games-1616 --status $ST >>$L 2>&1' EXIT
+  trap 'exit 143' HUP INT TERM
+fi
 P=$(cat ~/lane-wt/logs/$N.prompt)
 lane_preflight >>$L 2>&1 || { echo "PREFLIGHT FAILED, not starting" >>$L; exit 1; }
 if $SSH true 2>/dev/null; then
@@ -45,3 +54,4 @@ if [ -z "$PR" ]; then
   PR=$(gh pr create -R rupret007/$R --draft --head $B --base $BASE --title "$N" --body "$PROV $M lane ($TIER) $N (NucBox). See commits. Do not merge before Karen gate." | grep -oE '[0-9]+$')
 fi
 echo "RESULT pr=$PR head=$HEAD $(date)" >>$L
+ST=DONE

@@ -9,6 +9,7 @@ mini/lane-wt-logs/fill.sh	mini	~/lane-wt/logs/fill.sh
 mini/lane-wt-logs/gemini-direct.py	mini	~/lane-wt/logs/gemini-direct.py
 mini/lane-wt-logs/gemini-feed.py	mini	~/lane-wt/logs/gemini-feed.py
 mini/lane-wt-logs/gemini-lane.sh	mini	~/lane-wt/logs/gemini-lane.sh
+mini/lane-wt-logs/lane-lease.sh	mini	~/lane-wt/logs/lane-lease.sh
 mini/lane-wt-logs/lane-result.sh	mini	~/lane-wt/logs/lane-result.sh
 mini/lane-wt-logs/lane-route.conf	mini	~/lane-wt/logs/lane-route.conf
 mini/lane-wt-logs/lane-route.sh	mini	~/lane-wt/logs/lane-route.sh
@@ -23,6 +24,8 @@ mini/bin/mini-offload.sh	mini	~/bin/mini-offload.sh
 mini/bin/nuc-verify	mini	~/bin/nuc-verify
 mini/bin/nucbox-backup.sh	mini	~/bin/nucbox-backup.sh
 mini/bin/nucbox-post-reboot-check.sh	mini	~/bin/nucbox-post-reboot-check.sh
+nucbox/nuc-tools/apply-edits.py	nucbox	~/nuc-tools/apply-edits.py
+nucbox/nuc-tools/gat-policy.py	nucbox	~/nuc-tools/gat-policy.py
 nucbox/nuc-tools/gemini-apply-test.sh	nucbox	~/nuc-tools/gemini-apply-test.sh
 nucbox/nuc-tools/gemini-ctx.sh	nucbox	~/nuc-tools/gemini-ctx.sh
 nucbox/nuc-tools/lane-run-q.sh	nucbox	~/nuc-tools/lane-run-q.sh
@@ -36,3 +39,5 @@ nucbox/systemd/bob-cluster-worker.service	nucbox	~/.config/systemd/user/bob-clus
 nucbox/systemd/bob-cluster.target	nucbox	~/.config/systemd/user/bob-cluster.target
 nucbox/systemd/bob-live.service	nucbox	~/.config/systemd/user/bob-live.service
 nucbox/systemd/bob-nats.service	nucbox	~/.config/systemd/user/bob-nats.service
+nucbox/nuc-tools/codex-win.sh	nucbox	~/nuc-tools/codex-win.sh
+nucbox/nuc-tools/lane-run-codex.sh	nucbox	~/nuc-tools/lane-run-codex.sh

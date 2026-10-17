@@ -92,6 +92,26 @@ def now():
     return dt.datetime.now(dt.timezone.utc)
 
 
+LEASE_S = os.environ.get("LANE_LEASE_S", "900")  # lane-ops v2: heartbeat lease; lane-lease.sh renews every 300 s
+
+
+def lease_dead(j):
+    """lane-ops v2: same rule as claim-gate.lease_dead (heartbeat older than lease_s)."""
+    try:
+        lease = float(j.get("lease_s") or 0)
+    except (TypeError, ValueError):
+        return False
+    if lease <= 0:
+        return False
+    try:
+        hb = dt.datetime.fromisoformat(j.get("heartbeat") or j.get("created") or "1970-01-01T00:00:00+00:00")
+    except (TypeError, ValueError):
+        return True
+    if hb.tzinfo is None:
+        hb = hb.replace(tzinfo=dt.timezone.utc)
+    return (now() - hb).total_seconds() > lease
+
+
 def live_claims():
     out = []
     best = {}
@@ -111,7 +131,7 @@ def live_claims():
             continue
         if e.tzinfo is None:
             e = e.replace(tzinfo=dt.timezone.utc)
-        if e < now() or str(j.get("status", "")).upper() in DONE:
+        if e < now() or str(j.get("status", "")).upper() in DONE or lease_dead(j):
             continue
         j = dict(j)
         j["_file"] = f
@@ -179,6 +199,8 @@ def claim_repo(repo, work_id, title, pr=None):
         LANE,
         "--ttl-min",
         "300",
+        "--lease-s",
+        LEASE_S,
     ]
     if pr is not None:
         args += ["--pr", str(pr)]
@@ -230,7 +252,7 @@ def main():
         args2 = [sys.executable, GATE, "claim", "--repo", repos[0], "--work-id", "issue-%d" % issue_n,
                  "--title", "lane-fill implement issue #%d then open draft PR (%s)" % (issue_n, job),
                  "--owner", OWNER, "--lane", LANE, "--branch", "lane/auto-issue-%d" % issue_n,
-                 "--ttl-min", "300"]
+                 "--ttl-min", "300", "--lease-s", LEASE_S]
         r = subprocess.run(args2, capture_output=True, text=True, timeout=180)
         out = (r.stdout or r.stderr or "").strip()
         print(out)

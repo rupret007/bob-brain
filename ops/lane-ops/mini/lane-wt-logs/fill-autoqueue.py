@@ -19,6 +19,9 @@ QUEUE = os.path.join(LOGS, "fill.queue")
 LEASE = os.path.join(LOGS, "fill-lease.py")
 DISPATCH = os.path.join(LOGS, "dispatch.log")
 GH = os.environ.get("GH", "gh")
+# lane-ops v2: only work authored by these logins becomes a lane prompt. Several repos are PUBLIC, and lane prompts
+# embed PR/issue titles and tell agents to read PR comments, so a stranger's PR or issue must never start a lane.
+TRUSTED_AUTHORS = {a.strip().lower() for a in os.environ.get("LANE_TRUSTED_AUTHORS", "rupret007").split(",") if a.strip()}
 
 # Jeff priority: Web Bob, WebJam, AdoptIQ, StoryBoard, then band sites / rest.
 PRIORITY = [
@@ -97,6 +100,16 @@ def run(cmd, timeout=90):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
+def trusted(item: dict) -> bool:
+    """True only for same-repo PRs/issues opened by a trusted author (fail closed on missing fields)."""
+    author = ((item.get("author") or {}).get("login") or "").lower()
+    if author not in TRUSTED_AUTHORS:
+        return False
+    if item.get("isCrossRepository") is True:
+        return False
+    return True
+
+
 def read_queue() -> list[str]:
     if not os.path.isfile(QUEUE):
         return []
@@ -135,7 +148,8 @@ def write_queue(jobs: list[str]) -> None:
 def active_lane_jobs() -> set[str]:
     r = run(["screen", "-ls"])
     found = set()
-    for m in re.finditer(r"lane-q-([A-Za-z0-9._-]+)", r.stdout + r.stderr):
+    # lane-ops v2: fill.sh v5+ names screens lane-<provider>-<job>; matching only lane-q- missed every running job
+    for m in re.finditer(r"\.lane-(?:q|codex-nuc|codex|cursor|gemini|claude|minimax)-([A-Za-z0-9._-]+)", r.stdout + r.stderr):
         found.add(m.group(1))
     return found
 
@@ -152,7 +166,11 @@ def lease_ok(job: str, prompt_path: str) -> bool:
 
 
 def gh_json(args: list[str]):
-    r = run([GH, *args], timeout=120)
+    try:
+        r = run([GH, *args], timeout=120)
+    except (subprocess.TimeoutExpired, OSError) as e:  # lane-ops v2: one hung gh call used to abort the whole refill
+        log(f"gh failed ({type(e).__name__}) for {' '.join(args[:4])}")
+        return None
     if r.returncode != 0:
         return None
     try:
@@ -173,7 +191,7 @@ def list_draft_prs(repo: str) -> list[dict]:
             "--limit",
             "30",
             "--json",
-            "number,title,isDraft,updatedAt,mergeable,url,headRefName",
+            "number,title,isDraft,updatedAt,mergeable,url,headRefName,author,isCrossRepository",
         ]
     )
     if not data:
@@ -181,6 +199,9 @@ def list_draft_prs(repo: str) -> list[dict]:
     # Prefer drafts; also include non-draft open if marked PRE_KAREN / needs work in title
     out = []
     for p in data:
+        if not trusted(p):
+            log(f"skip untrusted PR {repo}#{p.get('number')} (author={((p.get('author') or {}).get('login'))!r}, cross={p.get('isCrossRepository')})")
+            continue
         title = p.get("title") or ""
         if p.get("isDraft") or re.search(r"PRE_KAREN|DO NOT MERGE|HELD|DRAFT", title, re.I):
             out.append(p)
@@ -199,10 +220,16 @@ def list_issues(repo: str) -> list[dict]:
             "--limit",
             "15",
             "--json",
-            "number,title,updatedAt,url",
+            "number,title,updatedAt,url,author",
         ]
     )
-    return data or []
+    out = []
+    for i in data or []:
+        if trusted(i):
+            out.append(i)
+        else:
+            log(f"skip untrusted issue {repo}#{i.get('number')} (author={((i.get('author') or {}).get('login'))!r})")
+    return out
 
 
 def issue_has_open_pr(repo: str, n: int):

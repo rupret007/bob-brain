@@ -1,23 +1,32 @@
 #!/usr/bin/env python3
 """gemini-feed.py v1 (22:00 CT 10/16): queue Gemini PRE-REVIEW jobs (not Karen) for open PRs whose head SHA
 Gemini hasn't reviewed yet, in Jeff's priority order. Real work only: one review per head SHA. Output stays in logs."""
-import json, os, re, subprocess, sys
-L = os.path.expanduser("~/lane-wt/logs"); Q = f"{L}/fill.queue"; SEEN = f"{L}/gemini-reviewed.tsv"
+import json, os, re, subprocess, sys, time
+L = os.environ.get("LANE_LOG_DIR") or os.path.expanduser("~/lane-wt/logs"); Q = f"{L}/fill.queue"; SEEN = f"{L}/gemini-reviewed.tsv"
 REPOS = ["bob-brain", "StalemateSite", "Turdanoid", "webjam", "AdoptIQ", "StoryBoard", "rad-dad-show-night", "RadDadSite",
          "AI-Music-Vault", "TrailerParkDerby", "storyland-draft-and-season", "Storyland-Fantasy-Football", "StoryDesk", "Andrea_NanoBot"]
 SKIP = {("Turdanoid", 80), ("Turdanoid", 81)}   # held claims
 MAXADD = int(sys.argv[1]) if len(sys.argv) > 1 else 6
+GH = os.environ.get("GH", "gh")
+# lane-ops v2: public repos -> only same-repo PRs by trusted authors feed Gemini (their title/diff/comments reach the model,
+# and gemfix jobs push code). Per-PR cap stops the review->fix->new SHA->review loop from running unbounded.
+TRUSTED = {a.strip().lower() for a in os.environ.get("LANE_TRUSTED_AUTHORS", "rupret007").split(",") if a.strip()}
+FIX_CAP_PER_DAY = int(os.environ.get("GEMFIX_CAP_PER_DAY", "3"))
+def trusted(p):
+    return ((p.get("author") or {}).get("login") or "").lower() in TRUSTED and p.get("isCrossRepository") is not True
 seen = set(open(SEEN).read().split()) if os.path.exists(SEEN) else set()
 q = open(Q).read().split() if os.path.exists(Q) else []
 add = []
 for r in REPOS:
     if len(add) >= MAXADD: break
     try:
-        prs = json.loads(subprocess.run(["gh", "pr", "list", "-R", f"rupret007/{r}", "--state", "open", "--limit", "30",
-              "--json", "number,headRefOid,title"], capture_output=True, text=True, timeout=40).stdout or "[]")
+        prs = json.loads(subprocess.run([GH, "pr", "list", "-R", f"rupret007/{r}", "--state", "open", "--limit", "30",
+              "--json", "number,headRefOid,title,author,isCrossRepository"], capture_output=True, text=True, timeout=40).stdout or "[]")
     except Exception: continue
     for p in prs:
         n, sha = p["number"], p["headRefOid"][:10]
+        if not trusted(p):
+            print(f"gemini-feed: skip untrusted {r}#{n}"); continue
         if (r, n) in SKIP or f"{r}#{n}@{sha}" in seen: continue
         j = f"gemrev-{r}-pr{n}"
         if j in q or j in add: continue
@@ -39,14 +48,23 @@ for md in sorted(glob.glob(f"{L}/q-gemrev-*.gemini.md"), key=os.path.getmtime):
     if not re.search(r"[\w/.-]+\.\w+:\d+", t): continue          # needs concrete file:line
     r, n = m.group(1), int(m.group(2)); key = f"{r}#{n}@{int(os.path.getmtime(md))}"
     if key in done_fix or (r, n) in SKIP: continue
+    recent = [k for k in done_fix if k.startswith(f"{r}#{n}@") and k.rsplit("@", 1)[1].isdigit()
+              and time.time() - int(k.rsplit("@", 1)[1]) < 86400]
+    if len(recent) >= FIX_CAP_PER_DAY:
+        print(f"gemini-feed: gemfix cap {FIX_CAP_PER_DAY}/24h reached for {r}#{n}"); continue
     j = f"gemfix-{r}-pr{n}"
     if j in q or j in front: continue
+    # lane-ops v2: one writer per PR branch -- skip while another queued/running job (auto-*, gemfix-*) targets this PR
+    try: act = subprocess.run(["screen", "-ls"], capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.TimeoutExpired): act = ""
+    if any(re.search(rf"(^|-){re.escape(r)}-pr{n}$", x) for x in q) or re.search(rf"\.lane-[a-z]+-[^\s]*{re.escape(r)}-pr{n}\s", act):
+        print(f"gemini-feed: {r}#{n} already has a queued/running job; gemfix deferred"); continue
     open(f"{L}/q-{j}.prompt", "w").write(
         f"Fix rupret007/{r} PR #{n} (draft; push to this PR's branch only, never open a new PR, never merge).\n"
         "Fix ONLY the concrete must-fix issues from this Gemini pre-review that you can confirm in the code; ignore anything speculative. "
         "Add or extend tests for each fix. Never delete, skip or loosen existing tests. Do not touch the PR body.\n\nPre-review:\n" + t[-6000:] + "\n")
     open(f"{L}/q-{j}.lane", "w").write("tier=cheap\nprovider=gemini\n")
-    open(FIXED, "a").write(key + "\n"); front.append(j)
+    open(FIXED, "a").write(key + "\n"); done_fix.add(key); front.append(j)
 # (b) Karen FAIL fixes that are not security / hard logic -> Gemini (tier cheap)
 HARD = re.compile(r"security|auth|oauth|secret|token|crypt|race|deadlock|concurren|nats|spend|billing|protocol.?2|proto2", re.I)
 for lf in glob.glob(f"{L}/q-*.lane"):

@@ -90,7 +90,7 @@ def call(model, text, gen, timeout=600):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["review", "patch", "light"], default="review")
+    ap.add_argument("--mode", choices=["review", "patch", "edits", "light"], default="review")
     ap.add_argument("-f", required=True); ap.add_argument("--ctx", action="append", default=[])
     ap.add_argument("--out"); ap.add_argument("--ctx-chars", type=int, default=400000)  # v6.4: ~100K tokens
     a = ap.parse_args()
@@ -113,6 +113,18 @@ def main():
         gen = {"temperature": 0.1, "maxOutputTokens": 24576, "thinkingConfig": {"thinkingLevel": os.environ.get("GEMINI_REVIEW_THINK", "high")}}  # v6.2 Jeff 21:59: pro high thinking
         text = ("You are a strict code reviewer. Task:\n" + task + "\nContext:\n" + ctx +
                 "\nGive numbered must-fix findings with file:line, then end with exactly ASSESS_OK or ASSESS_BLOCKED.")
+    elif a.mode == "edits":
+        # lane-ops v2: SEARCH/REPLACE blocks apply far more reliably than LLM-written unified diffs
+        # (no line numbers or hunk counts to get wrong); apply-edits.py on the NucBox turns them into a git diff.
+        model, marks = HEAVY, ("EDITS_END",)
+        gen = {"temperature": 0.1, "maxOutputTokens": 65536, "thinkingConfig": {"thinkingLevel": "high"}}
+        text = ("You edit a git repo. Task:\n" + task + "\nRepo context:\n" + ctx +
+                "\nOutput ONLY edit blocks between a line EDITS_BEGIN and a line EDITS_END. Each block is exactly:\n"
+                "FILE: <path relative to repo root>\n<<<<<<< SEARCH\n<lines copied EXACTLY from the current file, enough to be unique>\n"
+                "=======\n<replacement lines>\n>>>>>>> REPLACE\n"
+                "Use an empty SEARCH section only to create a new file. Keep each SEARCH small (3-15 lines) and unique. "
+                "Use several blocks for several places. No line numbers, no diff markers, no prose. "
+                "Add/extend tests as the task asks; never delete, skip or weaken tests.")
     else:
         model, marks = HEAVY, ("PATCH_END",)
         gen = {"temperature": 0.1, "maxOutputTokens": 65536, "thinkingConfig": {"thinkingLevel": "high"}}  # v6.2: code fixes at highest thinking
@@ -131,6 +143,12 @@ def main():
         if any(m in out for m in marks): break
     if a.out: open(a.out, "w").write(out)
     if not out.strip(): print("BLOCKER gemini empty"); return 6
+    if a.mode == "edits":
+        m = re.search(r"EDITS_BEGIN\s*\n(.*?)EDITS_END", out, re.S)
+        body = m.group(1) if m else out
+        if "<<<<<<< SEARCH" not in body or ">>>>>>> REPLACE" not in body:
+            print(f"BLOCKER no edit blocks (finish={fin})"); return 3
+        sys.stdout.write(body.rstrip() + "\n"); return 0
     if a.mode == "patch":
         m = re.search(r"PATCH_BEGIN\s*\n(?:```(?:diff|patch)?\n)?(.*?)(?:```\s*)?PATCH_END", out, re.S) \
             or re.search(r"```(?:diff|patch)\n(.*?)```", out, re.S) or re.search(r"((?:diff --git|--- a/).*)", out, re.S)

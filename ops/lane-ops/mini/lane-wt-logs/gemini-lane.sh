@@ -27,6 +27,11 @@ elif [[ -n $pr && ( $lc == *readme* || $lc == *docs* ) && $lc != *screenshot* &&
 elif [[ -n $pr && ( $lc == *"add tests"* || $lc == *test-only* || $lc == *coverage* ) ]]; then mode=tests
 fi
 echo "gemini-lane $j repo=$repo pr=${pr:-none} mode=$mode $(date)"
+# lane-ops v2: PRs from outside authors or forks never reach Gemini or the cursor fallback (public repos; prompt injection)
+if [[ -n $pr ]]; then
+  who=$(gh pr view $pr -R $repo --json author,isCrossRepository -q '"\(.author.login) \(.isCrossRepository)"' 2>/dev/null)
+  [[ " ${LANE_TRUSTED_AUTHORS:-rupret007} " == *" ${who%% *} "* && ${who##* } == false ]] || { echo "BLOCKER untrusted or unknown PR author/fork ($who); not run"; exit 0; }
+fi
 [[ $mode == cursor ]] && { fallback "" "no PR / visual job"; exit; }
 # v6.3 (22:10 CT): clone/checkout/context on the NucBox (gemini-ctx.sh); only the HTTP call runs on the Mini (key stays on the Mini).
 print -r -- $txt | grep -oE '[A-Za-z0-9_./-]+\.(ts|tsx|js|mjs|py|sh|json|md)' | ${=SSH} "bash -l ~/nuc-tools/gemini-ctx.sh q-$j $repo $pr" > $L/q-$j.ctx.txt; crc=$?
@@ -56,12 +61,19 @@ PY2
   gh pr edit $pr -R $repo --body-file $L/q-$j.body.md >/dev/null && echo "RESULT pr-body-updated https://github.com/$repo/pull/$pr (Gemini; needs Karen re-gate)"; exit 0
 fi
 if [[ $mode == code || $mode == tests || $mode == docs ]]; then
+  EF=${GEMINI_EDIT_FORMAT:-edits}   # lane-ops v2: edits (SEARCH/REPLACE) by default; GEMINI_EDIT_FORMAT=patch restores unified diffs
   for try in 1 2; do
-    python3 $G --mode patch -f $P $cargs ${=extra} > $L/q-$j.gemini.patch || break
-    if grep -E '^\+\+\+ b/' $L/q-$j.gemini.patch | sed 's|^+++ b/||' | while read pf; do grep -qxF "$repo	$pf" $L/gemini-deny-paths.txt && { echo "$pf"; break; }; done | grep -q .; then echo "BLOCKER patch touches Karen-gated protocol-2 file (gemini-deny-paths.txt); not applied, no fallback"; exit 0; fi
-    if [[ -n ${GEMINI_DENY_RE:-} ]] && grep -E '^(\+\+\+|---) [ab]/' $L/q-$j.gemini.patch | grep -qE "$GEMINI_DENY_RE"; then echo "BLOCKER patch touches denied path ($GEMINI_DENY_RE)"; exit 0; fi
+    if [[ $EF == edits ]]; then
+      python3 $G --mode edits -f $P $cargs ${=extra} > $L/q-$j.gemini.patch || break
+      touched=$(grep -E '^FILE:' $L/q-$j.gemini.patch | sed -E 's/^FILE:[[:space:]]*//; s/[[:space:]]*$//; s/`//g')
+    else
+      python3 $G --mode patch -f $P $cargs ${=extra} > $L/q-$j.gemini.patch || break
+      touched=$(grep -E '^(\+\+\+|---) [ab]/' $L/q-$j.gemini.patch | sed -E 's#^(\+\+\+|---) [ab]/##')
+    fi
+    if print -r -- $touched | while read pf; do [[ -n $pf ]] && grep -qxF "$repo	$pf" $L/gemini-deny-paths.txt && { echo "$pf"; break; }; done | grep -q .; then echo "BLOCKER patch touches Karen-gated protocol-2 file (gemini-deny-paths.txt); not applied, no fallback"; exit 0; fi
+    if [[ -n ${GEMINI_DENY_RE:-} ]] && print -r -- $touched | grep -qE "$GEMINI_DENY_RE"; then echo "BLOCKER patch touches denied path ($GEMINI_DENY_RE)"; exit 0; fi
     ${=SSH} "mkdir -p ~/work/results && cat > ~/work/results/q-$j.gemini.patch" < $L/q-$j.gemini.patch
-    ${=SSH} "bash -l ~/nuc-tools/gemini-apply-test.sh q-$j $repo $pr push" > $L/q-$j.gat.$try.log 2>&1; grc=$?
+    ${=SSH} "bash -l ~/nuc-tools/gemini-apply-test.sh q-$j $repo $pr push $EF" > $L/q-$j.gat.$try.log 2>&1; grc=$?
     cat $L/q-$j.gat.$try.log
     (( grc == 0 )) && { echo "RESULT gemini-code pr=https://github.com/$repo/pull/$pr $(grep '^GAT pushed' $L/q-$j.gat.$try.log) model=$GEMINI_CODE_MODEL"; exit 0; }
     (( grc == 4 || grc == 5 )) && break
