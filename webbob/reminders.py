@@ -32,14 +32,28 @@ class ReminderStore:
                 owner TEXT NOT NULL,
                 body TEXT NOT NULL,
                 due_utc REAL NOT NULL,
-                state TEXT NOT NULL)"""
+                state TEXT NOT NULL,
+                delivery_lease_utc REAL)"""
+            )
+            cols = {
+                row[1] for row in db.execute("pragma table_info(reminders)")
+            }
+            if "delivery_lease_utc" not in cols:
+                db.execute(
+                    "ALTER TABLE reminders ADD COLUMN delivery_lease_utc REAL"
+                )
+            now_ts = self._now_utc().timestamp()
+            db.execute(
+                """UPDATE reminders SET state='uncertain' WHERE owner=? AND state='delivering'
+                   AND delivery_lease_utc IS NOT NULL AND delivery_lease_utc <= ?""",
+                (self.owner, now_ts),
             )
             db.execute(
-                "UPDATE reminders SET state='uncertain' WHERE owner=? AND state='delivering'",
+                """UPDATE reminders SET state='uncertain' WHERE owner=? AND state='delivering'
+                   AND delivery_lease_utc IS NULL""",
                 (self.owner,),
             )
         self.path.chmod(0o600)
-        self._now_utc()
 
     @staticmethod
     def _validate_owner(owner):
@@ -79,7 +93,10 @@ class ReminderStore:
         now = self.clock()
         if now.tzinfo is None:
             raise ReminderError("timezone-aware clock required")
-        return now.astimezone(timezone.utc)
+        try:
+            return now.astimezone(timezone.utc)
+        except (OverflowError, OSError, ValueError) as exc:
+            raise ReminderError("invalid clock time") from exc
 
     @staticmethod
     def _parse_due(due_at):
@@ -159,7 +176,9 @@ class ReminderStore:
                 raise ReminderError("reminder limit reached")
             try:
                 db.execute(
-                    "INSERT INTO reminders VALUES (?,?,?,?,?)",
+                    """INSERT INTO reminders
+                       (id, owner, body, due_utc, state, delivery_lease_utc)
+                       VALUES (?,?,?,?,?,NULL)""",
                     (reminder_id, self.owner, body, due_utc.timestamp(), "pending"),
                 )
             except (OverflowError, ValueError) as exc:
@@ -170,6 +189,15 @@ class ReminderStore:
         with self.db() as db:
             rows = db.execute(
                 "SELECT * FROM reminders WHERE owner=? AND state='pending' ORDER BY due_utc",
+                (self.owner,),
+            ).fetchall()
+        return [self._row(row) for row in rows]
+
+    def list_uncertain(self):
+        with self.db() as db:
+            rows = db.execute(
+                """SELECT * FROM reminders WHERE owner=? AND state='uncertain'
+                   ORDER BY due_utc""",
                 (self.owner,),
             ).fetchall()
         return [self._row(row) for row in rows]
@@ -205,6 +233,10 @@ class ReminderStore:
                     (row["id"],),
                 )
                 if updated.rowcount == 1:
+                    db.execute(
+                        "UPDATE reminders SET delivery_lease_utc=? WHERE id=?",
+                        (now_utc, row["id"]),
+                    )
                     fresh = db.execute(
                         "SELECT * FROM reminders WHERE id=?", (row["id"],)
                     ).fetchone()
@@ -218,6 +250,10 @@ class ReminderStore:
                 raise ReminderError("only delivering reminders may be marked fired")
             db.execute(
                 "UPDATE reminders SET state='fired' WHERE id=? AND owner=? AND state='delivering'",
+                (reminder_id, self.owner),
+            )
+            db.execute(
+                "UPDATE reminders SET delivery_lease_utc=NULL WHERE id=? AND owner=?",
                 (reminder_id, self.owner),
             )
         return self.get(reminder_id)

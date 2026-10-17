@@ -79,8 +79,14 @@ class ReminderStoreTests(unittest.TestCase):
             "0001-01-01T00:00:00+14:00",
             datetime(9999, 12, 31, 23, 59, tzinfo=timezone(timedelta(hours=-12))),
         ):
-            with self.assertRaises(ReminderError):
+            try:
                 self.store.create("x", due)
+            except ReminderError:
+                continue
+            except OverflowError as exc:
+                self.fail(f"expected ReminderError, not {exc!r}")
+            else:
+                self.fail("expected ReminderError for extreme due time")
 
     def test_far_future_cap_enforced(self):
         with self.assertRaises(ReminderError):
@@ -90,6 +96,19 @@ class ReminderStoreTests(unittest.TestCase):
         base = datetime(2027, 1, 1, 9, 0, tzinfo=CHICAGO)
         for i in range(MAX_PENDING_PER_OWNER):
             self.store.create(f"r{i}", base + timedelta(minutes=i))
+        with self.assertRaises(ReminderError):
+            self.store.create("one too many", base + timedelta(days=1))
+
+    def test_per_owner_pending_cap_does_not_count_other_owners(self):
+        base = datetime(2027, 1, 1, 9, 0, tzinfo=CHICAGO)
+        for i in range(MAX_PENDING_PER_OWNER):
+            self.store.create(f"r{i}", base + timedelta(minutes=i))
+        other = ReminderStore(self.path, "other", clock=self.clock)
+        try:
+            created = other.create("other ok", base + timedelta(days=2))
+        except ReminderError as exc:
+            self.fail(f"other owner should not be capped by jeff pending count: {exc}")
+        self.assertEqual(created["owner"], "other")
         with self.assertRaises(ReminderError):
             self.store.create("one too many", base + timedelta(days=1))
 
@@ -104,7 +123,10 @@ class ReminderStoreTests(unittest.TestCase):
     def test_owner_normalized_nfkc_casefold_ascii(self):
         created = self.store.create("Jeff private", "2027-01-02T09:00:00")
         for owner in ("Jeff", "JEFF", "jeff ", "ｊｅｆｆ", "jeff\u200b"):
-            view = ReminderStore(self.path, owner, clock=self.clock)
+            try:
+                view = ReminderStore(self.path, owner, clock=self.clock)
+            except ReminderError as exc:
+                self.fail(f"owner {owner!r} should normalize: {exc}")
             self.assertEqual(len(view.list()), 1)
             self.assertEqual(view.get(created["id"])["id"], created["id"])
         self.assertEqual(created["owner"], OWNER)
@@ -120,7 +142,10 @@ class ReminderStoreTests(unittest.TestCase):
         for o in range(owners):
             st = ReminderStore(self.path, f"o{o}", clock=self.clock)
             for i in range(MAX_PENDING_PER_OWNER):
-                st.create(f"r{i}", base + timedelta(minutes=i))
+                try:
+                    st.create(f"r{i}", base + timedelta(minutes=i))
+                except ReminderError as exc:
+                    self.fail(f"owner o{o} reminder {i} rejected unexpectedly: {exc}")
         overflow = ReminderStore(self.path, "overflow", clock=self.clock)
         with self.assertRaises(ReminderError):
             overflow.create("one too many", base)
@@ -204,6 +229,28 @@ class ReminderStoreTests(unittest.TestCase):
         claimed = [r["id"] for batch in batches for r in batch]
         self.assertEqual(claimed.count(reminder["id"]), 1)
 
+    def test_concurrent_collectors_claim_each_due_id_once(self):
+        create_clock = lambda: datetime(2026, 10, 17, 2, 0, tzinfo=CHICAGO)
+        self.now = datetime(2027, 1, 1, 10, 0, tzinfo=CHICAGO)
+        self.clock = lambda: self.now
+        creator = ReminderStore(self.path, OWNER, clock=create_clock)
+        for i in range(20):
+            creator.create(f"c{i}", "2027-01-01T09:00:00")
+        batches = []
+
+        def worker():
+            store = ReminderStore(self.path, OWNER, clock=self.clock)
+            batches.append(store.collect_due())
+
+        threads = [threading.Thread(target=worker) for _ in range(6)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        claimed = [r["id"] for batch in batches for r in batch]
+        self.assertEqual(len(claimed), len(set(claimed)))
+        self.assertEqual(len(claimed), 20)
+
     def test_crash_after_collect_leaves_uncertain_not_resent(self):
         due = datetime(2026, 3, 7, 12, 0, tzinfo=CHICAGO)
         reminder = self.store.create("crash", due)
@@ -211,9 +258,51 @@ class ReminderStoreTests(unittest.TestCase):
         again = ReminderStore(self.path, OWNER, clock=self.clock).collect_due()
         self.assertEqual(again, [])
         self.assertEqual(self.store.get(reminder["id"])["state"], "uncertain")
+        surfaced = ReminderStore(self.path, OWNER, clock=self.clock).list_uncertain()
+        self.assertEqual([r["id"] for r in surfaced], [reminder["id"]])
         self.assertEqual(
             ReminderStore(self.path, OWNER, clock=self.clock).collect_due(), []
         )
+
+    def test_collect_due_scoped_to_owner(self):
+        due = datetime(2026, 3, 7, 12, 0, tzinfo=CHICAGO)
+        self.now = due
+        other = ReminderStore(self.path, "other", clock=self.clock)
+        other.create("not mine", due)
+        self.assertEqual(self.store.collect_due(), [])
+
+    def test_active_delivery_kept_when_store_opened_with_earlier_clock(self):
+        due_clock = lambda: datetime(2027, 1, 1, 10, 0, tzinfo=CHICAGO)
+        early_clock = lambda: datetime(2026, 10, 17, 2, 0, tzinfo=CHICAGO)
+        reminder = ReminderStore(self.path, OWNER, clock=early_clock).create(
+            "mid", "2027-01-01T09:30:00"
+        )
+        worker = ReminderStore(self.path, OWNER, clock=due_clock)
+        claimed = worker.collect_due()
+        self.assertEqual([r["id"] for r in claimed], [reminder["id"]])
+        ReminderStore(self.path, OWNER, clock=early_clock)
+        worker.mark_fired(reminder["id"])
+        self.assertEqual(
+            ReminderStore(self.path, OWNER, clock=due_clock).get(reminder["id"])["state"],
+            "fired",
+        )
+
+    def test_mark_fired_scoped_to_owner(self):
+        due = datetime(2026, 3, 7, 12, 0, tzinfo=CHICAGO)
+        reminder = self.store.create("x", due)
+        self.assertEqual(len(self.store.collect_due()), 1)
+        other = ReminderStore(self.path, "other", clock=self.clock)
+        with self.assertRaises(ReminderError):
+            other.mark_fired(reminder["id"])
+        self.assertEqual(self.store.get(reminder["id"])["state"], "delivering")
+
+    def test_clock_overflow_raises_reminder_error(self):
+        extreme = datetime(
+            9999, 12, 31, 23, 59, tzinfo=timezone(timedelta(hours=-12))
+        )
+        with self.assertRaises(ReminderError) as ctx:
+            ReminderStore(self.path, OWNER, clock=lambda: extreme)
+        self.assertIs(type(ctx.exception), ReminderError)
 
     def test_mark_fired_rejects_cancelled_reminder(self):
         due = datetime(2026, 3, 7, 12, 30, tzinfo=CHICAGO)
