@@ -374,7 +374,11 @@ class GatPolicyJSReturns(unittest.TestCase):
                 for blank in ("", "\n  \n"):
                     with self.subTest(path=path, statement=statement, blank=blank):
                         new = JST.replace("});", "  " + statement + "\n" + blank + "});")
-                        self.assertEqual(self.pol.check(self.patch(path, JST, new)), [])
+                        reasons = self.pol.check(self.patch(path, JST, new))
+                        if statement.startswith("if "):
+                            self.assertTrue(any("early exit" in r for r in reasons), reasons)
+                        else:
+                            self.assertEqual(reasons, [])
 
     def test_new_test_files_are_unaffected(self):
         for path in self.PATHS:
@@ -422,9 +426,12 @@ class GatPolicyJSReturns(unittest.TestCase):
                         subprocess.run(["git", "add", "a.spec.ts"], cwd=repo, check=True)
                         files, contents = self.pol.staged(repo)
                         reasons = self.pol.check_files(files, contents=contents)
-                        self.assertEqual(bool(reasons), not terminal, reasons)
-                        if not terminal:
+                        refused = not terminal or statement.startswith("if ")
+                        self.assertEqual(bool(reasons), refused, reasons)
+                        if refused:
                             self.assertTrue(any("early exit" in r for r in reasons), reasons)
+            path.write_text(old.replace("\n\n", "\n  return await 0;\n\n", 1))
+            subprocess.run(["git", "add", "a.spec.ts"], cwd=repo, check=True)
             subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "terminal return"],
                            cwd=repo, check=True)
             files, contents = self.pol.staged(repo, "HEAD~1", "HEAD")
