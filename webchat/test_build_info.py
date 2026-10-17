@@ -114,7 +114,7 @@ class ReleaseIdentity(Fixture):
                     index = response.read().decode()
                     self.assertIn("no-cache", response.headers["Cache-Control"])
                     self.assertIn("no-store", response.headers["Cache-Control"])
-                for name in ("app.js", "action-history.js", "attachment-reminder.js", "style.css", "manifest.webmanifest"):
+                for name in ("app.js", "action-history.js", "attachment-reminder.js", "reply-playback.js", "style.css", "manifest.webmanifest"):
                     url = "/" + name + "?v=" + BUILD["short_sha"]
                     self.assertIn(url, index)
                     with client.opener.open(client.url + url) as response:

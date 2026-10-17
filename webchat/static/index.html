@@ -13,6 +13,7 @@
   <script src="/voice.js?v=__WEBBOB_SHA__" defer></script>
   <script src="/action-history.js?v=__WEBBOB_SHA__" defer></script>
   <script src="/attachment-reminder.js?v=__WEBBOB_SHA__" defer></script>
+  <script src="/reply-playback.js?v=__WEBBOB_SHA__" defer></script>
   <script src="/app.js?v=__WEBBOB_SHA__" defer></script>
 </head>
 <body>
@@ -36,6 +37,12 @@
     <section id="view-chat" class="main-view active" data-view="chat">
       <main id="messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions text"></main>
       <div id="notice" class="notice" role="status"></div>
+      <div id="reply-playback" class="reply-playback" hidden role="status" aria-live="polite" aria-label="Read-aloud playback">
+        <span id="reply-playback-state" class="reply-playback-state"></span>
+        <span id="reply-playback-message" class="reply-playback-message muted"></span>
+        <span id="reply-playback-cap" class="reply-playback-cap muted"></span>
+        <button type="button" id="reply-playback-stop" class="quiet reply-playback-stop" hidden>Stop reading</button>
+      </div>
       <details id="action-history" class="action-history disclosure" hidden>
         <summary>Action receipts <span id="action-history-count" class="action-history-count muted"></span></summary>
         <div id="action-history-body" class="action-history-body" tabindex="0" role="region" aria-label="Action receipts in this chat"></div>

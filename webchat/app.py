@@ -1899,6 +1899,7 @@ class Handler(BaseHTTPRequestHandler):
         assets = {"/style.css": ("style.css", "text/css; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
                   "/action-history.js": ("action-history.js", "text/javascript; charset=utf-8"),
                   "/attachment-reminder.js": ("attachment-reminder.js", "text/javascript; charset=utf-8"),
+                  "/reply-playback.js": ("reply-playback.js", "text/javascript; charset=utf-8"),
                   "/voice.js": ("voice.js", "text/javascript; charset=utf-8"),
                   "/voice-capture.js": ("voice-capture.js", "text/javascript; charset=utf-8"),
                   "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json")}

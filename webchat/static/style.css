@@ -520,6 +520,24 @@ select option { background: var(--surface-2); color: var(--text); }
   0%, 100% { transform: scaleY(0.55); opacity: 0.65; }
   50% { transform: scaleY(1); opacity: 1; }
 }
+.reply-playback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0 12px 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.4;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+}
+.reply-playback[data-state="speaking"] .reply-playback-state { color: var(--accent); font-weight: 600; }
+.reply-playback[data-state="failed"] .reply-playback-state { color: var(--danger); font-weight: 600; }
+.reply-playback-message { flex: 1 1 12rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reply-playback-cap { flex: 1 1 100%; font-size: 12px; }
+.reply-playback-stop { min-height: 44px; margin-left: auto; }
 .composer-speak {
   display: none;
 }
