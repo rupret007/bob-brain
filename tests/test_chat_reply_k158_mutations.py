@@ -1,12 +1,10 @@
-"""Karen kg17k m158k mutants K3, K5, K8 must be killed by chat reply assertions."""
-import json
+"""Karen m158k mutants K3, K5, K8 must be killed by chat reply assertions."""
 import subprocess
 import sys
 import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MUTATION_FILE = Path("/home/rupret/work/kg17k/m158k.json")
 TARGET = REPO_ROOT / "webbob" / "chat_reply.py"
 TEST_MODULES = [
     "tests.test_chat_reply",
@@ -18,6 +16,12 @@ K3_UNCERTAIN_TO_RETRY = {
     "name": "K3 uncertain -> retry",
     "old": "        except Exception:\n            if effect_may_be_visible:\n                return self._mark_uncertain(reply_id, now)\n            return self._mark_send_timeout(reply_id, attempts, now)",
     "new": "        except Exception:\n            raise ReplyNotSentError()",
+}
+
+K5_SYMLINK_ALLOWED = {
+    "name": "K5 symlink allowed",
+    "old": " or self.path.is_symlink()",
+    "new": "",
 }
 
 K8_CHAT_REPLY_RETRY = {
@@ -34,17 +38,15 @@ K8_CHAT_REPLY_RETRY = {
             return self._snapshot(row)""",
 }
 
+K158_MUTANTS = [K3_UNCERTAIN_TO_RETRY, K5_SYMLINK_ALLOWED, K8_CHAT_REPLY_RETRY]
+
 
 class ChatReplyK158MutationGate(unittest.TestCase):
     def test_k158_mutants_killed(self):
-        muts = json.loads(MUTATION_FILE.read_text())
-        muts = [m for m in muts if m["name"] == "K5 symlink allowed"]
-        muts.extend([K3_UNCERTAIN_TO_RETRY, K8_CHAT_REPLY_RETRY])
-        self.assertEqual(len(muts), 3)
         orig = TARGET.read_text()
         survivors = []
         try:
-            for mutation in muts:
+            for mutation in K158_MUTANTS:
                 count = orig.count(mutation["old"])
                 if count != 1:
                     self.fail(f"{mutation['name']}: expected one match, found {count}")
