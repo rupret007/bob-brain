@@ -139,7 +139,7 @@ while true; do
     codex)
       eff=$CODEX_CHEAP_EFFORT; [[ $tier == high ]] && eff=$CODEX_HIGH_EFFORT; [[ $tier == xhigh ]] && eff=xhigh
       # v3 (item 10): NucBox-only. If the NucBox can't take it now, release the lease and defer; never run on the Mini
-      # (CODEX_HOST=mini, an explicit operator override, is the only way to get "mini" here).
+      # (even CODEX_HOST=mini is refused at launch).
       chost=$(codex_host_pick 2>/dev/null)
       if [[ -z $chost ]]; then
         echo "$(date) fill codex host unavailable for $j at launch -> DEFER (no Mini fallback)" >> $L
@@ -152,10 +152,10 @@ while true; do
         printf "%s\t%s\tcodex-nuc\t%s\tstart\n" "$(date +%F\ %T)" $j $eff >> $CODEX_LOG
         echo "$(date) fill codex host=nuc model=${CODEX_MODEL:-gpt-6-astra} effort=$eff job=$j" >> $L
       else
-        w=~/lane-wt/q-$j; mkdir -p $w
-        screen -dmS lane-codex-$j $LW zsh -c "cd $w && codex exec -c model_reasoning_effort=$eff --skip-git-repo-check -C $w \"\$(cat ~/lane-wt/logs/q-$j.prompt)\" </dev/null > $LOG 2>&1; $FIN"
-        printf "%s\t%s\tcodex\t%s\tstart\n" "$(date +%F\ %T)" $j $eff >> $CODEX_LOG
-        echo "$(date) fill codex host=mini effort=$eff job=$j" >> $L
+        echo "$(date) fill codex REFUSED host=mini (NucBox-only)" >> $L
+        [[ -n $claimf && $claimf == */coord/claims/* ]] && mv -f "$claimf" ~/Documents/bob-overnight-inject/coord/claims-released/ 2>/dev/null
+        sleep 120
+        continue
       fi;;
     gemini)
       LANE_REMOTE_NAME=q-$j LANE_REMOTE_SSH=$SSH screen -dmS lane-gemini-$j $LW zsh -c "~/lane-wt/logs/gemini-lane.sh $j > $LOG 2>&1; $FIN";;

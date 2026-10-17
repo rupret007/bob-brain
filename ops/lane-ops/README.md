@@ -42,7 +42,7 @@ hosts, ports, paths and guard logic.
 | B8 TTL / waits | `renew` moves `expires` forward by the TTL, capped at `created + max_age_s` (`LANE_MAX_AGE_MIN`, default 360); `check` is a fence; `codex-win.sh` picks the highest settled `--version`; `nuc-lane.sh` claim retry is 3 tries within ~75 s |
 | Pre-Karen self-gate | `shared/pre-karen-check.py` (CI collects new tests, mutation smoke on changed lines, body matches head, no weakening, head checks) wrapped by `mini/bin/karen-request.sh`. A lane or the conductor may request a Karen gate only after `KAREN_REQUEST_OK`; Karen keeps the final say |
 | Draft WIP limit | `fill-autoqueue.py` queues no new-issue (feature) jobs while more than `FILL_DRAFT_WIP_MAX` (15) trusted drafts wait across the priority repos; fixes to existing PRs keep flowing; an unknown count holds new work |
-| Codex host | Codex is NucBox-only (`CODEX_HOST=nuc`; `mini` only as an explicit override); no `|| mini` fallback at launch |
+| Codex host | Codex is NucBox-only (`CODEX_HOST=nuc`; `mini` is refused at launch); no `|| mini` fallback at launch |
 | Mini memory | `lane-guard.sh mini_mem_ok` holds new Mini work on memory pressure >= warn, free < 15 %, or swap growth > 512 MB in 10 min |
 | NucBox capacity | `nuc-test-slot.sh` caps concurrent test runs at 3; `nuc-repo-cache.sh` keeps one bare clone per repo and hands out worktrees instead of a fresh clone per job |
 
