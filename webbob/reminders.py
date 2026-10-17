@@ -22,11 +22,8 @@ class ReminderStore:
         self.path = Path(path)
         self.owner = self._validate_owner(owner)
         self.clock = clock or (lambda: datetime.now(CHICAGO))
-        if (
-            not self.path.parent.is_dir()
-            or self.path.is_symlink()
-            or self.path.parent.is_symlink()
-        ):
+        self._reject_symlink_path()
+        if not self.path.parent.is_dir():
             raise ReminderError("reminder store unavailable")
         with self.db() as db:
             db.execute(
@@ -72,8 +69,14 @@ class ReminderStore:
             raise ReminderError("owner required")
         return normalized
 
+    def _reject_symlink_path(self):
+        for part in (self.path, *self.path.parents):
+            if part.is_symlink():
+                raise ReminderError("reminder store unavailable")
+
     @contextmanager
     def db(self):
+        self._reject_symlink_path()
         conn = sqlite3.connect(self.path, timeout=5)
         conn.row_factory = sqlite3.Row
         try:

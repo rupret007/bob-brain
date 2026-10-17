@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import os
 import sqlite3
 import tempfile
 import threading
@@ -318,6 +319,40 @@ class ReminderStoreTests(unittest.TestCase):
         self.store = ReminderStore(self.path, OWNER, clock=self.clock)
         self.assertEqual(self.store.collect_due(), [])
 
+    def test_symlinked_store_path_rejected_for_read_and_write(self):
+        real = Path(self.tmp.name) / "real-reminders.sqlite"
+        link = Path(self.tmp.name) / "reminders-link.sqlite"
+        ReminderStore(real, OWNER, clock=self.clock).create(
+            "seed", datetime(2026, 3, 7, 18, 0, tzinfo=CHICAGO))
+        os.symlink(real, link)
+        with self.assertRaises(ReminderError):
+            ReminderStore(link, OWNER, clock=self.clock)
+        self.store.create("local", datetime(2026, 3, 7, 19, 0, tzinfo=CHICAGO))
+        backing = Path(self.tmp.name) / "backing.sqlite"
+        self.path.rename(backing)
+        os.symlink(backing, self.path)
+        with self.assertRaises(ReminderError):
+            self.store.list()
+
+    def test_symlinked_ancestor_directory_rejected_for_read_and_write(self):
+        real_root = Path(self.tmp.name) / "real-root"
+        real_root.mkdir()
+        link_root = Path(self.tmp.name) / "link-root"
+        os.symlink(real_root, link_root)
+        nested = link_root / "nested"
+        nested.mkdir()
+        path = nested / "reminders.sqlite"
+        self.assertFalse(path.parent.is_symlink())
+        due = datetime(2026, 3, 7, 18, 0, tzinfo=CHICAGO)
+        with self.assertRaises(ReminderError):
+            ReminderStore(path, OWNER, clock=self.clock).create("blocked", due)
+        good = real_root / "nested" / "good.sqlite"
+        ReminderStore(good, OWNER, clock=self.clock).create("ok", due)
+        alias = link_root / "nested" / "good.sqlite"
+        self.assertTrue(alias.exists())
+        with self.assertRaises(ReminderError):
+            ReminderStore(alias, OWNER, clock=self.clock).list()
+
     def test_symlink_store_rejected(self):
         real = Path(self.tmp.name) / "real.sqlite"
         link = Path(self.tmp.name) / "link.sqlite"
@@ -333,6 +368,10 @@ class ReminderStoreTests(unittest.TestCase):
         with self.assertRaises(ReminderError):
             ReminderStore(linkdir / "reminders.sqlite", OWNER, clock=self.clock)
 
+    def test_store_file_mode_is_private(self):
+        self.store.create("Private", datetime(2026, 3, 7, 18, 0, tzinfo=CHICAGO))
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
+
     def test_naive_clock_rejected(self):
         with self.assertRaises(ReminderError):
             ReminderStore(
@@ -340,6 +379,14 @@ class ReminderStoreTests(unittest.TestCase):
                 OWNER,
                 clock=lambda: datetime(2026, 3, 7, 12, 0),
             )
+
+    def test_naive_due_interpreted_as_chicago_wall_clock(self):
+        naive_due = datetime(2026, 3, 7, 18, 0)
+        created = self.store.create("Wall clock", naive_due)
+        self.assertEqual(created["due_chicago"], "2026-03-07T18:00:00-06:00")
+        explicit = self.store.create(
+            "Explicit", datetime(2026, 3, 7, 18, 0, tzinfo=CHICAGO))
+        self.assertEqual(explicit["due_chicago"], created["due_chicago"])
 
     def test_body_length_enforced(self):
         with self.assertRaises(ReminderError):
