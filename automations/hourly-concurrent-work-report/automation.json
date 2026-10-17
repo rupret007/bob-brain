@@ -1,0 +1,16 @@
+{
+  "name": "Hourly concurrent work report",
+  "prompt": "Hourly concurrent work report (TOKEN CONSERVE). Stay silent unless something is stuck needing Jeff or a material landing digest is due and not already sent. No filler status.",
+  "schedule": "32 10,14,18 * * 1-5",
+  "triggerPresentation": {
+    "version": 1,
+    "trigger": {
+      "type": "cron",
+      "schedule": "32 10,14,18 * * 1-5"
+    }
+  },
+  "enabled": true,
+  "provenance": "user",
+  "createdAt": 1787417096968,
+  "lastRunAt": 1789515924663
+}

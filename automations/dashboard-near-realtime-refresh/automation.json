@@ -1,0 +1,16 @@
+{
+  "name": "Dashboard near-realtime refresh",
+  "prompt": "Dashboard near-realtime refresh (TOKEN CONSERVE, every ~2h weekdays). Refresh and push if needed. Stay silent on success. Only surface if refresh fails in a way Jeff must fix.",
+  "schedule": "10 9-21/2 * * 1-5",
+  "triggerPresentation": {
+    "version": 1,
+    "trigger": {
+      "type": "cron",
+      "schedule": "10 9-21/2 * * 1-5"
+    }
+  },
+  "enabled": true,
+  "provenance": "user",
+  "createdAt": 1787448035064,
+  "lastRunAt": 1789525046737
+}

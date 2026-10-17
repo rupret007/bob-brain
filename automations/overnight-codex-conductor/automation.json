@@ -1,0 +1,16 @@
+{
+  "name": "Overnight multi-LLM conductor",
+  "prompt": "Overnight multi-LLM conductor (TOKEN CONSERVE + SPARK-ONLY OpenAI + $20 Claude Pro). Priority repos Jeff locked: WebJam first, then AdoptIQ, then TACTrack \u2014 demo-ready + docs. Do NOT start new Claude on bob-ops-dashboard / StoryBoard / Show Night unless those three are blocked. OpenAI: only Spark (general/Ultra empty). Claude: Sonnet 5 on included Pro; no Fable unless Jeff said spend credits; no Opus unless Sonnet stuck. Stay silent unless true Jeff gate or hosted-green PRE_KAREN needing Karen via parent. No CONTINUE on empty general. If nothing material: no user message. Rank1: WebJam-first policy writer notes; Bob sole cloud_fills_mode writer; Lane/MiniMax are silent capped peers (do not fold long loops onto this wake); never DM Jeff from peers; one WebJam coding lane; hold_final_build until Karen+Jeff.",
+  "schedule": "25 23,1,3,5 * * *",
+  "triggerPresentation": {
+    "version": 1,
+    "trigger": {
+      "type": "cron",
+      "schedule": "25 23,1,3,5 * * *"
+    }
+  },
+  "enabled": true,
+  "provenance": "untrusted",
+  "createdAt": 1788593866784,
+  "lastRunAt": 1789468997641
+}
