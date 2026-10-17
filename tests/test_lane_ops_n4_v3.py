@@ -136,6 +136,33 @@ class N4V3(unittest.TestCase):
             with self.subTest(statement=statement):
                 self.assertEqual(policy.check(patch(BASE, BASE + statement + '\n')), [])
 
+    def test_declarations_without_initializers_and_multiline_calls(self):
+        for statement, reason in (
+            ('let safe, expect;', 'rebind'),
+            ('var safe,\n it;', 'rebind'),
+            ('process["exit"](0)', 'process.exit'),
+            ('jest["mock"]("./m")', 'mock'),
+            ('vi["mock"]("./m")', 'mock'),
+        ):
+            with self.subTest(statement=statement):
+                self.refused(BASE, BASE + statement + '\n', reason)
+
+    def test_unreachable_calls_do_not_authorize_assertion_helpers(self):
+        for statement in (
+            'function never(){ assert(f()); }\nif (false) never();',
+            'function never(){ assert(f()); }\nif (false) { never(); }',
+            'function never(){ assert(f()); }\nfalse && never();',
+            'function* never(){ assert(f()); }\nnever();',
+        ):
+            with self.subTest(statement=statement):
+                self.refused(BASE, BASE + statement + '\n', 'uncalled')
+
+    def test_unchanged_computed_calls_without_semicolons(self):
+        for call in ('process["exit"](0)', 'jest["mock"]("./m")', 'vi["mock"]("./m")'):
+            old = BASE + call + '\n'
+            with self.subTest(call=call):
+                self.assertEqual(policy.check(patch(old, old + 'checkResult();\n')), [])
+
     def test_staged_and_range_cli_refuse_fallback_repros(self):
         with tempfile.TemporaryDirectory() as repo:
             def git(*args):

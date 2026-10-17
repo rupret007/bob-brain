@@ -13,6 +13,9 @@ Strict rules (fail closed, Gemini patches):
     `pytest.importorskip`);
   * added returns in existing JS/TS tests must be the final statement of the test callback itself;
   * added lines must not close existing JS/TS blocks; only a proven helper return-alias refactor is exempt;
+  * assertions in added/changed JS/TS functions need a proven direct invocation path;
+  * added JS/TS runner/assertion bindings, process.exit calls and jest.mock/vi.mock are refused;
+  * returns in hooks are refused, including terminal returns;
   * a patch that names no files is refused.
 --push rules (human-reviewed lanes; Karen still gates): skip markers and runner-config edits are refused as above,
 but a test-file line may be removed when the same line is added back elsewhere in the diff (a move, e.g. putting
@@ -551,6 +554,234 @@ def _js_helper_alias_refactors(old, new, old_tree):
     return removed, returns
 
 
+def _js_added(nodes, added):
+    return any(n.line in added for node in nodes for n in _js_walk(node))
+
+
+def _js_binding_reasons(tree, added, path):
+    """Inspect binding targets, not RHS uses of the runner/assertion names.
+
+    Destructuring is deliberately conservative: an ambiguous protected name in
+    a target needs review. Strings and comments are already separate tokens.
+    """
+    protected = {'expect', 'it', 'test', 'describe'}
+    reasons = []
+
+    def binding(nodes):
+        if (_js_added(nodes, added) and
+                any(n.kind == 'word' and n.text in protected for node in nodes for n in _js_walk(node))):
+            reasons.append(f'rebinds a test/assertion name in {path}')
+
+    for parent in _js_walk(tree):
+        nodes = parent.children
+        for i, node in enumerate(nodes):
+            if node.text in ('const', 'let', 'var'):
+                # At this level commas separate declarators, not nested RHS args.
+                j = i + 1
+                while j < len(nodes):
+                    start = j
+                    while j < len(nodes) and nodes[j].text not in ('=', ';', ',', 'in', 'of'):
+                        if j > start and nodes[j].line > nodes[j-1].end_line:
+                            break
+                        j += 1
+                    binding(nodes[start:j])
+                    if j < len(nodes) and nodes[j].text == ',':
+                        j += 1
+                        continue
+                    if j == len(nodes) or nodes[j].text != '=':
+                        break
+                    j += 1
+                    while j < len(nodes) and nodes[j].text not in (';', ','):
+                        if nodes[j].line > nodes[j-1].end_line:
+                            break
+                        j += 1
+                    if j == len(nodes) or nodes[j].text != ',':
+                        break
+                    j += 1
+            if node.text in ('function', 'class'):
+                j = i + 1
+                if j < len(nodes) and nodes[j].text == '*':
+                    j += 1
+                binding(nodes[j:j+1])
+            if node.text == 'import':
+                j = i + 1
+                while j < len(nodes) and nodes[j].text not in ('from', ';', '='):
+                    j += 1
+                binding(nodes[i+1:j])
+            # Simple and compound assignments; equality operators are single tokens.
+            if node.text == '=':
+                j = i - 1
+                if j >= 0 and nodes[j].text in ('+', '-', '*', '&&', '||', '??', '&', '|', '^', '**'):
+                    j -= 1
+                if j >= 0:
+                    target = nodes[j]
+                    if target.text in ('{', '['):
+                        binding([target, node])
+                    elif target.kind == 'word' and target.text in protected:
+                        binding([target, node])
+                    # globalThis['it'] = ... (also refuse computed receiver aliases).
+                    if target.text == '[' and any(n.kind == 'string' and n.text[1:-1] in protected
+                                                  for n in target.children) and _js_added([target, node], added):
+                        reasons.append(f'rebinds a global test/assertion name in {path}:{node.line}')
+    return reasons
+
+
+def _js_assertion_function_reasons(tree, added, path):
+    """Prove a direct invocation path from module execution to assertion helpers.
+
+    This is a conservative lexical call graph, not general JS execution analysis.
+    Only direct calls, known test/hook registrations and IIFEs establish invocation;
+    passing a helper to an unknown API or ambiguous duplicate names needs review.
+    Recursive calls in an unreachable function cannot make it reachable.
+    """
+    functions = []
+    declarations = set()
+    parents = {}
+    for parent in _js_walk(tree):
+        for child in parent.children:
+            parents[child] = parent
+        nodes = parent.children
+        for i, node in enumerate(nodes):
+            body, name = None, None
+            if node.text == 'function':
+                j = i + 1
+                if j < len(nodes) and nodes[j].text == '*':
+                    j += 1
+                if j < len(nodes) and nodes[j].kind == 'word':
+                    name = nodes[j].text
+                    declarations.add(nodes[j])
+                    j += 1
+                if j < len(nodes) and nodes[j].text == '(':
+                    j += 1
+                    if j < len(nodes) and nodes[j].text == '{':
+                        body = [nodes[j]]
+                    else:
+                        raise JSSyntaxError('function body needs review')
+                # A named function expression is invoked through its assignment.
+                if i >= 2 and nodes[i-1].text == '=' and nodes[i-2].kind == 'word':
+                    name = nodes[i-2].text
+            elif node.text == '=>':
+                j = i + 1
+                if j >= len(nodes):
+                    raise JSSyntaxError('missing arrow body')
+                if nodes[j].text == '{':
+                    body = [nodes[j]]
+                else:
+                    end = j
+                    while end < len(nodes) and nodes[end].text not in (';', ','):
+                        end += 1
+                    body = nodes[j:end]
+                start = i - 1
+                if start and nodes[start-1].text == 'async':
+                    start -= 1
+                if start >= 2 and nodes[start-1].text == '=' and nodes[start-2].kind == 'word':
+                    name = nodes[start-2].text
+            if body is not None:
+                functions.append({'anchor': node, 'body': body, 'name': name,
+                                  'generator': node.text == 'function' and nodes[i+1].text == '*',
+                                  'tokens': {n for b in body for n in _js_walk(b)}})
+
+    def owner(token):
+        candidates = [i for i, fn in enumerate(functions) if token in fn['tokens']]
+        return min(candidates, key=lambda i: len(functions[i]['tokens'])) if candidates else None
+
+    def straight_line(token):
+        # Conditional/short-circuit calls do not prove invocation. Likewise a
+        # call after return cannot rescue an otherwise unreachable helper.
+        fn_id = owner(token)
+        boundary = functions[fn_id]['body'] if fn_id is not None else [tree]
+        child = token
+        while child in parents:
+            parent = parents[child]
+            nodes = parent.children
+            if parent.text == '{' or parent.kind == 'root':
+                index = nodes.index(child)
+                for kind, start, end in _js_statements(nodes):
+                    if start <= index < end:
+                        if kind != 'expression':
+                            return False
+                        if any(n.text in ('&&', '||', '??', '?') for n in nodes[start:index]):
+                            return False
+                        break
+                    if kind in ('return', 'control', 'label'):
+                        return False
+            elif any(n.text in ('&&', '||', '??', '?') for n in nodes[:nodes.index(child)]):
+                return False
+            if parent in boundary or child in boundary:
+                break
+            child = parent
+        return True
+
+    names = {}
+    for i, fn in enumerate(functions):
+        if fn['name']:
+            names.setdefault(fn['name'], []).append(i)
+    edges = []
+    registrations = {'it': 1, 'test': 1, 'specify': 1, 'describe': 1,
+                     'beforeAll': 0, 'beforeEach': 0, 'afterAll': 0, 'afterEach': 0}
+    for parent in _js_walk(tree):
+        nodes = parent.children
+        for i, node in enumerate(nodes):
+            if node.text != '(' or i == 0:
+                continue
+            callee = nodes[i-1]
+            if callee in declarations or not straight_line(callee):
+                continue
+            direct = i < 2 or nodes[i-2].text not in ('.', '?.', 'function')
+            if direct and callee.kind == 'word':
+                targets = names.get(callee.text, [])
+                if len(targets) == 1:
+                    edges.append((owner(callee), targets[0]))
+            j = i - 1
+            while j >= 2 and nodes[j-1].text == '.' and nodes[j].text in ('concurrent', 'serial'):
+                j -= 2
+            if nodes[j].text in registrations and (j == 0 or nodes[j-1].text not in ('.', '?.')):
+                args, arg = [], []
+                for child in node.children:
+                    if child.text == ',':
+                        args.append(arg); arg = []
+                    else:
+                        arg.append(child)
+                args.append(arg)
+                pos = registrations[nodes[j].text]
+                if len(args) > pos:
+                    callback = args[pos]
+                    for target, fn in enumerate(functions):
+                        if fn['anchor'] in callback:
+                            edges.append((owner(nodes[j]), target))
+                    if len(callback) == 1 and len(names.get(callback[0].text, [])) == 1:
+                        edges.append((owner(nodes[j]), names[callback[0].text][0]))
+            # A parenthesized function immediately followed by an argument list.
+            if callee.text == '(':
+                for target, fn in enumerate(functions):
+                    if fn['anchor'] in callee.children:
+                        edges.append((owner(callee), target))
+
+    live = {None}
+    while True:
+        reached = live | {target for source, target in edges
+                          if source in live and not functions[target]['generator']}
+        if reached == live:
+            break
+        live = reached
+    reasons = []
+    for node in _js_walk(tree):
+        if node.kind != 'word' or node.text not in ('expect', 'assert'):
+            continue
+        fn_id = owner(node)
+        if fn_id is None or fn_id in live:
+            continue
+        changed = node.line in added
+        ancestor = fn_id
+        while ancestor is not None:
+            fn = functions[ancestor]
+            changed |= fn['anchor'].line in added or any(b.line in added for b in fn['body'])
+            ancestor = owner(fn['anchor'])
+        if changed:
+            reasons.append(f'assertion in an uncalled function in {path}:{node.line} (invocation needs review)')
+    return reasons
+
+
 def _js_return_reasons(f, contents):
     """Return (findings, safe removed-row indexes) for strict existing JS/TS tests."""
     path = f.new
@@ -565,6 +796,8 @@ def _js_return_reasons(f, contents):
                 raise JSSyntaxError('missing full-file context; use --staged or --range')
             new = '\n'.join(f.new_lines[n] for n in sorted(f.new_lines))
         tree = _js_parse(new)
+        reasons.extend(_js_binding_reasons(tree, f.added_lines, path))
+        reasons.extend(_js_assertion_function_reasons(tree, f.added_lines, path))
         if old is not None:
             removed, helper_returns = _js_helper_alias_refactors(old, new, _js_parse(old))
         safe_returns = set()
@@ -587,6 +820,22 @@ def _js_return_reasons(f, contents):
                     reasons.append(f'adds an early exit to an existing test file {path}:{node.line} (return must be the last statement of the test callback itself)')
             children = node.children
             for i, child in enumerate(children):
+                # Calls may occur anywhere in an expression, or span added lines.
+                if i + 2 < len(children) and child.text in ('process', 'jest', 'vi'):
+                    call_end = i + 4
+                    member = children[i+1:i+3]
+                    call = children[i+3] if i + 3 < len(children) else member[1]
+                    prop = member[1].text if member[0].text in ('.', '?.') else None
+                    if member[0].text == '[' and len(member[0].children) == 1:
+                        key = member[0].children[0]
+                        prop = key.text[1:-1] if key.kind == 'string' else None
+                        call = member[1]
+                        call_end = i + 3
+                    if call.text == '(' and _js_added(children[i:call_end], f.added_lines):
+                        if child.text == 'process' and prop == 'exit':
+                            reasons.append(f'adds process.exit in {path}:{child.line}')
+                        elif child.text in ('jest', 'vi') and prop == 'mock':
+                            reasons.append(f'adds {child.text}.mock in {path}:{child.line} (needs human review)')
                 if child.line not in f.added_lines:
                     continue
                 if child.text == 'await' and [n.text for n in children[i+1:i+3]] == ['new', 'Promise']:
