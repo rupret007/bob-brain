@@ -5,10 +5,12 @@ on:
     branches:
       - main
       - draft/webbob-h2h-r10
+      - draft/webbob-clean-0927
   push:
     branches:
       - main
       - draft/webbob-h2h-r10
+      - draft/webbob-clean-0927
 
 permissions:
   contents: read
