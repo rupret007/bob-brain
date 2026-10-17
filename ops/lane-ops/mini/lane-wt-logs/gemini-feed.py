@@ -76,9 +76,11 @@ for lf in glob.glob(f"{L}/q-*.lane"):
     if HARD.search(re.sub(r"RULES:.*", "", pt, flags=re.S)): continue
     open(lf, "w").write("tier=cheap\nprovider=gemini\n# v2 gemini-feed: Karen-FAIL non-security fix -> Gemini\n")
     print(f"gemini-feed: routed Karen-fail {jid} -> gemini")
-seenq = set(); out = []
-for x in front + q + add:
-    if x not in seenq: seenq.add(x); out.append(x)
-open(Q, "w").write(" ".join(out))
+# lane-ops v3 (B5): merge into the CURRENT queue under the shared fill.queue lock, atomically (fill.sh may have
+# started or removed jobs since `q` was read; a plain rewrite lost them or resurrected started jobs).
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location("fill_queue", os.path.join(os.path.dirname(os.path.abspath(__file__)), "fill-queue.py"))
+_fq = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_fq)
+_fq.update(lambda cur: front + cur + add, queue=Q)
 if front: print(f"gemini-feed fix jobs: {' '.join(front)}")
 print(f"gemini-feed added {len(add)}: {' '.join(add)}")

@@ -1,0 +1,3 @@
+#!/bin/bash
+# lane-ops v3: no lane checks at this stage; run the repo's own commit-msg hook.
+exec "$(dirname "$0")/chain.sh" commit-msg "$@"

@@ -14,12 +14,17 @@ benchmarks and Diff-XYZ) to a git checkout. Format, one or more blocks:
 Matching ladder per block: exact text, then trailing-whitespace-insensitive, then
 indentation-insensitive line match. A SEARCH must match exactly once; ambiguous or missing
 matches fail the whole run (nothing is written) and name the failing block so the model can repair it.
-Paths must stay inside the root (no absolute paths, no "..", no .git/).
+Paths must stay inside the root (no absolute paths, no "..", no .git/ in any letter case).
+lane-ops v3 (arch-review-2 B7): files are written atomically (temp file in the same folder, fsync, os.replace,
+original mode kept), and an empty SEARCH is refused for a file that already has content: it used to append
+silently, so a model "creating" a file that existed duplicated it. An empty SEARCH still creates a new file or
+fills an empty one.
 Exit: 0 applied (or would apply with --check), 3 refused/failed, 2 usage.
 """
 import os
 import re
 import sys
+import tempfile
 
 BLOCK = re.compile(
     r"^FILE:[ \t]*(?P<path>[^\n]+?)[ \t]*\n(?:```[^\n]*\n)?<{7} SEARCH[ \t]*\n(?P<search>.*?)^={7}[ \t]*\n(?P<replace>.*?)^>{7} REPLACE[ \t]*$",
@@ -42,7 +47,7 @@ def safe_path(root, rel):
     if not rel or rel.startswith(("/", "~")) or "\\" in rel:
         raise EditError(f"unsafe path {rel!r}")
     parts = rel.split("/")
-    if ".." in parts or ".git" in parts:
+    if ".." in parts or any(p.lower() == ".git" for p in parts):
         raise EditError(f"unsafe path {rel!r}")
     full = os.path.realpath(os.path.join(root, rel))
     if not full.startswith(os.path.realpath(root) + os.sep):
@@ -62,7 +67,9 @@ def _find_lines(hay_lines, needle_lines, norm):
 
 def replace_once(content, search, replace, label):
     if search == "":
-        return content + replace
+        if content.strip():
+            raise EditError(f"{label}: empty SEARCH on a file that already has content; quote the lines to replace")
+        return replace
     c = content.count(search)
     if c == 1:
         return content.replace(search, replace, 1)
@@ -92,6 +99,39 @@ def replace_once(content, search, replace, label):
     raise EditError(f"{label}: SEARCH not found (first line: {first!r}); copy the lines exactly from the file")
 
 
+def write_atomic(full, body):
+    d = os.path.dirname(full)
+    os.makedirs(d, exist_ok=True)
+    mode = None
+    try:
+        mode = os.stat(full).st_mode & 0o7777
+    except FileNotFoundError:
+        pass
+    fd, tmp = tempfile.mkstemp(prefix=".apply-edits-", dir=d)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
+            f.write(body)
+            f.flush()
+            os.fsync(f.fileno())
+        if mode is not None:
+            os.chmod(tmp, mode)
+        else:
+            os.chmod(tmp, 0o666 & ~_umask())
+        os.replace(tmp, full)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _umask():
+    m = os.umask(0)
+    os.umask(m)
+    return m
+
+
 def apply(text, root, check=False):
     root = os.path.realpath(root)
     staged = {}
@@ -109,9 +149,7 @@ def apply(text, root, check=False):
         staged[full] = replace_once(cur, search, replace, label)
     if not check:
         for full, body in staged.items():
-            os.makedirs(os.path.dirname(full), exist_ok=True)
-            with open(full, "w", encoding="utf-8", errors="surrogateescape") as f:
-                f.write(body)
+            write_atomic(full, body)
     return sorted(os.path.relpath(p, root) for p in staged)
 
 

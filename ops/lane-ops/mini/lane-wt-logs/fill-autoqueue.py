@@ -42,6 +42,10 @@ PRIORITY = [
 ]
 
 LOW_WATER = int(os.environ.get("FILL_LOW_WATER", "2"))
+# lane-ops v3 (arch-review-2 item 4, WIP limit): no NEW feature PRs (issue jobs) while more than this many draft PRs
+# across the PRIORITY repos are waiting on Karen. Fix jobs on existing PRs keep flowing, so lane slots go to
+# Karen-fail fixes instead of piling up more drafts. Unknown count (gh down) = hold new PRs (fail closed).
+DRAFT_WIP_MAX = int(os.environ.get("FILL_DRAFT_WIP_MAX", "15"))
 TARGET = int(os.environ.get("FILL_REFILL_TARGET", "6"))
 MAX_PER_REPO = int(os.environ.get("FILL_MAX_PER_REPO", "2"))
 RULES = (
@@ -51,7 +55,11 @@ RULES = (
     "HEAVY TESTS: if ~/bin/nuc-verify exists (Mac mini), run Node/Playwright/vitest gates from your worktree via "
     "`~/bin/nuc-verify -- bash -c '<test cmd>'` so they run on the NucBox; keep macOS-only tests and WebKit play.spec.js local; "
     "on the NucBox just run tests normally. "
-    "End by printing exactly: RESULT branch=<b> pr=<url> head=<sha> tests=<summary>  (or BLOCKER <reason>)."
+    "PRE-KAREN SELF-GATE (required): after your last push, run `python3 ~/nuc-tools/pre-karen-check.py --repo <owner/repo> "
+    "--pr <n>` on the NucBox (Mini: `~/bin/karen-request.sh <owner/repo> <n>`) and fix every FAIL it prints (tests CI never "
+    "collects, surviving mutants, stale/truncated PR body, weakened tests); PENDING only means CI is still running. "
+    "Never ask for a Karen gate yourself; the conductor does that via karen-request.sh. "
+    "End by printing exactly: RESULT branch=<b> pr=<url> head=<sha> tests=<summary> prekaren=<PASS|FAIL|PENDING>  (or BLOCKER <reason>)."
 )
 
 
@@ -133,16 +141,23 @@ def classify(text: str) -> str:
         tier, prov = "cheap", "gemini"   # v6: routine fixes -> Gemini (code mode, tests on NucBox, cursor fallback)
     return f"tier={tier}\nprovider={prov}\n"
 
-def write_queue(jobs: list[str]) -> None:
-    # preserve order, unique
-    seen = set()
-    out = []
-    for j in jobs:
-        if j not in seen:
-            seen.add(j)
-            out.append(j)
-    with open(QUEUE, "w") as f:
-        f.write(" ".join(out) + ("\n" if out else ""))
+def _fill_queue():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("fill_queue", os.path.join(os.path.dirname(os.path.abspath(__file__)), "fill-queue.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def write_queue(jobs: list[str], active: set[str] | None = None) -> list[str]:
+    """lane-ops v3 (B5): merge into the CURRENT queue under the shared lock, atomically.
+
+    `jobs` is what this run added. fill.sh may have started (removed) jobs or gemini-feed may
+    have appended since then, so the new queue is: current queue minus running jobs, then any of `jobs` not in it.
+    A job fill.sh removed after starting it is not resurrected unless it is one this run just added.
+    """
+    act = active or set()
+    return _fill_queue().update(lambda cur: [j for j in cur if j not in act] + [j for j in jobs if j not in cur and j not in act], queue=QUEUE)
 
 
 def active_lane_jobs() -> set[str]:
@@ -276,6 +291,30 @@ def prompt_for_issue(repo: str, issue: dict) -> str:
     )
 
 
+def drafts_waiting_on_karen() -> int | None:
+    """Open draft PRs by trusted authors across PRIORITY repos (None when GitHub can't be read)."""
+    repos = {r.lower() for _, r in PRIORITY}
+    rows = gh_json(["search", "prs", "--owner", "rupret007", "--state", "open", "--draft", "--limit", "500",
+                    "--json", "number,repository,author"])
+    if not isinstance(rows, list):
+        return None
+    n = 0
+    for p in rows:
+        repo = ((p.get("repository") or {}).get("nameWithOwner") or "").lower()
+        if repo in repos and trusted(dict(p, isCrossRepository=False)):
+            n += 1
+    return n
+
+
+def new_prs_allowed() -> tuple[bool, str]:
+    n = drafts_waiting_on_karen()
+    if n is None:
+        return False, "draft count unknown (gh failed)"
+    if n > DRAFT_WIP_MAX:
+        return False, f"{n} drafts waiting on Karen > {DRAFT_WIP_MAX}"
+    return True, f"{n} drafts waiting on Karen <= {DRAFT_WIP_MAX}"
+
+
 def main() -> int:
     q = read_queue()
     active = active_lane_jobs()
@@ -289,6 +328,8 @@ def main() -> int:
     log(f"refill start: pending={len(pending)} need={need} active={sorted(active)}")
     added: list[str] = []
     per_repo: dict[str, int] = {}
+    allow_new, why_wip = new_prs_allowed()
+    log(f"WIP limit: {'new feature PRs allowed' if allow_new else 'HOLD new feature PRs'} ({why_wip}); fixes to existing PRs continue")
 
     for short, repo in PRIORITY:
         if len(added) >= need:
@@ -336,6 +377,8 @@ def main() -> int:
             per_repo[repo] += 1
             log(f"queued {jid} from {repo} PR #{n}")
 
+        if not allow_new:
+            continue   # v3 WIP limit: issue jobs open NEW PRs; only fix jobs on existing PRs run while over the limit
         # grok 10/16 18:48: Jeff 10/14 WebJam closeout rule - no NEW PRs (issue jobs) while >=10 WebJam PRs are open
         if repo == "rupret007/webjam":
             _open = gh_json(["pr", "list", "-R", repo, "--state", "open", "--limit", "300", "--json", "number"])
@@ -373,8 +416,7 @@ def main() -> int:
             per_repo[repo] += 1
             log(f"queued {jid} from {repo} issue #{n} as implement-issue-then-draft-PR job (issue claim, not PR lease)")
 
-    new_q = pending + added
-    write_queue(new_q)
+    new_q = write_queue(added, active)
     log(f"refill done: added={len(added)} queue={new_q}")
     print(json.dumps({"added": added, "queue": new_q, "pending_before": pending}))
     return 0

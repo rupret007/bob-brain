@@ -16,6 +16,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install zsh (lane-ops shell tests run the zsh scripts for real instead of skipping)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh
       - name: Install component dependencies
         run: |
           for requirements in requirements-*.txt; do

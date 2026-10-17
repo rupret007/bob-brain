@@ -41,3 +41,15 @@ nucbox/systemd/bob-live.service	nucbox	~/.config/systemd/user/bob-live.service
 nucbox/systemd/bob-nats.service	nucbox	~/.config/systemd/user/bob-nats.service
 nucbox/nuc-tools/codex-win.sh	nucbox	~/nuc-tools/codex-win.sh
 nucbox/nuc-tools/lane-run-codex.sh	nucbox	~/nuc-tools/lane-run-codex.sh
+
+mini/lane-wt-logs/fill-queue.py	mini	~/lane-wt/logs/fill-queue.py
+mini/bin/karen-request.sh	mini	~/bin/karen-request.sh
+shared/pre-karen-check.py	mini	~/bin/pre-karen-check.py
+shared/pre-karen-check.py	nucbox	~/nuc-tools/pre-karen-check.py
+nucbox/nuc-tools/lane-supervise.sh	nucbox	~/nuc-tools/lane-supervise.sh
+nucbox/nuc-tools/nuc-test-slot.sh	nucbox	~/nuc-tools/nuc-test-slot.sh
+nucbox/nuc-tools/nuc-repo-cache.sh	nucbox	~/nuc-tools/nuc-repo-cache.sh
+nucbox/nuc-tools/lane-hooks/pre-push	nucbox	~/nuc-tools/lane-hooks/pre-push
+nucbox/nuc-tools/lane-hooks/pre-commit	nucbox	~/nuc-tools/lane-hooks/pre-commit
+nucbox/nuc-tools/lane-hooks/commit-msg	nucbox	~/nuc-tools/lane-hooks/commit-msg
+nucbox/nuc-tools/lane-hooks/chain.sh	nucbox	~/nuc-tools/lane-hooks/chain.sh

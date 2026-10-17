@@ -8,11 +8,20 @@ Usage:
   claim-gate.py release --repo OWNER/R --work-id ID --owner O [--status DONE] [--pr URL]
   claim-gate.py release --claim FILE --owner O [--status DONE]      (lane-ops v2: release one exact claim)
   claim-gate.py renew   --claim FILE --owner O                      (lane-ops v2: heartbeat a lease)
+  claim-gate.py check   --claim FILE --owner O                      (lane-ops v3: fence; exit 0 only if the lease is live)
 
 Leases (lane-ops v2): `claim --lease-s N` adds heartbeat + lease_s to the claim. A leased claim stops
 blocking work N seconds after its last heartbeat even if its TTL is hours away, so a killed lane (screen
 quit, kill -9, reboot) frees its work in minutes, not hours. lane-lease.sh renews and releases for you.
 Claims without lease_s behave exactly as before.
+
+lane-ops v3 (arch-review-2 B1, B8):
+  * Each owner's newest record is chosen by its `created` time, not file mtime, and per (repo, work id, owner).
+    A late release from a lane whose lease already lapsed can no longer hide another lane's live claim (B1);
+    `release --claim` on a lapsed lease is refused and leaves the file untouched.
+  * `renew` also pushes `expires` forward by the claim's TTL (B8), capped at `created + max_age_s`
+    (`--max-age-min`, default LANE_MAX_AGE_MIN or 360). Past that age renew refuses, so a hung lane that keeps
+    heartbeating still loses its claim and lane-lease.sh stops it.
 
 Exit codes (callers MUST treat anything but 0 as "do not start / do not open a PR"):
   0  CLAIMED / OK_TO_CREATE
@@ -26,6 +35,7 @@ ROOT = os.environ.get("CLAIM_GATE_ROOT", "/Users/jeffstory/Documents/bob-overnig
 CLAIMS = os.environ.get("CLAIM_GATE_CLAIMS", os.path.join(ROOT, "coord", "claims"))
 GH = os.environ.get("CLAIM_GATE_GH", "gh")
 DONE = {"DONE", "RELEASED", "FAILED", "ABANDONED", "HELD"}
+MAX_AGE_MIN = int(os.environ.get("LANE_MAX_AGE_MIN", "360"))
 STOP = set("a an the and or of to in on for with from by is are be no not when it its this that into as at after before only one all any new add fix make show keep use".split())
 TITLE_SIM = 0.6
 FILE_SIM = 0.5
@@ -83,19 +93,39 @@ def lease_dead(j, at=None):
     if hb.tzinfo is None: hb = hb.replace(tzinfo=dt.timezone.utc)
     return ((at or now()) - hb).total_seconds() > lease
 
+def ts(s, default=None):
+    try:
+        t = dt.datetime.fromisoformat(s)
+    except (TypeError, ValueError):
+        return default
+    return t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
+
+EPOCH = dt.datetime(1970, 1, 1, tzinfo=dt.timezone.utc)
+
 def latest_by_key():
+    """Newest record per (repo, work id, owner), ordered by the record's own `created` time.
+
+    lane-ops v3 (B1): this used to keep one record per (repo, work id) by file mtime. `release --claim`
+    rewrites a file in place, which bumps its mtime, so lane A's late release (after A's lease had lapsed and
+    lane B had claimed) became "latest" and hid B's live claim; a third lane could then claim the same PR.
+    Keying by owner means one owner's release can only close that owner's own claim, and `created` never
+    changes when a file is rewritten. mtime only breaks ties between records with the same `created`.
+    """
     best = {}
     for f in glob.glob(os.path.join(CLAIMS, "*.json")):
         try: j = json.load(open(f))
         except Exception: continue
-        k = ((j.get("repo") or "").lower(), norm_id(j.get("work_id") or j.get("task") or ""))
-        m = os.path.getmtime(f)
-        if k not in best or m >= best[k][0]: best[k] = (m, j, f)
+        if not isinstance(j, dict): continue
+        k = ((j.get("repo") or "").lower(), norm_id(j.get("work_id") or j.get("task") or ""), j.get("owner") or "")
+        try: m = os.path.getmtime(f)
+        except OSError: continue
+        order = (ts(j.get("created"), EPOCH), m)
+        if k not in best or order >= best[k][0]: best[k] = (order, j, f)
     return best
 
 def live_claims():
     out_ = []
-    for (_, _), (_, j, f) in latest_by_key().items():
+    for _k, (_, j, f) in latest_by_key().items():
         try: e = dt.datetime.fromisoformat(j.get("expires", "1970-01-01T00:00:00+00:00"))
         except Exception: continue
         if e.tzinfo is None: e = e.replace(tzinfo=dt.timezone.utc)
@@ -142,9 +172,10 @@ def write_claim(a, status, files, extra=None):
              title=a.title, owner=a.owner, lane=a.lane or a.owner, scope=a.title, branch=a.branch or "",
              files=sorted(files), pr_target=str(a.pr or ""), status=status,
              expires=(now() + dt.timedelta(minutes=a.ttl_min)).isoformat(), next_handoff=a.owner,
-             evidence=[], created=now().isoformat())
+             evidence=[], created=now().isoformat(), ttl_min=int(a.ttl_min))
     if getattr(a, "lease_s", 0):
-        j.update(lease_s=int(a.lease_s), heartbeat=now().isoformat())
+        j.update(lease_s=int(a.lease_s), heartbeat=now().isoformat(),
+                 max_age_s=int(getattr(a, "max_age_min", 0) or MAX_AGE_MIN) * 60)
     if extra: j.update(extra)
     p = os.path.join(CLAIMS, "gate-%s-%s-%s-%s.json" % (norm_id(a.repo.split("/")[-1]), norm_id(a.work_id)[:60], norm_id(a.owner), ts))
     tmp = p + ".tmp"; json.dump(j, open(tmp, "w")); os.rename(tmp, p)
@@ -201,19 +232,68 @@ def own_claim(a):
 def rewrite(path, j):
     tmp = path + ".tmp"; json.dump(j, open(tmp, "w")); os.rename(tmp, path)
 
+def ttl_of(j):
+    """The claim's TTL: stored ttl_min, else the original created->expires span (legacy files)."""
+    try:
+        return dt.timedelta(minutes=float(j["ttl_min"]))
+    except (KeyError, TypeError, ValueError):
+        c, e = ts(j.get("created")), ts(j.get("expires"))
+        return (e - c) if c and e and e > c else dt.timedelta(minutes=180)
+
+def max_age_reached(j, at=None):
+    try:
+        cap = float(j.get("max_age_s") or 0)
+    except (TypeError, ValueError):
+        return False
+    c = ts(j.get("created"))
+    return bool(cap > 0 and c and ((at or now()) - c).total_seconds() > cap)
+
+def live_problem(j):
+    """Why a claim this owner holds is no longer live, or None if it is."""
+    if str(j.get("status", "")).upper() in DONE: return "claim already %s" % j.get("status")
+    if lease_dead(j): return "lease already expired; claim again"
+    e = ts(j.get("expires"))
+    if e is None or e < now(): return "claim expired"
+    if max_age_reached(j): return "max lease age reached (hung lane?)"
+    return None
+
 def cmd_renew(a):
     with Lock():
         path, j = own_claim(a)
-        if str(j.get("status", "")).upper() in DONE: out("BLOCKED", 3, reason="claim already %s" % j.get("status"))
-        if lease_dead(j): out("BLOCKED", 3, reason="lease already expired; claim again")
-        j["heartbeat"] = now().isoformat()
+        why = live_problem(j)
+        if why: out("BLOCKED", 3, reason=why)
+        t = now()
+        j["heartbeat"] = t.isoformat()
+        # B8: renewing also moves the TTL forward, so a long heartbeating lane does not expire at created+TTL,
+        # but never past created + max_age_s.
+        new_exp = t + ttl_of(j)
+        try:
+            cap = float(j.get("max_age_s") or 0)
+        except (TypeError, ValueError):
+            cap = 0
+        c = ts(j.get("created"))
+        old_exp = ts(j.get("expires"), t)
+        exp = max(old_exp, new_exp)
+        if cap > 0 and c: exp = min(exp, c + dt.timedelta(seconds=cap))
+        j["expires"] = exp.isoformat()
         rewrite(path, j)
-        out("RENEWED", 0, claim=path, heartbeat=j["heartbeat"])
+        out("RENEWED", 0, claim=path, heartbeat=j["heartbeat"], expires=j["expires"])
+
+def cmd_check(a):
+    """Fence before push / PR create: exit 0 only while this owner's lease is live."""
+    with Lock():
+        path, j = own_claim(a)
+        why = live_problem(j)
+        if why: out("BLOCKED", 3, reason=why, claim=path)
+        out("LIVE", 0, claim=path)
 
 def cmd_release(a):
     if a.claim:
         with Lock():
             path, j = own_claim(a)
+            if str(j.get("status", "")).upper() not in DONE and lease_dead(j):
+                # B1: the lease lapsed, so another lane may own this work now. Leave the file as it is.
+                out("BLOCKED", 3, reason="lease already lapsed; not rewriting a claim that no longer holds the work", claim=path)
             j.update(status=a.status, released=now().isoformat())
             rewrite(path, j)
             out("RELEASED", 0, claim=path)
@@ -224,7 +304,7 @@ def cmd_release(a):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["claim", "pre-pr", "release", "renew"])
+    ap.add_argument("cmd", choices=["claim", "pre-pr", "release", "renew", "check"])
     ap.add_argument("--repo", default=""); ap.add_argument("--work-id", default="")
     ap.add_argument("--claim", default=""); ap.add_argument("--lease-s", type=int, default=0)
     ap.add_argument("--title", default=""); ap.add_argument("--owner", required=True)
@@ -232,10 +312,11 @@ def main():
     ap.add_argument("--branch", default=""); ap.add_argument("--pr", default="")
     ap.add_argument("--pr-url", default=""); ap.add_argument("--status", default="DONE")
     ap.add_argument("--ttl-min", type=int, default=180)
+    ap.add_argument("--max-age-min", type=int, default=0)
     a = ap.parse_args()
-    if a.cmd == "renew" or (a.cmd == "release" and a.claim):
+    if a.cmd in ("renew", "check") or (a.cmd == "release" and a.claim):
         if not a.claim: out("BLOCKED", 3, reason="--claim required")
-        {"renew": cmd_renew, "release": cmd_release}[a.cmd](a)
+        {"renew": cmd_renew, "check": cmd_check, "release": cmd_release}[a.cmd](a)
     if not a.repo or not a.work_id: out("BLOCKED", 3, reason="--repo and --work-id required")
     if a.cmd != "release" and not a.title and not a.pr: out("BLOCKED", 3, reason="--title or --pr required")
     if "/" not in a.repo: out("BLOCKED", 3, reason="--repo must be OWNER/NAME")

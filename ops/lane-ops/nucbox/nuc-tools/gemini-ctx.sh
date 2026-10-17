@@ -4,13 +4,18 @@
 J=$1; R=$2; PR=$3; W=~/work/gem-ctx-$J; rc=0
 . ~/.nvm/nvm.sh >/dev/null 2>&1
 extra=$(cat)
-rm -rf $W; gh repo clone $R $W -- --depth 60 --no-single-branch -q >/dev/null 2>&1 || exit 4
+# lane-ops v3 (capacity): worktree from the cached bare clone (nuc-repo-cache.sh) instead of a fresh clone per job
+if [ -n "$PR" ]; then
+  bash ~/nuc-tools/nuc-repo-cache.sh $R $W $PR >/dev/null 2>&1; c=$?
+  if [ $c = 5 ]; then bash ~/nuc-tools/nuc-repo-cache.sh $R $W >/dev/null 2>&1 || exit 4; rc=5; elif [ $c != 0 ]; then exit 4; fi
+else
+  bash ~/nuc-tools/nuc-repo-cache.sh $R $W >/dev/null 2>&1 || exit 4
+fi
 cd $W
 emit(){ [ -f "$1" ] || return; echo "--- FILE $1 ---"; head -c 200000 "$1"; echo; }
 if [ -n "$PR" ]; then
-  gh pr checkout $PR >/dev/null 2>&1 || { git fetch -q --depth 60 origin pull/$PR/head:gem-pr-$PR && git checkout -q gem-pr-$PR; } || rc=5
-  echo "--- FILE PR-$PR.diff ---"; gh pr diff $PR 2>/dev/null | head -c 80000; echo
-  gh pr diff $PR --name-only 2>/dev/null | head -25 | while read f; do emit "$f"; done
+  echo "--- FILE PR-$PR.diff ---"; gh pr diff $PR -R $R 2>/dev/null | head -c 80000; echo
+  gh pr diff $PR -R $R --name-only 2>/dev/null | head -25 | while read f; do emit "$f"; done
 fi
 emit README.md
 printf '%s\n' "$extra" | sort -u | while read f; do [ -n "$f" ] && emit "$f"; done

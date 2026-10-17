@@ -13,6 +13,9 @@ while [ -z "$got" ]; do
   [ -z "$got" ] && sleep 30
 done
 echo "SLOT $got/$MAX load=$(cut -d' ' -f1 /proc/loadavg) $(date)"
-cd ~/work; [ -d $N ] || git clone -q https://github.com/rupret007/$R.git $N; cd $N; git fetch -q origin
-if git ls-remote --exit-code --heads origin $B >/dev/null; then git checkout -q -B $B origin/$B; else git checkout -q -B $B origin/$BASE; fi
+# lane-ops v3 (capacity): fresh worktree from the cached bare clone instead of a per-lane full clone
+bash ~/nuc-tools/nuc-repo-cache.sh rupret007/$R ~/work/$N >/dev/null || { echo "BLOCKER repo cache failed for $R"; exit 4; }
+cd ~/work/$N
+if git rev-parse -q --verify refs/remotes/origin/$B >/dev/null; then git checkout -q --ignore-other-worktrees -B $B origin/$B
+else git checkout -q --ignore-other-worktrees -B $B origin/$BASE; fi
 set +e; ~/.local/bin/cursor-agent agent --model $MODEL -f --trust -p "$(cat ~/work/results/$N.prompt)"; echo "EXIT $?"

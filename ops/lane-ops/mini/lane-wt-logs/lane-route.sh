@@ -28,14 +28,17 @@ nuc_lane_count(){ echo $(( $(running cursor) + $(running gemini) + $(running cla
 nuc_ok(){ local n l; n=$(nuc_lane_count); l=$(${=SSH} 'cut -d" " -f1 /proc/loadavg|cut -d. -f1' 2>/dev/null) || return 1; [[ -n $l ]] || return 1; local cap=4; (( l < 10 )) && cap=5; (( l < 12 && n < cap )); }
 nuc_codex_ok(){ # Codex on NucBox: shared slot/load cap; Windows CLI must be reachable
   nuc_ok || return 1
-  ${=SSH} 'test -x ~/nuc-tools/codex-win.sh && test -x "$(ls -td /mnt/c/Users/rupret/AppData/Local/OpenAI/Codex/bin/*/codex.exe 2>/dev/null | head -1)"' 2>/dev/null
+  # v3 (B8): ask codex-win.sh which codex.exe it would run (settled install, answers --version), not the newest mtime
+  ${=SSH} 'test -x ~/nuc-tools/codex-win.sh && ~/nuc-tools/codex-win.sh --which >/dev/null' 2>/dev/null
 }
 codex_cap_ok(){ local l=$(sysctl -n vm.loadavg | awk '{print int($3)}'); (( l > 10 )) && (( $(running codex) >= 2 )) && return 1; return 0; }  # v5.1: Codex 3, drop to 2 when 15-min load trends >10
-codex_host_pick(){ # echo nuc|mini ; prefer NucBox when CODEX_HOST=auto/nuc and nuc_codex_ok
-  case ${CODEX_HOST:-auto} in
-    nuc) nuc_codex_ok && echo nuc || return 1;;
+codex_host_pick(){ # echo nuc|mini
+  # lane-ops v3 (arch-review-2 item 10): Codex lanes are NucBox-only; the Mini coordinates and makes API calls.
+  # auto/nuc/unset never fall back to the Mini (when the NucBox can't take Codex the job goes to Cursor on the NucBox
+  # via CODEX_REFUSED_FALLBACK). CODEX_HOST=mini is an explicit operator override only, and still needs mini_ok.
+  case ${CODEX_HOST:-nuc} in
     mini) echo mini; return 0;;
-    auto|*) nuc_codex_ok && echo nuc || echo mini; return 0;;
+    *) nuc_codex_ok && echo nuc || return 1;;
   esac
 }
 codex_start_ok(){ # $1=tier — host-aware gate for starting a Codex lane (does not raise TGT)
@@ -48,4 +51,5 @@ codex_start_ok(){ # $1=tier — host-aware gate for starting a Codex lane (does 
 gemini_ok(){ [[ -f ~/lane-wt/logs/gemini.pause ]] && return 1; local h=$(awk -F'\t' -v c="$(date -v-1H '+%F %T')" '$1>=c{t+=$6} END{printf "%d", t}' ~/lane-wt/logs/gemini-spend.txt 2>/dev/null); (( ${h:-0} < ${GEMINI_HOURLY_PACE:-20} )) || return 1
   local nl; nl=$(${=SSH} 'cut -d" " -f1 /proc/loadavg|cut -d. -f1' 2>/dev/null) || return 1; [[ -n $nl ]] && (( nl < 11 )) || return 1   # v6.3: cap on NucBox load (clones/tests run there)
   local l s; l=$(sysctl -n vm.loadavg | awk '{print int($3)}'); s=$(sysctl -n vm.swapusage | awk '{gsub("M","",$3);gsub("M","",$6); printf "%d", $6*100/$3}')
-  (( l < 10 && s < 80 )) || (( $(running gemini) < 4 )) || return 1; return 0; }  # Mini only makes HTTP calls now; over Mini guard hold at 4
+  # v3: memory pressure counts too (macOS load includes Spotlight I/O waits; swap/pressure is the real limit at 16 GB)
+  (( l < 10 && s < 80 )) && mini_mem_ok || (( $(running gemini) < 4 )) || return 1; return 0; }  # Mini only makes HTTP calls now; over Mini guard hold at 4

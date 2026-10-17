@@ -17,7 +17,9 @@ fallback(){ # $1 = extra prompt file (optional)
   echo "gemini-lane: fallback to cursor-agent ($CURSOR_MODEL) reason=$2"
   { deny=$(awk -F'\t' -v r="$repo" '$1==r{print $2}' $L/gemini-deny-paths.txt | tr '\n' ' '); [[ -n $deny ]] && echo "HARD RULE: do NOT modify these Karen-gated protocol-2 files: $deny"; cat $P; [[ -n $1 && -s $1 ]] && { echo; echo "A Gemini-proposed patch follows. Apply it if correct (git apply), run the repo tests, fix real failures, never weaken tests:"; cat $1; }; } \
     | ${=SSH} "mkdir -p ~/work/results && cat > ~/work/results/q-$j.prompt"
-  ${=SSH} "bash -l ~/nuc-tools/lane-run-q.sh q-$j $CURSOR_MODEL"; }
+  ${=SSH} "bash -l ~/nuc-tools/lane-supervise.sh run q-$j ${LANE_LEASE_S:-900} -- bash -l ~/nuc-tools/lane-run-q.sh q-$j $CURSOR_MODEL"; }
+# lane-ops v3 (B2): fence before any push this script makes on the Mini: the claim lane-lease.sh holds must be live
+fence(){ [[ -z ${LANE_CLAIM_FILE:-} ]] && return 0; python3 ${CLAIM_GATE:-$HOME/Documents/bob-overnight-inject/bin/claim-gate.py} check --claim $LANE_CLAIM_FILE --owner $LANE_CLAIM_OWNER >/dev/null 2>&1; }
 mode=cursor
 [[ -f $L/gemini.pause ]] && { fallback "" "gemini paused: $(tail -1 $L/gemini.pause)"; exit; }
 [[ -n $pr ]] && mode=code   # v2 21:55 CT: Gemini codes PR fixes itself; tests run on NucBox (gemini-apply-test.sh)
@@ -73,7 +75,9 @@ if [[ $mode == code || $mode == tests || $mode == docs ]]; then
     if print -r -- $touched | while read pf; do [[ -n $pf ]] && grep -qxF "$repo	$pf" $L/gemini-deny-paths.txt && { echo "$pf"; break; }; done | grep -q .; then echo "BLOCKER patch touches Karen-gated protocol-2 file (gemini-deny-paths.txt); not applied, no fallback"; exit 0; fi
     if [[ -n ${GEMINI_DENY_RE:-} ]] && print -r -- $touched | grep -qE "$GEMINI_DENY_RE"; then echo "BLOCKER patch touches denied path ($GEMINI_DENY_RE)"; exit 0; fi
     ${=SSH} "mkdir -p ~/work/results && cat > ~/work/results/q-$j.gemini.patch" < $L/q-$j.gemini.patch
-    ${=SSH} "bash -l ~/nuc-tools/gemini-apply-test.sh q-$j $repo $pr push $EF" > $L/q-$j.gat.$try.log 2>&1; grc=$?
+    # v3 (B3): GAT runs supervised on the NucBox, so a lost lease stops it before its push (lane-hooks/pre-push fences too)
+    ${=SSH} "bash -l ~/nuc-tools/lane-supervise.sh run q-$j ${LANE_LEASE_S:-900} -- bash -l ~/nuc-tools/gemini-apply-test.sh q-$j $repo $pr push $EF" > $L/q-$j.gat.$try.log 2>&1; grc=$?
+    (( grc == 143 )) && { echo "BLOCKER gemini GAT stopped (lease lost); no fallback"; exit 0; }
     cat $L/q-$j.gat.$try.log
     (( grc == 0 )) && { echo "RESULT gemini-code pr=https://github.com/$repo/pull/$pr $(grep '^GAT pushed' $L/q-$j.gat.$try.log) model=$GEMINI_CODE_MODEL"; exit 0; }
     (( grc == 4 || grc == 5 )) && break
@@ -87,6 +91,7 @@ if (( rc != 0 )) || ! git apply --check $L/q-$j.gemini.patch 2>$L/q-$j.gemini.ap
   fallback $L/q-$j.gemini.patch "patch rc=$rc or apply --check failed"; exit; fi
 files=(${(f)"$(git apply --numstat $L/q-$j.gemini.patch | awk '{print $3}')"})
 if [[ $mode == docs ]] && ! print -l $files | grep -vqE '(\.md$|^docs/)'; then
+  fence || { echo "BLOCKER lease lost before docs push; not pushed"; exit 0; }
   git apply $L/q-$j.gemini.patch && git add -A && git commit -qm "docs: Gemini lane update for PR #$pr ($j)" && git push -q origin HEAD \
     && echo "RESULT branch=$(git rev-parse --abbrev-ref HEAD) pr=https://github.com/$repo/pull/$pr head=$(git rev-parse HEAD) tests=docs-only (no code touched)" && exit 0
   fallback $L/q-$j.gemini.patch "docs push failed"; exit
