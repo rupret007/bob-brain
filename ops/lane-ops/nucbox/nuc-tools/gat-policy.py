@@ -5,13 +5,14 @@ Used by gemini-apply-test.sh before `git apply` (strict mode), and since lane-op
 for EVERY provider (Codex, Cursor, Claude, Gemini) and by pre-karen-check (`--push` mode). Exit 0 = allowed,
 3 = refused (reasons on stdout), 2 = usage.
 Strict rules (fail closed, Gemini patches):
-  * no deleted lines in test files (existing GAT rule, kept);
+  * no deleted lines in test files, except a proven value-preserving JS/TS helper return-alias refactor;
   * no edits to CI workflows or test-runner configuration (incl. jest/vitest blocks in package.json,
     Makefile/justfile test targets);
   * no edits to package.json lines that define test scripts;
   * no added skip/only/todo markers anywhere (incl. skipIf/runIf, `pytestmark = pytest.mark.skip`,
     `pytest.importorskip`);
-  * added returns in existing JS/TS test files require the next non-blank line to close the block;
+  * added returns in existing JS/TS tests must be the final statement of the test callback itself;
+  * added lines must not close existing JS/TS blocks; only a proven helper return-alias refactor is exempt;
   * a patch that names no files is refused.
 --push rules (human-reviewed lanes; Karen still gates): skip markers and runner-config edits are refused as above,
 but a test-file line may be removed when the same line is added back elsewhere in the diff (a move, e.g. putting
@@ -31,6 +32,7 @@ v4 (Karen #151 N3/N4):
     numeric tolerance/threshold constants changed outside test files. Undecidable cases are refused for a human.
 """
 import ast
+import difflib
 import os
 import re
 import subprocess
@@ -71,12 +73,10 @@ JS_SKIP = re.compile(
 XFAIL_MARK = re.compile(r"\bexpectedFailure\b|\bxfail\b|\b__test__\s*=\s*False\b|\b__unittest_skip__\b|\bSkipTest\b"
                         r"|\bdef\s+load_tests\s*\(|\bpytestmark\b|\bcollect_ignore")
 TEST_SKIP_CALL = re.compile(r"\b(this|ctx|context|t)\s*\.\s*skip\s*\(")
-# Legacy return heuristics for push mode and other languages. Strict JS/TS checks use the following line instead.
+# Legacy return heuristics for push mode and other languages. Strict JS/TS checks parse structure.
 EARLY_EXIT = re.compile(r"(^\s*|[:;{)]\s*)(return\b(?!\s+(expect\b|new\s+Promise\b|Promise\.|request\s*\(|supertest\b|page\.|await\b))"
                         r"|sys\.exit\s*\(|os\._exit\s*\(|process\.exit\s*\()")
 JS_FILE = re.compile(r"\.[cm]?[jt]sx?$", re.I)
-# Fail closed on any return token, including inline or comment-separated statements.
-JS_RETURN = re.compile(r"\breturn\b")
 EXIT_CALL = re.compile(r"(^\s*|[:;{)]\s*)(sys\.exit\s*\(|os\._exit\s*\(|process\.exit\s*\()")
 DEAD_BRANCH = re.compile(r"^\s*(el)?(if|while)\s*\(?\s*(not\s+(True|1)|!\s*(true|1)|False|false|0|None|null|undefined|void 0)\s*\)?\s*[:{)]?\s*$"
                          r"|^\s*(el)?(if|while)\s*\(?\s*(False|false|0|None|null)\s*(and|&&)")
@@ -159,6 +159,7 @@ class FileDiff:
         self.hunks = 0
         self.lines = []             # (sign, text)
         self.new_lines = {}         # new-file line number -> added/context text (never bridge hunk gaps)
+        self.removed_lines = {}     # old-file line number -> index in lines
         self.added_lines = set()    # new-file line numbers of additions
 
     def paths(self):
@@ -169,7 +170,7 @@ def parse_files(text):
     """Strictly parse a unified/git diff into [FileDiff]. Raises Malformed."""
     files, cur = [], None
     rem_old = rem_new = 0
-    new_lineno = 0
+    old_lineno = new_lineno = 0
     state = "out"                   # out | hunk | binary
     prev_minus = False
     for n, line in enumerate(text.splitlines(), 1):
@@ -186,6 +187,10 @@ def parse_files(text):
                 rem_new -= 1; cur.lines.append(("+", body))
             else:
                 raise Malformed(f"line {n}: hunk shorter than its @@ header says")
+            if tag in (" ", "-"):
+                if tag == "-":
+                    cur.removed_lines[old_lineno] = len(cur.lines) - 1
+                old_lineno += 1
             if tag in (" ", "+"):
                 cur.new_lines[new_lineno] = body
                 if tag == "+":
@@ -260,6 +265,7 @@ def parse_files(text):
                 raise Malformed(f"line {n}: hunk without ---/+++ file header")
             rem_old = int(mh.group(2)) if mh.group(2) is not None else 1
             rem_new = int(mh.group(4)) if mh.group(4) is not None else 1
+            old_lineno = int(mh.group(1))
             new_lineno = int(mh.group(3))
             cur.hunks += 1
             state = "hunk" if (rem_old or rem_new) else "out"
@@ -295,25 +301,305 @@ def _protected(p):
     return bool(p and (CI_OR_RUNNER.search(p) or TASK_FILE.search(p)))
 
 
-def _js_return_reasons(f, contents):
-    """Require visible evidence that each added return is the block's final statement."""
-    path = f.new
-    if f.status == "A" or not (_is_test(path) and JS_FILE.search(path)):
-        return []
-    new = contents.get(path, (None, None))[1]
-    lines = dict(enumerate(new.splitlines(), 1)) if new is not None else f.new_lines
-    reasons = []
-    for lineno in sorted(f.added_lines):
-        line = f.new_lines[lineno]
-        if not JS_RETURN.search(line):
+class JSSyntaxError(ValueError):
+    pass
+
+
+class JSNode:
+    """A lexical token or balanced delimiter node, with source line provenance."""
+    def __init__(self, kind, text, line, children=(), end_line=None):
+        self.kind, self.text, self.line = kind, text, line
+        self.children = list(children)
+        self.end_line = line if end_line is None else end_line
+
+
+def _js_parse(source):
+    """Conservative JS/TS structural parser; never execute the candidate's code.
+
+    Strings/comments are lexed before delimiters. Expressions remain token trees;
+    callback argument lists and statement boundaries are parsed below. Regex literals,
+    interpolated templates, JSX and escaped identifiers are deliberately undecidable
+    here: refuse for review rather than mistaking their contents for control flow.
+    This keeps the standalone Python gate independent of a candidate repo's packages.
+    """
+    root = JSNode('root', '', 1)
+    stack = [root]
+    i, line = 0, 1
+    while i < len(source):
+        c = source[i]
+        if c.isspace():
+            line += c == '\n'
+            i += 1
             continue
-        following = lineno + 1
-        while following in lines and not lines[following].strip():
-            following += 1
-        # Missing context fails closed. Only blank lines may intervene before the closing brace.
-        if not lines.get(following, "").lstrip().startswith("}"):
-            reasons.append(f"adds an early exit to an existing test file {path} (next non-blank line must close the block): {line.strip()[:80]}")
-    return reasons
+        if source.startswith('//', i):
+            end = source.find('\n', i)
+            i = len(source) if end < 0 else end
+            continue
+        if source.startswith('/*', i):
+            end = source.find('*/', i + 2)
+            if end < 0:
+                raise JSSyntaxError('unterminated comment')
+            line += source[i:end + 2].count('\n')
+            i = end + 2
+            continue
+        start, start_line = i, line
+        if c in "\"'`":
+            i += 1
+            while i < len(source) and source[i] != c:
+                if c == '`' and source.startswith('${', i):
+                    raise JSSyntaxError('interpolated template needs review')
+                if source[i] == '\\':
+                    i += 1
+                if i < len(source):
+                    line += source[i] == '\n'
+                i += 1
+            if i == len(source):
+                raise JSSyntaxError('unterminated string')
+            i += 1
+            node = JSNode('string', source[start:i], start_line, end_line=line)
+        elif c.isalpha() or c in '_$':
+            i += 1
+            while i < len(source) and (source[i].isalnum() or source[i] in '_$'):
+                i += 1
+            node = JSNode('word', source[start:i], line)
+        elif c.isdigit():
+            i += 1
+            while i < len(source) and (source[i].isalnum() or source[i] in '._'):
+                i += 1
+            node = JSNode('number', source[start:i], line)
+        elif c in '({[':
+            node = JSNode('group', c, line)
+            stack[-1].children.append(node)
+            stack.append(node)
+            i += 1
+            continue
+        elif c in ')}]':
+            if len(stack) == 1 or stack[-1].text != {')': '(', '}': '{', ']': '['}[c]:
+                raise JSSyntaxError('unmatched delimiter')
+            stack.pop().end_line = line
+            i += 1
+            continue
+        elif c in '/\\' or source.startswith('</', i) or (c == '<' and i + 1 < len(source) and source[i+1].isalpha()):
+            raise JSSyntaxError('ambiguous expression syntax needs review')
+        else:
+            op = next((op for op in ('===', '!==', '=>', '==', '!=', '<=', '>=', '&&', '||', '??', '?.', '++', '--', '**', '...')
+                       if source.startswith(op, i)), c)
+            i += len(op)
+            node = JSNode('punct', op, line)
+        stack[-1].children.append(node)
+    if len(stack) != 1:
+        raise JSSyntaxError('incomplete file / unclosed delimiter')
+    return root
+
+
+def _js_walk(node):
+    yield node
+    for child in node.children:
+        yield from _js_walk(child)
+
+
+def _js_statements(nodes):
+    """Parse statement ownership, including unbraced controls and ASI returns.
+
+    A return inside an if/loop/label is a child statement, never a direct return
+    of the containing callback. Unknown compound forms cannot earn an exemption.
+    """
+    def statement(i):
+        if i >= len(nodes):
+            raise JSSyntaxError('missing statement')
+        start = i
+        word = nodes[i].text
+        if word in ('if', 'for', 'while', 'with', 'switch'):
+            i += 1
+            if i < len(nodes) and nodes[i].text == 'await':
+                i += 1
+            if i >= len(nodes) or nodes[i].text != '(':
+                raise JSSyntaxError('invalid control condition')
+            i += 1
+            if i >= len(nodes):
+                raise JSSyntaxError('missing control body')
+            _, i = statement(i)
+            if word == 'if' and i < len(nodes) and nodes[i].text == 'else':
+                _, i = statement(i + 1)
+            return ('control', start, i), i
+        if word == 'do':
+            _, i = statement(i + 1)
+            if i + 1 >= len(nodes) or nodes[i].text != 'while' or nodes[i+1].text != '(':
+                raise JSSyntaxError('invalid do/while')
+            i += 2
+            if i < len(nodes) and nodes[i].text == ';':
+                i += 1
+            return ('control', start, i), i
+        if i + 1 < len(nodes) and nodes[i].kind == 'word' and nodes[i+1].text == ':':
+            _, i = statement(i + 2)
+            return ('label', start, i), i
+        if word == '{':
+            return ('block', start, i + 1), i + 1
+        if word == 'try':
+            i += 1
+            if i >= len(nodes) or nodes[i].text != '{':
+                raise JSSyntaxError('invalid try')
+            i += 1
+            while i < len(nodes) and nodes[i].text in ('catch', 'finally'):
+                i += 1
+                if i < len(nodes) and nodes[i].text == '(':
+                    i += 1
+                if i >= len(nodes) or nodes[i].text != '{':
+                    raise JSSyntaxError('invalid handler')
+                i += 1
+            return ('control', start, i), i
+        kind = 'return' if word == 'return' else 'expression'
+        i += 1
+        while i < len(nodes):
+            if nodes[i].text == ';':
+                i += 1
+                break
+            # ASI after return's newline, or before a new declaration/return.
+            if nodes[i].line > nodes[i-1].end_line and (
+                    (kind == 'return' and i == start + 1) or
+                    nodes[i].text in ('return', 'const', 'let', 'var', 'throw', 'if', 'for', 'while')):
+                break
+            # A new expression on the next line cannot be swallowed into the
+            # return's operand (e.g. `return void 0\n expect(...)`). Ambiguous
+            # continuations are conservative: only explicit operators/groups join.
+            if (nodes[i].line > nodes[i-1].end_line
+                    and (nodes[i].kind in ('word', 'number', 'string') or nodes[i].text in ('{', '!', '~', '++', '--'))
+                    and (nodes[i-1].kind in ('word', 'number', 'string', 'group'))
+                    and nodes[i-1].text not in ('await', 'new', 'void', 'typeof', 'delete', 'instanceof', 'in')):
+                break
+            # A function declaration ends with its body, without needing ';'.
+            if word in ('function', 'async') and nodes[i].text == '{':
+                i += 1
+                break
+            i += 1
+        return (kind, start, i), i
+
+    result, i = [], 0
+    while i < len(nodes):
+        item, i = statement(i)
+        result.append(item)
+    return result
+
+
+def _js_callback_bodies(root):
+    bodies = set()
+    for parent in _js_walk(root):
+        nodes = parent.children
+        for i, node in enumerate(nodes):
+            if node.text != '(' or i == 0:
+                continue
+            # Only known direct test registration calls can authorize a return.
+            j = i - 1
+            while j >= 2 and nodes[j-1].text == '.' and nodes[j].text in ('concurrent', 'serial'):
+                j -= 2
+            if nodes[j].text not in ('it', 'test', 'specify') or (j and nodes[j-1].text in ('.', '?.')):
+                continue
+            args, arg = [], []
+            for child in node.children:
+                if child.text == ',':
+                    args.append(arg); arg = []
+                else:
+                    arg.append(child)
+            args.append(arg)
+            # A named test's second argument is its callback (third may be timeout).
+            if len(args) < 2:
+                continue
+            fn = args[1]
+            if fn and fn[0].text == 'async':
+                fn = fn[1:]
+            if len(fn) == 3 and fn[0].text == '(' and fn[1].text == '=>' and fn[2].text == '{':
+                bodies.add(fn[2])
+            elif fn and fn[0].text == 'function':
+                fn = fn[1:]
+                if fn and fn[0].kind == 'word':
+                    fn = fn[1:]
+                if len(fn) == 2 and fn[0].text == '(' and fn[1].text == '{':
+                    bodies.add(fn[1])
+    return bodies
+
+
+def _js_helper_alias_refactors(old, new, old_tree):
+    """Recognize only `return y;` -> `const z = y; return z;` in a top-level helper.
+
+    Karen's accepted helper repro is value-preserving. It does not authorize
+    arbitrary helper deletion, assertion removal, or new returns in helpers.
+    """
+    helper_returns = set()
+    nodes = old_tree.children
+    for i in range(len(nodes) - 3):
+        if (nodes[i].text == 'function' and nodes[i+1].kind == 'word'
+                and not nodes[i+1].text.lower().startswith(('test', 'spec'))
+                and nodes[i+2].text == '(' and nodes[i+3].text == '{'):
+            body = nodes[i+3]
+            statements = _js_statements(body.children)
+            if statements and statements[-1][0] == 'return':
+                helper_returns.add(body.children[statements[-1][1]].line)
+    removed, returns = set(), set()
+    a, b = old.splitlines(), new.splitlines()
+    for tag, i, j, k, l in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
+        if tag != 'replace' or j-i != 1 or l-k != 2 or i+1 not in helper_returns:
+            continue
+        before = _js_parse(a[i]).children
+        after = _js_parse('\n'.join(b[k:l])).children
+        if (len(before) == 3 and before[0].text == 'return' and before[1].kind == 'word' and before[2].text == ';'
+                and len(after) == 8 and after[0].text == 'const' and after[1].kind == 'word'
+                and [n.text for n in after[2:]] == ['=', before[1].text, ';', 'return', after[1].text, ';']
+                and after[1].text != before[1].text
+                and sum(n.kind == 'word' and n.text == after[1].text for n in _js_walk(_js_parse(new))) == 2):
+            removed.add(i+1)
+            returns.add(k+2)
+    return removed, returns
+
+
+def _js_return_reasons(f, contents):
+    """Return (findings, safe removed-row indexes) for strict existing JS/TS tests."""
+    path = f.new
+    if f.status == 'A' or not (_is_test(path) and JS_FILE.search(path)):
+        return [], set()
+    old, new = contents.get(path, (None, None))
+    reasons, removed, helper_returns = [], set(), set()
+    try:
+        if new is None:
+            # Patch-only mode can prove structure only from a contiguous file prefix.
+            if not f.new_lines or sorted(f.new_lines) != list(range(1, max(f.new_lines) + 1)):
+                raise JSSyntaxError('missing full-file context; use --staged or --range')
+            new = '\n'.join(f.new_lines[n] for n in sorted(f.new_lines))
+        tree = _js_parse(new)
+        if old is not None:
+            removed, helper_returns = _js_helper_alias_refactors(old, new, _js_parse(old))
+        safe_returns = set()
+        for body in _js_callback_bodies(tree):
+            statements = _js_statements(body.children)
+            if statements and statements[-1][0] == 'return':
+                safe_returns.add(body.children[statements[-1][1]])
+        lines = new.splitlines()
+        for node in _js_walk(tree):
+            if node.text == '{' and node.end_line in f.added_lines and node.line not in f.added_lines:
+                reasons.append(f'added line closes an existing block in {path}:{node.end_line}')
+            if node.kind == 'word' and node.text == 'return' and node.line in f.added_lines:
+                if node.line in helper_returns:
+                    continue
+                # Preserve the conservative rule for comments after the return.
+                following = node.line
+                while following < len(lines) and not lines[following].strip():
+                    following += 1
+                if node not in safe_returns or (following < len(lines) and lines[following].lstrip().startswith(('//', '/*'))):
+                    reasons.append(f'adds an early exit to an existing test file {path}:{node.line} (return must be the last statement of the test callback itself)')
+            children = node.children
+            for i, child in enumerate(children):
+                if child.line not in f.added_lines:
+                    continue
+                if child.text == 'await' and [n.text for n in children[i+1:i+3]] == ['new', 'Promise']:
+                    reasons.append(f'adds an awaited constructed Promise in {path}:{child.line} (settlement needs review)')
+                # Property access is checked regardless of the receiver, so aliases
+                # cannot hide disabled test registration (T = it; S = T.skip).
+                if child.text in ('.', '?.') and i+1 < len(children) and children[i+1].text in ('skip', 'only', 'todo', 'fixme', 'skipIf', 'runIf', 'failing', 'fails'):
+                    reasons.append(f'adds a skip/only marker through a property/alias in {path}:{child.line}')
+                if child.text == '[' and any(n.kind == 'string' and n.text[1:-1] in ('skip', 'only', 'todo', 'fixme', 'skipIf', 'runIf', 'failing', 'fails') for n in child.children):
+                    reasons.append(f'adds a computed skip/only marker in {path}:{child.line}')
+        return reasons, {f.removed_lines[n] for n in removed if n in f.removed_lines}
+    except (JSSyntaxError, RecursionError) as e:
+        return [f'cannot establish safe JS/TS structure / early exit in {path}: {e}'], set()
 
 
 def _py_defs(text):
@@ -369,9 +655,12 @@ def check_files(files, push=False, warnings=None, contents=None):
     rows = [(f, ((f.old or f.new) if s == "-" else (f.new or f.old)), s, l) for f in files for s, l in f.lines]
     # Moves: a test-file line removed and added back (stripped) anywhere in the diff is not a deletion (push mode).
     added = Counter(l.strip() for f, p, sg, l in rows if sg == "+" and _is_test(p))
+    helper_removed = {}
     for f in files:
         if not push:
-            reasons.extend(_js_return_reasons(f, contents))
+            js_reasons, safe_removed = _js_return_reasons(f, contents)
+            reasons.extend(js_reasons)
+            helper_removed[f] = safe_removed
         for p in f.paths():
             if push and CI_FILE.search(p):
                 if warnings is not None:
@@ -386,11 +675,15 @@ def check_files(files, push=False, warnings=None, contents=None):
             reasons.append(f"binary change to test/protected file {' -> '.join(f.paths())}")
         if f.mode_change and any(_is_test(p) or _protected(p) for p in f.paths()):
             reasons.append(f"mode change on test/protected file {' -> '.join(f.paths())}")
+    row_indexes = Counter()
     for f, path, sign, line in rows:
+        row_index = row_indexes[f]
+        row_indexes[f] += 1
         test = _is_test(path)
         if sign == "-" and test:
             if not push:
-                reasons.append(f"deletes a line in test file {path}")
+                if row_index not in helper_removed.get(f, set()):
+                    reasons.append(f"deletes a line in test file {path}")
             elif added[line.strip()] > 0:
                 added[line.strip()] -= 1
             elif ASSERTION.search(line):

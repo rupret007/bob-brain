@@ -98,5 +98,76 @@ class KarenN4V2(unittest.TestCase):
                 self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
 
 
+    def test_return_must_belong_directly_to_the_test_callback(self):
+        statements = (
+            "if (ready) return;", "if (ready) { return; }", "for (;;) return;",
+            "while (ready) return;", "do { return; } while (ready);",
+            "label: return;", "label: { return; }", "{ return; }",
+            "try { return; } finally {}", "const hidden = () => { return; };",
+            "describe('suite', () => { return; });",
+            "return; expect(f()).toBe(1);",
+            "return void 0\n      expect(f()).toBe(1);",
+            "return 0\n      !expect(f()).toBe(1);",
+            "return 0\n      { expect(f()).toBe(1); }",
+            "return\n      expect(f()).toBe(1);",
+        )
+        for statement in statements:
+            with self.subTest(statement=statement):
+                new = BASE.replace(E + "\n    });", E + "\n      " + statement + "\n    });")
+                result = self.check_staged("a.test.js", new)
+                self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+                self.assertIn("early exit", result.stdout)
+
+    def test_terminal_callback_returns_and_balanced_new_blocks(self):
+        for callback in ("async () =>", "async function ()", "async function named()"):
+            base = BASE.replace("async () =>", callback)
+            for statement in ("return;", "return await f();", "return expect(f()).resolves;",
+                              "return new Promise(r=>r());", "return void 0", "return(0)"):
+                with self.subTest(callback=callback, statement=statement):
+                    new = base.replace(E + "\n    });", E + "\n      " + statement + "\n    });")
+                    result = self.check_staged("a.spec.ts", new, base)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for statement in ("if (ready) { g(); }", "const braces = '}); return; {';",
+                          "/* }); return; { */ g();", "const text = `return; }`;",
+                          "if (ready) {\n        g();\n      }"):
+            with self.subTest(statement=statement):
+                result = self.check_staged("a.test.js", before_expect("      " + statement))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_added_closing_brace_is_independently_refused(self):
+        new = BASE.replace("      const r = await f();", "      const r = await f();\n      }); (() => {", 1)
+        result = self.check_staged("a.test.js", new)
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertIn("closes an existing block", result.stdout)
+        new = BASE.replace("        g();", "        g();\n      } /* existing block */\n      if (false) {")
+        result = self.check_staged("a.test.js", new)
+        self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+        self.assertIn("closes an existing block", result.stdout)
+
+    def test_helper_exception_cannot_remove_or_weaken_test_code(self):
+        changes = (
+            BASE.replace("  return y;", "  return 0;"),
+            BASE.replace("  return y;", "  return;\n  return y;"),
+            BASE.replace("  return y;", "  const z = 0;\n  return z;"),
+            BASE.replace("  return y;", "  const z = y;\n  return z;").replace(E, "      g();"),
+            BASE.replace("        g();", "        return y;").replace("  return y;", "  return z;", 1),
+        )
+        for new in changes:
+            with self.subTest(new=new):
+                result = self.check_staged("a.test.js", new)
+                self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+
+    def test_ambiguous_or_incomplete_syntax_fails_closed(self):
+        for statement in ("const re = /return[}]/;", "const s = `${f()}`;",
+                          "const el = <Widget />;", "if (ready) {", "label:"):
+            with self.subTest(statement=statement):
+                result = self.check_staged("a.test.tsx", before_expect("      " + statement))
+                # A label followed by expect is valid, so exercise a missing body at EOF.
+                if statement == "label:":
+                    result = self.check_staged("a.test.js", BASE.replace(E + "\n    });", E + "\n      label:\n    });"))
+                self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+                self.assertIn("structure", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
