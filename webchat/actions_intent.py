@@ -12,10 +12,21 @@ MORNING = re.compile(
     r'(?:(?:create|set(?:\s+up)?|schedule)\s+(?:an?\s+)?(?P<kind>routine|reminder|timer|alarm)\s+|(?P<remind>remind me)\s+)?'
     r'every morning(?:\s+at\s+(?P<clock>\d{1,2}(?::\d{2})?\s*(?:am|pm)?))?'
     r'\s+(?P<mode>do|to|remind me to)\s+(?P<body>[\s\S]+)$', re.I)
+CALENDAR_READ = re.compile(r'^(?:read|show|list) (?:my )?calendar(?: today)?[.!?]?$', re.I)
 
 
 def routine_request(text):
     return MORNING.fullmatch(text.strip())
+
+
+def calendar_routine_request(text):
+    """Exact read-only action grammar; extra constraints cannot be discarded."""
+    match = routine_request(text)
+    if (match and match['mode'].lower() == 'do' and not match['remind']
+            and (match['kind'] or 'routine').lower() == 'routine'
+            and CALENDAR_READ.fullmatch(match['body'])):
+        return match
+    return None
 
 
 def routine_intent(text):

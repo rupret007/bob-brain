@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo
 
 import chat_intent
 from approval_language import approval_categories, leading_approval_request
+from actions_intent import CALENDAR_READ
 from failover import atomic_text
 
 LIMIT = 64 * 1024
@@ -159,6 +160,8 @@ def search_web(query, opener=None):
 def parse(text):
     """Recognized but invalid commands stay in this lane, never a coding job."""
     text = text.strip()
+    if CALENDAR_READ.fullmatch(text):
+        return dict(kind='calendar_read')
     match = SEARCH.fullmatch(text)
     if match:
         query = match[1].strip()
@@ -360,7 +363,8 @@ class LocalFiles:
 
 
 class LocalTasks:
-    def __init__(self, folder, files=None, search=None, clock=time.time, *, root=None, _worker=False):
+    def __init__(self, folder, files=None, search=None, clock=time.time, *, root=None, _worker=False,
+                 read_calendar=None):
         self.folder = Path(folder) / 'local-tasks'
         self.root = Path(root if root is not None else os.environ.get('BOB_ROOT', Path(folder).parent.parent)).resolve()
         self.files = files if files is not None else LocalFiles(
@@ -368,6 +372,9 @@ class LocalTasks:
             protected=self.protected_paths)
         self.search = search if search is not None else search_web
         self.clock = clock
+        # Narrow host callback: today's primary calendar only. No create/send
+        # adapter or caller-selected tool/arguments reach a scheduled action.
+        self.read_calendar = read_calendar
         # Explicitly injected file adapters are the in-process test boundary.
         # Production file work, including receipts and routine validation, runs
         # in a fresh killable interpreter; never fork the threaded chat server.
@@ -457,6 +464,10 @@ class LocalTasks:
         atomic_text(self.folder / 'receipts.json', payload)
 
     def validate_routine(self, text, *, check_path=True):
+        if CALENDAR_READ.fullmatch(text.strip()):
+            if not callable(self.read_calendar):
+                raise LocalTaskError('Calendar reads are unavailable. No calendar routine was saved.')
+            return text
         if self.isolated_files and check_path and not SEARCH.fullmatch(text.strip()):
             return self.file_worker('validate_routine', [text], {})
         spec = parse(text)
@@ -490,6 +501,14 @@ class LocalTasks:
                 f'Reply `yes {row["token"]}` to apply.')
 
     def execute(self, spec):
+        if spec['kind'] == 'calendar_read':
+            if not callable(self.read_calendar):
+                raise LocalTaskError('Calendar reads are unavailable; no calendar result was verified.')
+            from calendar_actions import CalendarError
+            try:
+                return self.read_calendar()
+            except CalendarError as exc:
+                raise LocalTaskError(str(exc)) from None
         return self.search(spec['query']) if spec['kind'] == 'search' else self.files.execute(spec)
 
     def handle(self, text, cid, request_id, intent_state, *, routine=False):

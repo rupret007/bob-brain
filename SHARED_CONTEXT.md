@@ -105,3 +105,12 @@ The tests cover actual Chat/provider prompt integration, both journal actors,
 concurrency/restart replay, crash tails, source age, fixed GET/SSH boundaries,
 link/permission rejection, credential/tag rejection, privacy and journal outage
 without losing the completed reply. No real network/provider/send is used.
+
+## Stack Ops runtime status
+
+Explicit `$stack-ops` / `Stack Ops` selection now reads the configured shared
+snapshot alongside the bounded local status helper. It reports each shared
+source's availability, observation time and freshness. Journal/source prose does
+not become a status command, health verdict or approval. This read-only route
+does not install the source sync or Grok hook; the staging gates above still apply.
+See [runtime integrations](docs/WEBBOB-RUNTIME-INTEGRATIONS.md).

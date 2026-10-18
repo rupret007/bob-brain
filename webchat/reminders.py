@@ -12,7 +12,7 @@ import uuid
 from zoneinfo import ZoneInfo
 
 from failover import atomic_text
-from actions_intent import reminder_request, routine_request, routine_intent
+from actions_intent import reminder_request, routine_request, routine_intent, calendar_routine_request
 from approval_language import approval_requested, leading_approval_request
 import chat_intent
 
@@ -28,6 +28,7 @@ HELP = ('Try “remind me to check the oven in 10 minutes”, “remind me to ca
         'Local macOS notifications require owner opt-in and notification permission. '
         'Reminders never send texts or emails or start work.')
 ROUTINE_HELP = ('Try “every morning do read file ~/Documents/notes.txt”, '
+                '“every morning at 8am do show my calendar today”, '
                 '“every morning at 8am do search the web for Chicago weather”, or '
                 '“every morning remind me to stretch”. Morning defaults to 9am America/Chicago. '
                 'Read-only routines run in this chat while Web Bob is running; one overdue run catches up after restart. '
@@ -341,7 +342,11 @@ def parse(text, now, *, for_draft=False, original_text=None):
     morning = routine_request(text)
     if morning:
         clock = morning_clock(morning['clock'])
-        return reminder_body(morning['body']), next_morning(now, clock), 86400
+        # "today" is the calendar's read window, not a second reminder time.
+        # Only an exact calendar action may use this grammar, and only to make
+        # a draft. The existing separate token-bound approval still schedules it.
+        body = morning['body'] if for_draft and calendar_routine_request(text) else reminder_body(morning['body'])
+        return body, next_morning(now, clock), 86400
     request = reminder_request(stripped)
     if request:
         clause = request['clause'].strip()
@@ -825,7 +830,9 @@ class Reminders:
                                            'I’ll wait for your OK before scheduling.')
                 draft_interval = bool(DIRECT_INTERVAL_REQUEST.fullmatch(text.strip()))
                 try:
-                    parsed = parse(normalized, self.clock(), for_draft=draft_interval, original_text=text)
+                    parsed = parse(normalized, self.clock(),
+                                   for_draft=bool(draft_interval or calendar_routine_request(normalized)),
+                                   original_text=text)
                 except ReminderError:
                     # A constrained interval with invalid/competing times is
                     # not an approvable draft. Keep the existing fresh-request

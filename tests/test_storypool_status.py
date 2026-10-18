@@ -116,6 +116,12 @@ class StackStatusTests(unittest.TestCase):
 
 
 class OnDemandSkillTests(unittest.TestCase):
+    def test_status_dates_are_validated_canonical_data(self):
+        from webbob.storypool_status import _timestamp
+        self.assertEqual(_timestamp('2026-10-18T19:11:32.123456Z'), '2026-10-18T19:11:32.123456+00:00')
+        for value in (None, {}, 'password=fixture', '2026-10-18T19:11:32'):
+            self.assertEqual(_timestamp(value), 'unknown')
+
     def test_three_skills_exist_are_explicit_only_and_read_only(self):
         root = Path(__file__).parents[1] / 'skills'
         for name in ('band-desk', 'director', 'stack-ops'):

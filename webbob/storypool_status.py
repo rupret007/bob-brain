@@ -45,8 +45,18 @@ def _read(root, name):
 
 def _freshness(timestamp, now):
     try:
-        observed = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).timestamp()
+        observed = datetime.fromisoformat(_timestamp(timestamp)).timestamp()
         return 'fresh' if 0 <= now - observed <= 900 else 'stale'
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        return 'unknown'
+
+
+def _timestamp(value):
+    # Validate and re-encode dates rather than treating numeric ISO offsets as
+    # free-text facts (the fact credential filter can omit those legitimate dates).
+    try:
+        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return parsed.isoformat() if parsed.tzinfo is not None else 'unknown'
     except (AttributeError, TypeError, ValueError, OverflowError):
         return 'unknown'
 
@@ -90,7 +100,7 @@ def collect_status(data_dir=None, repo_dir=None, *, dashboard_port=8790, now=Non
             if not isinstance(data, dict):
                 raise ValueError('not a status object')
             timestamp = data.get('timestamp')
-            row.update(state='observed', timestamp=_safe(timestamp),
+            row.update(state='observed', timestamp=_timestamp(timestamp),
                        freshness=_freshness(timestamp, now), summary=_counts(data.get('summary')))
         except (OSError, ValueError, UnicodeError):
             pass
@@ -119,7 +129,7 @@ def collect_status(data_dir=None, repo_dir=None, *, dashboard_port=8790, now=Non
                 continue
             services.append({'name': _safe(row.get('name')),
                              'status': row.get('status') if row.get('status') in STATES else 'unknown'})
-        result['dashboard'] = {'state': 'observed', 'timestamp': _safe(data.get('timestamp')),
+        result['dashboard'] = {'state': 'observed', 'timestamp': _timestamp(data.get('timestamp')),
                                'freshness': _freshness(data.get('timestamp'), now),
                                'services': services, 'jobs_stats': _counts(data.get('jobs_stats'))}
     except (OSError, ValueError, TypeError, http.client.HTTPException):

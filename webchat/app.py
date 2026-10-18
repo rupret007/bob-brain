@@ -148,9 +148,11 @@ def password_at(folder):
 
 
 class Chat(TaskDispatch):
-    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, local_tasks=None, shared_context=None):
+    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, local_tasks=None, shared_context=None, skills=None):
         self.folder, self.root = folder, root
         self.shared_context = shared_context
+        from skill_runtime import SkillRuntime
+        self.skills = skills if skills is not None else SkillRuntime()
         folder.mkdir(parents=True, exist_ok=True)
         self.password = password_at(folder)
         self.redact = Redactor(root, self.password)
@@ -188,7 +190,8 @@ class Chat(TaskDispatch):
         # Keep direct lookups and routines on the established search adapter,
         # including its offline release/test injection boundary.
         self.local_tasks = local_tasks if local_tasks is not None else LocalTasks(
-            folder, root=root, search=lambda query: format_web_search_reply(web_search(query)))
+            folder, root=root, search=lambda query: format_web_search_reply(web_search(query)),
+            read_calendar=lambda: self.calendar.read('today'))
         for path in self.state.glob("*.json"):
             if not UUID.fullmatch(path.stem):
                 continue
@@ -226,7 +229,7 @@ class Chat(TaskDispatch):
         if (messages and messages[-1].get('role') == 'assistant' and messages[-1].get('status') == 'done'
                 and not messages[-1].get('texting')
                 and not messages[-1].get('private_memory')
-                and messages[-1].get('provider') not in ('drafts', 'calendar', 'reminders', 'project-context', 'capabilities')
+                and messages[-1].get('provider') not in ('drafts', 'calendar', 'reminders', 'project-context', 'capabilities', 'skills')
                 and not messages[-1].get('authority_review')
                 and not messages[-1].get('result_provenance_review')
                 and not messages[-1].get('artifact')
@@ -737,6 +740,27 @@ class Chat(TaskDispatch):
                 worker=worker, attachments=public_attachments, source_voice=source_voice)
             if context_reply is not None:
                 return context_reply
+            from skill_runtime import selected as selected_skill, definition as skill_definition, SkillUnavailable
+            # Preserve the established sourced watcher-status and private
+            # digest receipts. These exact commands remain in teammates.py;
+            # explicit skill selection must not intercept a bound thread read.
+            legacy_band = re.fullmatch(r'band desk (?:status|(?:digest|read)(?: for .+)?)',
+                                       text.strip().rstrip('.?!'), re.I)
+            skill = selected_skill(text) if legacy_band is None else None
+            if skill is not None:
+                try:
+                    skill_definition(skill)
+                    if worker is not None:
+                        return self.intent_reply(conversation, 'This skill reads or drafts in chat. Choose it without a work-lane assignment.', provider='skills')
+                    if skill == 'director':
+                        self.save(conversation)
+                        self.conversations[identifier] = conversation
+                        self.launch(identifier)
+                        return self.public(conversation)
+                    content = self.skills.status(skill, shared_context=self.shared_context)
+                except SkillUnavailable:
+                    content = 'The reviewed skill is unavailable. No skill action ran.'
+                return self.intent_reply(conversation, self.redact(content), provider='skills')
             if VERSION_QUESTION.search(text):
                 self.texting.invalidate(conversation)
                 return self.intent_reply(conversation, BUILD["short_sha"])
