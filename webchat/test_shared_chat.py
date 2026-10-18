@@ -169,10 +169,10 @@ class SharedChatTests(SharedChatFixture):
             connection = MagicMock()
             connection.getresponse.return_value.status = status
             connection.getresponse.return_value.read.return_value = raw
-            with patch('shared_chat.http.client.HTTPConnection', return_value=connection) as connect:
+            with patch('shared_chat.http.client.HTTPSConnection', return_value=connection) as connect:
                 with self.assertRaises(SharedChatError):
                     engine_snapshot('mini')
-                connect.assert_called_once_with('100.67.108.113', 8790, timeout=1)
+                connect.assert_called_once_with('jeffs-mac-mini.tail758ab4.ts.net', 8790, timeout=1)
                 connection.request.assert_called_once_with('GET', '/api/engine', headers={'Accept': 'application/json'})
                 connection.close.assert_called_once()
         with self.assertRaises(SharedChatError):

@@ -4,6 +4,19 @@ Candidate design and implementation, 2026-10-18. Live is unchanged. This is an
 adapter plus Web Bob runtime hooks; source sync and Grok runner installation have
 not been performed. The Mini is not accessible for staging proof from this run.
 
+Milestone 1 update: the trusted server now reads canonical local StoryPool status
+directly from `~/.local/share/storypool` (trusted `BOB_STORYPOOL_STATE_DIR`
+override), so prepared private status copies are optional. It reads the newest
+4,000-character MONITOR tail and fixed NEEDS_JEFF/PARITY files, plus the latest
+dated `conductor/digest-YYYY-MM-DD-{am,pm}.md`. Every excerpt retains source mtime,
+freshness and truncation flags; a failed direct read stays unavailable rather
+than falling back to an older copy. Source files are owner-owned regular files,
+without symlinks, hardlinks or world-write permission; journal writes retain the
+separate private-file policy. Mini engine reads use verified HTTPS at
+`jeffs-mac-mini.tail758ab4.ts.net:8790`; NucBox keeps its fixed tailnet GET.
+Engine freshness uses fetch completion time, preserving the engine timestamp.
+This read-only adapter does not activate Web Bob or authorize any action.
+
 ## Sources and data flow
 
 The authoritative journal lives on the Mini at
