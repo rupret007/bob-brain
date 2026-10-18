@@ -58,12 +58,41 @@ class StoryPoolSourcesTests(unittest.TestCase):
         self.assertNotIn('private', json.dumps(rows))
         self.assertNotIn('do-not-expose', json.dumps(rows))
 
-    def test_stale_copy_cannot_mask_unavailable_direct_source(self):
+    def test_stale_copy_cannot_mask_unsafe_direct_source(self):
         chat = self.root / 'chat'
         chat.mkdir(mode=0o700)
         copy = chat / 'MONITOR.md'
         copy.write_text('Old copy says everything green')
         copy.chmod(0o600)
+        self.write('MONITOR.md', 'Unsafe canonical source').chmod(0o666)
+        context = SharedChatContext(chat, source_folder=self.root)
+        row = context.snapshot(include_engines=False)['sources'][0]
+        self.assertEqual(row['state'], 'unavailable')
+        self.assertNotIn('text', row)
+
+    def test_missing_canonical_file_uses_dated_verified_sync_copy(self):
+        chat = self.root / 'chat'
+        chat.mkdir(mode=0o700)
+        copy = chat / 'MONITOR.md'
+        copy.write_text('NucBox dated observation')
+        copy.chmod(0o600)
+        old = self.now - 3600
+        os.utime(copy, (old, old))
+        context = SharedChatContext(chat, source_folder=self.root, clock=lambda: self.now)
+        row = context.snapshot(include_engines=False)['sources'][0]
+        self.assertEqual(row['state'], 'observed')
+        self.assertEqual(row['text'], 'NucBox dated observation')
+        self.assertEqual(row['freshness'], 'stale')
+        self.assertEqual(row['observed_at'], _stamp(old))
+        self.assertIn('synced source copy; canonical local source absent', row['provenance'])
+        self.assertEqual(row['source_path'], 'chat/MONITOR.md')
+
+    def test_missing_canonical_file_does_not_accept_unsafe_sync_copy(self):
+        chat = self.root / 'chat'
+        chat.mkdir(mode=0o700)
+        copy = chat / 'MONITOR.md'
+        copy.write_text('Public copy is not a verified sync source')
+        copy.chmod(0o644)
         context = SharedChatContext(chat, source_folder=self.root)
         row = context.snapshot(include_engines=False)['sources'][0]
         self.assertEqual(row['state'], 'unavailable')

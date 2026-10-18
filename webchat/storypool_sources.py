@@ -56,6 +56,10 @@ def status_sources(root, now):
                        freshness=_freshness(info.st_mtime, now), truncated=clipped,
                        provenance='read-only local StoryPool observation',
                        source_path=('conductor/' if name == 'MORNING_DIGEST.md' else '') + selected)
+        except FileNotFoundError:
+            # A different node may only have the trusted sync copy. Missing is
+            # distinct from an unsafe file or failed read, which must fail closed.
+            row['unavailable_reason'] = 'missing'
         except (OSError, ValueError, UnicodeError):
             pass
         rows.append(row)
