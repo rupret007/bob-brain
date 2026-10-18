@@ -224,12 +224,18 @@ class Chat(TaskDispatch):
 
     def save(self, conversation):
         messages = conversation.get('messages', [])
+        from personal_drafts import private_requests as private_draft_requests
+        private_drafts = private_draft_requests(conversation)
+        for message in messages:
+            if message.get('request_id') in private_drafts:
+                message['private_draft'] = True
         # Product receipts, capability answers, resource/outage facts and private
         # memory own their exact source wording. Preserve reviewed evidence after
         # authority, provenance, and planning-condition checks too.
         if (messages and messages[-1].get('role') == 'assistant' and messages[-1].get('status') == 'done'
                 and not messages[-1].get('texting')
                 and not messages[-1].get('private_memory')
+                and not messages[-1].get('private_draft')
                 and messages[-1].get('provider') not in ('drafts', 'calendar', 'reminders', 'project-context', 'capabilities', 'skills')
                 and not messages[-1].get('authority_review')
                 and not messages[-1].get('result_provenance_review')
@@ -250,7 +256,7 @@ class Chat(TaskDispatch):
             conversation['_coordination_excluded'] = True
         pending = conversation.setdefault('_coordination_outbox', {})
         private_requests = {m.get('request_id') for m in conversation.get('messages', [])
-                            if m.get('private_memory') or m.get('texting')}
+                            if m.get('private_memory') or m.get('texting') or m.get('private_draft')}
         for event_id, record in list(pending.items()):
             if record.get('kind') == 'answer-delivered' and record.get('request_id') in private_requests:
                 pending.pop(event_id)
@@ -322,7 +328,8 @@ class Chat(TaskDispatch):
         user = next((m for m in reversed(messages) if m.get('role') == 'user'
                      and m.get('request_id') == last.get('request_id')), {})
         if (not user or last.get('texting') or user.get('texting') or
-                last.get('private_memory') or user.get('private_memory')):
+                last.get('private_memory') or user.get('private_memory') or
+                last.get('private_draft') or user.get('private_draft')):
             return []
         records = []
         permission = conversation.get('intent_state', {}).get('last_permission') or {}

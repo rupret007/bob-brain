@@ -15,6 +15,8 @@ def rendering(message):
     """Bind the actual public text/artifact/attachment rendering, not model output."""
     if (message.get('role') != 'assistant' or message.get('status') != 'done'
             or message.get('texting') or message.get('private_memory')
+            or message.get('private_draft')
+            or message.get('provider') == 'drafts'
             or message.get('voice_call_id') or message.get('reminder_notice')
             or not isinstance(message.get('request_id'), str)
             or not isinstance(message.get('id'), str)

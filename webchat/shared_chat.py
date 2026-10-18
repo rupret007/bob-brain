@@ -275,7 +275,7 @@ class SharedChatContext:
         user = next((m for m in reversed(messages) if m.get('role') == 'user' and m.get('request_id') == rid), None)
         if not user:
             return
-        private = (any(m.get('texting') or m.get('private_memory') or m.get('attachments') for m in (user, last))
+        private = (any(m.get('texting') or m.get('private_memory') or m.get('private_draft') or m.get('attachments') for m in (user, last))
                    or last.get('provider') in ('drafts', 'calendar', 'reminders', 'memory')
                    or conversation.get('_personal_action'))
         summary = ('Private action turn recorded; details stay in its original Web Bob conversation.' if private else

@@ -611,14 +611,20 @@ class Texting:
     @staticmethod
     def provider_view(conversation):
         value = copy.deepcopy(conversation)
+        from personal_drafts import private_requests
+        private = private_requests(value)
+        value.pop('_personal_action', None)
         value.pop("_texting", None)
         value.pop("pending_memory_removal", None)
         if any(m.get("texting") for m in value["messages"]):
             value["title"] = "Conversation with private texting history"
         if any(m.get('private_memory') for m in value['messages']):
             value['title'] = 'Conversation with private saved memory'
+        if private:
+            value['title'] = 'Conversation with private drafts'
         # Thread contents, phone numbers and confirmation tokens stay out of model context.
-        value["messages"] = [m for m in value["messages"] if not m.get("texting") and not m.get('private_memory')]
+        value["messages"] = [m for m in value["messages"] if not m.get("texting") and not m.get('private_memory')
+                             and m.get('request_id') not in private]
         return value
 
     def resolve(self, query):
@@ -795,7 +801,8 @@ class Texting:
         help_request = command in ("texting", "texting help", "texting status") or re.match(
             r"^(?:draft|write|compose|send) (?:a )?(?:text|reply|sms|message)\b", clean, re.I
         )
-        cancel = active and command in ("cancel text", "cancel text draft", "never mind", "cancel")
+        cancel = active and (command in ("cancel text", "cancel text draft", "never mind", "cancel")
+                             or re.fullmatch(r"(?:no|don['’]t send|do not send)(?: (?:it|that))?", command))
         if not any((confirmation, check_delivery, edit, replace, compose, read, listing, help_request, cancel)):
             # An intervening turn also withdraws consent, including unsupported edits.
             self.invalidate(conversation)

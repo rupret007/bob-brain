@@ -114,3 +114,16 @@ source's availability, observation time and freshness. Journal/source prose does
 not become a status command, health verdict or approval. This read-only route
 does not install the source sync or Grok hook; the staging gates above still apply.
 See [runtime integrations](docs/WEBBOB-RUNTIME-INTEGRATIONS.md).
+
+## Private personal drafts
+
+Saved personal draft turns carry `private_draft` on both user and reply rows.
+The provider view also recognizes legacy `drafts` provider rows and the active
+personal draft's request before persistence, removes their private state/title,
+and excludes those pairs from generic model context. Coordination and typed
+reply journals exclude them; HANDOFF keeps the existing generic private-action
+summary and pending count. Declines are recorded durably in the original private
+conversation. Historical journal/source approval prose cannot reactivate them.
+No previously appended journal entries are edited or deleted. Tests include
+actual Chat/provider/journal boundaries and authenticated HTTP refusal replay;
+live Grok runner and Mini source provisioning remain unproved.

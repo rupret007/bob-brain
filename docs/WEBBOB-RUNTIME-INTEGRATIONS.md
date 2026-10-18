@@ -3,6 +3,41 @@
 These paths are part of the draft candidate. They do not install, activate or
 authorize Web Bob, messages, calendar writes or work lanes.
 
+## Outbound draft safety
+
+Text drafts continue to use the existing exact-token Andrea bridge. A separate
+`no`, `don't send`, `do not send`, or `cancel text` cancels an unconsumed text
+draft and clears its token. A declined token cannot send after replay or restart.
+If a text was already handed off, refusal preserves its actual delivery state
+and reports that outcome; it cannot undo a submission or claim nothing was sent.
+
+Personal email/note/booking drafts now record a durable `declined` state for a
+separate refusal. A later `yes`, `send it`, or `go ahead` does not reactivate that
+draft. When several actions are pending, a bare refusal asks which draft; use
+`cancel email draft`, `cancel note draft`, or `cancel booking draft` to identify
+the personal action. Declining never releases a saved hold. A new draft replaces
+the old personal draft and requires fresh review.
+
+Email sending is unavailable in this candidate's Chat runtime. Its concrete
+draft and approval guidance say so; they never save standing approval for later
+delivery. Resolve the actual recipient/thread and configure/review the trusted
+transport before requesting fresh exact-message approval. The imported
+`MessageDraftGate` and `AndreaReplies` libraries are not installed email or
+mention ingress transports. The existing Andrea text bridge remains separate.
+No new sender, OAuth grant, background retry or fallback is installed here.
+
+Personal draft turns remain in Jeff's authenticated history. Their user/reply
+pair, private draft state and title are omitted from generic provider context;
+legacy draft rows are recognized before a new save. Shared coordination and
+typed-reply observation journals do not publish their recipient/body. The shared
+handoff retains only its existing private-action summary/pending count. This
+does not remove any previously appended historical journal entry.
+
+Ten new real Chat/authenticated HTTP tests exercise refusal, restart/request
+replay, competing drafts, holds, fresh drafts, legacy privacy, missing transport,
+conditional/draft-only cues, authentication and CSRF. All use isolated state;
+real sends, provider services and work dispatch are forbidden in those tests.
+
 ## Morning calendar
 
 In an isolated authenticated staging conversation, submit:
@@ -107,6 +142,7 @@ Staged release packaging: [WEBBOB-GO-LIVE.md](WEBBOB-GO-LIVE.md).
 ## Offline validation
 
 ```bash
+PYTHONPATH=webchat:state python3 -m unittest test_outbound_draft_safety test_personal_drafts test_texting_draft_routing -v
 PYTHONPATH=webchat:state python3 -m unittest test_calendar_routine_runtime test_skill_runtime -v
 PYTHONPATH=webchat:state python3 -m unittest test_reply_delivery_runtime test_reply_lifecycle -v
 node webchat/test_reply_receipts.mjs

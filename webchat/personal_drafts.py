@@ -5,6 +5,22 @@ import chat_intent
 
 VAGUE_OK = re.compile(r'(?:yes|ok(?:ay)?|send it(?: now)?|go ahead(?: with that)?|do it|'
                       r'sounds good,? go ahead(?: with that)?|yeah whatever you think,? send it)[.! ]*', re.I)
+DECLINE = re.compile(r"(?:no|don['’]t send(?: (?:it|that))?|do not send(?: (?:it|that))?|"
+                     r"cancel(?: (?:the )?(?:email|note|booking)(?: draft)?)?|never mind)[.! ]*", re.I)
+EMAIL_UNAVAILABLE = ('Email sending is unavailable in this chat. This is an unsent draft; '
+                     'no approval will be saved for a later send. After the recipient and '
+                     'thread are verified and a transport is configured, review the exact '
+                     'message again and give fresh separate approval.')
+
+
+def private_requests(conversation):
+    """Include legacy draft rows so a restart cannot expose older private drafts."""
+    rows = conversation.get('messages', [])
+    ids = {m.get('request_id') for m in rows
+           if m.get('private_draft') or m.get('provider') == 'drafts'}
+    ids.add(conversation.get('_personal_action', {}).get('request_id'))
+    ids.discard(None)
+    return ids
 
 
 def pending(chat, conversation, *, include_texting=True, include_work=True):
@@ -23,7 +39,9 @@ def pending(chat, conversation, *, include_texting=True, include_work=True):
                     found.append((row.get('body') or row.get('text'), render(row)))
     row = conversation.get('_personal_action')
     if row and row.get('state') == 'draft':
-        found.append((row['body'], 'Your draft is still pending. ' + row.get('question', f"OK to send to {row['target']}?")))
+        found.append((row['body'], 'Your draft is still pending. ' +
+                      (EMAIL_UNAVAILABLE if row.get('kind') == 'email' else
+                       row.get('question', f"OK to send to {row['target']}?"))))
     for key in ('pending_job', 'pending_council'):
         if include_work and conversation.get(key):
             found.append((conversation[key], 'Review the work proposal and use its explicit confirmation.'))
@@ -57,7 +75,8 @@ def save_draft(conversation, request_id, kind, target, body, limitation, *, ques
     conversation['_personal_action'] = dict(request_id=request_id, kind=kind, target=target,
                                             body=body, limitation=limitation, question=question, state='draft')
     separator = ' ' if kind == 'calendar' else '\n\n'
-    return f'Draft for {target}:{separator}{body}\n\n{question}'
+    detail = limitation + '\n\n' if limitation else ''
+    return f'Draft for {target}:{separator}{body}\n\n{detail}{question}'
 
 
 def outbound(text):
@@ -109,6 +128,15 @@ def outbound(text):
 
 def handle(chat, conversation, text, request_id):
     state = chat_intent.state_for(conversation)
+    row = conversation.get('_personal_action')
+    if row and DECLINE.fullmatch(text.strip()):
+        explicit = re.fullmatch(r'cancel (?:the )?(email|note|booking)(?: draft)?[.! ]*', text.strip(), re.I)
+        if explicit and explicit[1].lower() != row.get('kind'):
+            return 'Which draft do you want to decline? Nothing was sent.'
+        if not explicit and len(pending(chat, conversation)) > 1:
+            return 'Which draft do you want to decline? There is more than one pending action. Nothing was sent.'
+        row.update(state='declined', declined_request_id=request_id)
+        return 'Draft declined. Nothing was sent. A later send needs a new draft and fresh separate approval.'
     if VAGUE_OK.fullmatch(text.strip()) and not state.get('holds'):
         try:
             # Texting owns token guidance and observed delivery outcomes. Stale
@@ -121,6 +149,8 @@ def handle(chat, conversation, text, request_id):
             # An adapter without draft inspection cannot establish consent or
             # rule out competing drafts. Ask instead of choosing an action.
             return 'I could not verify the pending draft. Which action do you want to approve?'
+        if not rows and row and row.get('state') == 'declined':
+            return 'That draft was declined. Nothing was sent. Prepare a new draft for fresh review.'
         from task_dispatch import FOLLOW_UP, PREAMBLE, followup_work
         if not rows and FOLLOW_UP.fullmatch(PREAMBLE.sub('', text.strip())):
             work, _ = followup_work(conversation)
@@ -179,6 +209,7 @@ def handle(chat, conversation, text, request_id):
     kind, target, body = spec
     limitation = ''
     if kind == 'email':
+        limitation = EMAIL_UNAVAILABLE
         reply_to_thread = bool(re.search(r"\breply to .+?['’]s email\b", text, re.I))
         review = ('I’d verify the email thread and recipient first. OK to send once those match?'
                   if reply_to_thread else 'I’ll wait for your OK before sending.')
