@@ -19,6 +19,10 @@ text. It reads git identity; it does not contact or change live services.
 controller: Jeff's exact candidate/predecessor OK, complete unscoped release
 qualification, exact-head Karen PASS, Claude+Codex main >=144 and holdout PASS,
 fresh exact-head GitHub Actions success, and authenticated predecessor versions.
+Both native runtime jobs, the root unit job and `public-privacy` must succeed
+at that exact SHA. Missing, skipped, pending, failed or stale privacy checks
+refuse admission even when the runtime suites are green. Historical privacy
+findings remain blockers; this package never suppresses or classifies them.
 It then calls `solo.deploy` with `feature=improve` and the fixed full predecessor.
 Every existing gate remains, including two latest consecutive full check greens,
 hash-verified logs, source/self-review, bridge/media/voice/browser checks,

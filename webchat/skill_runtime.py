@@ -214,8 +214,13 @@ class SkillRuntime:
                     # Journal/monitor prose stays context data, never a command
                     # or an inferred health verdict. This status surface reports
                     # availability, source time and freshness only.
+                    observed = row.get('source_timestamp') or row.get('observed_at') or 'unknown'
+                    timing = ('; fetched ' + row['fetched_at']) if row.get('fetched_at') else ''
+                    excerpt = '; excerpt; complete source not verified' if row.get('truncated') else ''
                     lines.append(f'{row["source"]}: {row["state"]}; {row.get("freshness", "unknown")}; '
-                                 f'observed {row.get("observed_at", "unknown")}.')
+                                 f'observed {observed}{timing}{excerpt}.')
+                lines.append('Retrieval time does not establish machine health or completed work; '
+                             'those require current machine observations and verified outcome receipts.')
             except (OSError, ValueError, TypeError, KeyError):
                 lines.append('Shared Mini/NucBox sources: unavailable; no health result verified.')
         return '\n\n'.join(lines)

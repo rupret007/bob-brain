@@ -14,7 +14,11 @@ No live switch, sends, merge, tags, releases, main push or test bypass is author
 original source date; the Mini fallback reads the newest lines rather than the
 first historical entries. Actual-reader regression coverage is in
 `webchat/test_shared_source_sync.py`. Production Mini sync, the shared Mini
-journal binding and two-chat pickup remain acceptance gates.
+journal binding and two-chat pickup remain acceptance gates. M1 health evidence
+now rejects unreadable bounded canonical MONITOR tails, requires timezone-aware
+engine source times for freshness, and exposes source/fetch/excerpt distinctions
+through the actual Stack Ops Chat route. This is candidate evidence, not a host
+health or completed-work claim.
 
 | Priority / surface | Candidate evidence | Remaining acceptance condition |
 | --- | --- | --- |

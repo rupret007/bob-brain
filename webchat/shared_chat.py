@@ -238,9 +238,14 @@ class SharedChatContext:
                 text, clipped = self.fetch_engine(machine)
                 fetched = self.clock()
                 data = json.loads(text) if not clipped else {}
+                if not isinstance(data, dict):
+                    raise SharedChatError('Invalid engine response')
                 timestamp = data.get('timestamp')
                 try:
-                    observed = datetime.fromisoformat(timestamp.replace('Z', '+00:00')).timestamp()
+                    source_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                    # A timezone-free remote clock cannot be interpreted using
+                    # this host's local timezone as evidence of fresh health.
+                    observed = source_time.timestamp() if source_time.utcoffset() is not None else None
                 except (AttributeError, TypeError, ValueError, OverflowError):
                     observed = None
                 row.update(state='observed', text=safe_text(text, 12000), truncated=clipped,

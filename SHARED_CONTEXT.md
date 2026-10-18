@@ -140,6 +140,14 @@ not become a status command, health verdict or approval. This read-only route
 does not install the source sync or Grok hook; the staging gates above still apply.
 See [runtime integrations](docs/WEBBOB-RUNTIME-INTEGRATIONS.md).
 
+Health evidence keeps source time separate from retrieval time. Engine
+freshness requires an explicit timezone on the remote timestamp; a missing or
+ambiguous timestamp stays stale. A malformed engine observation cannot discard
+the other sources. Stack Ops displays the source time, fetch time and excerpt
+flag without treating a recent fetch as machine health or successful work.
+Canonical MONITOR reads, like synced copies, are unavailable when the bounded
+tail contains no complete readable line. The original files are never changed.
+
 ## Private personal drafts
 
 Saved personal draft turns carry `private_draft` on both user and reply rows.

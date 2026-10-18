@@ -118,6 +118,41 @@ class StoryPoolSourcesTests(unittest.TestCase):
         self.assertFalse(clipped)
         self.assertNotIn('private', text)
 
+    def test_canonical_monitor_without_a_complete_bounded_line_is_unavailable(self):
+        for ending in ('', '\n'):
+            with self.subTest(ending=ending):
+                self.write('MONITOR.md', 'x' * 5000 + ending)
+                context = SharedChatContext(self.root / 'chat', source_folder=self.root)
+                row = context.snapshot(include_engines=False)['sources'][0]
+                self.assertEqual(row['state'], 'unavailable')
+                self.assertNotIn('text', row)
+                self.assertNotIn('freshness', row)
+
+    def test_engine_timestamp_without_timezone_cannot_establish_freshness(self):
+        from datetime import datetime
+        timestamp = datetime.fromtimestamp(self.now).isoformat()
+        context = SharedChatContext(self.root / 'chat', clock=lambda: self.now,
+            fetch_engine=lambda _: (json.dumps({'timestamp': timestamp}), False))
+        for row in context.snapshot()['sources'][-2:]:
+            self.assertEqual(row['state'], 'observed')
+            self.assertEqual(row['freshness'], 'stale')
+            self.assertEqual(row['source_timestamp'], timestamp)
+
+    def test_malformed_engine_does_not_discard_other_sources(self):
+        self.write('MONITOR.md', 'CURRENT: source remains available\n')
+        for value in ([], None, True, 1, 'untrusted response'):
+            with self.subTest(value=value):
+                def fetch(machine):
+                    data = value if machine == 'mini' else {'timestamp': _stamp(self.now)}
+                    return json.dumps(data), False
+                context = SharedChatContext(self.root / 'chat', source_folder=self.root,
+                    clock=lambda: self.now, fetch_engine=fetch)
+                rows = {row['source']: row for row in context.snapshot()['sources']}
+                self.assertEqual(rows['mini /api/engine']['state'], 'unavailable')
+                self.assertNotIn('text', rows['mini /api/engine'])
+                self.assertEqual(rows['nucbox /api/engine']['freshness'], 'fresh')
+                self.assertIn('source remains available', rows['MONITOR.md']['text'])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -144,6 +144,25 @@ class SkillRuntimeTests(unittest.TestCase):
         self.assertEqual(self.fake.calls, [])
         self.github.assert_not_called()
 
+    def test_stack_ops_distinguishes_engine_source_time_fetch_time_and_excerpt(self):
+        from shared_chat import SharedChatContext
+        shared = SharedChatContext(self.root / 'shared', clock=lambda: 1000,
+            fetch_engine=lambda _: (json.dumps({'timestamp': '1970-01-01T00:16:39+00:00',
+                                                'engine': 'yellow'}), False))
+        self.chat.shared_context = shared
+        answer = self.say('$stack-ops')
+        self.assertIn('mini /api/engine: observed; fresh; observed 1970-01-01T00:16:39+00:00', answer['content'])
+        self.assertIn('fetched 1970-01-01T00:16:40+00:00', answer['content'])
+        self.assertIn('Retrieval time does not establish machine health or completed work', answer['content'])
+        self.assertNotIn('mini /api/engine: observed; fresh; observed unknown', answer['content'])
+        self.assertEqual(self.fake.calls, [])
+        shared.fetch_engine = lambda _: ('{"timestamp":"partial source', True)
+        answer = self.say('$stack-ops')
+        self.assertIn('mini /api/engine: observed; stale; observed unknown', answer['content'])
+        self.assertIn('excerpt; complete source not verified', answer['content'])
+        self.assertNotIn('partial source', answer['content'])
+        self.assertEqual(self.fake.calls, [])
+
     def test_director_reaches_actual_prompt_for_current_turn_only_with_no_work_dispatch(self):
         self.say('Hold all work')
         holds = copy.deepcopy(self.chat.get(self.cid)['intent_state']['holds'])

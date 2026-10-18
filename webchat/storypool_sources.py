@@ -23,6 +23,8 @@ def _observe(folder, name, *, tail=False):
         raw = os.read(fd, limit)
         if clipped and tail:
             raw = raw.partition(b'\n')[2]
+            if not raw:
+                raise ValueError('No complete bounded source line')
         text = raw.decode('utf-8')
         return safe_text(text), info, clipped or len(text) > 4000
     finally:

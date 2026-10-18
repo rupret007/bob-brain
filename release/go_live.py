@@ -20,7 +20,7 @@ from release_ownership import serialized
 
 PREVIOUS = 'cf83a9a80e0426d6998a0bf7b3a0574e52ac8e1a'
 REPO = 'rupret007/bob-brain'
-CI_NAMES = {'python-ubuntu-latest', 'python-macos-latest', 'unittest'}
+CI_NAMES = {'python-ubuntu-latest', 'python-macos-latest', 'unittest', 'public-privacy'}
 
 
 def require(condition, message):
