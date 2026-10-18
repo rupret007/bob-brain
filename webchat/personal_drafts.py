@@ -8,9 +8,11 @@ VAGUE_OK = re.compile(r'(?:yes|ok(?:ay)?|send it(?: now)?|go ahead(?: with that)
 DECLINE = re.compile(r"(?:no|don['’]t send(?: (?:it|that))?|do not send(?: (?:it|that))?|"
                      r"cancel(?: (?:the )?(?:email|note|booking)(?: draft)?)?|never mind)[.! ]*", re.I)
 EMAIL_UNAVAILABLE = ('Email sending is unavailable in this chat. This is an unsent draft; '
-                     'no approval will be saved for a later send. After the recipient and '
-                     'thread are verified and a transport is configured, review the exact '
-                     'message again and give fresh separate approval.')
+                     'no approval will be saved for a later send. When sending is available, '
+                     'verify the recipient and thread, review the exact message again, '
+                     'and give fresh separate approval.')
+CALENDAR_UNAVAILABLE = ("I can't reach your calendar right now. Nothing was added, "
+                        'and this draft cannot add it automatically later.')
 
 
 def private_requests(conversation):
@@ -193,10 +195,15 @@ def handle(chat, conversation, text, request_id):
             normalized, weekly, assumption = natural_request('remind me ' + when + ' to attend', chat.calendar.clock())
             _, due, _ = parse(normalized, chat.calendar.clock())
             resolved = True
-            from calendar_actions import iso
+            from calendar_actions import CalendarError, iso
             command = f'create a calendar event "{title}" at {iso(due)}'
-            content = chat.calendar.handle(command, conversation['id'], request_id, state)
-            if content and 'Calendar draft (not created):' in content:
+            try:
+                # Use the typed draft boundary: rendered errors cannot establish
+                # whether the calendar accepted a draft or grant send authority.
+                content = chat.calendar.draft(command, conversation['id'], request_id)
+            except (CalendarError, OSError, ValueError, TypeError, KeyError):
+                content = CALENDAR_UNAVAILABLE
+            else:
                 return 'Assuming a one-hour event. ' + assumption + content
             body = f'{title} — {stamp(due)}, for one hour (assumed).'
         except (ValueError, TypeError):
