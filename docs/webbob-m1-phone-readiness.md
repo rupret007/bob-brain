@@ -63,3 +63,37 @@ it is not evidence of macOS runtime acceptance or approval to deploy.
 
 Jeff retains the go-live decision. No email, calendar or text send is part of
 this milestone 1 smoke test.
+
+## Developer-owned source binding preflight
+
+Before asking Jeff to exercise a staged candidate, run this from its clean,
+frozen checkout, in the intended service account and host environment:
+
+```sh
+python3 tools/webbob_m1_bindings.py --expected-sha FULL_CANDIDATE_SHA
+```
+
+This performs local reads only. It reports the exact configured journal and
+selected canonical/synced status/digest paths, observation times, freshness,
+checkout/build full SHAs and dirty-tree status. It uses the runtime's actual
+source readers and refuses the same unsafe sources. Source contents, private
+journal text, credentials and exception payloads are omitted. Preserve the JSON
+in a private operator evidence directory outside the checkout. Exit 0 means
+only that this clean checkout matches the selected SHA and required sources
+were readable; inspect stale observations separately.
+
+The configuration scope is the invoking shell. Compare its
+`BOB_SHARED_CONTEXT_DIR` and `BOB_STORYPOOL_STATE_DIR` bindings to the intended
+service configuration before staging. This command cannot prove a running
+process inherited them. It does not contact the dashboard or fetch peer state.
+Use the existing `tools/webbob_m1_acceptance.py` separately to detect a reachable
+host serving a different full build SHA.
+
+Action component presence is metadata only. The preflight never imports the
+installed owner-task scheduler, claims work, creates state, kicks services or
+queues tasks. A present file does not prove the scheduler contract, cluster
+coordination, quota, guards or owner authority. Missing components are staging
+blockers for the corresponding action. Verify these in the guarded isolated
+runtime and retain exact-head receipts before presenting safe controls as
+ready. Authenticated phone/memory/action acceptance and Jeff's go-live OK remain
+separate gates.
