@@ -33,3 +33,5 @@ separate yes. Do not create another texts bot. Do not install Twilio, Blooio, or
 - Dump chat.db
 - Prefer Andrea `.env` BLUEBUBBLES_PASSWORD over config.db
 - Treat this Cursor chat as Andrea’s old Telegram approval surface unless the fenced path is actually wired
+
+Every outgoing send requires a fresh separate Jeff yes for the exact recipient and body. Standing permissions never authorize sends. No automatic send on recovery or retry.
