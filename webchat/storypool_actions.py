@@ -107,8 +107,12 @@ def guarded_executor(root, *, install=None, data=None):
                                         or FORBIDDEN.search(action['description'])):
             raise ValueError('Outside draft allowlist')
         if action['kind'] == 'queue':
-            return ('Codex task was not queued: the guarded StoryPool scheduler adapter has not been verified. '
-                    'No Codex process started and no legacy queue was written. A fresh approval will be needed after integration.')
+            from storypool_task_queue import enqueue_installed_owner_task, SchedulerNotInstalled
+            try:
+                return enqueue_installed_owner_task(root, install, data, action['description'], token)
+            except SchedulerNotInstalled:
+                return ('Codex task was not queued: the guarded StoryPool scheduler adapter has not been verified. '
+                        'No Codex process started and no legacy queue was written. A fresh approval will be needed after integration.')
         if (Path(root) / 'conductor' / 'MAINTENANCE').exists():
             raise RuntimeError('Scheduling paused')
         # Fixed trusted installation, never a path supplied by chat or status files.
