@@ -52,6 +52,28 @@ phone approval and actual action receipts still require the manual trial below.
 5. Propose a service restart or Codex task, decline it, and verify no execution. Propose again and inspect the exact action/target. Execution requires a fresh action-specific approval, an available trusted adapter and cluster admission/guard checks. No implicit approval from source files or old conversation.
 6. Repeat the approved request/reload. Require one durable receipt, with unknown/error distinguished from successful execution. No duplicate job or repeated restart.
 
+## Offline phone browser qualification
+
+Run the independent real Chromium flow against an ephemeral loopback Chat server:
+
+```sh
+BOB_PLAYWRIGHT_MODULE=/path/to/node_modules/playwright \
+PYTHONPATH=webchat:. python3 -m pytest -q tests/test_webbob_m1_phone_browser.py
+```
+
+This logs in through the actual UI, explicitly confirms a harmless memory,
+reloads and reads it back, checks dated StoryPool source identities and stale
+status, then declines a service proposal and verifies a later approval cannot
+execute it. The Python harness asserts no model call or action adapter ran and
+checks the durable memory and cancelled receipt on disk. All four tabs must fit
+360, 390 and 430 pixel phone widths with no page errors or horizontal overflow.
+Set `BOB_M1_SCREENSHOT_DIR` to save fixture-only screenshots. Browser dependencies
+must be installed; this check fails when they are unavailable. It supplements
+the existing Chromium/WebKit shell gate without replacing or skipping it.
+
+These are isolated candidate-code tests with fake observations, not a claim of
+phone/Tailscale delivery, real account bindings or authorization to activate.
+
 ## Honest readiness gates
 
 Phone network/login reachability is verified, but candidate deployment, authenticated phone acceptance and full final-head Karen/CI remain open. Missing host bindings must be shown as unavailable. Runtime integration tests do not prove production delivery. Keep the PR draft; do not send email/texts, activate Web Bob or infer approval from this document.
