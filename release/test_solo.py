@@ -39,9 +39,9 @@ class CurrentModeReplayTests(unittest.TestCase):
         from reminders import ZONE
         from texting_fixture import OfflineProviders
         import uuid
-        for hour, minute in ((9, 0), (19, 50), (23, 30)):
-            with self.subTest(hour=hour):
-                folder = self.root / str(hour)
+        for hour, minute, approval_delay in ((9, 0, 0), (19, 50, 0), (23, 30, 0), (19, 50, 2)):
+            with self.subTest(hour=hour, approval_delay=approval_delay):
+                folder = self.root / f"{hour}-{approval_delay}"
                 chat = Chat(folder / 'webchat', folder, OfflineProviders())
                 self.addCleanup(chat.close)
                 now = [datetime(2026, 10, 16, hour, minute, tzinfo=ZONE).timestamp()]
@@ -55,6 +55,8 @@ class CurrentModeReplayTests(unittest.TestCase):
                     if text == 'band desk digest for Fixture Band':
                         return {}, dict(provider='teammates', content='fixture',
                                         teammate_evidence=dict(all_read=True, band_reads=[dict(name='Fixture Band')]))
+                    if text.startswith('yes wbrem-'):
+                        now[0] += approval_delay
                     value = chat.submit(cid, text, str(uuid.uuid4()), actor='fixture-owner')
                     answer = value['messages'][-1]
                     if text.startswith('remind me'):

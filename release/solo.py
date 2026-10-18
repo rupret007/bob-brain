@@ -609,7 +609,10 @@ def remaining_replay(client, cid, root, *, real=False):
                     'Reminder saved' not in draft['content'], 'Reminder did not require separate confirmation')
             return submit(client, cid, match[1])[1]
         body = 'Web Bob local reminder replay ' + uuid.uuid4().hex[:8]
-        saved = schedule('remind me to ' + body + ' in 1 second')
+        # The due time starts at the draft turn. Leave room for the real
+        # HTTP round trip and separate approval; keep the ten-second delivery
+        # deadline and all durable/exactly-once assertions below.
+        saved = schedule('remind me to ' + body + ' in 5 seconds')
         require(saved.get('provider') == 'reminders' and 'Reminder saved' in saved['content'], 'Reminder was not saved')
         deadline = time.monotonic() + 10
         while True:
