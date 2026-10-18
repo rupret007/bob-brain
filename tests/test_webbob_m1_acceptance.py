@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from app import BUILD, Server
 import test_webchat as harness
-from tools.webbob_m1_acceptance import probe, target
+from tools.webbob_m1_acceptance import authenticated_probe, probe, target
 
 
 class AcceptanceTests(harness.Fixture):
@@ -39,6 +39,46 @@ class AcceptanceTests(harness.Fixture):
         self.assertFalse(result['staging_probes_passed'])
         self.assertFalse(result['checks'][0]['ok'])
         self.assertEqual(result['observed_sha'], BUILD['sha'])
+
+    def test_authenticated_reads_use_existing_session_without_printing_private_data(self):
+        token = self.chat.login(self.chat.password)
+        session = self.root / 'probe-session'
+        session.write_text(token)
+        session.chmod(0o600)
+        before = self.chat.history(self.identifier)
+        result = authenticated_probe(self.url, BUILD['sha'], session)
+        self.assertTrue(result['authenticated_read_probes_passed'], result)
+        self.assertNotIn(token, str(result))
+        self.assertNotIn(self.chat.authenticate('bob_session=' + token)['csrf'], str(result))
+        self.assertEqual(result['authenticated_phone_acceptance'], 'not exercised')
+        self.assertFalse(result['activation_authorized'])
+        self.assertEqual(self.chat.history(self.identifier), before)
+        self.assertFalse(self.fake.calls)
+
+    def test_mismatched_candidate_never_reads_session_file(self):
+        selected = 'a' * 40 if BUILD['sha'] != 'a' * 40 else 'b' * 40
+        with patch('os.open', side_effect=AssertionError('credential read')):
+            result = authenticated_probe(self.url, selected, '/does-not-exist')
+        self.assertFalse(result['authenticated_read_probes_passed'])
+
+    def test_session_file_permissions_header_injection_and_expired_session_fail_closed(self):
+        session = self.root / 'probe-session'
+        session.write_text('a' * 43)
+        session.chmod(0o644)
+        with self.assertRaises(ValueError):
+            authenticated_probe(self.url, BUILD['sha'], session)
+        session.chmod(0o600)
+        session.write_text('a' * 43 + '\r\nX-Injected: yes')
+        with self.assertRaises(ValueError):
+            authenticated_probe(self.url, BUILD['sha'], session)
+        session.write_text('a' * 43)
+        result = authenticated_probe(self.url, BUILD['sha'], session)
+        self.assertFalse(result['authenticated_read_probes_passed'])
+        self.assertTrue(all(row['status'] == 401 for row in result['authenticated_checks']))
+        link = self.root / 'probe-session-link'
+        link.symlink_to(session)
+        with self.assertRaises(ValueError):
+            authenticated_probe(self.url, BUILD['sha'], link)
 
     def test_invalid_and_credential_bearing_targets_fail_before_network(self):
         for url in ('https://user:password@host.ts.net/', 'https://host.ts.net/?token=x',
