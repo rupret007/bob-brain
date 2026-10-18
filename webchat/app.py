@@ -265,6 +265,17 @@ class Chat(TaskDispatch):
                 pending.pop(event_id)
         for record in self.coordination_records(conversation):
             pending.setdefault(record['event_id'], record)
+        # Operational evidence owns an immutable, atomically saved public reply.
+        # Bind its rendering identity in that same write; adding it only during
+        # history projection made the returned status differ from saved evidence.
+        # This is identity metadata, never a delivery acknowledgement or action.
+        from reply_delivery import rendering
+        for message in messages:
+            if "status_observation" in message:
+                message.pop("reply_delivery", None)
+                delivery = rendering(message)
+                if delivery is not None:
+                    message["reply_delivery"] = delivery[0]
         path = self.state / (conversation["id"] + ".json")
         private_write(path, json.dumps(conversation, ensure_ascii=False, indent=2) + "\n")
         if conversation.get('_coordination_excluded'):

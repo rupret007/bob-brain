@@ -98,6 +98,23 @@ class StatusObservationTests(SessionFixture):
             self.assertEqual(self.chat.history(self.identifier)["messages"][-1], original)
         self.assertFalse(self.errors(retried, started, before, after))
 
+    def test_status_rendering_identity_is_atomic_with_saved_evidence(self):
+        from reply_delivery import rendering
+        answer, started, before, after = self.status()
+        path = self.chat.state / (self.identifier + ".json")
+        saved = json.loads(path.read_text())["messages"][-1]
+        expected = rendering(saved)[0]
+        self.assertEqual(saved.get("reply_delivery"), expected)
+        self.assertEqual(answer["reply_delivery"], expected)
+        self.assertEqual(saved["status_observation"], answer["status_observation"])
+        original = path.read_bytes()
+        self.chat.history(self.identifier)
+        self.assertEqual(path.read_bytes(), original)
+        self.assertFalse((self.chat.state / "reply-receipts.sqlite").exists())
+        self.assertFalse(self.errors(answer, started, before, after))
+        # Identity alone never acknowledges delivery or executes any action.
+        self.assertFalse(self.chat.workers)
+
     def test_write_failure_cannot_expose_a_successful_unpersisted_status(self):
         from app import private_write
         def fail_completed(path, value):
