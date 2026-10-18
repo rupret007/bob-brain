@@ -135,6 +135,54 @@ class PersonalDraftTests(unittest.TestCase):
         self.assertIn('draft is still pending', reply)
         self.assertNotIn('_personal_action', restored.history(self.cid))
 
+    def test_unavailable_email_uses_plain_limits_and_never_saves_approval(self):
+        reply = self.say('Email Mike the rehearsal is Friday')
+        self.assertIn('The rehearsal is Friday.', reply)
+        self.assertNotRegex(reply, r'(?i)transport|config|OAuth')
+        self.assertIn('unsent draft', reply)
+        self.assertIn('no approval will be saved', reply)
+        for approval in ('OK', 'send it', 'go ahead'):
+            reply = self.say(approval)
+            self.assertIn('pending', reply)
+            self.assertIn('fresh separate approval', reply)
+            self.assertEqual(self.chat.get(self.cid)['_personal_action']['state'], 'draft')
+        self.assertFalse(task_queue.tasks(self.root))
+        self.chat.texting.andrea.deliver.assert_not_called()
+
+    def test_calendar_recovery_after_restart_does_not_consume_fallback_approval(self):
+        from calendar_actions import CalendarError, NEEDS_AUTH
+        self.client.configured.side_effect = CalendarError(NEEDS_AUTH)
+        reply = self.say('Put dinner with Andrea on the calendar Saturday at 7.')
+        self.assertIn('07:00 PM', reply)
+        self.assertNotRegex(reply, r'(?i)auth|config|transport|OAuth')
+        self.assertIn('Nothing was added', reply)
+        self.assertIn('cannot add it automatically later', reply)
+        self.say('OK')
+        self.client.configured.side_effect = None
+        restored = Chat(self.chat.folder, self.root, self.providers, calendar=self.calendar)
+        self.addCleanup(restored.close)
+        for approval in ('OK', 'go ahead'):
+            reply = restored.submit(self.cid, approval, str(uuid.uuid4()), actor='fixture')['messages'][-1]['content']
+            self.assertIn('pending', reply)
+        self.assertEqual(restored.get(self.cid)['_personal_action']['state'], 'draft')
+        with self.calendar.locked() as rows:
+            self.assertEqual(rows, {})
+        self.client.create.assert_not_called()
+
+    def test_calendar_fallback_uses_typed_failure_without_leaking_adapter_details(self):
+        from calendar_actions import CalendarError
+        for error in (CalendarError('Calendar refused request: configure private credentials'),
+                      OSError('Calendar transport unreachable at private address')):
+            with self.subTest(error=type(error).__name__):
+                self.client.configured.side_effect = error
+                reply = self.say('Put dinner with Andrea on the calendar Saturday at 7.')
+                self.assertIn('07:00 PM', reply)
+                self.assertIn('Nothing was added', reply)
+                self.assertNotRegex(reply, r'(?i)auth|config|transport|private|credentials')
+                self.assertNotIn('wbcal-', reply)
+                self.assertIn('pending', self.say('OK'))
+                self.client.create.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()
