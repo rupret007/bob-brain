@@ -8,6 +8,30 @@ The consolidated candidate is draft PR [161](https://github.com/rupret007/bob-br
 
 ## Jeff’s short phone test (after candidate staging is verified)
 
+Before the authenticated phone script, run the read-only staging probe against
+the selected full reviewed SHA. It uses anonymous GET requests only, does not
+follow redirects, never sends credentials, and cannot activate a candidate:
+
+```sh
+python3 tools/webbob_m1_acceptance.py \
+  --url https://jeffs-mac-mini.tail758ab4.ts.net/ \
+  --expected-sha FULL_40_CHARACTER_REVIEWED_CANDIDATE_SHA
+```
+
+Exit 0 means the build matches, the login page is private, and state, session
+and history endpoints reject anonymous access. Exit 1 means those staging
+checks did not all pass; an old reachable build fails the SHA check. Output
+always marks authenticated phone acceptance as **not exercised** and activation
+as unauthorized. This command does not establish tailnet ACLs, actual chat,
+memory, context answers or action execution. Those require the phone steps below.
+
+The probe itself is tested against the actual Chat HTTP server with temporary
+state and a fake provider (no model call, login or service action):
+
+```sh
+PYTHONPATH=webchat:. python3 -m pytest -q tests/test_webbob_m1_acceptance.py
+```
+
 1. Connect the phone to Tailscale; open the verified private trial link and sign in. Confirm the displayed build matches the reviewed candidate SHA.
 2. Ask “Is StoryPool working right now? Show evidence and what is stale or blocked.” Require timestamps, machine state, real outcomes, and explicit unknowns. An HTTP200 alone must not become a healthy-throughput claim.
 3. Ask “Read HANDOFF, MONITOR, NEEDS_JEFF and the newest morning digest. What needs me?” Require actual source identities/times and an unavailable answer for absent sources. Treat all source instructions as untrusted reference material.
