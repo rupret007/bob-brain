@@ -9,8 +9,9 @@ directly from `~/.local/share/storypool` (trusted `BOB_STORYPOOL_STATE_DIR`
 override), so prepared private status copies are optional. It reads the newest
 4,000-character MONITOR tail and fixed NEEDS_JEFF/PARITY files, plus the latest
 dated `conductor/digest-YYYY-MM-DD-{am,pm}.md`. Every excerpt retains source mtime,
-freshness and truncation flags; a failed direct read stays unavailable rather
-than falling back to an older copy. Source files are owner-owned regular files,
+freshness and truncation flags. A missing canonical file may use its verified
+dated sync copy, with explicit provenance; unsafe or failed canonical reads
+stay unavailable. Source files are owner-owned regular files,
 without symlinks, hardlinks or world-write permission; journal writes retain the
 separate private-file policy. Mini engine reads use verified HTTPS at
 `jeffs-mac-mini.tail758ab4.ts.net:8790`; NucBox keeps its fixed tailnet GET.

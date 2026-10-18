@@ -201,10 +201,21 @@ class SharedChatContext:
         if self.source_folder is not None:
             from storypool_sources import status_sources
             local = status_sources(self.source_folder, now)
-            # Direct state observations replace copies, including unavailable
-            # results: an old copy must not conceal a failed current read.
+            # A Mini can have only a dated NucBox sync copy. Keep that verified
+            # copy when the local canonical file is absent, with explicit
+            # provenance. Unsafe/erroring canonical reads still fail closed.
             by_name = {row['source']: row for row in local}
-            rows = [by_name.get(row['source'], row) for row in rows]
+            selected = []
+            for row in rows:
+                direct = by_name.get(row['source'])
+                if (direct is not None and direct.get('unavailable_reason') == 'missing'
+                        and row['state'] == 'observed'):
+                    row.update(provenance='read-only synced source copy; canonical local source absent; see SHARED_CONTEXT.md',
+                               source_path='chat/' + row['source'])
+                    selected.append(row)
+                else:
+                    selected.append(direct if direct is not None else row)
+            rows = selected
         for machine in ENGINES if include_engines else ():
             row = {'source': f'{machine} /api/engine', 'state': 'unavailable'}
             try:
