@@ -559,7 +559,7 @@ class CapabilityLedgerTests(unittest.TestCase):
         # Load the real secret patterns without invoking git for build metadata.
         with patch('subprocess.check_output', side_effect=OSError('Offline build metadata')):
             import providers
-        temporary = tempfile.TemporaryDirectory(dir='/private/tmp')
+        temporary = tempfile.TemporaryDirectory(prefix='webbob-consent-')
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.home = self.root / 'home'

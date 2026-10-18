@@ -377,7 +377,7 @@ class ApprovalCategoryTests(unittest.TestCase):
 
 class ApprovalIntentTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(dir='/private/tmp')
+        temporary = tempfile.TemporaryDirectory(prefix='webbob-consent-')
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.home = self.root / 'home'
