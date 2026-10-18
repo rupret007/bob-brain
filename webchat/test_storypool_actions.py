@@ -211,6 +211,30 @@ class GuardedAdapterTests(unittest.TestCase):
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_control_tokens_and_task_bodies_stay_out_of_journal_and_model(self):
+        from app import Chat
+        from shared_chat import SharedChatContext
+        from texting_fixture import OfflineProviders
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context = SharedChatContext(root / 'shared')
+            controls = StoryPoolActions(root / 'private', execute=Mock(return_value='Fixture approval consumed.'))
+            chat = Chat(root / 'webchat', root=root, providers=OfflineProviders(),
+                        storypool_actions=controls, shared_context=context)
+            cid = chat.new_conversation()['id']
+            result = chat.submit(cid, 'storypool queue codex task: private-task-canary-4021',
+                                 str(uuid.uuid4()), actor='jeff')
+            token = re.search(r'wbsp-[a-f0-9]{32}', result['messages'][-1]['content'])[0]
+            chat.submit(cid, 'yes ' + token, str(uuid.uuid4()), actor='jeff')
+            saved = chat.get(cid)
+            self.assertTrue(all(m.get('private_draft') for m in saved['messages']))
+            journal = (root / 'shared/HANDOFF.md').read_text()
+            model = json.dumps(chat.texting.provider_view(saved))
+            for private in ('private-task-canary-4021', token):
+                self.assertNotIn(private, journal)
+                self.assertNotIn(private, model)
+            self.assertIn('Private action turn recorded', journal)
+
     def test_chat_routes_controls_without_provider_or_queue(self):
         from app import Chat
         from texting_fixture import OfflineProviders
