@@ -46,6 +46,17 @@ const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
         assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${tab} overflow at ${width}`);
       }
       await page.locator('[data-bottom="chat"]').click();
+      await page.locator('[data-view="chat"]:not([hidden])').waitFor();
+      await page.locator('[data-view="chat"]').evaluate(v => Promise.all(v.getAnimations().map(a => a.finished)));
+      await page.locator('.composer-dock').waitFor({state:'visible'});
+      const lastReply = page.locator('#messages .assistant').last();
+      await lastReply.filter({hasText:'already consumed'}).waitFor({state:'visible'});
+      for (const visible of [lastReply, page.locator('#message'), page.locator('#send')]) {
+        const rect = await visible.boundingBox();
+        assert(rect && rect.width > 0 && rect.height > 0 && rect.x < width &&
+          rect.x + rect.width > 0 && rect.y < 844 && rect.y + rect.height > 0,
+          `Chat content/composer is outside the phone viewport at ${width}`);
+      }
       if (config.screenshots) await page.screenshot({path:path.join(config.screenshots, `webbob-m1-${width}.png`),fullPage:true});
     }
     assert.deepEqual(errors, []);
