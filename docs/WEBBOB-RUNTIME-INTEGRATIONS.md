@@ -73,10 +73,43 @@ become model instructions or consent. Skills do not invoke sends and do not
 release saved holds. The Director uses the existing model admission/usage
 boundary; no Grok lane or default Claude lane is introduced.
 
+## Saved reply delivery
+
+Chat uses saved history as its reply transport. Completed public typed replies
+now expose a stable display ID plus a SHA-256 binding of the actual saved text,
+artifact and attachment metadata. The browser observes only currently visible
+rows after rendering and posts bounded authenticated, CSRF-protected batches to
+`/api/reply-receipts`. The existing `ChatReplyJournal` records those observations
+idempotently, privately, and without storing reply text. Status-card refreshes
+do not create new text versions. Changed text/artifacts get a distinct exact
+version while retaining one display row.
+
+History GETs remain read-only. Lost observation responses never submit a message,
+call a model or invoke a sender; reload may repeat only the idempotent receipt.
+Unacknowledged visibility stays unknown. A browser observation is not a human
+read receipt, audio playback proof, action receipt or send approval. Private
+texting/memory, voice, incomplete, foreign and stale rows cannot be acknowledged.
+Automatic reminder notices keep their existing durable occurrence receipts and
+are excluded from this typed-turn observation path.
+Journal failure leaves the saved answer intact. Existing request IDs, duplicate
+submission handling, pending-generation recovery and conversation persistence
+remain authoritative; the push/retry `deliver` method is not used for polling.
+
+Eight runtime/real authenticated HTTP cases cover restart, concurrent reloads,
+lost receipt responses, exact changed bodies/long artifacts, foreign/private
+rows, private permissions, unavailable stores and unchanged holds/model counts.
+`test_reply_receipts.mjs` tests the actual UI observation code with deterministic
+frames and network loss. Actual Chromium/WebKit Mini rendering/reload acceptance
+is still required; the host browser binaries/dependencies are unavailable here.
+
+Staged release packaging: [WEBBOB-GO-LIVE.md](WEBBOB-GO-LIVE.md).
+
 ## Offline validation
 
 ```bash
 PYTHONPATH=webchat:state python3 -m unittest test_calendar_routine_runtime test_skill_runtime -v
+PYTHONPATH=webchat:state python3 -m unittest test_reply_delivery_runtime test_reply_lifecycle -v
+node webchat/test_reply_receipts.mjs
 python3 -m unittest discover -s tests -p test_storypool_status.py -v
 ```
 

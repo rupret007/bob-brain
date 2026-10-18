@@ -14,6 +14,7 @@ import re
 import secrets
 import shlex
 import signal
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -411,6 +412,11 @@ class Chat(TaskDispatch):
             message.pop('_generation', None)
             message.pop('_reply_contract', None)
             message.pop('_reminder_extraction', None)
+            message.pop('reply_delivery', None)
+            from reply_delivery import rendering
+            delivery = rendering(message)
+            if delivery is not None:
+                message['reply_delivery'] = delivery[0]
         info = self.workers.get(value["id"])
         public["reply_stopping"] = bool(info and info["cancel"].is_set())
         return public
@@ -565,6 +571,28 @@ class Chat(TaskDispatch):
             # Recovery belongs to startup and the background loop. A page read
             # must not enqueue a saved intent or acknowledge an outbox result.
             return self.public(self.get(identifier))
+
+    def acknowledge_replies(self, identifier, receipts):
+        from reply_delivery import acknowledge
+        from webbob.chat_reply import ChatReplyError
+        if (not isinstance(receipts, list) or not 1 <= len(receipts) <= 32
+                or any(not isinstance(row, dict) or set(row) != {'message_id', 'id', 'sha256'}
+                       or any(not isinstance(value, str) for value in row.values()) for row in receipts)):
+            raise RequestError(400, 'Invalid reply receipts.')
+        with self.lock:
+            conversation = self.public(self.get(identifier))
+            by_id = {m['id']: m for m in conversation['messages']}
+            # Validate the entire batch before writing any observation. Private
+            # text/voice and stale/foreign identities cannot become receipts.
+            for row in receipts:
+                message = by_id.get(row['message_id'], {})
+                if message.get('reply_delivery') != {key: row[key] for key in ('id', 'sha256')}:
+                    raise RequestError(409, 'Reply rendering changed or is unavailable.')
+            try:
+                return {'replies': [acknowledge(self.state, identifier, by_id[row['message_id']],
+                    {key: row[key] for key in ('id', 'sha256')}) for row in receipts]}
+            except (OSError, ChatReplyError, sqlite3.Error):
+                raise RequestError(503, 'Reply observation could not be saved; the saved reply is unchanged.') from None
 
     def worker_info(self, identifier):
         return self.workers.get(identifier)
@@ -2192,6 +2220,9 @@ class Handler(BaseHTTPRequestHandler):
             self.body()
             spawned = maybe_spawn_dashboard_refresh(chat.root)
             return self.send(202, {"ok": True, "spawned": spawned})
+        if route == "/api/reply-receipts":
+            data = self.body()
+            return self.send(200, chat.acknowledge_replies(data.get('conversation_id'), data.get('receipts')))
         if route == "/api/messages":
             data = self.body()
             return self.send(202, chat.submit(

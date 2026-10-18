@@ -408,6 +408,39 @@ if ($("login-form")) {
     submitChatText("show saved project context");
   });
   const messageText = new WeakMap();
+  const replyReceiptAttempts = new Set();
+  let renderedConversation = null;
+  function acknowledgeVisibleReplies(conversation) {
+    requestAnimationFrame(() => {
+      if (conversation.id !== current || document.visibilityState !== 'visible') return;
+      const panel = $('messages'), bounds = panel.getBoundingClientRect();
+      const byId = new Map(conversation.messages.map(message => [message.id, message]));
+      const receipts = [];
+      for (const article of panel.children) {
+        const message = byId.get(article.dataset.messageId), delivery = message?.reply_delivery;
+        if (!delivery || article.dataset.replyDeliveryId !== delivery.id) continue;
+        const rect = article.getBoundingClientRect();
+        if (rect.bottom <= Math.max(0, bounds.top) || rect.top >= Math.min(innerHeight, bounds.bottom)
+            || !rect.width || !rect.height) continue;
+        const key = conversation.id + ':' + delivery.id;
+        if (replyReceiptAttempts.has(key)) continue;
+        replyReceiptAttempts.add(key);
+        receipts.push({message_id: message.id, id: delivery.id, sha256: delivery.sha256});
+        if (receipts.length === 32) break;
+      }
+      if (receipts.length) {
+        // A lost observation response never triggers message submission,
+        // generation, or resend. Reload can repeat this idempotent observation.
+        void api('/api/reply-receipts', {conversation_id: conversation.id, receipts}).catch(() => {});
+      }
+    });
+  }
+  $('messages').addEventListener('scroll', () => {
+    if (renderedConversation) acknowledgeVisibleReplies(renderedConversation);
+  }, {passive: true});
+  document.addEventListener('visibilitychange', () => {
+    if (renderedConversation) acknowledgeVisibleReplies(renderedConversation);
+  });
   function render(conversation) {
     if (conversation.id !== current) return;
     const nextRevision = JSON.stringify(conversation);
@@ -415,7 +448,11 @@ if ($("login-form")) {
     replyStopping = Boolean(conversation.reply_stopping);
     busy = replyStopping || conversation.messages.some((message) => ["running", "queued", "waiting"].includes(message.status));
     composerState();
-    if (nextRevision === revision) return;
+    renderedConversation = conversation;
+    if (nextRevision === revision) {
+      acknowledgeVisibleReplies(conversation);
+      return;
+    }
     revision = nextRevision;
     const last = conversation.messages.at(-1);
     if (replyStopping && !sending) {
@@ -437,6 +474,8 @@ if ($("login-form")) {
     for (const message of conversation.messages) {
       const pending = ["queued", "running"].includes(message.status);
       const article = document.createElement("article");
+      article.dataset.messageId = message.id;
+      if (message.reply_delivery) article.dataset.replyDeliveryId = message.reply_delivery.id;
       article.className = `message ${message.role} ${pending ? "pending" : ""} ${message.status === "error" ? "error" : ""}`;
       if (message.texting) article.classList.add("texting");
       if (message.private_memory) article.classList.add("private-memory");
@@ -611,6 +650,7 @@ if ($("login-form")) {
     }
     panel.replaceChildren(fragment);
     if (nearBottom || sending) panel.scrollTop = panel.scrollHeight;
+    acknowledgeVisibleReplies(conversation);
   }
   function textDraftCard(draft) {
     const card = document.createElement("section");

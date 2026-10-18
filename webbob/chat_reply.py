@@ -195,3 +195,21 @@ class ChatReplyJournal:
                        (receipt, now, reply_id))
             row = self._row(db, reply_id)
         return self._snapshot(row)
+
+    def acknowledge_visible(self, reply_id, body):
+        """Record an authenticated browser observation, without invoking a sender.
+
+        Polling can replay one saved message many times. A receipt binds the
+        stable display identity and exact rendering input; it is not permission
+        for an action, a human read receipt, or proof of audio playback.
+        """
+        self.prepare(reply_id, body)
+        with self.db() as db:
+            row = self._row(db, reply_id)
+            # Preserve the first receipt across reloads and concurrent tabs.
+            if row['state'] != 'delivered':
+                db.execute("""UPDATE replies SET state='delivered', receipt=?,
+                    next_retry_at=NULL, updated_at=? WHERE id=?""",
+                    ('browser:' + reply_id, time.time(), reply_id))
+                row = self._row(db, reply_id)
+            return self._snapshot(row)
