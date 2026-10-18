@@ -84,6 +84,30 @@ class OwnerTaskQueueTests(unittest.TestCase):
                 with self.assertRaises(QueueUnavailable):
                     queue.enqueue('Add tests', self.token, 'b' * 40)
 
+    def test_durable_pending_inbox_is_recorded_without_claiming_lane_admission(self):
+        def staged(request):
+            return dict({k: v for k, v in request.items() if k != 'description'},
+                        receipt_id=request['request_id'], state='awaiting_admission', recorded_at=999)
+        self.scheduler.side_effect = staged
+        answer = self.enqueue()
+        self.assertIn('recorded in the shared StoryPool inbox', answer)
+        self.assertIn('no Codex lane has started', answer)
+        self.assertNotIn('accepted by', answer)
+        self.assertEqual(self.enqueue(), answer)
+        self.scheduler.assert_called_once()
+        for mutate in (lambda r: r.update(receipt_id='other'),
+                       lambda r: r.update(recorded_at=float('nan')),
+                       lambda r: r.update(recorded_at=True),
+                       lambda r: r.update(head_sha='c' * 40),
+                       lambda r: r.update(checks={k: True for k in CHECKS})):
+            with tempfile.TemporaryDirectory() as tmp:
+                def invalid(request):
+                    result = staged(request)
+                    mutate(result)
+                    return result
+                with self.assertRaises(QueueUnavailable):
+                    OwnerTaskQueue(tmp, invalid, clock=lambda: 1000).enqueue('Add tests', self.token, 'b' * 40)
+
     def test_invalid_task_never_reaches_scheduler(self):
         for kw in ({'description': ''}, {'description': 'x' * 2001},
                    {'description': 'merge the change'}, {'description': 'use Grok'},

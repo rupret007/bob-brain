@@ -103,7 +103,7 @@ class OwnerTaskQueue:
             rows = json.loads(path.read_text()) if path.exists() else {}
             previous = rows.get(fingerprint)
             if previous:
-                if previous.get('digest') != digest or previous.get('state') != 'queued':
+                if previous.get('digest') != digest or previous.get('state') not in ('queued', 'awaiting_admission'):
                     raise QueueUnavailable('Approval attempt already consumed; request a fresh approval')
                 return previous['answer']
             # A crash/timeout following this durable consume is never replayed.
@@ -111,9 +111,13 @@ class OwnerTaskQueue:
             atomic_json(path, rows)
             receipt = self.scheduler(dict(request))
             self._validate_receipt(receipt, request)
-            answer = ('Codex draft task accepted by the guarded StoryPool scheduler. Receipt '
-                      + receipt['receipt_id'] + '. Execution remains subject to scheduler guards and Karen review.')
-            rows[fingerprint].update(state='queued', answer=answer)
+            if receipt['state'] == 'awaiting_admission':
+                answer = ('Owner-approved Codex draft task recorded in the shared StoryPool inbox. Receipt '
+                          + receipt['receipt_id'] + '. It is awaiting guarded scheduler admission; no Codex lane has started.')
+            else:
+                answer = ('Codex draft task accepted by the guarded StoryPool scheduler. Receipt '
+                          + receipt['receipt_id'] + '. Execution remains subject to scheduler guards and Karen review.')
+            rows[fingerprint].update(state=receipt['state'], answer=answer)
             atomic_json(path, rows)
             return answer
 
@@ -121,6 +125,16 @@ class OwnerTaskQueue:
         if not isinstance(receipt, dict):
             raise QueueUnavailable('No durable scheduler receipt')
         expected = {k: request[k] for k in ('contract', 'request_id', 'repo', 'head_sha', 'branch', 'provider', 'policy')}
+        if receipt.get('state') == 'awaiting_admission':
+            recorded = receipt.get('recorded_at')
+            if (any(receipt.get(k) != v for k, v in expected.items())
+                    or type(receipt.get('contract')) is not int
+                    or receipt.get('receipt_id') != request['request_id']
+                    or type(recorded) not in (int, float) or not math.isfinite(recorded)
+                    or not 0 <= recorded <= self.clock()
+                    or 'checks' in receipt or 'codex_weekly_pct' in receipt):
+                raise QueueUnavailable('No durable shared inbox receipt')
+            return
         checks = receipt.get('checks')
         observed, quota = receipt.get('admitted_at'), receipt.get('codex_weekly_pct')
         if (any(receipt.get(k) != v for k, v in expected.items())
