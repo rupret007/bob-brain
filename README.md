@@ -26,3 +26,7 @@ Local StoryPool services (draft, activation needs Jeff):
   NEEDS_JEFF observations. `python3 -m webbob.storypool_status` is read-only.
 
 The three skills require explicit invocation and default to read-only work.
+
+The go-live candidate's remaining integration work is tracked in [GAP_LIST.md](GAP_LIST.md).
+[SHARED_CONTEXT.md](SHARED_CONTEXT.md) describes the shared Mini journal and bounded
+live-source readers. These candidate changes do not activate Web Bob or authorize sends.

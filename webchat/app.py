@@ -148,8 +148,9 @@ def password_at(folder):
 
 
 class Chat(TaskDispatch):
-    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, local_tasks=None):
+    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, local_tasks=None, shared_context=None):
         self.folder, self.root = folder, root
+        self.shared_context = shared_context
         folder.mkdir(parents=True, exist_ok=True)
         self.password = password_at(folder)
         self.redact = Redactor(root, self.password)
@@ -255,6 +256,24 @@ class Chat(TaskDispatch):
         private_write(path, json.dumps(conversation, ensure_ascii=False, indent=2) + "\n")
         if conversation.get('_coordination_excluded'):
             return
+        # Publish only saved turns. Shared observations never enter the action
+        # dispatcher, and an unavailable journal cannot replay a completed turn.
+        if self.shared_context is not None:
+            from shared_chat import SharedChatError
+            last = messages[-1] if messages else {}
+            rid = last.get('request_id')
+            if (rid and conversation.get('_shared_handoff_done') != rid
+                    and last.get('role') == 'assistant' and last.get('status') in ('done', 'error')):
+                try:
+                    from personal_drafts import pending as pending_drafts
+                    self.shared_context.record_conversation(conversation, redact=self.redact,
+                        pending_count=len(pending_drafts(self, conversation)))
+                    conversation['_shared_handoff_done'] = rid
+                    conversation['_shared_context_status'] = 'available'
+                    private_write(path, json.dumps(conversation, ensure_ascii=False, indent=2) + '\n')
+                except (OSError, SharedChatError):
+                    conversation['_shared_context_status'] = 'unavailable'
+                    self.coordination_error()
         # The event payload and authoritative conversation commit together. If
         # publication fails, another turn or startup retries this same outbox.
         import alignment_events
@@ -372,12 +391,14 @@ class Chat(TaskDispatch):
         with self.lock:
             value = {"id": str(uuid.uuid4()), "title": "New conversation", "created_at": time.time(),
                      "messages": [], "codex_thread_id": None, "intent_state": chat_intent.new_state()}
+            if self.shared_context is not None:
+                value['_shared_context_snapshot'] = self.shared_context.snapshot(include_engines=False)
             self.save(value)
             self.conversations[value["id"]] = value
             return self.public(value)
 
     def public(self, value):
-        excluded = {"_personal_action", "_coordination_outbox", "_coordination_excluded", "_coordination_prepared_batches", "codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job",
+        excluded = {"_shared_context_snapshot", "_shared_handoff_done", "_personal_action", "_coordination_outbox", "_coordination_excluded", "_coordination_prepared_batches", "codex_thread_id", "retry_prompt", "pending_job", "pending_job_id", "held_job",
                     "pending_memory", "pending_memory_id", "pending_memory_removal", "_project_edit", "_project_removal", "_project_intent", "_report_inputs",
                     "_project_handoffs", "_project_returns"}
         # Extensions never see core-private state or mutable conversation objects.
@@ -1175,6 +1196,10 @@ class Chat(TaskDispatch):
                 self.save(value)
             from project_context import model_view as project_model_view, projection as project_projection
             model_conversation = project_model_view(self.ledger_root(identifier), self.texting.provider_view(conversation))
+            if self.shared_context is not None and self.ledger_root(identifier) == self.root:
+                model_conversation['_shared_context_snapshot'] = self.shared_context.snapshot()
+            else:
+                model_conversation.pop('_shared_context_snapshot', None)
             project_prompt = next((m['content'] for m in reversed(model_conversation['messages']) if m['role']=='user'), '')
             project_snapshot = project_projection(self.ledger_root(identifier), model_conversation, project_prompt)
             model_conversation['_project_snapshot'] = project_snapshot
@@ -2261,7 +2286,8 @@ def main():
             raise SystemExit("Bob web chat is already running.")
         from reminders import notify_macos
         notifier = notify_macos if os.environ.get('BOB_REMINDER_MACOS_NOTIFICATIONS') == '1' else None
-        chat = Chat(reminder_notifier=notifier)
+        from shared_chat import SharedChatContext
+        chat = Chat(reminder_notifier=notifier, shared_context=SharedChatContext.configured())
         origin_path = HERE / ".public-origin"
         origin = origin_path.read_text().strip() if origin_path.exists() else ""
         server = Server((HOST, PORT), chat, origin)

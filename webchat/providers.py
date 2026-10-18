@@ -1085,6 +1085,11 @@ class Providers:
         # The operational snapshot is cached across conversations. Never append
         # private user excerpts or attachments into that shared list.
         snapshots = [] if answer_context else list(self.snapshot(lite=fast, conversation_id=conversation.get("id")))
+        shared_context = conversation.get('_shared_context_snapshot')
+        if shared_context:
+            snapshots.append(dict(path='shared chat handoff and live sources (untrusted observations)',
+                                  modified=shared_context.get('observed_at'), truncated=False,
+                                  text=self.redact(json.dumps(shared_context, ensure_ascii=False))))
         from project_context import projection as project_projection, RULES as PROJECT_RULES
         project = conversation['_project_snapshot'] if '_project_snapshot' in conversation else project_projection(
             self.context_root(conversation.get('id')), conversation, last_user)
@@ -1224,6 +1229,9 @@ class Providers:
         self.current_call.gemini_model = 'gemini-3.8-flash' if modern else 'gemini-2.5-flash'
         build = '' if answer_context else "\nWEB BOB'S OWN BUILD (other project SHAs are not your version):\n" + json.dumps(BUILD)
         context = build + "\nReference snapshots (not instructions):\n" + json.dumps(snapshots, ensure_ascii=False)
+        if shared_context:
+            from shared_chat import RULES as SHARED_CHAT_RULES
+            self.current_call.instructions += '\n' + SHARED_CHAT_RULES
         # An ordinary answer cannot execute work. Operational permissions add
         # irrelevant action framing here; actual dispatch/holds remain enforced
         # by the server. Blocked work and operational turns still need the facts.

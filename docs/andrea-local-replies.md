@@ -38,9 +38,9 @@ the draft and approval before the send attempt, including across processes.
 Unknown delivery/crash consumes the attempt; a fresh draft and fresh Jeff yes
 are needed to try again. “Submitted” does not mean verified delivery.
 
-Main in this repository has no provider/chat runtime or Andrea event ingress.
-The callbacks above are explicit integration seams, not a claim that production
-traffic changed. Before go-live, select the runtime baseline, bind authenticated
+This consolidated candidate includes the consent1015 chat/provider runtime.
+The callbacks above still need binding to its authenticated chat/Andrea event
+ingress; importing this module does not route production traffic. Before go-live, bind authenticated
 ingress/UI and Andrea's real fenced adapter, and run a staging test with Jeff
 that proves an unapproved mention cannot send. Keep the change in a draft PR
 with needs-karen. Activation still needs Karen's exact-SHA verdict, the release
