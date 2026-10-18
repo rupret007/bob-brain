@@ -67,6 +67,8 @@ status, then declines a service proposal and verifies a later approval cannot
 execute it. The Python harness asserts no model call or action adapter ran and
 checks the durable memory and cancelled receipt on disk. All four tabs must fit
 360, 390 and 430 pixel phone widths with no page errors or horizontal overflow.
+After tab transitions, chat messages and composer must also be visible inside
+the viewport before screenshots are captured; an empty shell is not acceptance.
 Set `BOB_M1_SCREENSHOT_DIR` to save fixture-only screenshots. Browser dependencies
 must be installed; this check fails when they are unavailable. It supplements
 the existing Chromium/WebKit shell gate without replacing or skipping it.
@@ -95,6 +97,18 @@ means only that the approved intent was recorded: no Codex lane has started.
 The actual guarded runtime, shared fresh weekly quota and control authorities,
 operator inbox provisioning and reviewed rollout remain required. Do not count
 a pending inbox entry as successful task execution or M1 queue acceptance.
+
+The experimental execution worker is a separate stacked
+[draft #91](https://github.com/rupret007/bob-ops-dashboard/pull/91), not part of
+the deployed inbox. Admission and execution are hard-disabled following
+independent safety review. Verified sandbox teardown, an immutable tested
+snapshot, executed-regression evidence and real shared authorities remain
+developer work. Passing its unit tests does not close those blockers.
+
+Qualification also covers unavailable email/calendar drafts: their replies
+explain that nothing was sent or added, without exposing adapter configuration.
+Natural calendar drafts use typed failure handling. Vague approval, restart or
+later account recovery cannot turn a fallback draft into permission to send.
 
 ## Milestone 2 queue
 
