@@ -770,6 +770,9 @@ class Chat(TaskDispatch):
                 allow_effects=not public_attachments and worker is None and source_voice is None
                     and self.ledger_root(identifier) == self.root, blocked=bool(intent_state.get("holds")))
             if storypool is not None:
+                for message in conversation['messages']:
+                    if message.get('request_id') == request_id:
+                        message['private_draft'] = True
                 return self.intent_reply(conversation, self.redact(storypool), provider='storypool-controls')
             from memory_removal import handle as memory_removal_turn
             removal = memory_removal_turn(self, conversation, text, request_id, source_voice=source_voice,
