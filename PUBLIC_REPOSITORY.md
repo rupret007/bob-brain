@@ -18,6 +18,11 @@ The public-repository CI gate checks changes and reports locations and rule
 names without exposing matched values. Passing a pattern scanner does not
 replace reviewing prose, images and attachments for private information.
 
+The trusted pull-request gate runs the base branch's scanner against fetched
+candidate objects without executing candidate code. It becomes available after
+the workflow reaches the base branch through the ordinary Karen merge gate;
+the initial draft's self-check does not establish trusted enforcement.
+
 If a credential or private record is found, stop publication, report only its
 location through the local operator notes, and arrange credential rotation or
 removal with the owner. Never paste the value into a PR, issue or CI log.
