@@ -100,6 +100,38 @@ class PublicPrivacyTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 privacy.scan("missing", "HEAD")
 
+    def test_imported_root_history_scans_secrets_removed_before_merge(self):
+        with tempfile.TemporaryDirectory() as directory:
+            def git(*args):
+                return subprocess.run(["git", "-C", directory, *args], check=True, capture_output=True).stdout.decode().strip()
+            git("init", "-q")
+            git("config", "user.email", "ci@example.invalid")
+            git("config", "user.name", "Privacy test")
+            root = Path(directory)
+            (root / "base.txt").write_text("safe\n")
+            git("add", ".")
+            git("commit", "-qm", "base")
+            branch = git("branch", "--show-current")
+            base = git("rev-parse", "HEAD")
+            git("checkout", "--orphan", "imported-component")
+            git("rm", "-rf", ".")
+            secret = "ghp_" + "b" * 30
+            (root / "removed.txt").write_text(secret + "\n")
+            git("add", ".")
+            git("commit", "-qm", "component root")
+            git("rm", "removed.txt")
+            (root / "component.txt").write_text("safe\n")
+            git("add", ".")
+            git("commit", "-qm", "remove sensitive component file")
+            git("checkout", branch)
+            git("merge", "--allow-unrelated-histories", "--no-ff", "-m", "import component", "imported-component")
+            actual_git = privacy.git
+            def in_repo(*args):
+                return actual_git("-C", directory, *args)
+            with patch.object(privacy, "git", side_effect=in_repo):
+                findings = privacy.scan(base, "HEAD")
+            self.assertEqual([("removed.txt", 1, "credential")], findings)
+
 
 if __name__ == "__main__":
     unittest.main()

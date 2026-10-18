@@ -87,7 +87,7 @@ def line_rules(path, line):
 
 
 def git(*args):
-    return subprocess.run(["git", *args], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+    return subprocess.run(["git", *args], input=b"", check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
 
 
 def scan_comparison(base, head):
@@ -138,9 +138,11 @@ def scan(base, head):
     commits = git("rev-list", "--reverse", base + ".." + head).decode().splitlines()
     for commit in commits:
         ancestry = git("rev-list", "--parents", "-n", "1", commit).decode().split()
-        if len(ancestry) < 2:
-            raise ValueError("unrelated root commit")
-        findings.update(scan_comparison(ancestry[1], commit))
+        # Imported component histories can legitimately introduce root commits.
+        # Every root file is an addition: compare with Git's empty tree, using
+        # mktree so this also works with the repository's object hash format.
+        parent = ancestry[1] if len(ancestry) > 1 else git("mktree").decode().strip()
+        findings.update(scan_comparison(parent, commit))
     return sorted(findings)
 
 
