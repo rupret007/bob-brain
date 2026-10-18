@@ -7,7 +7,7 @@ description: >-
 ---
 # Band music ops desk
 
-Use for Stalemate, Rad Dad, or any Jeff live band when music ops need a group text, studio digest, show brief, or booking assist. Bob is the front door; Andrea NanoBot + BlueBubbles is the only text send path. Jeff always holds the send key unless a standing permission for that exact watch was granted in Bob chat.
+Use for Stalemate, Rad Dad, or any Jeff live band when music ops need a group text, studio digest, show brief, or booking assist. Bob is the front door; Andrea NanoBot + BlueBubbles is the only text send path. Every send requires Jeff's fresh separate yes to the exact recipient and body in Bob chat. Standing permissions never authorize sends.
 
 Related skills:
 - [@andrea band front door](sand-workflow:andrea-band-front-door) for `@andrea` / NanoBot mentions
