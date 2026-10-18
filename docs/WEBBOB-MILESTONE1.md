@@ -56,13 +56,23 @@ phone approval and actual action receipts still require the manual trial below.
 
 Phone network/login reachability is verified, but candidate deployment, authenticated phone acceptance and full final-head Karen/CI remain open. Missing host bindings must be shown as unavailable. Runtime integration tests do not prove production delivery. Keep the PR draft; do not send email/texts, activate Web Bob or infer approval from this document.
 
-The Oct 18 17:17 CT broader check also reproduced an inherited status snapshot
-versus public reply metadata mismatch in
-`test_status_observation.StatusObservationTests.test_snapshot_is_atomic_private_and_immutable_across_retry_and_restart`
-at the unchanged `9acadbe7` baseline. This remains a qualification blocker.
-Media checks additionally need the real local text safety tool; an absent tool
-must continue to reject image uploads. Focused M1 tests do not replace these
-qualification gates or authorize weakening their assertions.
+The inherited status snapshot/public reply metadata mismatch is repaired:
+status replies now save their rendering identity atomically with the evidence.
+The existing immutable-snapshot test and a new fail-before/pass-after regression
+pass alongside the delivery receipt tests. Generic delivery receipts keep their
+existing persistence behavior. This is local qualification evidence; candidate
+host acceptance and exact-head Karen/CI still apply.
+
+Media qualification requires real OCR and decoder tools. Missing tools must
+continue to reject unsafe uploads; focused M1 tests do not replace full release
+qualification or authorize weakening its assertions.
+
+The companion StoryPool owner-task backend is a separate draft. It provides a
+durable shared pending inbox and fenced consumer contract. A pending receipt
+means only that the approved intent was recorded: no Codex lane has started.
+The actual guarded runtime, shared fresh weekly quota and control authorities,
+operator inbox provisioning and reviewed rollout remain required. Do not count
+a pending inbox entry as successful task execution or M1 queue acceptance.
 
 ## Milestone 2 queue
 
