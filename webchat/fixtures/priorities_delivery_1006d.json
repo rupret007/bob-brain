@@ -1,0 +1,44 @@
+[
+  {
+    "source": "WEBBOB-GOAL-1006d-r3-exposed-sample.json",
+    "request_id": "0d1fa19e-28f1-4e16-ba8b-1ed4f12e483f",
+    "prior_turns": [
+      {
+        "prompt": "For the Web Bob project, remember the priority: reliable everyday conversation comes before adding more agents. Keep texting working. This is planning only.",
+        "content": "Saved Web Bob project context at revision 1 (product receipt this turn).\n\nPriority: reliable everyday conversation comes before adding more agents.\nConstraint: Keep texting working.\nConstraint: This is planning only.\n\nI can use this in later conversations about this project. No task was started."
+      },
+      {
+        "prompt": "Correction: continuity across conversations is the first priority, then conversation quality. Keep the texting constraint.",
+        "content": "Saved Web Bob project context at revision 2 (product receipt this turn).\n\nPriority: continuity across conversations is the first priority, then conversation quality.\nConstraint: Keep the texting constraint.\n\nI can use this in later conversations about this project. No task was started."
+      }
+    ],
+    "transport_messages": [
+      {
+        "content": "Different topic: write a warm two-sentence thank-you for someone who helped move a couch.",
+        "role": "user"
+      }
+    ],
+    "raw_answer": "Thank you so much for helping me move the couch. I could not have managed that heavy lifting without you, and I truly appreciate your time and generosity.\n"
+  },
+  {
+    "source": "WEBBOB-GOAL-1006d-r3-exposed-sample-recovery-4.json",
+    "request_id": "3a4175df-9224-4cac-8ca4-aff21544e09c",
+    "prior_turns": [
+      {
+        "prompt": "For the Web Bob project, remember the priority: reliable everyday conversation comes before adding more agents. Keep texting working. This is planning only.",
+        "content": "Saved Web Bob project context at revision 1 (product receipt this turn).\n\nPriority: reliable everyday conversation comes before adding more agents.\nConstraint: Keep texting working.\nConstraint: This is planning only.\n\nI can use this in later conversations about this project. No task was started."
+      },
+      {
+        "prompt": "Correction: continuity across conversations is the first priority, then conversation quality. Keep the texting constraint.",
+        "content": "Saved Web Bob project context at revision 2 (product receipt this turn).\n\nPriority: continuity across conversations is the first priority, then conversation quality.\nConstraint: Keep the texting constraint.\n\nI can use this in later conversations about this project. No task was started."
+      }
+    ],
+    "transport_messages": [
+      {
+        "content": "Different topic: write a warm two-sentence thank-you for someone who helped move a couch.",
+        "role": "user"
+      }
+    ],
+    "raw_answer": "Thank you so much for helping me move the couch today—I truly couldn't have managed that heavy lifting without you. Your time and muscle made a huge difference, and I am so grateful for your generosity!\n"
+  }
+]

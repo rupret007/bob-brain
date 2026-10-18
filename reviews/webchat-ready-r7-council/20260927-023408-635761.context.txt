@@ -1,0 +1,321 @@
+### FILE /Users/jeffstory/Documents/bob-overnight-inject/conductor/reviews/webchat-ready-r7-council/20260927-023408-r7.context.txt
+# Round 7 delta (Cursor lane)
+## WEBCHAT-READY priorities
+## ADDED 00:37 (Jeff): The models help each other
+Cross-check everything. After each build step, the builder (Cursor or Codex) sends its diff to Gemini and MiniMax for critique and applies their fixes. Gemini and MiniMax review each other's suggestions, and a council vote breaks ties. When one model is stuck or fails, hand the task to another with full context. Log who helped with what in the RESULT file.
+
+## ADDED 00:42 (Jeff): Web Bob gets Bob's self-improvement loop
+Give Web Bob the same self-improvement loop Bob has. On a schedule (launchd on the mini, with no Grok):
+- Review its own recent chats and failures.
+- Score itself, then research fixes with Gemini and MiniMax.
+- Have Cursor or Codex implement fixes on a draft branch, run tests, and write a RESULT file.
+- Log every round to the handback files.
+It stays draft-only, never merges, and never uses Grok. Give self-improvement its own score, which must be 9 or higher.
+
+## ADDED 00:44 (Jeff): Music creation is a core Web Bob use case
+Web Bob must be a full AI songwriting partner, covering as much as exists today:
+- Lyrics: drafting, rewrites, rhyme and meter help, song structure, and hooks.
+- Chords and progressions, melody ideas, arrangement notes, and references.
+- MiniMax music model: generate demos and sketches from lyrics plus a style prompt. Stay within the MiniMax $59 cap and log the cost of each call.
+- Moises (Jeff has it): stem separation, chord detection, and key and BPM detection for uploaded audio. Research its API or CLI access. If the only option is the app, document the manual handoff clearly.
+- Logic Pro MCP on the mini (3.17.0): open projects, markers, tempo, and bounce. Always read-only or confirm first.
+- Audio upload and playback in the chat, plus a song-project notebook (lyrics, versions, notes) that persists and hands back to Bob.
+- Research the current AI music tools (Suno, Udio, ElevenLabs music, Stable Audio, and others). Rank what's worth wiring in, but only for keys Jeff already has. Never spend money or sign up without a yes from Jeff.
+Give "music" its own score, which must reach 9 or higher. Do real tests: write a short song end to end and produce a MiniMax demo.
+
+## ADDED 02:00 (Jeff)
+MiniMax music API is not entitled (410). Do NOT chase new endpoints or signups. Use what we have: lyrics/chords/arrangement via LLMs, MiniMax text + speech/TTS if entitled, Logic Pro MCP (read/confirm-first), audio upload/playback, song notebook. Score music on those.
+
+## ADDED 02:03 (Jeff) — Detailed live dashboard
+Jeff cannot see terminal work. Make the ops dashboard (agents-status.json + Pages) show, per running screen/job: what it is doing now (last 3 log lines, plain English), round number, started time, elapsed, last commit SHA+message, current scores table, which model is building/reviewing, MiniMax spend vs $59 cap, and stalled/finished state. Mobile-friendly. Data-only pushes, no secrets in logs. Also show it inside Web Bob as a status panel.
+
+## ADDED 02:07 (Jeff) — TOP PRIORITY: conductor inside Web Bob
+Everything Bob does as conductor must also work from inside Web Bob before Bob usage runs out: see and control the autopilot/rounds, start/stop screens, launch Cursor/Codex jobs, call the council (Gemini/MiniMax/Claude), read scores/SHAs/logs, watch the live dashboard, handback to Bob. Same safety rules (drafts only, confirm-first for merges/sends/spend, never Grok). Score "Conductor parity" as its own row and prove it with a drill: Jeff runs one full round only from Web Bob on his phone.
+
+## ADDED 02:08 (Jeff) — Research-first design
+Every round starts with a short research pass on what exists today (for example open-source agent orchestrators, multi-agent frameworks, assistant failover/handoff patterns, mobile AI chat UX, AI music tools), then writes a DESIGN note: what we borrow, what we reject, and why. Use Gemini (search-grounded) plus the council to rank ideas. Aim for the most logical, well-designed system, not just passing scores. Cite sources in the result file.
+
+## ADDED 02:11 (Jeff) — iPhone-first redesign, make it look AMAZING (TOP of queue)
+Jeff: current phone UI is horribly designed; iPhone is the primary device. Seen: raw status dump (markdown headers, file names) fills the screen above chat; STATUS.md/Latest review/Jobs detail/Model lanes/Song project/Reply-with crowd out the conversation; jargon footer. Redesign to feel as polished as iMessage/ChatGPT/Claude iOS: chat fills the screen; slim header (name + status dot); status/jobs/songs/lanes/settings in a bottom sheet or tab bar; plain English, no file names or raw markdown; beautiful typography, spacing, subtle motion, dark/light; 44pt tap targets; safe-area insets; composer pinned above keyboard. Research best mobile AI chat UX first. Playwright screenshots at 390x844 and 430x932 in result; council reviews screenshots; score iPhone design separately, must be >=9.
+
+## ADDED 02:18 (Jeff) — Layout decision
+Chat takes most of the screen (at least ~75% of height) and must be big enough to be truly useful. Bottom tab bar (iOS style) with separate tabs: Chat (default), Jobs, Models/LLM status, Songs, Settings. No status panels above the chat.
+
+## git diff
+diff --git a/webchat/app.py b/webchat/app.py
+index 9df568e..a31153d 100644
+--- a/webchat/app.py
++++ b/webchat/app.py
+@@ -419,12 +419,14 @@ class Chat:
+                 value["messages"][-1].update(answer, status="done")
+                 value["messages"][-1].pop("retry_at", None)
+                 self.save(value)
+-                user = next((m["content"] for m in reversed(value["messages"]) if m["role"] == "user"), "")
++                user_msg = next((m for m in reversed(value["messages"]) if m["role"] == "user"), {})
++                user = user_msg.get("content", "")
+                 head = draft_head_sha(self.root)
+                 commits = [head] if head else []
+                 self.record_turn(ask=user, provider=answer.get("provider"),
+                             jobs=[], files=[], commits=commits, confirmations=[], refusals=[],
+-                            open_items=[user[:200]] if user else [])
++                            open_items=[user[:200]] if user else [],
++                            request_id=user_msg.get("request_id"))
+         except AllDown as exc:
+             with self.lock:
+                 value = self.get(identifier)
+diff --git a/webchat/capture_iphone.cjs b/webchat/capture_iphone.cjs
+index 1427608..63e2312 100644
+--- a/webchat/capture_iphone.cjs
++++ b/webchat/capture_iphone.cjs
+@@ -37,7 +37,7 @@ async function box(page, selector) {
+     await page.screenshot({ path: path.join(evidence, `${tag}-chat.png`) });
+     await page.locator("#message").fill("Reply with exactly: playwright ping");
+     await page.locator("#send").click();
+-    await page.locator(".message.assistant .body", { hasText: "playwright ping" }).waitFor({ timeout: 120000 });
++    await page.locator(".message.assistant .body").last().waitFor({ state: "visible", timeout: 120000 });
+     await page.locator('.bottom-tab[data-bottom="ops"]').click();
+     await page.locator("#tools-sheet.open").waitFor();
+     await page.screenshot({ path: path.join(evidence, `${tag}-jobs-tab.png`) });
+diff --git a/webchat/handback.py b/webchat/handback.py
+index 5cb8ced..ddaf328 100644
+--- a/webchat/handback.py
++++ b/webchat/handback.py
+@@ -140,14 +140,22 @@ def refresh_summary(root: Path) -> None:
+ 
+ 
+ def append_turn(root: Path, *, ask: str, provider: str | None, jobs: list[str], files: list[str], commits: list[str],
+-                confirmations: list[str], refusals: list[str], open_items: list[str]) -> None:
++                confirmations: list[str], refusals: list[str], open_items: list[str],
++                request_id: str | None = None) -> bool:
++    """Append one handback block. Returns False if request_id already logged (idempotent retry)."""
+     folder = _folder(root)
+     log_path = folder / LOG
++    if request_id:
++        needle = f"**Request:** {request_id}"
++        if log_path.exists() and needle in log_path.read_text(errors="replace"):
++            return False
+     block = [
+         f"## {_now_ct()}",
+         f"- **Ask:** {ask.strip()[:2000]}",
+         f"- **Provider:** {provider or 'none'}",
+     ]
++    if request_id:
++        block.append(f"- **Request:** {request_id}")
+     if jobs:
+         block.append("- **Jobs:** " + "; ".join(jobs[:20]))
+     if files:
+@@ -174,6 +182,7 @@ def append_turn(root: Path, *, ask: str, provider: str | None, jobs: list[str],
+         handle.flush()
+         os.fsync(handle.fileno())
+     refresh_summary(root)
++    return True
+ 
+ 
+ def compact_digest(root: Path, *, limit: int = 900) -> str:
+diff --git a/webchat/start.py b/webchat/start.py
+index 4dcd896..ce7ea2c 100644
+--- a/webchat/start.py
++++ b/webchat/start.py
+@@ -43,7 +43,7 @@ def main():
+             print("svc-webchat exists but HTTP is not ready; inspect logs/webchat-server.log. No process was replaced.")
+             return 1
+         subprocess.run(["/usr/bin/screen", "-dmS", "svc-webchat", "/bin/bash", str(HERE / "run.sh")],
+-                       stdin=subprocess.DEVNULL, check=True, timeout=10)
++                       stdin=subprocess.DEVNULL, check=True, timeout=10, env=os.environ.copy())
+         for _ in range(40):
+             if healthy():
+                 print("Started svc-webchat at " + URL)
+diff --git a/webchat/static/app.js b/webchat/static/app.js
+index 1a6a3fe..352ee2f 100644
+--- a/webchat/static/app.js
++++ b/webchat/static/app.js
+@@ -79,9 +79,32 @@ if ($("login-form")) {
+   $("close-sheet")?.addEventListener("click", () => setSheetOpen(false));
+   $("sheet-backdrop")?.addEventListener("click", () => setSheetOpen(false));
+   for (const tab of document.querySelectorAll(".sheet-tab")) {
+-    tab.addEventListener("click", () => showSheetTab(tab.dataset.sheet));
++    tab.addEventListener("click", () => {
++      const sheet = tab.dataset.sheet;
++      showSheetTab(sheet);
++      const bottomMap = { ops: "ops", conductor: "ops", song: "song", settings: "settings", lanes: "lanes" };
++      if (bottomMap[sheet]) setBottomTab(bottomMap[sheet]);
++    });
+   }
++  const conductorPrompts = {
++    round: "start a job: Web Bob ready round (draft only, no merge)",
++    council: "run council on: score Web Bob failover and mobile UX after R7 fixes",
++    status: "From BOB-STATE and handback: what's running and what needs my yes?",
++  };
++  $("tools-sheet")?.addEventListener("click", (event) => {
++    const btn = event.target.closest("[data-conductor]");
++    if (!btn) return;
++    const text = conductorPrompts[btn.dataset.conductor];
++    if (!text) return;
++    setBottomTab("chat");
++    const field = $("message");
++    field.value = text;
++    field.focus();
++    field.dispatchEvent(new Event("input"));
++  });
++  let activeBottomTab = "chat";
+   function setBottomTab(name) {
++    activeBottomTab = name;
+     for (const btn of document.querySelectorAll(".bottom-tab")) {
+       const on = btn.dataset.bottom === name;
+       btn.classList.toggle("active", on);
+@@ -430,10 +453,17 @@ if ($("login-form")) {
+       elapsed.textContent = `${mins}m elapsed${job.started_at ? " · " + job.started_at.replace("T", " ").slice(0, 16) : ""}`;
+       header.append(title, stall, elapsed);
+       const now = document.createElement("p");
+-      now.textContent = job.plain_now || "Working…";
++      const events = (job.events || []).filter((e) => e && (e.text || e.sha));
++      if (events.length) {
++        now.textContent = events.find((e) => e.kind === "status")?.text || job.plain_now || "Working…";
++      } else {
++        now.textContent = job.plain_now || "Working…";
++      }
+       const tail = document.createElement("pre");
+       tail.className = "log-tail";
+-      const lines = (job.log_tail || []).slice(-3);
++      const lines = events.length
++        ? events.filter((e) => e.kind === "log").map((e) => e.text).slice(-3)
++        : (job.log_tail || []).slice(-3);
+       tail.textContent = lines.length ? lines.join("\n") : "";
+       const commit = document.createElement("p");
+       if (job.last_commit?.sha) {
+@@ -468,23 +498,29 @@ if ($("login-form")) {
+       const freshness = meta.stale ? "Last known snapshot (refreshing)" : "Live";
+       $("status-summary").textContent = `${freshness} · round ${ops.webchat_round || "?"} · MiniMax ${spendText}`;
+       const scoreLines = (ops.scores || []).slice(0, 8).map((row) => `${row.area} ${row.score}`).join(" · ");
+-      const summaryPlain = (data.handback?.summary?.text || "").split("\n").filter((l) => l.trim() && !l.startsWith("#")).slice(0, 6).join("\n");
++      const liveCards = jobs.filter((j) => j.live_screen && j.stall_state === "running");
++      const summaryPlain = (data.handback?.summary?.text || "").split("\n").filter((l) => l.trim() && !l.startsWith("#")).slice(0, 4).join("\n");
+       const lines = [
+         `Building with ${roles.building || "nobody right now"} · reviews via ${roles.reviewing || "idle"}`,
+-        jobs.length ? `${jobs.length} screen job${jobs.length === 1 ? "" : "s"} running` : "No screen jobs right now",
+-        scoreLines ? `Latest scores: ${scoreLines}` : "Scores will appear after the next dashboard refresh",
+-        summaryPlain ? `Handback:\n${summaryPlain}` : "",
++        liveCards.length ? `${liveCards.length} live screen job${liveCards.length === 1 ? "" : "s"}` : (jobs.length ? `${jobs.length} tracked job(s) (no live screen)` : "No screen jobs right now"),
++        scoreLines ? `Scores: ${scoreLines}` : "Scores refresh with the dashboard",
++        summaryPlain ? `Handback snapshot:\n${summaryPlain}` : "",
+       ].filter(Boolean);
+       $("status-body").textContent = lines.join("\n\n");
+       renderLiveJobs(jobs);
+       const c = data.conductor || {};
+       $("conductor-summary").textContent = `${c.draft_branch || "?"} @ ${(c.head_sha || "").slice(0, 7)}`;
+       const headShort = (c.head_sha || "").slice(0, 7);
++      const autopilot = liveCards.length
++        ? `Autopilot busy — ${liveCards.length} job(s) on screen`
++        : (c.pass_schedule?.state
++          ? `Autopilot ${c.pass_schedule.state}${c.pass_schedule.next_due ? " · next " + new Date(c.pass_schedule.next_due * 1000).toLocaleString() : ""}`
++          : "Autopilot idle");
+       $("conductor-body").textContent = [
+         `Draft branch ${c.draft_branch || "?"} at ${headShort}`,
+         c.maintenance ? "Scheduling paused on the mini" : "Scheduler accepting draft jobs",
+         c.latest_result ? `Last ready round saved` : "",
+-        c.pass_schedule?.state ? `Autopilot ${c.pass_schedule.state}${c.pass_schedule.next_due ? " · next " + new Date(c.pass_schedule.next_due * 1000).toLocaleString() : ""}` : "",
++        autopilot,
+         c.safety || "Drafts only · confirm before merge, send, or spend",
+       ].filter(Boolean).join("\n");
+     } catch (_) {
+diff --git a/webchat/static/index.html b/webchat/static/index.html
+index 76fa7e8..8648e10 100644
+--- a/webchat/static/index.html
++++ b/webchat/static/index.html
+@@ -80,7 +80,12 @@
+         <h2 class="sheet-title">Conductor</h2>
+         <p id="conductor-summary" class="sheet-lead muted"></p>
+         <div id="conductor-body" class="status-body"></div>
+-        <p class="sheet-hint muted">From chat: <code>run council on: …</code> then <code>yes, run council</code> · <code>start a job: …</code> then <code>yes, start job</code></p>
++        <div class="conductor-actions" role="toolbar" aria-label="Conductor actions">
++          <button type="button" class="chip" data-conductor="round">Start round</button>
++          <button type="button" class="chip" data-conductor="council">Ask council</button>
++          <button type="button" class="chip" data-conductor="status">Status</button>
++        </div>
++        <p class="sheet-hint muted">Draft-only. Risky actions still need your yes in chat.</p>
+       </section>
+       <section id="sheet-song" class="sheet-panel" data-panel="song" hidden>
+         <h2 class="sheet-title">Song notebook</h2>
+diff --git a/webchat/static/style.css b/webchat/static/style.css
+index 9623894..5defb4b 100644
+--- a/webchat/static/style.css
++++ b/webchat/static/style.css
+@@ -147,7 +147,7 @@ option { background: var(--surface-2); color: var(--text); }
+ .message.assistant .body pre.code-block { margin: 8px 0; padding: 10px; background: var(--bg); border-radius: 10px; overflow-x: auto; white-space: pre; }
+ .message.assistant .body ul { margin: 6px 0 6px 1.1em; padding: 0; }
+ .message.user .body { border-radius: 18px 18px 4px 18px; padding: 12px 16px; background: color-mix(in srgb, var(--accent) 22%, var(--surface-2)); }
+-.message.assistant .body { padding: 2px 0; }
++.message.assistant .body { padding: 2px 0; color: var(--text); }
+ .message .meta { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+ .message.user .meta { text-align: right; }
+ .message.error .body { color: #ffceb2; }
+@@ -197,6 +197,8 @@ option { background: var(--surface-2); color: var(--text); }
+   padding: 4px 0 max(6px, env(safe-area-inset-bottom));
+   border-top: 1px solid var(--line);
+   background: color-mix(in srgb, var(--surface) 92%, var(--bg));
++  position: relative;
++  z-index: 60;
+ }
+ .bottom-tab {
+   flex: 1;
+@@ -234,7 +236,10 @@ textarea::placeholder { color: var(--muted); }
+ 
+ .sheet-backdrop {
+   position: fixed;
+-  inset: 0;
++  top: 0;
++  left: 0;
++  right: 0;
++  bottom: calc(52px + env(safe-area-inset-bottom));
+   background: #070e0b88;
+   z-index: 40;
+   animation: fade-in 0.2s ease;
+@@ -243,7 +248,7 @@ textarea::placeholder { color: var(--muted); }
+   position: fixed;
+   left: 0;
+   right: 0;
+-  bottom: 0;
++  bottom: calc(52px + env(safe-area-inset-bottom));
+   z-index: 50;
+   max-height: min(88dvh, 720px);
+   background: var(--surface);
+@@ -278,6 +283,20 @@ textarea::placeholder { color: var(--muted); }
+ .sheet-hint code { font-size: 11px; }
+ .sheet-close { width: 100%; margin-top: 4px; }
+ .status-body { white-space: pre-wrap; font-size: 13px; line-height: 1.45; color: var(--muted); }
++.conductor-actions {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 8px;
++  margin-top: 12px;
++}
++.conductor-actions .chip {
++  min-height: 40px;
++  padding: 6px 12px;
++  font-size: 13px;
++  border-radius: 999px;
++  background: var(--surface-2);
++  border: 1px solid var(--line);
++}
+ .live-jobs { display: grid; gap: 8px; margin-top: 10px; }
+ .live-job { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 12px; line-height: 1.4; background: var(--bg); }
+ .live-job header { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin-bottom: 4px; color: var(--text); padding: 0; }
+diff --git a/webchat/test_webchat.py b/webchat/test_webchat.py
+index be58509..1790fac 100644
+--- a/webchat/test_webchat.py
++++ b/webchat/test_webchat.py
+@@ -526,6 +526,14 @@ class HandbackJobTests(Fixture):
+         self.assertIn("status?", summary)
+         self.assertIn("Running: test job", summary)
+ 
++    def test_handback_idempotent_request_id(self):
++        rid = str(uuid.uuid4())
++        kwargs = dict(ask="ping", provider="gemini", jobs=[], files=[], commits=[], confirmations=[], refusals=[], open_items=[])
++        self.assertTrue(append_turn(self.root, request_id=rid, **kwargs))
++        self.assertFalse(append_turn(self.root, request_id=rid, **kwargs))
++        log = (self.root / "conductor/handback/HANDBACK-LOG.md").read_text()
++        self.assertEqual(log.count(f"**Request:** {rid}"), 1)
++
+     def test_music_demo_receipt_stable(self):
+         from music_demo import demo_receipt
+         self.assertEqual(demo_receipt("a", "b"), demo_receipt("a", "b"))

@@ -1,0 +1,663 @@
+### FILE /tmp/webchat-r12-diff.txt
+diff --git a/handback/HANDBACK-SUMMARY.md b/handback/HANDBACK-SUMMARY.md
+index 6e72e53..e8da178 100644
+--- a/handback/HANDBACK-SUMMARY.md
++++ b/handback/HANDBACK-SUMMARY.md
+@@ -1,6 +1,6 @@
+ # HANDBACK-SUMMARY
+ 
+-Updated 2026-09-27 01:55:17 CT · digest since Bob last saw handback (.bob-last-seen)
++Updated 2026-09-27 03:50:40 CT · digest since Bob last saw handback (.bob-last-seen)
+ 
+ ## Bob state (snapshot)
+ # BOB-STATE (written by Grok Bot Bob) — updated 2026-09-27 00:27 CT
+@@ -19,52 +19,24 @@ _None logged._
+ - Running: svc-webchat-ready (Cursor, WEBCHAT-READY.md), svc-webchat-failover (Codex, WEBCHAT-FAILOVER.md), svc-self-improve-r3 (Cursor, SELF-IMPROVE-R3.md), svc-
+ 
+ ## Waiting on Jeff
+-- Reply with exactly: drill A5 (gemini)
+-- Reply with exactly: drill B5 (gemini)
+-- Reply with exactly: drill A1 (gemini)
+-- Reply with exactly: drill B1 (gemini)
+-- Reply with exactly: drill A2 (gemini)
+-- Reply with exactly: drill B2 (gemini)
+-- Reply with exactly: drill A3 (gemini)
+-- Reply with exactly: drill B3 (gemini)
+-- Reply with exactly: drill A4 (gemini)
+-- Reply with exactly: drill B4 (gemini)
+-- Reply with exactly: drill A5 (gemini)
+-- Reply with exactly: drill B5 (gemini)
++_No open confirmations._
+ 
+ ## Risks
+-- merge #158 (none)
++- Drafts only; no merge/send/spend without yes.
++
++## Latest pickup (ledger + recent commits)
++- Draft HEAD: 9896157
++- Open ask e7dccf55: What about WebJam?
++- Open ask 9097f064: I want to see all ongoing projects and tasks and LLMs. Anything you’re doing.
++- Open ask 795ab5fe: Ok just keep going on all of these regardless if I’ve seen them.
++- Open ask a4606d53: Ok use all resources too. Like minimax and Gemini but the others too like codex and Claude.
++- Open ask 088ae227: Go to the max
++- Open ask 2ea50d8a: Are we using all them now?
++- Open ask 2662381b: Ok all including Gemini and minimax. Divide and conquer and be a true conductor.
++- Open ask 66380d42: Ok so using all now?
++- Open ask 2a67b3e6: I’m meaning also using Gemini and Minimax.
++- Open ask 8a319393: It’s just showing ready though. Use them all.
++- Open ask 18567011: Yeah but again I want them used concurrently to maximize our time and effort.
+ 
+ ## Web Bob turns since last seen (detail)
+-## 2026-09-27 01:54:57 CT
+-- **Ask:** Reply with exactly: drill A2
+-- **Provider:** gemini
+-- **Open:** Reply with exactly: drill A2
+-## 2026-09-27 01:55:00 CT
+-- **Ask:** Reply with exactly: drill B2
+-- **Provider:** gemini
+-- **Open:** Reply with exactly: drill B2
+-## 2026-09-27 01:55:03 CT
+-- **Ask:** Reply with exactly: drill A3
+-- **Provider:** gemini
+-- **Open:** Reply with exactly: drill A3
+-## 2026-09-27 01:55:07 CT
+-- **Ask:** Reply with exactly: drill B3
+-- **Provider:** gemini
+-- **Open:** Reply with exactly: drill B3
+-## 2026-09-27 01:55:09 CT
+-- **Ask:** Reply with exactly: drill A4
+-- **Provider:** gemini
+-- **Open:** Reply with exactly: drill A4
+-## 2026-09-27 01:55:12 CT
+-- **Ask:** Reply with exactly: drill B4
+-- **Provider:** gemini
+-- **Open:** Reply with exactly: drill B4
+-## 2026-09-27 01:55:14 CT
+-- **Ask:** Reply with exactly: drill A5
+-- **Provider:** gemini
+-- **Open:** Reply with exactly: drill A5
+-## 2026-09-27 01:55:17 CT
+-- **Ask:** Reply with exactly: drill B5
+-- **Provider:** gemini
+-- **Open:** Reply with exactly: drill B5
++_No Web Bob turns logged since last Bob read._
+diff --git a/services/live_dashboard.py b/services/live_dashboard.py
+index afab592..b4f3806 100644
+--- a/services/live_dashboard.py
++++ b/services/live_dashboard.py
+@@ -107,9 +107,17 @@ def _webchat_round() -> int | None:
+     return best or None
+ 
+ 
++def _result_round(path: Path) -> int:
++    match = re.search(r"R(\d+)-RESULT", path.name)
++    return int(match.group(1)) if match else 0
++
++
+ def _scores_table() -> list[dict]:
+-    reviews = sorted((CONDUCTOR / "reviews").glob("WEBCHAT-READY-R*-RESULT.md"),
+-                     key=lambda p: p.stat().st_mtime, reverse=True)
++    reviews = sorted(
++        (CONDUCTOR / "reviews").glob("WEBCHAT-READY-R*-RESULT.md"),
++        key=_result_round,
++        reverse=True,
++    )
+     if not reviews:
+         return []
+     text = reviews[0].read_text(errors="replace")
+diff --git a/services/test_services.py b/services/test_services.py
+index bc5da54..06264c1 100644
+--- a/services/test_services.py
++++ b/services/test_services.py
+@@ -293,6 +293,31 @@ class ServicesTest(unittest.TestCase):
+         rev1 = int(state_ledger.load_state(self.root).get("revision") or 0)
+         self.assertGreater(rev1, rev0)
+ 
++    def test_scores_table_uses_highest_round_not_mtime(self):
++        import live_dashboard
++        with patch.object(live_dashboard, "CONDUCTOR", self.core):
++            reviews = self.core / "reviews"
++            reviews.mkdir(parents=True, exist_ok=True)
++            old = reviews / "WEBCHAT-READY-R5-RESULT.md"
++            new = reviews / "WEBCHAT-READY-R11-RESULT.md"
++            old.write_text("| Area | R4 | **R5** |\n| Reliability | 9 | **9.5** |\n")
++            new.write_text("| Area | R10 | **R11** |\n| Reliability | 9.8 | **9.9** |\n")
++            old.touch(time.time() + 60)
++            rows = live_dashboard._scores_table()
++        self.assertTrue(rows)
++        self.assertIn("9.9", rows[0]["score"])
++
++    def test_alignment_events_paginated_read(self):
++        ledger_dir = str(HERE.parent / "state")
++        if ledger_dir not in sys.path:
++            sys.path.insert(0, ledger_dir)
++        import alignment_events
++
++        for index in range(1, 95):
++            alignment_events.append_event(self.root, actor="test", kind="tick", summary=f"tick {index}")
++        page = alignment_events.read_events_since_paginated(self.root, since_seq=0, page_size=40, max_pages=3)
++        self.assertEqual(len(page), 94)
++
+     def test_public_live_ops_allowlists_log_tail(self):
+         import live_dashboard
+         payload = live_dashboard.build_live_ops(sessions={}, jobs_map={}, lanes={}, spend={}, now=time.time())
+diff --git a/state/alignment_events.py b/state/alignment_events.py
+index 1927954..ea154c7 100644
+--- a/state/alignment_events.py
++++ b/state/alignment_events.py
+@@ -106,6 +106,36 @@ def read_events(root: Path, *, since_seq: int = 0, limit: int = 80) -> list[dict
+     return rows[-limit:]
+ 
+ 
++def read_events_since_paginated(
++    root: Path,
++    *,
++    since_seq: int = 0,
++    page_size: int = 80,
++    max_pages: int = 8,
++) -> list[dict]:
++    """Read events after since_seq oldest-first, up to page_size * max_pages."""
++    path = _folder(root) / EVENTS_FILE
++    if not path.is_file():
++        return []
++    cap = max(1, page_size) * max(1, max_pages)
++    rows: list[dict] = []
++    with path.open("r", errors="replace") as handle:
++        for line in handle:
++            line = line.strip()
++            if not line:
++                continue
++            try:
++                row = json.loads(line)
++            except json.JSONDecodeError:
++                continue
++            if int(row.get("seq") or 0) <= since_seq:
++                continue
++            rows.append(row)
++            if len(rows) >= cap:
++                break
++    return rows
++
++
+ def latest_seq(root: Path) -> int:
+     path = _folder(root) / EVENTS_FILE
+     if not path.is_file():
+diff --git a/state/ledger.py b/state/ledger.py
+index f9d9a7a..b2adf4d 100644
+--- a/state/ledger.py
++++ b/state/ledger.py
+@@ -221,8 +221,15 @@ def _log_alignment(root: Path, *, actor: str, kind: str, summary: str, **fields)
+         pass
+ 
+ 
++def _drill_fixture_ledger(root: Path) -> bool:
++    return "drill-fixtures" in root.resolve().parts
++
++
+ def record_webchat_turn(root: Path, *, ask: str, provider: str | None, request_id: str | None = None) -> None:
+-    turn = {"at": _now_ct(), "ask": ask.strip()[:500], "provider": provider or "none", "request_id": request_id}
++    body = (ask or "").strip()
++    if not _drill_fixture_ledger(root) and _DRILL_NOISE_RE.search(body):
++        return
++    turn = {"at": _now_ct(), "ask": body[:500], "provider": provider or "none", "request_id": request_id}
+ 
+     def _apply(state: dict) -> None:
+         state.setdefault("webchat_turns", []).append(turn)
+@@ -328,7 +335,8 @@ def _write_catchup_body(root: Path, state: dict) -> None:
+     try:
+         import alignment_events  # noqa: WPS433
+ 
+-        pending_events = alignment_events.read_events(root, since_seq=ack, limit=40)
++        pending_events = alignment_events.read_events_since_paginated(root, since_seq=ack, page_size=40, max_pages=6)
++        overflow = len(pending_events) > 20
+         for ev in pending_events:
+             kind = ev.get("kind") or "note"
+             if kind not in ("chat-turn", "handback-turn", "inbox", "decision", "tick", "blocker"):
+@@ -336,8 +344,8 @@ def _write_catchup_body(root: Path, state: dict) -> None:
+             event_lines.append(
+                 f"Event {ev.get('seq')}: {kind} — {(ev.get('summary') or '')[:100]}"
+             )
+-        if len(pending_events) > 20:
+-            blockers.insert(0, f"+{len(pending_events) - 20} alignment events since ack seq {ack}")
++        if overflow:
++            blockers.insert(0, f"+{len(pending_events) - 20} more alignment events since ack seq {ack} (paginated)")
+     except (ImportError, OSError):
+         pending_events = []
+     delivered_seq = ack
+diff --git a/webchat/evidence/handback-drill.json b/webchat/evidence/handback-drill.json
+index 31cf869..55cce46 100644
+--- a/webchat/evidence/handback-drill.json
++++ b/webchat/evidence/handback-drill.json
+@@ -1,46 +1,46 @@
+ {
+-  "started_at": 1790498669.026628,
++  "started_at": 1790498913.882891,
+   "rounds": [
+     {
+       "ledger": {
+-        "tag": "r10-1",
+-        "fixture_id": "e450bb3c-5cf4-40ad-9bed-0074850920a3",
++        "tag": "r12-1",
++        "fixture_id": "61826d18-fa74-4e7e-872e-3d6182cd90ff",
+         "ledger_ok": true,
+         "bob_pickup_ok": true,
+         "summary_chars": 967
+       },
+       "live": {
+-        "tag": "r10-1",
++        "tag": "r12-1",
+         "status": "done",
+         "provider": "state",
+-        "elapsed_seconds": 0.052,
++        "elapsed_seconds": 0.048,
+         "mentions_running": true,
+-        "snippet": "Running: handback drill screen `drill-r10-1`",
++        "snippet": "Running: handback drill screen `drill-r12-1`",
+         "live_ok": true
+       },
+-      "fixture_id": "e450bb3c-5cf4-40ad-9bed-0074850920a3",
++      "fixture_id": "61826d18-fa74-4e7e-872e-3d6182cd90ff",
+       "reverse_handback_ok": true,
+       "events_ok": true,
+       "pass": true
+     },
+     {
+       "ledger": {
+-        "tag": "r10-2",
+-        "fixture_id": "db219980-838c-478a-a430-8101df08b4fb",
++        "tag": "r12-2",
++        "fixture_id": "789ced0e-463b-4683-9c24-3970f956c88b",
+         "ledger_ok": true,
+         "bob_pickup_ok": true,
+         "summary_chars": 967
+       },
+       "live": {
+-        "tag": "r10-2",
++        "tag": "r12-2",
+         "status": "done",
+         "provider": "state",
+-        "elapsed_seconds": 0.052,
++        "elapsed_seconds": 0.046,
+         "mentions_running": true,
+-        "snippet": "Running: handback drill screen `drill-r10-2`",
++        "snippet": "Running: handback drill screen `drill-r12-2`",
+         "live_ok": true
+       },
+-      "fixture_id": "db219980-838c-478a-a430-8101df08b4fb",
++      "fixture_id": "789ced0e-463b-4683-9c24-3970f956c88b",
+       "reverse_handback_ok": true,
+       "events_ok": true,
+       "pass": true
+@@ -48,7 +48,7 @@
+   ],
+   "isolated": true,
+   "prod_unchanged": true,
+-  "finished_at": 1790498669.4195552,
++  "finished_at": 1790498914.2598221,
+   "result": "PASS",
+   "drill_commit_marker": "drill0001"
+ }
+diff --git a/webchat/music_notebook.py b/webchat/music_notebook.py
+index eab01b5..3f41b19 100644
+--- a/webchat/music_notebook.py
++++ b/webchat/music_notebook.py
+@@ -115,7 +115,7 @@ def snapshot_for_prompt(root: Path, limit: int = 6000) -> str:
+ 
+ 
+ _MUSIC_COACH_RE = re.compile(
+-    r"\b(?:(?:my |a )?song|lyrics|chorus|verse|bridge|hook|chords?|progression|melody|arrange|rhyme|meter)\b",
++    r"\b(?:(?:my |a )?song|lyrics|chorus|verse|bridge|hook|chords?|progression|melody|arrange|rhyme|meter|tempo|bpm|structure)\b",
+     re.I,
+ )
+ 
+@@ -150,6 +150,18 @@ def try_music_coach_reply(text: str) -> str | None:
+             "Arrangement: add one layer at a time (guitar → bass → pad). "
+             "Use Songs for structure notes; Logic on the mini is confirm-first for tempo/markers/bounce."
+         )
++    if "bridge" in lower or "structure" in lower or "verse" in lower:
++        return (
++            "Structure: verse sets the story, chorus is the emotional headline, bridge is one new angle before the final chorus. "
++            "Try 8-bar sections in 4/4; label them in Songs → notes so versions stay clear. "
++            "When a section feels long, cut a line instead of adding chords."
++        )
++    if "tempo" in lower or "bpm" in lower or "key" in lower:
++        return (
++            "Tempo/key: pick BPM in Songs notes (e.g. 92 BPM, key of G). "
++            "Match chord voicings to the singer’s comfortable range; capo is fine. "
++            "Upload a rough take in Songs for reference — local sketch demo can follow lyrics + style ($0)."
++        )
+     return (
+         "Song structure: verse → chorus → verse → chorus → bridge → chorus is a solid default. "
+         "Use the Songs tab for lyrics/chords/versions; I can rewrite lines, rhyme, or arrangement notes here. "
+diff --git a/webchat/static/app.js b/webchat/static/app.js
+index 17ca33d..802a95a 100644
+--- a/webchat/static/app.js
++++ b/webchat/static/app.js
+@@ -278,6 +278,16 @@ if ($("login-form")) {
+     $("conversations").value = current;
+     remember("bob.conversation", current);
+   }
++  async function waitForReply(conversationId, { timeoutMs = 120000 } = {}) {
++    const started = Date.now();
++    while (Date.now() - started < timeoutMs) {
++      const value = await api(`/api/conversations/${conversationId}`);
++      const last = value.messages.filter((m) => m.role === "assistant").at(-1);
++      if (last && !["queued", "running"].includes(last.status)) return value;
++      await new Promise((resolve) => setTimeout(resolve, 900));
++    }
++    throw new Error("Reply timed out — check chat.");
++  }
+   async function poll() {
+     if (!current || polling) return;
+     polling = true;
+@@ -496,6 +506,111 @@ if ($("login-form")) {
+     try { await api("/api/cancel", { conversation_id: current }); $("notice").textContent = "Stopping this reply…"; }
+     catch (error) { $("notice").textContent = error.message; }
+   });
++  let callSession = null;
++  function appendCallLine(role, text) {
++    const host = $("call-transcript");
++    if (!host || !text) return;
++    const row = document.createElement("p");
++    row.className = role === "you" ? "call-you" : "call-bob";
++    row.textContent = (role === "you" ? "You: " : "Bob: ") + text.trim();
++    host.append(row);
++    host.scrollTop = host.scrollHeight;
++  }
++  async function speakCallReply(text) {
++    if (!("speechSynthesis" in window) || !text) return;
++    await ensureSpeechVoices();
++    return new Promise((resolve) => {
++      const utter = new SpeechSynthesisUtterance(speechText(text).slice(0, 2000));
++      utter.rate = 1.05;
++      const voices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith("en"));
++      if (voices.length) utter.voice = voices.find((v) => /samantha|daniel|english/i.test(v.name)) || voices[0];
++      utter.onend = utter.onerror = () => resolve();
++      if (callSession) callSession.speaking = utter;
++      speechSynthesis.speak(utter);
++    });
++  }
++  function stopLiveCall() {
++    if (callSession?.recognition) {
++      try { callSession.recognition.stop(); } catch (_) { /* ignore */ }
++    }
++    speechSynthesis.cancel();
++    callSession = null;
++    $("live-call")?.classList.remove("call-active");
++    $("call-dialog")?.close();
++    $("call-status").textContent = "";
++    $("call-transcript").replaceChildren();
++  }
++  async function handleCallUtterance(transcript) {
++    if (!callSession || !transcript.trim()) return;
++    appendCallLine("you", transcript);
++    $("call-status").textContent = "Bob is thinking…";
++    speechSynthesis.cancel();
++    try {
++      const payload = {
++        conversation_id: current,
++        message: transcript,
++        provider: $("provider-choice").value,
++        request_id: crypto.randomUUID(),
++      };
++      await api("/api/messages", payload);
++      const value = await waitForReply(current);
++      const msg = value.messages.filter((m) => m.role === "assistant").at(-1);
++      const body = msg?.content || "No reply yet.";
++      appendCallLine("bob", body);
++      $("call-status").textContent = "Listening… speak anytime (tap End to stop).";
++      await speakCallReply(body);
++    } catch (error) {
++      $("call-status").textContent = error.message || "Call error";
++    }
++  }
++  $("live-call")?.addEventListener("click", () => {
++    if (callSession) { stopLiveCall(); return; }
++    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
++    if (!Speech) {
++      $("notice").textContent = "Live call needs Safari on iPhone (HTTPS) or Chrome. Use the mic for dictation.";
++      return;
++    }
++    const rec = new Speech();
++    callSession = { recognition: rec, speaking: null };
++    $("call-dialog")?.showModal();
++    $("call-transcript").replaceChildren();
++    $("call-status").textContent = "Listening… speak naturally. Bob will answer out loud.";
++    $("live-call").classList.add("call-active");
++    rec.lang = "en-US";
++    rec.interimResults = true;
++    rec.continuous = true;
++    let buffer = "";
++    rec.onresult = (event) => {
++      if (!callSession) return;
++      if (callSession.speaking) {
++        speechSynthesis.cancel();
++        callSession.speaking = null;
++      }
++      buffer = Array.from(event.results).map((row) => row[0].transcript).join(" ").trim();
++      const last = event.results[event.results.length - 1];
++      if (last?.isFinal && buffer.length > 2) {
++        const said = buffer;
++        buffer = "";
++        handleCallUtterance(said);
++      }
++    };
++    rec.onerror = (event) => {
++      if (!callSession) return;
++      if (event.error === "not-allowed") $("call-status").textContent = "Microphone blocked — allow mic in Settings.";
++      else if (event.error !== "aborted") $("call-status").textContent = "Mic error — try again or type in chat.";
++    };
++    rec.onend = () => {
++      if (callSession?.recognition === rec) {
++        try { rec.start(); } catch (_) { /* restart loop while call open */ }
++      }
++    };
++    try { rec.start(); } catch (_) {
++      stopLiveCall();
++      $("notice").textContent = "Could not start live call.";
++    }
++  });
++  $("end-call")?.addEventListener("click", () => stopLiveCall());
++  $("call-dialog")?.addEventListener("close", () => stopLiveCall());
+   $("logout").addEventListener("click", async () => {
+     try { await api("/api/logout", {}); location.assign("/login"); }
+     catch (error) { $("notice").textContent = error.message; }
+@@ -768,6 +883,7 @@ if ($("login-form")) {
+       $("status-summary").textContent = `${freshness}${scoreStamp} · ${jobLead} · MiniMax ${spendText} · round ${ops.webchat_round || "?"}`;
+       renderLiveJobs(jobs);
+       lastPanelScores = ops.scores;
++      lastPanelOps = ops;
+       if (activeBottomTab === "lanes") renderScoresTable(ops.scores);
+       const c = data.conductor || {};
+       $("conductor-summary").textContent = `Draft work on ${c.draft_branch || "unknown branch"}`;
+@@ -812,9 +928,23 @@ if ($("login-form")) {
+     }
+   }
+   let lastPanelScores = null;
++  let lastPanelOps = null;
+   async function refreshLanes() {
+     try {
+       renderScoresTable(lastPanelScores);
++      const ops = lastPanelOps || {};
++      const spend = ops.minimax_spend || {};
++      const roles = ops.roles || {};
++      const dashAge = ops.dashboard_freshness_seconds;
++      const dashBit = dashAge == null ? "dashboard age unknown" : `dashboard ${dashAge}s ago`;
++      const spendBit = spend.committed_usd == null ? "MiniMax spend unknown" : `MiniMax $${Number(spend.committed_usd).toFixed(2)} / $${spend.cap_usd || 59}`;
++      $("lanes-summary").textContent = [
++        ops.now_line || "Live ops from the mini",
++        dashBit,
++        spendBit,
++        `Builder ${roles.building || "idle"} · Reviews ${roles.reviewing || "idle"}`,
++        ops.webchat_round ? `Round ${ops.webchat_round} scores below` : "",
++      ].filter(Boolean).join(" · ");
+       const data = await api("/api/lanes" + (current ? "?conversation_id=" + encodeURIComponent(current) : ""));
+       const entries = Object.entries(data.providers);
+       const cooling = entries.filter(([, lane]) => lane.state === "cooldown").length;
+diff --git a/webchat/static/index.html b/webchat/static/index.html
+index 05b20a5..669580d 100644
+--- a/webchat/static/index.html
++++ b/webchat/static/index.html
+@@ -44,8 +44,11 @@
+         <button type="button" id="mic" class="quiet icon-btn" aria-label="Voice input" title="Voice input">🎤</button>
+         <textarea id="message" name="message" placeholder="Message Bob…" rows="1" maxlength="6000" required enterkeyhint="send"></textarea>
+         <button type="button" id="speak" class="quiet icon-btn" aria-label="Read last reply aloud" title="Read aloud">🔊</button>
++        <button type="button" id="live-call" class="call-btn" aria-label="Live voice call" title="Live call">
++          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 10v4h2l3 3V7L6 10H4zm12.5 2c0-1.77-1.02-3.29-2.5-4.03v8.06c1.48-.74 2.5-2.26 2.5-4.03zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
++        </button>
+         <button type="button" id="stop" hidden>Stop</button>
+-        <button type="submit" id="send" class="primary">Send <span aria-hidden="true">↑</span></button>
++        <button type="submit" id="send" class="primary send-btn" aria-label="Send">↑</button>
+       </form>
+     </section>
+ 
+@@ -129,7 +132,7 @@
+         </div>
+         <div class="settings-group">
+           <h3 class="settings-group-title">Voice</h3>
+-          <p class="muted view-hint">On iPhone, tap 🎤 and allow the mic, or hold the keyboard mic for dictation. Read-aloud uses your device voices.</p>
++          <p class="muted view-hint">Tap 🎤 for dictation or the waveform button for a live call (hands-free listen + speak). Read-aloud uses your device voices.</p>
+         </div>
+         <div class="settings-group">
+           <h3 class="settings-group-title">Self-improve</h3>
+@@ -183,5 +186,14 @@
+     <p id="report-date" class="muted"></p>
+     <pre id="report-body"></pre>
+   </dialog>
++
++  <dialog id="call-dialog" class="call-dialog">
++    <div class="report-heading">
++      <h2>Live call</h2>
++      <button type="button" id="end-call" class="primary">End call</button>
++    </div>
++    <p id="call-status" class="muted">Connecting…</p>
++    <div id="call-transcript" class="call-transcript" aria-live="polite"></div>
++  </dialog>
+ </body>
+ </html>
+diff --git a/webchat/static/style.css b/webchat/static/style.css
+index f3e1e65..3bac447 100644
+--- a/webchat/static/style.css
++++ b/webchat/static/style.css
+@@ -321,6 +321,50 @@ textarea {
+ }
+ textarea::placeholder { color: var(--muted); }
+ .composer button { flex-shrink: 0; }
++button.call-btn {
++  min-width: 44px;
++  min-height: 44px;
++  width: 44px;
++  height: 44px;
++  padding: 0;
++  border-radius: 50%;
++  border: 0;
++  background: var(--text);
++  color: var(--bg);
++  display: flex;
++  align-items: center;
++  justify-content: center;
++}
++button.call-btn.call-active {
++  background: #6fcf97;
++  color: #13261c;
++  box-shadow: 0 0 0 3px color-mix(in srgb, #6fcf97 35%, transparent);
++}
++button.send-btn {
++  min-width: 44px;
++  width: 44px;
++  padding: 0;
++  border-radius: 50%;
++  font-size: 18px;
++  font-weight: 700;
++}
++.call-dialog {
++  border: 1px solid var(--line);
++  border-radius: 16px;
++  background: var(--surface);
++  color: var(--text);
++  max-width: min(420px, 96vw);
++  width: 96vw;
++}
++.call-transcript {
++  min-height: 120px;
++  max-height: 40vh;
++  overflow-y: auto;
++  font-size: 15px;
++  line-height: 1.45;
++  padding: 8px 4px;
++  margin-top: 8px;
++}
+ 
+ .conductor-block, .handback-block { margin-top: 8px; }
+ .conductor-actions {
+diff --git a/webchat/test_webchat.py b/webchat/test_webchat.py
+index cb23699..8a38355 100644
+--- a/webchat/test_webchat.py
++++ b/webchat/test_webchat.py
+@@ -675,16 +675,28 @@ class HandbackJobTests(Fixture):
+         self.assertNotIn("drill open item", reply)
+ 
+     def test_handback_drill_isolated_fixture(self):
+-        from drill_fixture import assert_prod_unchanged, ledger_round, new_fixture_root, prod_fingerprint, try_bob_state_running_line
++        from drill_fixture import assert_prod_unchanged, events_ok, ledger_round, new_fixture_root, prod_fingerprint, try_bob_state_running_line
+ 
+         before = prod_fingerprint(self.root)
+         fixture = new_fixture_root(self.folder)
+         result = ledger_round(fixture, "unit-test")
+         self.assertTrue(result["ledger_ok"])
++        self.assertTrue(events_ok(fixture, "unit-test"))
+         assert_prod_unchanged(before, self.root)
+         line = try_bob_state_running_line(fixture, "From BOB-STATE only: what's running?")
+         self.assertIn("drill-unit-test", (line or "").lower())
+ 
++    def test_record_webchat_turn_skips_ready_drill_on_prod(self):
++        ledger_dir = Path(__file__).resolve().parent.parent / "state"
++        if str(ledger_dir) not in sys.path:
++            sys.path.insert(0, str(ledger_dir))
++        import alignment_events
++        import ledger as state_ledger
++
++        before = alignment_events.latest_seq(self.root)
++        state_ledger.record_webchat_turn(self.root, ask="Reply with exactly: drill A1", provider="gemini")
++        self.assertEqual(alignment_events.latest_seq(self.root), before)
++
+     def test_purge_drill_open_asks(self):
+         ledger_dir = Path(__file__).resolve().parent.parent / "state"
+         if str(ledger_dir) not in sys.path:
+@@ -756,6 +768,8 @@ class HandbackJobTests(Fixture):
+         from music_notebook import try_music_coach_reply
+         self.assertIn("chorus", (try_music_coach_reply("help with chorus hook") or "").lower())
+         self.assertIn("rhyme", (try_music_coach_reply("fix the rhyme scheme") or "").lower())
++        self.assertIn("bridge", (try_music_coach_reply("help with song structure and bridge") or "").lower())
++        self.assertIn("bpm", (try_music_coach_reply("what tempo bpm should I use") or "").lower())
+ 
+     def test_self_improve_healthy_flag(self):
+         (self.root / "conductor/launchd").mkdir(parents=True, exist_ok=True)
+
+
+### FILE reviews/WEBCHAT-READY-R12-DESIGN.md
+# Web Bob R12 design note (research-first)
+
+**Date:** 2026-09-27 CT · **Council:** R12 critique after build · **No Grok.**
+
+## Borrow
+
+| Source | Take | Reject |
+|--------|------|--------|
+| [Apple HIG Tab bars](https://developer.apple.com/design/human-interface-guidelines/tab-bars) | Persistent bottom tabs; chat-first main view | Pop-over sheets for primary nav (R10–R11 Jeff feedback) |
+| [Web Speech API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Speech_API) | Live call v1: continuous recognition + `speechSynthesis` barge-in on iPhone Safari | Full WebRTC streaming STT until whisper stream is wired on mini |
+| R9 isolated `drill-fixtures/` + overlay | Prod fingerprint unchanged; handback ×2 drill | Mutating prod `events.jsonl` for ready-drill phrases |
+| `events.jsonl` + paginated catch-up (ALIGNMENT-DESIGN) | Bob wake reads all pages since ack | Bob polling |
+
+## R12 build focus (lowest R11 scores)
+
+1. **Architecture / safety:** Skip prod alignment events for ready-drill noise; paginated catch-up events.
+2. **Voice:** Grok-style waveform live-call button + dialog (listen/speak/barge-in).
+3. **Music:** Structure/tempo coach paths (no MiniMax music API).
+4. **Live dashboard:** Models tab plain-English ops line (freshness, spend, roles, scores); scores table picks highest READY round number.
+
+## Prove
+
+- Handback drill `WEBCHAT_HANDBACK_TAG=r12` ×2 runs ×2.
+- `live_ready_drill.py` + unit tests.
+- Playwright 390×844 / 430×932 in `webchat/evidence/iphone-r12/`.

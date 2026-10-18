@@ -1,0 +1,27 @@
+[
+  [
+    {
+      "reasoning": "The practical recommendation is to keep the saved configuration's chat route (listed as Gemini) active while preserving our quality bar, and prepare qualification criteria for Codex before any routing change. Unchanged constraints, including keeping texting operational and remaining in planning-only mode, continue in revision 2 of the saved project record."
+    },
+    {
+      "reasoning": "Here is what the saved project record and route configurations show versus what remains unverified:\n\n\u2022 What is recorded: As of revision 2 of the saved project record loaded with this chat (not live-verified), continuity across conversations is recorded as the owner's first priority, followed by conversation quality. Web Bob's configured route registry (not live-verified) lists Gemini as the current chat route, and separates Codex into a CLI conversation adapter and a scoped executor for local coding work.\n\u2022 What still needs checking: Live sign-in for Codex is unverified. Account allowance, extra-usage settings, and actual response quality on multi-turn dialogue remain unverified."
+    },
+    {
+      "fact": "purchase_vs_usage"
+    },
+    {
+      "reasoning": "Before calling any candidate model for comparison, funding prerequisites must be satisfied by verifying account allowance and confirming that extra-usage settings prevent unexpected billing. Once budget admission is confirmed, evaluate Codex using this exact 3-turn qualification sequence:\n\n1. Turn 1 (Constraint and Correction): Request a brief technical summary constrained to bullet points, followed immediately by a user correction changing the requirement to two continuous narrative paragraphs with no bullet points.\n2. Turn 2 (Topic Change): Introduce an unrelated question regarding audio formats to diverge the conversation context.\n3. Turn 3 (Return to Corrected Task): Instruct the assistant to deliver the revised summary from Turn 1, testing whether it maintains the corrected prose format or reverts to bullet points.\n\nAcceptance Rubric:\n\u2022 Reasoning: Produces sound deductions from supplied facts without inventing capabilities or file inspections.\n\u2022 Delivered Usefulness: Fully answers each prompt with concrete, practical detail rather than vague promises.\n\u2022 Retained Constraints: Strictly retains the negative constraint and formatting correction after the topic diversion, matching our continuity priority."
+    }
+  ],
+  [
+    {
+      "fact": "quality_bar"
+    },
+    {
+      "reasoning": "The recommended next step is to prepare a matched multi-turn qualification sequence for Claude, explicitly gated on first inspecting Claude's account dashboard to verify remaining tier allowance and confirm that automatic overage charges are disabled. Testing must not run unconditioned, ensuring we incur no unexpected billing while evaluating whether Claude meets Web Bob's standards before considering any chat routing change."
+    },
+    {
+      "reasoning": "Run the comparison using this four-turn sequence once allowance is verified:\n1. Prompt: Draft a bounded technical recommendation with explicit negative constraints, word count boundaries, and neutral phrasing.\n2. Correction: Provide a targeted instruction adjusting one requirement while preserving all other constraints.\n3. Topic Change: Introduce an unrelated inquiry (such as drafting a neutral meeting notice) to shift context.\n4. Return: Prompt for a follow-up on the original technical recommendation.\n\nAcceptance criteria: Claude qualifies only if it demonstrates delivered usefulness, full retention of the initial and corrected constraints after the topic switch, and strict refusal to invent unverified file state or capabilities. The saved project record revision 2 records owner constraints to remain planning-only and preserve texting, with cross-conversation continuity prioritized."
+    }
+  ]
+]

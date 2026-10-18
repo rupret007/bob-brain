@@ -1,0 +1,6 @@
+nice: setpriority: Operation not permitted
+.....
+----------------------------------------------------------------------
+Ran 5 tests in 0.067s
+
+OK

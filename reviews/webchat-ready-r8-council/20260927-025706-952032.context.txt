@@ -1,0 +1,709 @@
+### FILE conductor/reviews/webchat-ready-r8-council/20260927-r8b.context.txt
+diff --git a/handback/HANDBACK-LOG.md b/handback/HANDBACK-LOG.md
+index 9087f61..d5de14c 100644
+--- a/handback/HANDBACK-LOG.md
++++ b/handback/HANDBACK-LOG.md
+@@ -198,3 +198,54 @@
+ - **Ask:** Reply with exactly: drill B5
+ - **Provider:** gemini
+ - **Open:** Reply with exactly: drill B5
++## 2026-09-27 02:55:01 CT
++- **Ask:** Ok and I’ll look at WebJam tomorrow keep doing what you’re doing.
++- **Provider:** gemini
++- **Request:** a1c4cd49-90c4-4adb-a314-72c0636dd906
++- **Commits/SHAs:** bee4e3c
++- **Open:** Ok and I’ll look at WebJam tomorrow keep doing what you’re doing.
++- **Outcome:** chat
++## 2026-09-27 02:55:54 CT
++- **Ask:** Yes and add like I told Bob the
++bot already, but find ways to know how much or how many resources you have left for each LLm.
++- **Provider:** gemini
++- **Request:** 5378357f-a331-464a-826e-0043987ff68e
++- **Commits/SHAs:** bee4e3c
++- **Open:** Yes and add like I told Bob the
++bot already, but find ways to know how much or how many resources you have left for each LLm.
++- **Outcome:** chat
++## 2026-09-27 02:56:24 CT
++- **Ask:** Reply with exactly: drill A4
++- **Provider:** gemini
++- **Request:** 99649819-52d0-4adc-9ce9-794624913151
++- **Commits/SHAs:** bee4e3c
++- **Open:** Reply with exactly: drill A4
++- **Outcome:** chat
++## 2026-09-27 02:56:25 CT
++- **Ask:** Reply with exactly: drill B4
++- **Provider:** gemini
++- **Request:** 9edbc94e-5450-42c5-bd99-f13ff2b1e6ea
++- **Commits/SHAs:** bee4e3c
++- **Open:** Reply with exactly: drill B4
++- **Outcome:** chat
++## 2026-09-27 02:56:26 CT
++- **Ask:** Reply with exactly: drill A5
++- **Provider:** gemini
++- **Request:** c690ea74-df0b-4388-a063-839dd54e8523
++- **Commits/SHAs:** bee4e3c
++- **Open:** Reply with exactly: drill A5
++- **Outcome:** chat
++## 2026-09-27 02:56:27 CT
++- **Ask:** Reply with exactly: drill B5
++- **Provider:** gemini
++- **Request:** e9931dd8-da04-4c50-b8e1-a9a3563418ad
++- **Commits/SHAs:** bee4e3c
++- **Open:** Reply with exactly: drill B5
++- **Outcome:** chat
++## 2026-09-27 02:56:50 CT
++- **Ask:** webchat self-improve tick
++- **Provider:** local
++- **Commits/SHAs:** bee4e3cec17f83e937e169b6437f77f7299a9324
++- **Open:** review /tmp/webchat-self-improve-tests.txt on mini if failures
++- **Outcome:** chat
++
+diff --git a/handback/HANDBACK-SUMMARY.md b/handback/HANDBACK-SUMMARY.md
+index 6e72e53..a5757e0 100644
+--- a/handback/HANDBACK-SUMMARY.md
++++ b/handback/HANDBACK-SUMMARY.md
+@@ -1,6 +1,6 @@
+ # HANDBACK-SUMMARY
+ 
+-Updated 2026-09-27 01:55:17 CT · digest since Bob last saw handback (.bob-last-seen)
++Updated 2026-09-27 02:57:02 CT · digest since Bob last saw handback (.bob-last-seen)
+ 
+ ## Bob state (snapshot)
+ # BOB-STATE (written by Grok Bot Bob) — updated 2026-09-27 00:27 CT
+@@ -19,52 +19,20 @@ _None logged._
+ - Running: svc-webchat-ready (Cursor, WEBCHAT-READY.md), svc-webchat-failover (Codex, WEBCHAT-FAILOVER.md), svc-self-improve-r3 (Cursor, SELF-IMPROVE-R3.md), svc-
+ 
+ ## Waiting on Jeff
+-- Reply with exactly: drill A5 (gemini)
+-- Reply with exactly: drill B5 (gemini)
+-- Reply with exactly: drill A1 (gemini)
+-- Reply with exactly: drill B1 (gemini)
+-- Reply with exactly: drill A2 (gemini)
+-- Reply with exactly: drill B2 (gemini)
+-- Reply with exactly: drill A3 (gemini)
+-- Reply with exactly: drill B3 (gemini)
+-- Reply with exactly: drill A4 (gemini)
+-- Reply with exactly: drill B4 (gemini)
+-- Reply with exactly: drill A5 (gemini)
+-- Reply with exactly: drill B5 (gemini)
++_No open confirmations._
+ 
+ ## Risks
+-- merge #158 (none)
++- Drafts only; no merge/send/spend without yes.
++
++## Latest pickup (commits / open / jobs)
++- Commits: bee4e3c
++- Open: Reply with exactly: drill B4
++- Commits: bee4e3c
++- Open: Reply with exactly: drill A5
++- Commits: bee4e3c
++- Open: Reply with exactly: drill B5
++- Commits: bee4e3cec17f83e937e169b6437f77f7299a9324
++- Open: review /tmp/webchat-self-improve-tests.txt on mini if failures
+ 
+ ## Web Bob turns since last seen (detail)
+-## 2026-09-27 01:54:57 CT
+-- **Ask:** Reply with exactly: drill A2
+-- **Provider:** gemini
+-- **Open:** Reply with exactly: drill A2
+-## 2026-09-27 01:55:00 CT
+-- **Ask:** Reply with exactly: drill B2
+-- **Provider:** gemini
+-- **Open:** Reply with exactly: drill B2
+-## 2026-09-27 01:55:03 CT
+-- **Ask:** Reply with exactly: drill A3
+-- **Provider:** gemini
+-- **Open:** Reply with exactly: drill A3
+-## 2026-09-27 01:55:07 CT
+-- **Ask:** Reply with exactly: drill B3
+-- **Provider:** gemini
+-- **Open:** Reply with exactly: drill B3
+-## 2026-09-27 01:55:09 CT
+-- **Ask:** Reply with exactly: drill A4
+-- **Provider:** gemini
+-- **Open:** Reply with exactly: drill A4
+-## 2026-09-27 01:55:12 CT
+-- **Ask:** Reply with exactly: drill B4
+-- **Provider:** gemini
+-- **Open:** Reply with exactly: drill B4
+-## 2026-09-27 01:55:14 CT
+-- **Ask:** Reply with exactly: drill A5
+-- **Provider:** gemini
+-- **Open:** Reply with exactly: drill A5
+-## 2026-09-27 01:55:17 CT
+-- **Ask:** Reply with exactly: drill B5
+-- **Provider:** gemini
+-- **Open:** Reply with exactly: drill B5
++_No Web Bob turns logged since last Bob read._
+diff --git a/services/test_services.py b/services/test_services.py
+index 1c55c23..490e809 100644
+--- a/services/test_services.py
++++ b/services/test_services.py
+@@ -244,6 +244,14 @@ class ServicesTest(unittest.TestCase):
+         self.assertIn("running_jobs", ops)
+         self.assertEqual(ops["minimax_spend"]["cap_usd"], 59.0)
+         self.assertTrue(ops["running_jobs"][0]["plain_now"])
++        self.assertIn("scores", ops)
++        self.assertIn("roles", ops)
++        self.assertIn("now_line", ops)
++        self.assertIn("webchat_round", ops)
++        job = ops["running_jobs"][0]
++        self.assertIn("log_tail", job)
++        self.assertIn("last_commit", job)
++        self.assertIn("stall_state", job)
+ 
+     def test_state_ledger_catchup_and_now(self):
+         ledger_dir = str(HERE.parent / "state")
+@@ -257,6 +265,20 @@ class ServicesTest(unittest.TestCase):
+         catchup = (self.root / "conductor/state/BOB-CATCHUP.md").read_text()
+         self.assertIn("INBOX", catchup)
+         self.assertTrue((self.root / "conductor/state/NOW.md").exists())
++        loaded = state_ledger.load_state(self.root)
++        self.assertGreaterEqual(int(loaded.get("revision") or 0), 2)
++
++    def test_state_ledger_mutate_under_lock(self):
++        ledger_dir = str(HERE.parent / "state")
++        if ledger_dir not in sys.path:
++            sys.path.insert(0, ledger_dir)
++        import ledger as state_ledger
++
++        rev0 = int(state_ledger.load_state(self.root).get("revision") or 0)
++        state_ledger.record_webchat_turn(self.root, ask="hello", provider="state")
++        state_ledger.add_open_ask(self.root, "ship tab polish")
++        rev1 = int(state_ledger.load_state(self.root).get("revision") or 0)
++        self.assertGreater(rev1, rev0)
+ 
+     def test_public_live_ops_allowlists_log_tail(self):
+         import live_dashboard
+diff --git a/state/ledger.py b/state/ledger.py
+index f473afa..f47ce88 100644
+--- a/state/ledger.py
++++ b/state/ledger.py
+@@ -58,9 +58,25 @@ def _now_ct() -> str:
+     return datetime.now(CT).strftime("%Y-%m-%d %H:%M:%S CT")
+ 
+ 
++_REQUIRED_KEYS = (
++    "version",
++    "updated_at",
++    "active_round",
++    "last_sha",
++    "owner",
++    "jobs",
++    "open_asks",
++    "decisions",
++    "now_history",
++    "inbox",
++    "webchat_turns",
++)
++
++
+ def default_state() -> dict:
+     return {
+         "version": 1,
++        "revision": 0,
+         "updated_at": _now_ct(),
+         "active_round": None,
+         "last_sha": None,
+@@ -74,6 +90,19 @@ def default_state() -> dict:
+     }
+ 
+ 
++def _validate_state(data: dict) -> bool:
++    return isinstance(data, dict) and all(key in data for key in _REQUIRED_KEYS)
++
++
++def _log_corrupt(root: Path, reason: str) -> None:
++    try:
++        path = _folder(root) / ".STATE.corrupt.log"
++        with path.open("a") as handle:
++            handle.write(f"{_now_ct()} {reason}\n")
++    except OSError:
++        pass
++
++
+ def _state_lock(root: Path):
+     lock_path = _folder(root) / ".STATE.lock"
+     handle = lock_path.open("a")
+@@ -87,15 +116,19 @@ def load_state(root: Path) -> dict:
+         return default_state()
+     try:
+         data = json.loads(path.read_text(errors="replace"))
+-        if isinstance(data, dict) and "version" in data:
++        if _validate_state(data):
++            if "revision" not in data:
++                data["revision"] = 0
+             return data
+-    except (OSError, json.JSONDecodeError):
+-        pass
++        _log_corrupt(root, "schema mismatch")
++    except (OSError, json.JSONDecodeError) as err:
++        _log_corrupt(root, f"parse error: {err}")
+     return default_state()
+ 
+ 
+ def save_state(root: Path, state: dict) -> None:
+     state["updated_at"] = _now_ct()
++    state["revision"] = int(state.get("revision") or 0) + 1
+     _atomic_write(_folder(root) / STATE_FILE, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+ 
+ 
+@@ -105,12 +138,21 @@ def _mutate(root: Path, fn):
+         state = load_state(root)
+         result = fn(state)
+         save_state(root, state)
+-        return result
++        return result, state
+     finally:
+         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+         handle.close()
+ 
+ 
++def _rewrite_inbox_md(root: Path, state: dict) -> None:
++    inbox_path = _folder(root) / INBOX_FILE
++    lines = [f"# Builder inbox · updated {_now_ct()}", ""]
++    for row in state.get("inbox") or []:
++        flag = "DONE" if row.get("status") == "done" else "OPEN"
++        lines.append(f"- [{flag}] ({row.get('source', '?')}) {row.get('body', '')[:500]}")
++    _atomic_write(inbox_path, "\n".join(lines) + "\n")
++
++
+ def parse_inbox_message(text: str) -> str | None:
+     if not text:
+         return None
+@@ -133,51 +175,50 @@ def append_inbox(root: Path, body: str, *, source: str = "web-bob", request_id:
+         state["inbox"] = state["inbox"][-80:]
+         return item
+ 
+-    item = _mutate(root, _apply)
+-    state = load_state(root)
+-    inbox_path = _folder(root) / INBOX_FILE
+-    lines = [f"# Builder inbox · updated {_now_ct()}", ""]
+-    for row in state["inbox"]:
+-        flag = "DONE" if row.get("status") == "done" else "OPEN"
+-        lines.append(f"- [{flag}] ({row.get('source', '?')}) {row.get('body', '')[:500]}")
+-    _atomic_write(inbox_path, "\n".join(lines) + "\n")
++    item, state = _mutate(root, _apply)
++    _rewrite_inbox_md(root, state)
+     write_catchup(root, state=state)
+     return item
+ 
+ 
+ def record_webchat_turn(root: Path, *, ask: str, provider: str | None, request_id: str | None = None) -> None:
+-    state = load_state(root)
+     turn = {"at": _now_ct(), "ask": ask.strip()[:500], "provider": provider or "none", "request_id": request_id}
+-    state.setdefault("webchat_turns", []).append(turn)
+-    state["webchat_turns"] = state["webchat_turns"][-40:]
+-    save_state(root, state)
++
++    def _apply(state: dict) -> None:
++        state.setdefault("webchat_turns", []).append(turn)
++        state["webchat_turns"] = state["webchat_turns"][-40:]
++
++    _, state = _mutate(root, _apply)
+     write_catchup(root, state=state)
+ 
+ 
+ def record_decision(root: Path, text: str, *, kind: str = "jeff") -> None:
+-    state = load_state(root)
+     entry = {"at": _now_ct(), "kind": kind, "text": text.strip()[:800]}
+-    state.setdefault("decisions", []).append(entry)
+-    state["decisions"] = state["decisions"][-50:]
+-    save_state(root, state)
++
++    def _apply(state: dict) -> None:
++        state.setdefault("decisions", []).append(entry)
++        state["decisions"] = state["decisions"][-50:]
++
++    _, state = _mutate(root, _apply)
+     write_catchup(root, state=state)
+ 
+ 
+ def add_open_ask(root: Path, body: str, *, status: str = "new", finished_sha: str | None = None) -> str:
+-    state = load_state(root)
+     ask_id = str(uuid.uuid4())[:8]
+-    state.setdefault("open_asks", []).append(
+-        {"id": ask_id, "body": body.strip()[:500], "status": status, "finished_sha": finished_sha, "at": _now_ct()}
+-    )
+-    state["open_asks"] = state["open_asks"][-60:]
+-    save_state(root, state)
++    row = {"id": ask_id, "body": body.strip()[:500], "status": status, "finished_sha": finished_sha, "at": _now_ct()}
++
++    def _apply(state: dict) -> str:
++        state.setdefault("open_asks", []).append(row)
++        state["open_asks"] = state["open_asks"][-60:]
++        return ask_id
++
++    ask_id, state = _mutate(root, _apply)
+     write_catchup(root, state=state)
+     return ask_id
+ 
+ 
+ def write_now(root: Path, line: str, *, step: str | None = None, elapsed_seconds: int | None = None,
+               sha: str | None = None, state: dict | None = None) -> None:
+-    state = state or load_state(root)
+     plain = line.strip()[:500]
+     if elapsed_seconds is not None:
+         plain += f" · {elapsed_seconds // 60}m elapsed"
+@@ -186,11 +227,22 @@ def write_now(root: Path, line: str, *, step: str | None = None, elapsed_seconds
+     if step:
+         plain += f" · step {step}"
+     entry = {"at": _now_ct(), "line": plain}
+-    state.setdefault("now_history", []).append(entry)
+-    state["now_history"] = state["now_history"][-40:]
+-    save_state(root, state)
+-    _atomic_write(_folder(root) / NOW_FILE, f"{plain}\n")
+-    write_catchup(root, state=state)
++
++    if state is not None:
++        state.setdefault("now_history", []).append(entry)
++        state["now_history"] = state["now_history"][-40:]
++        _atomic_write(_folder(root) / NOW_FILE, f"{plain}\n")
++        write_catchup(root, state=state)
++        return
++
++    def _apply(st: dict) -> str:
++        st.setdefault("now_history", []).append(entry)
++        st["now_history"] = st["now_history"][-40:]
++        return plain
++
++    plain_line, st = _mutate(root, _apply)
++    _atomic_write(_folder(root) / NOW_FILE, f"{plain_line}\n")
++    write_catchup(root, state=st)
+ 
+ 
+ def _commits_since(root: Path, since: float) -> list[str]:
+@@ -260,47 +312,46 @@ def write_catchup(root: Path, *, state: dict | None = None) -> None:
+ 
+ def sync_from_live_ops(root: Path, live_ops: dict, *, head_sha: str | None = None,
+                        webchat_round: int | None = None) -> dict:
+-    state = load_state(root)
+-    if head_sha:
+-        state["last_sha"] = head_sha
+-    if webchat_round:
+-        state["active_round"] = {"number": webchat_round, "label": "webchat-ready"}
+-    jobs_out = []
+-    now = time.time()
+-    for row in live_ops.get("running_jobs") or []:
+-        launched = row.get("started_at")
+-        heartbeat = now
+-        if launched:
+-            try:
+-                heartbeat = datetime.fromisoformat(launched.replace("Z", "+00:00")).timestamp()
+-            except (TypeError, ValueError):
+-                heartbeat = now - float(row.get("elapsed_seconds") or 0)
+-        stale = (now - heartbeat) > STALL_SECONDS and row.get("live_screen")
+-        jobs_out.append({
+-            "job_id": row.get("job_id") or row.get("engine"),
+-            "engine": row.get("engine"),
+-            "plain_now": row.get("plain_now"),
+-            "live": bool(row.get("live_screen")),
+-            "stall": "stalled" if stale or row.get("stall_state") == "stalled" else "running",
+-            "round": row.get("round"),
+-            "last_commit": (row.get("last_commit") or {}).get("sha"),
+-        })
+-    state["jobs"] = jobs_out[:12]
+-    save_state(root, state)
+-    lead = jobs_out[0] if jobs_out else None
++    def _apply(state: dict) -> dict:
++        if head_sha:
++            state["last_sha"] = head_sha
++        round_no = webchat_round or live_ops.get("webchat_round")
++        if round_no:
++            state["active_round"] = {"number": round_no, "label": "webchat-ready"}
++        jobs_out = []
++        for row in live_ops.get("running_jobs") or []:
++            stalled = row.get("stall_state") == "stalled"
++            jobs_out.append({
++                "job_id": row.get("job_id") or row.get("engine"),
++                "engine": row.get("engine"),
++                "plain_now": row.get("plain_now"),
++                "live": bool(row.get("live_screen")),
++                "stall": "stalled" if stalled else "running",
++                "round": row.get("round"),
++                "last_commit": (row.get("last_commit") or {}).get("sha"),
++            })
++        state["jobs"] = jobs_out[:12]
++        return jobs_out
++
++    jobs_out, state = _mutate(root, _apply)
++    lead = next((j for j in jobs_out if j.get("live")), jobs_out[0] if jobs_out else None)
+     if lead and lead.get("live"):
++        elapsed = None
++        for row in live_ops.get("running_jobs") or []:
++            if row.get("job_id") == lead.get("job_id") or row.get("engine") == lead.get("engine"):
++                elapsed = row.get("elapsed_seconds")
++                break
+         write_now(
+             root,
+             lead.get("plain_now") or f"{lead.get('engine', 'job')} is running",
+             sha=lead.get("last_commit") or head_sha,
+-            elapsed_seconds=live_ops.get("running_jobs", [{}])[0].get("elapsed_seconds") if live_ops.get("running_jobs") else None,
+-            state=state,
++            elapsed_seconds=elapsed,
+         )
+     elif head_sha:
+-        write_now(root, f"Idle on mini · last commit {head_sha[:12]}", sha=head_sha, state=state)
++        write_now(root, f"Idle on mini · last commit {head_sha[:12]}", sha=head_sha)
+     else:
+         write_catchup(root, state=state)
+-    return state
++    return load_state(root)
+ 
+ 
+ def read_now_line(root: Path) -> str | None:
+diff --git a/webchat/app.py b/webchat/app.py
+index dd71352..b2294d1 100644
+--- a/webchat/app.py
++++ b/webchat/app.py
+@@ -635,7 +635,10 @@ class Chat:
+         if launchd_loaded is True:
+             summary = "Launchd job loaded. " + summary
+         elif launchd_loaded is False and files_ok:
+-            summary = "Launchd job not loaded — bootstrap com.jeff.bob-webchat-self-improve when ready. " + summary
++            summary = (
++                "Launchd job not loaded — run conductor/webchat/bootstrap_self_improve_launchd.sh on the mini. "
++                + summary
++            )
+         elif launchd_loaded is None and files_ok:
+             summary = "Launchd probe unavailable on this host. " + summary
+         elif not files_ok:
+diff --git a/webchat/evidence/handback-drill.json b/webchat/evidence/handback-drill.json
+index 9aae120..49ab6d5 100644
+--- a/webchat/evidence/handback-drill.json
++++ b/webchat/evidence/handback-drill.json
+@@ -1,20 +1,20 @@
+ {
+-  "started_at": 1790495459.530438,
++  "started_at": 1790495807.462074,
+   "rounds": [
+     {
+       "ledger": {
+         "tag": "r8-1",
+         "ledger_ok": true,
+         "bob_pickup_ok": true,
+-        "summary_chars": 2639
++        "summary_chars": 1075
+       },
+       "live": {
+         "tag": "r8-1",
+         "status": "done",
+         "provider": "gemini",
+-        "elapsed_seconds": 1.686,
++        "elapsed_seconds": 1.358,
+         "mentions_running": true,
+-        "snippet": "Hey Jeff,\n\nFrom the `BOB-STATE` and `HANDBACK-SUMMARY`, here's what's running right now:\n\n*   **`drill-r8-1`**: This is the handback drill screen.\n*   **`cursor-queue-23-recordin`**: This is a Cursor job that's active on",
++        "snippet": "Hey Jeff,\n\nRight now, the `drill-r8-1` screen is running for the handback drill.\n\nThere's also a Cursor job, `cursor-queue-23-recordin`, that's been active for about 76 minutes, with commit `bee4e3c`.",
+         "live_ok": true
+       },
+       "reverse_handback_ok": true,
+@@ -25,15 +25,15 @@
+         "tag": "r8-2",
+         "ledger_ok": true,
+         "bob_pickup_ok": true,
+-        "summary_chars": 2689
++        "summary_chars": 1981
+       },
+       "live": {
+         "tag": "r8-2",
+         "status": "done",
+         "provider": "gemini",
+-        "elapsed_seconds": 1.123,
++        "elapsed_seconds": 1.336,
+         "mentions_running": true,
+-        "snippet": "Hey Jeff,\n\nFrom the `BOB-STATE` and `HANDBACK-SUMMARY`, here's what's running right now:\n\n*   `drill-r8-1` (handback drill screen)\n*   `cursor-queue-23-recordin` (cursor job, active on a screen session, 70m elapsed, SHA ",
++        "snippet": "Hey Jeff,\n\nRight now, the `drill-r8-1` screen is running for the handback drill.\n\nThere's also a Cursor job, `cursor-queue-23-recordin`, that's been active on a screen session for about 76 minutes, with commit `bee4e3c`.",
+         "live_ok": true
+       },
+       "reverse_handback_ok": true,
+@@ -41,6 +41,6 @@
+     }
+   ],
+   "restored_handback": true,
+-  "finished_at": 1790495462.7105448,
++  "finished_at": 1790495810.525104,
+   "result": "PASS"
+ }
+diff --git a/webchat/evidence/ready-drill.json b/webchat/evidence/ready-drill.json
+index 5993a27..90a91bb 100644
+--- a/webchat/evidence/ready-drill.json
++++ b/webchat/evidence/ready-drill.json
+@@ -7,7 +7,7 @@
+       "text": "Reply with exactly: drill A1",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.071,
++      "elapsed_seconds": 1.079,
+       "busy_in_attempts": false
+     },
+     {
+@@ -15,7 +15,7 @@
+       "text": "Reply with exactly: drill B1",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 0.809,
++      "elapsed_seconds": 1.039,
+       "busy_in_attempts": false
+     },
+     {
+@@ -23,7 +23,7 @@
+       "text": "Reply with exactly: drill A2",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 0.799,
++      "elapsed_seconds": 1.019,
+       "busy_in_attempts": false
+     },
+     {
+@@ -31,7 +31,7 @@
+       "text": "Reply with exactly: drill B2",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.059,
++      "elapsed_seconds": 1.019,
+       "busy_in_attempts": false
+     },
+     {
+@@ -39,7 +39,7 @@
+       "text": "Reply with exactly: drill A3",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 0.753,
++      "elapsed_seconds": 1.045,
+       "busy_in_attempts": false
+     },
+     {
+@@ -47,7 +47,7 @@
+       "text": "Reply with exactly: drill B3",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 0.748,
++      "elapsed_seconds": 1.013,
+       "busy_in_attempts": false
+     },
+     {
+@@ -55,7 +55,7 @@
+       "text": "Reply with exactly: drill A4",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.072,
++      "elapsed_seconds": 1.032,
+       "busy_in_attempts": false
+     },
+     {
+@@ -63,7 +63,7 @@
+       "text": "Reply with exactly: drill B4",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 0.811,
++      "elapsed_seconds": 0.777,
+       "busy_in_attempts": false
+     },
+     {
+@@ -71,7 +71,7 @@
+       "text": "Reply with exactly: drill A5",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.115,
++      "elapsed_seconds": 1.057,
+       "busy_in_attempts": false
+     },
+     {
+@@ -79,18 +79,18 @@
+       "text": "Reply with exactly: drill B5",
+       "status": "done",
+       "provider": "gemini",
+-      "elapsed_seconds": 1.068,
++      "elapsed_seconds": 0.73,
+       "busy_in_attempts": false
+     }
+   ],
+-  "started_at": 1790495448.645078,
++  "started_at": 1790495777.861793,
+   "locks": [
+     "codex: drill holds background lock",
+     "cursor: background job holds lock",
+     "gemini: drill holds background lock",
+     "minimax: drill holds background lock"
+   ],
+-  "p50_seconds": 0.935,
+-  "finished_at": 1790495457.95585,
++  "p50_seconds": 1.026,
++  "finished_at": 1790495787.673079,
+   "result": "PASS"
+ }
+diff --git a/webchat/handback.py b/webchat/handback.py
+index 53596a6..3122448 100644
+--- a/webchat/handback.py
++++ b/webchat/handback.py
+@@ -131,6 +131,18 @@ def refresh_summary(root: Path) -> None:
+     lines += [f"- {row}" for row in groups["waiting"]] or ["_No open confirmations._"]
+     lines += ["", "## Risks"]
+     lines += [f"- {row}" for row in groups["risks"]] or ["- Drafts only; no merge/send/spend without yes."]
++    pickup: list[str] = []
++    for block in [text for _, text in _parse_blocks(log_path)][-4:]:
++        for label, pattern in (
++            ("Commits", r"\*\*Commits/SHAs:\*\* (.+)"),
++            ("Open", r"\*\*Open:\*\* (.+)"),
++            ("Jobs", r"\*\*Jobs:\*\* (.+)"),
++        ):
++            match = re.search(pattern, block)
++            if match:
++                pickup.append(f"{label}: {match.group(1).strip()[:140]}")
++    lines += ["", "## Latest pickup (commits / open / jobs)"]
++    lines += [f"- {row}" for row in pickup[-8:]] or ["- See HANDBACK-LOG for full detail."]
+     lines += ["", "## Web Bob turns since last seen (detail)"]
+     if entries:
+         lines.extend(entries[-8:])
+diff --git a/webchat/static/app.js b/webchat/static/app.js
+index 0091e7d..a796def 100644
+--- a/webchat/static/app.js
++++ b/webchat/static/app.js
+@@ -268,10 +268,19 @@ if ($("login-form")) {
+   });
+   let micRecognition = null;
+   let micErrorActive = false;
++  let speechVoicesReady = false;
++  function primeSpeechVoices() {
++    if (!("speechSynthesis" in window)) return;
++    const voices = speechSynthesis.getVoices();
++    if (voices.length) speechVoicesReady = true;
++    speechSynthesis.onvoiceschanged = () => {
++      if (speechSynthesis.getVoices().length) speechVoicesReady = true;
++    };
++  }
+   let speakingUtterance = null;
+   $("mic").addEventListener("click", () => {
+     const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+-    if (!Speech) { $("notice").textContent = "Voice input is not supported in this browser."; return; }
++    if (!Speech) { $("notice").textContent = "Voice input needs Safari on iPhone or Chrome on desktop. Keyboard dictation always works."; return; }
+     if (micRecognition) {
+       micRecognition.stop();
+       micRecognition = null;
+@@ -347,6 +356,8 @@ if ($("login-form")) {
+       speechSynthesis.cancel();
+       const utter = new SpeechSynthesisUtterance(speechText(last.content).slice(0, 4000));
+       utter.rate = 1.02;
++      if (!speechVoicesReady) primeSpeechVoices();
++      utter.rate = 1.02;
+       const voices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith("en"));
+       if (voices.length) utter.voice = voices.find((v) => /samantha|daniel|english/i.test(v.name)) || voices[0];
+       utter.onend = utter.onerror = () => {
+@@ -646,10 +657,13 @@ if ($("login-form")) {
+   }
+   async function init() {
+     try {
+-      if (window.speechSynthesis) {
+-        speechSynthesis.getVoices();
+-        speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices();
++      primeSpeechVoices();
++      const micBtn = $("mic");
++      const speakBtn = $("speak");
++      if (micBtn && !window.SpeechRecognition && !window.webkitSpeechRecognition) {
++        micBtn.setAttribute("title", "Use keyboard dictation (mic key on iOS keyboard)");
+       }
++      if (speakBtn && !("speechSynthesis" in window)) speakBtn.hidden = true;
+       csrf = (await api("/api/session")).csrf; current = stored("bob.conversation");
+       await refreshList(); await poll(); $("messages").scrollTop = $("messages").scrollHeight;
+       await refreshPanel(); await refreshLanes(); await loadSong();

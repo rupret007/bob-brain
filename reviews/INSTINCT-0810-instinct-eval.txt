@@ -1,0 +1,95 @@
+{
+  "total": 22,
+  "passed": 22,
+  "all_pass": true,
+  "cases": [
+    {
+      "name": "Instinct: read real adapter evidence",
+      "pass": true
+    },
+    {
+      "name": "Instinct: latest reply visible",
+      "pass": true
+    },
+    {
+      "name": "Instinct: bills flagged with source",
+      "pass": true
+    },
+    {
+      "name": "Instinct: security flagged with source",
+      "pass": true
+    },
+    {
+      "name": "Instinct: appointments flagged with source",
+      "pass": true
+    },
+    {
+      "name": "Instinct: limited observation stated",
+      "pass": true
+    },
+    {
+      "name": "Instinct: suggestion is an unsent reviewable card",
+      "pass": true
+    },
+    {
+      "name": "Instinct: tagged body retains Jeff authority",
+      "pass": true
+    },
+    {
+      "name": "Instinct: bare approvals never send",
+      "pass": true
+    },
+    {
+      "name": "Instinct: different login cannot approve",
+      "pass": true
+    },
+    {
+      "name": "Instinct: intervening read withdraws consent",
+      "pass": true
+    },
+    {
+      "name": "Instinct: relayed instructions stay inert",
+      "pass": true
+    },
+    {
+      "name": "Instinct: no auto-reply job",
+      "pass": true
+    },
+    {
+      "name": "Instinct: private history never enters model context",
+      "pass": true
+    },
+    {
+      "name": "Instinct: initial send request only drafts",
+      "pass": true
+    },
+    {
+      "name": "Instinct: separate exact yes uses mock Andrea",
+      "pass": true
+    },
+    {
+      "name": "Instinct: one-shot approval cannot replay",
+      "pass": true
+    },
+    {
+      "name": "Instinct: unavailable bridge is honest",
+      "pass": true
+    },
+    {
+      "name": "Instinct: read failure never invents a reply",
+      "pass": true
+    },
+    {
+      "name": "Instinct: missing mapping cannot draft",
+      "pass": true
+    },
+    {
+      "name": "Instinct: all tasks avoid model and job dispatch",
+      "pass": true
+    },
+    {
+      "name": "Instinct: no unexpected wire writes",
+      "pass": true
+    }
+  ]
+}

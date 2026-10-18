@@ -1,0 +1,1152 @@
+{
+  "screenshots": [
+    "webbob-tab-chat-0927.png",
+    "webbob-tab-jobs-0927.png",
+    "webbob-tab-songs-0927.png",
+    "webbob-tab-models-0927.png",
+    "webbob-tab-settings-0927.png",
+    "webbob-tab-songs-editor-0927.png"
+  ],
+  "layouts": [
+    {
+      "tab": "Chat",
+      "width": 390,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 390,
+      "document": 390,
+      "view": 358,
+      "viewWidth": 358,
+      "buttons": [
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Jobs",
+      "width": 390,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 390,
+      "document": 390,
+      "view": 358,
+      "viewWidth": 358,
+      "buttons": [
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Songs",
+      "width": 390,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 390,
+      "document": 390,
+      "view": 358,
+      "viewWidth": 358,
+      "buttons": [
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Models",
+      "width": 390,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 390,
+      "document": 390,
+      "view": 358,
+      "viewWidth": 358,
+      "buttons": [
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Settings",
+      "width": 390,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 390,
+      "document": 390,
+      "view": 358,
+      "viewWidth": 358,
+      "buttons": [
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Chat",
+      "width": 320,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 320,
+      "document": 320,
+      "view": 288,
+      "viewWidth": 288,
+      "buttons": [
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Jobs",
+      "width": 320,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 320,
+      "document": 320,
+      "view": 288,
+      "viewWidth": 288,
+      "buttons": [
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Songs",
+      "width": 320,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 320,
+      "document": 320,
+      "view": 288,
+      "viewWidth": 288,
+      "buttons": [
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Models",
+      "width": 320,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 320,
+      "document": 320,
+      "view": 288,
+      "viewWidth": 288,
+      "buttons": [
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Settings",
+      "width": 320,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 320,
+      "document": 320,
+      "view": 288,
+      "viewWidth": 288,
+      "buttons": [
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Chat",
+      "width": 430,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 430,
+      "document": 430,
+      "view": 398,
+      "viewWidth": 398,
+      "buttons": [
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Jobs",
+      "width": 430,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 430,
+      "document": 430,
+      "view": 398,
+      "viewWidth": 398,
+      "buttons": [
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Songs",
+      "width": 430,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 430,
+      "document": 430,
+      "view": 398,
+      "viewWidth": 398,
+      "buttons": [
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Models",
+      "width": 430,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 430,
+      "document": 430,
+      "view": 398,
+      "viewWidth": 398,
+      "buttons": [
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Settings",
+      "width": 430,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 430,
+      "document": 430,
+      "view": 398,
+      "viewWidth": 398,
+      "buttons": [
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Chat",
+      "width": 390,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 390,
+      "document": 390,
+      "view": 358,
+      "viewWidth": 358,
+      "buttons": [
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Jobs",
+      "width": 390,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 390,
+      "document": 390,
+      "view": 358,
+      "viewWidth": 358,
+      "buttons": [
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Songs",
+      "width": 390,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 390,
+      "document": 390,
+      "view": 358,
+      "viewWidth": 358,
+      "buttons": [
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Models",
+      "width": 390,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 390,
+      "document": 390,
+      "view": 358,
+      "viewWidth": 358,
+      "buttons": [
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Settings",
+      "width": 390,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 390,
+      "document": 390,
+      "view": 358,
+      "viewWidth": 358,
+      "buttons": [
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Songs",
+      "width": 320,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 320,
+      "document": 320,
+      "view": 288,
+      "viewWidth": 288,
+      "buttons": [
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 56,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Songs",
+      "width": 390,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 390,
+      "document": 390,
+      "view": 358,
+      "viewWidth": 358,
+      "buttons": [
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 70,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    },
+    {
+      "tab": "Songs",
+      "width": 430,
+      "header": {
+        "y": 0,
+        "height": 66
+      },
+      "viewport": 430,
+      "document": 430,
+      "view": 398,
+      "viewWidth": 398,
+      "buttons": [
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        },
+        {
+          "width": 78,
+          "height": 49.046875,
+          "bottom": 840
+        }
+      ],
+      "openDetails": 0
+    }
+  ],
+  "checks": [
+    "All five tabs fit 320, 390 and 430 pixels; navigation targets meet 44 pixels; details start collapsed.",
+    "Reply preference survives reload; one conversation picker; unfinished attachment control removed.",
+    "Light theme across all tabs and empty song editor/audio controls at all three phone widths.",
+    "Real private song save/load/version history; previous audio and versions cleared on new song; unsaved edits protected; failed save never claims persistence.",
+    "Fixture: duplicate job cards collapse; recent results remain; unconfirmed activity is explicit; IDs stay hidden and costs stay collapsed; details stay open during polling; live activity overrides cached ready state.",
+    "Fixture: a damaged queue hides unverified finished results and never presents waiting work as zero.",
+    "Fixture: failures and stale responses clear prior jobs, finished results and model values without claiming no work; successful empty checks show useful empty states.",
+    "Fixture: chat retry details are collapsed, deduplicated and translated into plain words.",
+    "Real private chat sends a server-owned status reply and starts a new conversation without a model call.",
+    "Settings shows logout failures in place; a successful logout invalidates the session.",
+    "No browser runtime errors or external browser requests."
+  ],
+  "screenshot_data": "Actual isolated server responses; empty private chats/songs, current read-only host activity, unchecked private model health.",
+  "actual_jobs": {
+    "checked_at": 1790540288.05008,
+    "inspection": {
+      "screens_available": true,
+      "processes_available": true,
+      "queue_available": true
+    },
+    "working": [
+      {
+        "key": "lane-webbob-ui",
+        "project": "Web Bob",
+        "task": "Interface updates",
+        "models": [
+          "Codex"
+        ],
+        "state": "running",
+        "elapsed_seconds": 666
+      },
+      {
+        "key": "lane-webbob-voice",
+        "project": "Web Bob",
+        "task": "Voice updates",
+        "models": [
+          "Codex"
+        ],
+        "state": "running",
+        "elapsed_seconds": 2246
+      }
+    ],
+    "recently_finished": [],
+    "details": {
+      "queued": 0,
+      "unconfirmed": 0,
+      "costs": [],
+      "health": [
+        {
+          "provider": "Codex",
+          "state": "unchecked",
+          "age_seconds": null
+        },
+        {
+          "provider": "Claude",
+          "state": "unchecked",
+          "age_seconds": null
+        },
+        {
+          "provider": "Cursor",
+          "state": "unchecked",
+          "age_seconds": null
+        },
+        {
+          "provider": "Gemini",
+          "state": "unchecked",
+          "age_seconds": null
+        },
+        {
+          "provider": "MiniMax",
+          "state": "unchecked",
+          "age_seconds": null
+        }
+      ],
+      "sources": [
+        {
+          "label": "Queue",
+          "age_seconds": null
+        },
+        {
+          "label": "Job history",
+          "age_seconds": null
+        },
+        {
+          "label": "Provider health",
+          "age_seconds": null
+        }
+      ]
+    }
+  },
+  "actual_overview": {
+    "captured_at": "2026-09-27T20:18:08.086172+00:00",
+    "inspection": {
+      "screens_available": true,
+      "processes_available": true,
+      "queue_available": true
+    },
+    "work": [
+      {
+        "title": "Voice updates",
+        "worker": "codex",
+        "model": null,
+        "state": "running",
+        "elapsed_seconds": 2246,
+        "pid": 17751,
+        "screen": "lane-webbob-voice",
+        "job_id": null,
+        "source": "process"
+      },
+      {
+        "title": "Interface updates",
+        "worker": "codex",
+        "model": null,
+        "state": "running",
+        "elapsed_seconds": 666,
+        "pid": 44387,
+        "screen": "lane-webbob-ui",
+        "job_id": null,
+        "source": "process"
+      }
+    ],
+    "queued": [],
+    "models": {
+      "codex": {
+        "state": "unchecked",
+        "reason": null,
+        "retry_at": 0,
+        "last_success": null,
+        "usage": {}
+      },
+      "cursor": {
+        "state": "unchecked",
+        "reason": null,
+        "retry_at": 0,
+        "last_success": null,
+        "usage": {}
+      },
+      "claude": {
+        "state": "unchecked",
+        "reason": null,
+        "retry_at": 0,
+        "last_success": null,
+        "usage": {}
+      },
+      "gemini": {
+        "state": "unchecked",
+        "reason": null,
+        "retry_at": 0,
+        "last_success": null,
+        "usage": {}
+      },
+      "minimax": {
+        "state": "unchecked",
+        "reason": null,
+        "retry_at": 0,
+        "last_success": null,
+        "usage": {}
+      }
+    },
+    "automation": {
+      "launchd_loaded": false,
+      "launchd_files_ok": false
+    }
+  },
+  "result": "PASS",
+  "live_before": {
+    "listener": [
+      "99149 Sun Sep 27 12:40:03 2026     /opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python"
+    ],
+    "services": [
+      "17509.svc-dashboard-updater",
+      "45974.svc-reviewer",
+      "53542.svc-watchdog",
+      "77277.svc-webbob-reviewers",
+      "94801.svc-disk-watch",
+      "99081.svc-job-runner",
+      "99147.svc-webchat"
+    ]
+  },
+  "live_after": {
+    "listener": [
+      "99149 Sun Sep 27 12:40:03 2026     /opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python"
+    ],
+    "services": [
+      "17509.svc-dashboard-updater",
+      "45974.svc-reviewer",
+      "53542.svc-watchdog",
+      "77277.svc-webbob-reviewers",
+      "94801.svc-disk-watch",
+      "99081.svc-job-runner",
+      "99147.svc-webchat"
+    ]
+  },
+  "started_at": "2026-09-27T20:18:06.526844+00:00",
+  "finished_at": "2026-09-27T20:18:17.366506+00:00",
+  "live_services_unchanged": true,
+  "provider_calls": 0,
+  "jobs_created": 0,
+  "isolation": "Temporary data root and ephemeral loopback listener; no model calls, probes or workers started.",
+  "source_sha256": {
+    "webchat/static/index.html": "7f38950eb2c65e416c5a048fcd4cf1a06a296a9cae5cca226d03f310c40c0844",
+    "webchat/static/app.js": "eba7c83e2a4318146243ed172dcc70ab0f04aacb45c1626d903982dc738d4c03",
+    "webchat/static/style.css": "d1e1823be86b0f2be5527dc74f72e560d65867d4b231088680ae3319bb35600a",
+    "webchat/tab_status.py": "50b6ead1dcc736c923b6603e2fe5bfc90de660a52c39c682c38e1c4d03a08a5a",
+    "webchat/app.py": "3189210cf84054d5629027d6017cbc9965eabcfca211d69a4c95f8dddee946c8",
+    "webchat/jobs_view.py": "714b2330bb96a973757d50713bbb12c4faac97f5c81f8855aa7a1b9648dca421",
+    "webchat/worker_activity.py": "ff21ead2a1a36ed8cd34f79dad056621b4e57c37477ac783a385dee1a7383a89",
+    "webchat/live_status_snapshot.py": "53b93e1ef610400517462fc7aa9c042355341bae7f9448b28e73eca1008af73c",
+    "webchat/browser_tabs.cjs": "1ee86b6ca4855f3eee087cb7a5a5e56774b7557c06d304bdc77811986776ca57",
+    "webchat/isolated_tabs_proof.py": "68099f52475fd58ba8313fc713ee1c587b3a5f1426c105ef2712b2a37e1c89b6"
+  },
+  "screenshot_sha256": {
+    "webbob-tab-chat-0927.png": "319aad812aea324b41747536db99638d09ec6d2c5b40aa850bc5b4dd8156d787",
+    "webbob-tab-jobs-0927.png": "34d3608e80fb06878178ce9d849305744f4742b4f5b1060af336975865c4aa2d",
+    "webbob-tab-songs-0927.png": "21a85b7220b4e67cb67e5e9f92f95a0c1290c36bf0e1ee57d03ac3299bf798b0",
+    "webbob-tab-models-0927.png": "6c99dbcade4d657a5d68de060e2fe4d724aae5986740836e5b8116013700796f",
+    "webbob-tab-settings-0927.png": "52d7579b0f2575a0ace3050cc2eb7ea884e9ccde3dbc96ee668057e9bba6b9fc",
+    "webbob-tab-songs-editor-0927.png": "a1e4a03d9276eb203f140a6c1ca55a5d1591b14f5d20f6a2bb7cc4ce69ef633b"
+  }
+}

@@ -1,0 +1,1526 @@
+### FILE reviews/WEBCHAT-READY-R10-DESIGN.md
+# Web Bob Round 10 — research-first design note
+
+**Date:** 2026-09-27 CT · **Branch:** `draft/webchat-failover-20260927` · **No Grok.**
+
+## Research pass — what exists today
+
+| Source | Borrow | Reject | Why |
+|--------|--------|--------|-----|
+| [Apple HIG — Tab bars](https://developer.apple.com/design/human-interface-guidelines/tab-bars) | Fixed 5-tab bar, icon + label, blur material, safe-area | Pop-up sheet as primary nav | Jeff 02:30 — sheet hid chat and cut Settings label |
+| [Apple HIG — Messages (patterns)](https://developer.apple.com/design/human-interface-guidelines/messages) | Full-height thread, pinned composer, slim header, high-contrast bubbles | Raw markdown / file paths in chrome | Chat is the product on iPhone |
+| ChatGPT / Claude iOS (product UX, not code) | Quick actions above composer, subtle model attribution, tap-to-copy code | Multi-panel status above thread | Matches Grok Bot iPhone feel Jeff approved |
+| [assistant-ui](https://github.com/assistant-ui/assistant-ui) | Sticky composer + scrollable thread separation | React rewrite tonight | Vanilla JS stack stays |
+| [LibreChat](https://github.com/danny-avila/LibreChat) | Per-message provider meta; lane health cards | Exposing branch/SHA syntax in UI | Plain English in Jobs/Models |
+| Temporal / LangGraph handoff docs | Isolated drill fixture + prod fingerprint (R9) | Shared drill on prod STATE | P0 leakage (`drill-r9`, fake SHAs) |
+| MiniMax music API | — | Any new music endpoints (410) | Jeff 02:00 — lyrics, sketch, Logic MCP only |
+| Web push (web.dev PWA) | Offline banner + retry (shipped) | Assuming iOS push without grant | Defer push to structural backlog |
+
+## R10 build (this round)
+
+1. **iPhone-first polish:** Tighter header/composer chrome for ≥0.75 `#messages` ratio gate; job cards with Stop/Details actions; conductor buttons submit chat actions (not syntax dumps); Models/Songs empty states; tab label fit on 390px width.
+2. **Failover both ways:** Re-run `live_handback_drill.py` ×2 runs ×2 with `WEBCHAT_HANDBACK_TAG=r10`; prod fingerprint unchanged.
+3. **Lowest scores:** Self-improve `healthy` signal + clearer Settings copy; music coach rhyme/meter paths; voice long-press + keyboard dictation hint; conductor one-tap actions.
+4. **Live dashboard:** Jobs tab continues `live_ops` fields (NOW line, 3 log lines, stall, SHA, roles, MiniMax cap).
+5. **Council:** Gemini + MiniMax + Claude critique diff; vote on disagreements.
+
+## Council alignment (pre-build)
+
+Rank: **ship chat-first ratio gate + job card actions + conductor submit** before new features (WebAuthn, push). Screenshots at 390×844 and 430×932 in `evidence/iphone-r10/`.
+
+## Sources
+
+`WEBCHAT-READY-R9-DESIGN.md`, `ALIGNMENT-DESIGN.md`, Apple HIG tab bar & layout, Jeff `WEBCHAT-READY.md` ADDED 02:11–02:30.
+
+
+### FILE webchat/static/app.js
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+if ($("login-form")) {
+  $("login-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = event.target.querySelector("button");
+    button.disabled = true;
+    $("login-error").textContent = "";
+    try {
+      const response = await fetch("/login", { method: "POST", body: new URLSearchParams(new FormData(event.target)), credentials: "same-origin" });
+      if (response.ok) location.assign("/");
+      else $("login-error").textContent = (await response.json()).error || "Login failed.";
+    } catch (_) { $("login-error").textContent = "Cannot reach Bob. Please try again."; }
+    finally { button.disabled = false; }
+  });
+} else {
+  let csrf = "", current = "", busy = false, sending = false, revision = "", polling = false, draftRequest = null, pollFailures = 0;
+  const providers = { codex: "Codex", cursor: "Cursor", gemini: "Gemini", minimax: "MiniMax", claude: "Claude" };
+  function escapeHtml(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function speechText(text) {
+    return text.replace(/```[\s\S]*?```/g, " ").replace(/`([^`]+)`/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/[#>*_-]/g, " ").replace(/\s+/g, " ").trim();
+  }
+  function renderMarkdown(text) {
+    let html = escapeHtml(text);
+    html = html.replace(/```([\s\S]*?)```/g, (_, code) => {
+      const inner = code.trim();
+      return `<pre class="code-block" tabindex="0"><button type="button" class="copy-code" aria-label="Copy code">Copy</button><code>${inner}</code></pre>`;
+    });
+    html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+    html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" rel="noopener noreferrer" target="_blank">$1</a>');
+    html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    html = html.replace(/^### (.+)$/gm, "<h4 class=\"md-h\">$1</h4>");
+    html = html.replace(/^## (.+)$/gm, "<h3 class=\"md-h\">$1</h3>");
+    html = html.replace(/(?:^|\n)(\d+\. .+(?:\n\d+\. .+)*)/g, (block) => {
+      const items = block.trim().split("\n").map((line) => `<li>${line.replace(/^\d+\.\s+/, "")}</li>`).join("");
+      return `<ol>${items}</ol>`;
+    });
+    html = html.replace(/(?:^|\n)([-*] .+(?:\n[-*] .+)*)/g, (block) => {
+      const items = block.trim().split("\n").map((line) => `<li>${line.replace(/^[-*]\s+/, "")}</li>`).join("");
+      return `<ul>${items}</ul>`;
+    });
+    html = html.replace(/\n/g, "<br>");
+    return html;
+  }
+  const stored = (key) => { try { return localStorage.getItem(key); } catch (_) { return null; } };
+  const remember = (key, value) => { try { localStorage.setItem(key, value); } catch (_) {} };
+  async function api(path, data) {
+    const response = await fetch(path, { credentials: "same-origin", cache: "no-store",
+      ...(data === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: JSON.stringify(data) }) });
+    if (response.status === 401) { location.assign("/login"); throw new Error("Please log in."); }
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Request failed.");
+    return result;
+  }
+  function composerState() {
+    $("send").disabled = busy || sending || !current;
+    $("stop").hidden = !busy;
+    $("message").disabled = !current;
+    const dot = $("status-dot");
+    if (dot) dot.classList.toggle("busy", busy || sending);
+  }
+  const conductorPrompts = {
+    round: "start a job: Web Bob ready round (draft only, no merge)",
+    council: "run council on: score Web Bob iPhone tab UI and handback failover",
+    status: "status",
+    stop: "stop the current screen job if it's safe (draft only)",
+  };
+  async function submitChatText(text, { confirmStop = false } = {}) {
+    if (!text || !current) return;
+    if (confirmStop && !window.confirm("Stop the current screen job if it's safe?")) return;
+    if (busy || sending) {
+      $("notice").textContent = "Wait for the current reply to finish, then try again.";
+      setBottomTab("chat");
+      return;
+    }
+    setBottomTab("chat");
+    const provider = $("provider-choice").value;
+    draftRequest = { conversation_id: current, message: text, provider, request_id: crypto.randomUUID() };
+    sending = true;
+    composerState();
+    $("notice").textContent = "";
+    try {
+      const conversation = await api("/api/messages", draftRequest);
+      draftRequest = null;
+      render(conversation);
+      await refreshList();
+    } catch (error) {
+      $("notice").textContent = error.message;
+    } finally {
+      sending = false;
+      composerState();
+    }
+  }
+  document.querySelector(".app")?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-conductor]");
+    if (!btn) return;
+    const key = btn.dataset.conductor;
+    const text = conductorPrompts[key];
+    if (!text) return;
+    submitChatText(text, { confirmStop: key === "stop" });
+  });
+  let activeBottomTab = "chat";
+  let songSnapshot = "";
+  function songFieldsText() {
+    return ["song-title", "song-lyrics", "song-chords", "song-notes"]
+      .map((id) => $(id)?.value || "").join("\x1e");
+  }
+  function markSongClean() { songSnapshot = songFieldsText(); }
+  async function confirmLeaveSongEdits() {
+    if (songFieldsText() === songSnapshot) return true;
+    return window.confirm("You have unsaved song edits. Continue without saving?");
+  }
+  function setBottomTab(name) {
+    if (activeBottomTab === "song" && name !== "song" && songFieldsText() !== songSnapshot) {
+      if (!window.confirm("You have unsaved song edits. Leave this tab anyway?")) return;
+    }
+    activeBottomTab = name;
+    for (const btn of document.querySelectorAll(".bottom-tab")) {
+      const on = btn.dataset.bottom === name;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-current", on ? "page" : "false");
+    }
+    for (const view of document.querySelectorAll(".main-view")) {
+      const on = view.dataset.view === name;
+      view.hidden = !on;
+      view.classList.toggle("active", on);
+    }
+  }
+  for (const btn of document.querySelectorAll(".bottom-tab")) {
+    btn.addEventListener("click", () => setBottomTab(btn.dataset.bottom));
+  }
+  $("open-chats")?.addEventListener("click", () => {
+    syncConversationDialog();
+    $("chats-dialog")?.showModal();
+  });
+  $("close-chats")?.addEventListener("click", () => $("chats-dialog")?.close());
+  function syncConversationDialog() {
+    const main = $("conversations");
+    const dialog = $("conversations-dialog");
+    if (!main || !dialog) return;
+    dialog.replaceChildren(...Array.from(main.options).map((opt) => {
+      const clone = document.createElement("option");
+      clone.value = opt.value;
+      clone.textContent = opt.textContent;
+      return clone;
+    }));
+    dialog.value = main.value;
+  }
+  $("conversations-dialog")?.addEventListener("change", async () => {
+    $("conversations").value = $("conversations-dialog").value;
+    $("conversations").dispatchEvent(new Event("change"));
+    $("chats-dialog")?.close();
+  });
+  $("new-chat-dialog")?.addEventListener("click", () => { $("new-chat")?.click(); $("chats-dialog")?.close(); });
+  const chipActions = {
+    status: "status",
+    round: "start a job: Web Bob ready round (draft only, no merge)",
+    council: "run council on: score Web Bob mobile UX after bottom tab bar",
+    song: "",
+  };
+  $("quick-chips")?.addEventListener("click", (event) => {
+    const chip = event.target.closest("[data-chip]");
+    if (!chip) return;
+    const key = chip.dataset.chip;
+    if (key === "song") {
+      setBottomTab("song");
+      $("song-title")?.focus();
+      return;
+    }
+    const text = chipActions[key];
+    if (!text) return;
+    setBottomTab("chat");
+    const field = $("message");
+    field.value = text;
+    field.focus();
+    field.dispatchEvent(new Event("input"));
+  });
+  function render(conversation) {
+    if (conversation.id !== current) return;
+    const nextRevision = JSON.stringify(conversation);
+    busy = conversation.messages.some((message) => ["running", "queued", "waiting"].includes(message.status));
+    composerState();
+    if (nextRevision === revision) return;
+    revision = nextRevision;
+    const last = conversation.messages.at(-1);
+    if (last?.status === "error" && last.role === "assistant") {
+      $("notice").textContent = last.content || "Reply failed. Edit your message and send again.";
+    } else if (last?.status === "cancelled" && last.role === "assistant" && !sending) {
+      $("notice").textContent = "Reply stopped. Send again when ready.";
+    }
+    const panel = $("messages"), nearBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 100;
+    const fragment = document.createDocumentFragment();
+    if (!conversation.messages.length) {
+      const welcome = document.createElement("div"); welcome.className = "welcome";
+      const title = document.createElement("h2"); title.textContent = "What’s on your mind?";
+      const text = document.createElement("p"); text.textContent = "Ask a question, work on a draft, or catch up on what’s running.";
+      welcome.append(title, text); fragment.append(welcome);
+    }
+    for (const message of conversation.messages) {
+      const pending = ["queued", "running"].includes(message.status);
+      const article = document.createElement("article");
+      article.className = `message ${message.role} ${pending ? "pending" : ""} ${message.status === "error" ? "error" : ""}`;
+      const meta = document.createElement("div"); meta.className = "meta";
+      meta.textContent = `${message.role === "user" ? "You" : "Bob"}${message.provider ? " · " + providers[message.provider] : ""} · ${new Date(message.created_at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+      const body = document.createElement("div"); body.className = "body";
+      if (pending) body.textContent = message.provider ? `Thinking via ${providers[message.provider]}…` : "One moment…";
+      else if (message.role === "assistant") body.innerHTML = renderMarkdown(message.content || "");
+      else body.textContent = message.content;
+      article.append(meta, body);
+      if (message.status === "waiting" && message.retry_at) {
+        const retry = document.createElement("div"); retry.className = "attempt";
+        retry.textContent = `Queued · retry after ${new Date(message.retry_at * 1000).toLocaleTimeString()}`;
+        article.append(retry);
+      }
+      if (message.action_card) {
+        const card = document.createElement("div"); card.className = "action-card";
+        const title = document.createElement("div"); title.className = "action-card-title";
+        title.textContent = message.action_card.reason || "Action";
+        card.append(title);
+        const suffix = message.action_card.state === "queued" ? "Queued for scheduler"
+          : message.action_card.state === "confirm" ? "Tap approve to continue (draft only)"
+          : message.action_card.state === "refused" ? "Blocked by safety rules"
+          : "No action executed";
+        const hint = document.createElement("div"); hint.className = "action-card-hint"; hint.textContent = suffix;
+        card.append(hint);
+        if (message.action_card.state === "confirm" && message.action_card.executable) {
+          const actions = document.createElement("div"); actions.className = "action-card-actions";
+          const council = /council/i.test(message.action_card.reason || "");
+          const proposalId = message.action_card.proposal_id || message.action_card.id || "";
+          const approve = document.createElement("button");
+          approve.type = "button"; approve.className = "action-approve";
+          approve.textContent = council ? "Yes, run council" : "Yes, start job";
+          approve.addEventListener("click", () => {
+            const suffix = proposalId ? ` proposal ${proposalId}` : "";
+            $("message").value = council ? `yes, run council${suffix}` : `yes, start job${suffix}`;
+            $("message").dispatchEvent(new Event("input"));
+            $("composer").requestSubmit();
+          });
+          const deny = document.createElement("button");
+          deny.type = "button"; deny.className = "action-deny";
+          deny.textContent = council ? "Dismiss" : "Not now";
+          deny.addEventListener("click", () => {
+            $("message").value = council ? "never mind council" : "never mind";
+            $("message").dispatchEvent(new Event("input"));
+            $("composer").requestSubmit();
+          });
+          actions.append(approve, deny);
+          card.append(actions);
+        }
+        article.append(card);
+      }
+      if (message.attempts?.length) {
+        const detail = document.createElement("div"); detail.className = "attempt";
+        detail.textContent = message.attempts.map((a) => a.message || `${providers[a.provider]}: ${a.error}${a.skipped ? " (cooldown or busy)" : ""}`).join(" · ");
+        article.append(detail);
+      }
+      fragment.append(article);
+    }
+    panel.replaceChildren(fragment);
+    if (nearBottom || sending) panel.scrollTop = panel.scrollHeight;
+  }
+  async function refreshList() {
+    const data = await api("/api/conversations");
+    const options = data.conversations.map((conversation) => {
+      const option = document.createElement("option"); option.value = conversation.id; option.textContent = conversation.title; return option;
+    });
+    $("conversations").replaceChildren(...options);
+    if (!current || !data.conversations.some((conversation) => conversation.id === current)) current = data.active_conversation || data.conversations[0]?.id;
+    $("conversations").value = current;
+    remember("bob.conversation", current);
+  }
+  async function poll() {
+    if (!current || polling) return;
+    polling = true;
+    try {
+      render(await api(`/api/conversations/${current}`));
+      pollFailures = 0;
+      $("connection").textContent = "On the mini";
+      $("status-dot")?.classList.remove("warn");
+      $("offline-banner")?.setAttribute("hidden", "");
+      if (!busy && $("notice").textContent === "Stopping this reply…") $("notice").textContent = "";
+    } catch (error) {
+      pollFailures += 1;
+      $("connection").textContent = pollFailures >= 3 ? "Offline — check the mini" : "Reconnecting…";
+      if (pollFailures >= 2) $("status-dot")?.classList.add("warn");
+      if (pollFailures >= 2) $("offline-banner")?.removeAttribute("hidden");
+      if (pollFailures < 3) $("notice").textContent = error.message;
+    }
+    finally { polling = false; }
+  }
+  $("messages")?.addEventListener("contextmenu", (event) => {
+    const article = event.target.closest(".message");
+    if (!article || article.classList.contains("pending")) return;
+    event.preventDefault();
+    const body = article.querySelector(".body");
+    const text = body?.innerText?.trim();
+    if (!text) return;
+    const menu = document.createElement("div");
+    menu.className = "msg-menu";
+    menu.innerHTML = '<button type="button" data-act="copy">Copy</button><button type="button" data-act="speak">Read aloud</button>';
+    const close = () => { menu.remove(); document.removeEventListener("click", close, true); };
+    menu.addEventListener("click", async (ev) => {
+      const act = ev.target.closest("[data-act]")?.dataset.act;
+      if (act === "copy") {
+        try { await navigator.clipboard.writeText(text); $("notice").textContent = "Copied."; } catch (_) {}
+      }
+      if (act === "speak" && "speechSynthesis" in window) {
+        await ensureSpeechVoices();
+        speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(speechText(text).slice(0, 4000));
+        utter.rate = 1.02;
+        speechSynthesis.speak(utter);
+      }
+      close();
+    });
+    article.append(menu);
+    setTimeout(() => document.addEventListener("click", close, true), 0);
+  });
+  $("messages")?.addEventListener("click", async (event) => {
+    const btn = event.target.closest(".copy-code");
+    if (!btn) return;
+    const code = btn.parentElement?.querySelector("code")?.textContent || "";
+    try {
+      await navigator.clipboard.writeText(code);
+      btn.textContent = "Copied";
+      setTimeout(() => { btn.textContent = "Copy"; }, 1200);
+    } catch (_) { $("notice").textContent = "Could not copy — select the code manually."; }
+  });
+  $("composer").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = $("message").value.trim();
+    if (!message || busy || sending) return;
+    const provider = $("provider-choice").value;
+    if (!draftRequest || draftRequest.message !== message || draftRequest.conversation_id !== current || draftRequest.provider !== provider) {
+      draftRequest = { conversation_id: current, message, provider, request_id: crypto.randomUUID() };
+    }
+    sending = true; composerState(); $("notice").textContent = "";
+    try {
+      const conversation = await api("/api/messages", draftRequest);
+      const submitted = draftRequest;
+      if (submitted.conversation_id === current && submitted.message === $("message").value.trim()) {
+        $("message").value = "";
+        $("message").style.height = "auto";
+        draftRequest = null;
+      }
+      render(conversation); await refreshList();
+    } catch (error) { $("notice").textContent = error.message; }
+    finally { sending = false; composerState(); $("message").focus(); }
+  });
+  $("message").addEventListener("input", () => {
+    $("message").style.height = "auto";
+    $("message").style.height = Math.min($("message").scrollHeight, 180) + "px";
+  });
+  $("message").addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing && !matchMedia("(pointer: coarse)").matches) {
+      event.preventDefault(); $("composer").requestSubmit();
+    }
+  });
+  $("conversations").addEventListener("change", async () => {
+    current = $("conversations").value; remember("bob.conversation", current); revision = ""; busy = false;
+    await poll(); $("messages").scrollTop = $("messages").scrollHeight;
+  });
+  $("new-chat").addEventListener("click", async () => {
+    try { const conversation = await api("/api/conversations", {}); current = conversation.id; revision = ""; await refreshList(); render(conversation); $("message").focus(); }
+    catch (error) { $("notice").textContent = error.message; }
+  });
+  let micRecognition = null;
+  let micErrorActive = false;
+  let speechVoicesReady = false;
+  function primeSpeechVoices() {
+    if (!("speechSynthesis" in window)) return;
+    const voices = speechSynthesis.getVoices();
+    if (voices.length) speechVoicesReady = true;
+    speechSynthesis.onvoiceschanged = () => {
+      if (speechSynthesis.getVoices().length) speechVoicesReady = true;
+    };
+  }
+  function ensureSpeechVoices(timeoutMs = 600) {
+    primeSpeechVoices();
+    if (speechVoicesReady) return Promise.resolve();
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (speechSynthesis.getVoices().length) speechVoicesReady = true;
+        resolve();
+      };
+      speechSynthesis.onvoiceschanged = finish;
+      setTimeout(finish, timeoutMs);
+    });
+  }
+  let speakingUtterance = null;
+  $("mic").addEventListener("click", () => {
+    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Speech) { $("notice").textContent = "Voice input needs Safari on iPhone or Chrome on desktop. Keyboard dictation always works."; return; }
+    if (micRecognition) {
+      micRecognition.stop();
+      micRecognition = null;
+      $("mic").classList.remove("mic-active");
+      $("mic").setAttribute("aria-pressed", "false");
+      micErrorActive = false;
+      $("notice").textContent = "";
+      return;
+    }
+    micErrorActive = false;
+    const rec = new Speech();
+    micRecognition = rec;
+    rec.lang = "en-US";
+    rec.interimResults = true;
+    rec.continuous = matchMedia("(pointer: coarse)").matches;
+    rec.maxAlternatives = 1;
+    $("mic").classList.add("mic-active");
+    $("mic").setAttribute("aria-pressed", "true");
+    $("notice").textContent = rec.continuous
+      ? "Listening… tap mic again to stop (iPhone: allow mic when prompted)."
+      : "Listening… tap mic again to stop.";
+    rec.onresult = (event) => {
+      if (micRecognition !== rec) return;
+      const transcript = Array.from(event.results).map((row) => row[0].transcript).join(" ").trim();
+      $("message").value = ($("message").value + " " + transcript).trim();
+      $("message").dispatchEvent(new Event("input"));
+    };
+    rec.onend = () => {
+      if (micRecognition !== rec) return;
+      micRecognition = null;
+      $("mic").classList.remove("mic-active");
+      $("mic").setAttribute("aria-pressed", "false");
+      if (!micErrorActive) $("notice").textContent = "";
+    };
+    rec.onerror = (event) => {
+      if (micRecognition !== rec) return;
+      micErrorActive = true;
+      const reason = event?.error || "unknown";
+      const hint = reason === "not-allowed"
+        ? "Microphone blocked — allow mic in Safari settings or use keyboard dictation."
+        : "Could not capture voice. Try typing or keyboard dictation.";
+      $("notice").textContent = hint;
+    };
+    try {
+      rec.start();
+    } catch (_) {
+      micErrorActive = true;
+      micRecognition = null;
+      $("mic").classList.remove("mic-active");
+      $("mic").setAttribute("aria-pressed", "false");
+      $("notice").textContent = "Could not start voice input. Try keyboard dictation.";
+    }
+  });
+  $("speak").addEventListener("click", async () => {
+    if (!("speechSynthesis" in window)) { $("notice").textContent = "Read-aloud is not supported here."; return; }
+    if (micRecognition) {
+      micRecognition.stop();
+      micRecognition = null;
+      $("mic").classList.remove("mic-active");
+      $("mic").setAttribute("aria-pressed", "false");
+    }
+    if (speakingUtterance) {
+      speechSynthesis.cancel();
+      speakingUtterance = null;
+      $("speak").classList.remove("mic-active");
+      $("speak").setAttribute("aria-pressed", "false");
+      return;
+    }
+    try {
+      const conversation = await api(`/api/conversations/${current}`);
+      const last = conversation.messages.filter((m) => m.role === "assistant" && m.status === "done").at(-1);
+      if (!last?.content) { $("notice").textContent = "No finished reply to read."; return; }
+      await ensureSpeechVoices();
+      speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(speechText(last.content).slice(0, 4000));
+      utter.rate = 1.02;
+      const voices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith("en"));
+      if (voices.length) utter.voice = voices.find((v) => /samantha|daniel|english/i.test(v.name)) || voices[0];
+      utter.onend = utter.onerror = () => {
+        speakingUtterance = null;
+        $("speak").classList.remove("mic-active");
+        $("speak").setAttribute("aria-pressed", "false");
+      };
+      speakingUtterance = utter;
+      $("speak").classList.add("mic-active");
+      $("speak").setAttribute("aria-pressed", "true");
+      speechSynthesis.speak(utter);
+    } catch (error) { $("notice").textContent = error.message; }
+  });
+  $("stop").addEventListener("click", async () => {
+    try { await api("/api/cancel", { conversation_id: current }); $("notice").textContent = "Stopping this reply…"; }
+    catch (error) { $("notice").textContent = error.message; }
+  });
+  $("logout").addEventListener("click", async () => {
+    try { await api("/api/logout", {}); location.assign("/login"); }
+    catch (error) { $("notice").textContent = error.message; }
+  });
+  $("close-report")?.addEventListener("click", () => $("report")?.close());
+  let songProjectId = stored("bob.songProject") || "";
+  async function loadSongList(selectId) {
+    const list = await api("/api/song-projects");
+    const picker = $(selectId || "song-picker");
+    if (!picker) return list;
+    picker.replaceChildren(...list.projects.map((p) => {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.title || "Untitled";
+      return opt;
+    }));
+    if (!list.projects.length) {
+      const empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = "No songs yet — tap New song";
+      picker.append(empty);
+    }
+    return list;
+  }
+  async function loadSong(id) {
+    try {
+      const list = await loadSongList("song-picker");
+      const row = list.projects.find((p) => p.id === (id || songProjectId)) || list.projects[0];
+      if (!row) return;
+      songProjectId = row.id;
+      remember("bob.songProject", songProjectId);
+      $("song-picker").value = songProjectId;
+      const project = await api(`/api/song-projects/${songProjectId}`);
+      $("song-title").value = project.title || "";
+      $("song-lyrics").value = project.lyrics || "";
+      $("song-chords").value = project.chords || "";
+      $("song-notes").value = project.notes || "";
+      const versions = $("song-versions");
+      if (versions) {
+        const rows = (project.versions || []).slice().reverse().slice(0, 6);
+        if (rows.length) {
+          versions.hidden = false;
+          versions.replaceChildren(...rows.map((v) => {
+            const li = document.createElement("li");
+            const when = v.at ? new Date(v.at * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+            li.textContent = `${when}${v.note ? " · " + v.note : ""}`;
+            return li;
+          }));
+        } else {
+          versions.hidden = true;
+          versions.replaceChildren();
+        }
+      }
+      markSongClean();
+    } catch (_) { $("song-notice").textContent = "Offline — edits stay on device until you save."; }
+  }
+  $("song-picker")?.addEventListener("change", async () => {
+    if (!(await confirmLeaveSongEdits())) {
+      $("song-picker").value = songProjectId || "";
+      return;
+    }
+    await loadSong($("song-picker").value);
+  });
+  $("song-new")?.addEventListener("click", async () => {
+    if (!(await confirmLeaveSongEdits())) return;
+    songProjectId = "";
+    $("song-picker").value = "";
+    $("song-title").value = "";
+    $("song-lyrics").value = "";
+    $("song-chords").value = "";
+    $("song-notes").value = "";
+    $("song-title").focus();
+    markSongClean();
+  });
+  $("song-coach")?.addEventListener("click", () => {
+    setBottomTab("chat");
+    const field = $("message");
+    field.value = "help me with rhyme and song structure for this draft";
+    field.focus();
+    field.dispatchEvent(new Event("input"));
+    $("song-notice").textContent = "Tip sent to chat — send when ready.";
+  });
+  $("song-save").addEventListener("click", async () => {
+    $("song-notice").textContent = "Saving…";
+    try {
+      const project = await api("/api/song-projects", {
+        id: songProjectId || undefined,
+        title: $("song-title").value,
+        lyrics: $("song-lyrics").value,
+        chords: $("song-chords").value,
+        notes: $("song-notes").value,
+        version_note: "saved from phone",
+      });
+      songProjectId = project.id; remember("bob.songProject", songProjectId);
+      $("song-notice").textContent = "Saved " + new Date().toLocaleTimeString();
+      markSongClean();
+      await loadSongList("song-picker");
+      $("song-picker").value = project.id;
+    } catch (error) { $("song-notice").textContent = error.message; }
+  });
+  $("song-demo").addEventListener("click", async () => {
+    const lyrics = $("song-lyrics").value.trim();
+    if (!lyrics) { $("song-notice").textContent = "Add lyrics first."; return; }
+    let receipt = "";
+    try {
+      const quote = await api("/api/music/demo", { lyrics, style: $("song-notes").value || "acoustic songwriter" });
+      if (quote.needs_confirm) {
+        receipt = quote.receipt || "";
+        if (!quote.can_afford_demo) { $("song-notice").textContent = quote.message || "Cap too low for a demo."; return; }
+        if (!window.confirm(quote.message || "Generate local sketch demo ($0)?")) return;
+      }
+    } catch (error) { $("song-notice").textContent = error.message; return; }
+    $("song-notice").textContent = "Generating demo…";
+    try {
+      const demo = await api("/api/music/demo", {
+        lyrics, style: $("song-notes").value || "acoustic songwriter", confirm: true, receipt,
+      });
+      if (demo.audio_id) {
+        const player = $("song-player");
+        player.hidden = false;
+        player.src = `/api/audio/${demo.audio_id}`;
+        $("song-notice").textContent = `Demo ready · ${demo.engine || "local-sketch"} · ${demo.bytes} bytes`;
+      } else $("song-notice").textContent = demo.message || "Demo queued.";
+    } catch (error) { $("song-notice").textContent = error.message; }
+  });
+  $("song-upload").addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    $("song-notice").textContent = "Uploading…";
+    try {
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      const stored = await api("/api/audio/upload", { filename: file.name, data_base64: btoa(binary) });
+      const player = $("song-player");
+      player.hidden = false;
+      player.src = `/api/audio/${stored.audio_id}`;
+      $("song-notice").textContent = `Uploaded ${file.name}`;
+    } catch (error) { $("song-notice").textContent = error.message; }
+    event.target.value = "";
+  });
+  function renderScoresTable(scores) {
+    const host = $("scores-table");
+    if (!host) return;
+    if (!scores?.length) {
+      host.replaceChildren();
+      return;
+    }
+    host.replaceChildren(...scores.slice(0, 8).map((row) => {
+      const card = document.createElement("article");
+      card.className = "score-card";
+      const label = document.createElement("span");
+      label.textContent = row.area || "Score";
+      const val = document.createElement("strong");
+      val.textContent = row.score != null && String(row.score).length ? String(row.score) : "—";
+      card.append(label, val);
+      return card;
+    }));
+  }
+  function plainJobTitle(job) {
+    const round = job.round ? `Round ${job.round}` : "Job";
+    const engine = (job.engine || "worker").replace(/_/g, " ");
+    if (job.live_screen) return `${round} · live on screen`;
+    return `${round} · ${engine}`;
+  }
+  function renderLiveJobs(jobs) {
+    const host = $("live-jobs");
+    const empty = $("jobs-empty");
+    if (!host) return;
+    const rows = (jobs || []).slice(0, 6);
+    if (empty) empty.hidden = rows.length > 0;
+    host.replaceChildren(...rows.map((job) => {
+      const card = document.createElement("article");
+      card.className = "live-job";
+      const header = document.createElement("header");
+      const title = document.createElement("strong");
+      title.textContent = plainJobTitle(job);
+      const stall = document.createElement("span");
+      stall.className = `stall ${job.stall_state === "stalled" ? "stalled" : "running"}`;
+      stall.textContent = job.stall_state || "unknown";
+      const elapsed = document.createElement("span");
+      const mins = Math.round((job.elapsed_seconds || 0) / 60);
+      const roundNote = job.round ? ` · round ${job.round}` : "";
+      elapsed.textContent = `${mins}m elapsed${roundNote}${job.started_at ? " · " + job.started_at.replace("T", " ").slice(0, 16) : ""}`;
+      header.append(title, stall, elapsed);
+      const now = document.createElement("p");
+      const events = (job.events || []).filter((e) => e && (e.text || e.sha));
+      if (events.length) {
+        now.textContent = events.find((e) => e.kind === "status")?.text || job.plain_now || "Working…";
+      } else {
+        now.textContent = job.plain_now || "Working…";
+      }
+      const tail = document.createElement("pre");
+      tail.className = "log-tail";
+      const logLines = events.length
+        ? events.filter((e) => e.kind === "log").map((e) => e.text).slice(-3)
+        : (job.log_tail || []).slice(-3);
+      tail.textContent = logLines.length ? logLines.join("\n") : "";
+      const commit = document.createElement("p");
+      commit.className = "job-commit muted";
+      if (job.last_commit?.sha) {
+        const msg = job.last_commit.message ? job.last_commit.message.replace(/\.md\b/gi, "").slice(0, 80) : "";
+        commit.textContent = `Latest commit ${job.last_commit.sha}${msg ? " — " + msg : ""}`;
+      }
+      const actions = document.createElement("div");
+      actions.className = "live-job-actions";
+      const stopBtn = document.createElement("button");
+      stopBtn.type = "button";
+      stopBtn.className = "quiet";
+      stopBtn.textContent = "Stop";
+      stopBtn.addEventListener("click", () => submitChatText(conductorPrompts.stop, { confirmStop: true }));
+      const detailBtn = document.createElement("button");
+      detailBtn.type = "button";
+      detailBtn.className = "quiet";
+      detailBtn.textContent = "Details";
+      detailBtn.addEventListener("click", () => {
+        const bodyParts = [job.plain_now || "", ...logLines, ...(job.log_tail || [])].filter(Boolean);
+        const body = [...new Set(bodyParts)].join("\n\n") || "No extra detail yet.";
+        $("report-title").textContent = plainJobTitle(job);
+        $("report-date").textContent = elapsed.textContent || "";
+        $("report-body").textContent = body;
+        $("report")?.showModal();
+      });
+      actions.append(stopBtn, detailBtn);
+      card.append(header, now, tail, commit, actions);
+      return card;
+    }));
+  }
+  async function refreshPanel() {
+    try {
+      const data = await api("/api/panel");
+      const meta = data.live_ops_meta || {};
+      const ops = data.live_ops || {};
+      const spend = ops.minimax_spend || {};
+      const roles = ops.roles || {};
+      const jobs = ops.running_jobs || [];
+      const committed = spend.committed_usd;
+      const cap = spend.cap_usd || 59;
+      const spendText = committed === undefined || committed === null ? "budget unknown" : `$${committed.toFixed(2)} of $${cap}`;
+      const dashAge = ops.dashboard_freshness_seconds;
+      const dashNote = dashAge === null || dashAge === undefined ? "" : ` · dashboard ${dashAge}s ago`;
+      const freshness = meta.stale ? "Refreshing dashboard…" : `Live${dashNote}`;
+      const scoreStamp = ops.generated_at ? ` · scores ${ops.generated_at.replace("T", " ").slice(0, 16)} UTC` : "";
+      const liveCards = jobs.filter((j) => j.live_screen && j.stall_state === "running");
+      const jobLead = liveCards.length
+        ? `${liveCards.length} job${liveCards.length === 1 ? "" : "s"} running on screen`
+        : (jobs.length ? `${jobs.length} tracked — none on screen right now` : "Nothing running on screen");
+      const nowHost = $("now-line");
+      const nowLine = ops.now_line || data.alignment?.now_line;
+      if (nowHost) {
+        if (nowLine) {
+          nowHost.hidden = false;
+          nowHost.textContent = nowLine;
+        } else {
+          nowHost.hidden = true;
+          nowHost.textContent = "";
+        }
+      }
+      $("status-summary").textContent = `${freshness}${scoreStamp} · ${jobLead} · MiniMax ${spendText} · round ${ops.webchat_round || "?"}`;
+      renderLiveJobs(jobs);
+      lastPanelScores = ops.scores;
+      if (activeBottomTab === "lanes") renderScoresTable(ops.scores);
+      const c = data.conductor || {};
+      $("conductor-summary").textContent = `Draft work on ${c.draft_branch || "unknown branch"}`;
+      const autopilot = liveCards.length
+        ? `Busy — ${liveCards.length} live job${liveCards.length === 1 ? "" : "s"}`
+        : (c.pass_schedule?.state === "finished" && liveCards.length === 0
+          ? `Idle${c.pass_schedule.next_due ? " · next pass " + new Date(c.pass_schedule.next_due * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""}`
+          : (c.pass_schedule?.state ? `Autopilot ${c.pass_schedule.state}` : "Autopilot idle"));
+      $("conductor-status").textContent = [
+        autopilot,
+        c.maintenance ? "Scheduling paused" : "Scheduler on",
+        `Builder: ${roles.building || "none"} · Reviews: ${roles.reviewing || "idle"}`,
+        (c.head_sha || "").slice(0, 7) ? `Latest commit ${(c.head_sha || "").slice(0, 7)}` : "",
+      ].filter(Boolean).join(" · ");
+      const summary = data.handback?.summary?.text || "";
+      const plainHandback = summary.split("\n")
+        .map((l) => l.replace(/^#+\s*/, "").replace(/\*\*/g, "").trim())
+        .filter((l) => l && !l.startsWith("---"))
+        .slice(0, 5)
+        .join(" ");
+      $("handback-plain").textContent = plainHandback || "Handback will appear after your next chat turn.";
+      const si = data.self_improve || {};
+      const age = si.log_age_seconds;
+      const logFresh = age != null && age < 48 * 3600
+        ? `Log updated ${age < 3600 ? Math.round(age / 60) + "m" : Math.round(age / 3600) + "h"} ago`
+        : (age != null ? "Self-improve log stale (>48h)" : "");
+      const loaded = si.launchd_loaded === true ? "Scheduled tick loaded"
+        : (si.launchd_loaded === false ? "Tick not loaded — run bootstrap on mini" : (si.launchd_loaded === null ? "Launchd probe unavailable" : ""));
+      const health = si.healthy ? "Loop healthy" : (si.launchd_files_ok ? "Needs a successful tick" : "Install tick + plist");
+      $("self-improve-status").textContent = [health, loaded, logFresh, si.summary || ""].filter(Boolean).join(" · ");
+      const cl = data.round_changelog || {};
+      const clHost = $("changelog-line");
+      if (clHost) {
+        clHost.textContent = cl.round
+          ? `Round ${cl.round}: ${(cl.line || "").replace(/\*\*/g, "")}`
+          : (cl.line || "Round notes load from the latest RESULT file on the mini.");
+      }
+    } catch (_) {
+      $("status-summary").textContent = "Jobs panel unavailable";
+    }
+  }
+  let lastPanelScores = null;
+  async function refreshLanes() {
+    try {
+      renderScoresTable(lastPanelScores);
+      const data = await api("/api/lanes" + (current ? "?conversation_id=" + encodeURIComponent(current) : ""));
+      const entries = Object.entries(data.providers);
+      const cooling = entries.filter(([, lane]) => lane.state === "cooldown").length;
+      $("lanes-summary").textContent = cooling ? `${cooling} model${cooling === 1 ? "" : "s"} cooling down` : "All models ready to help";
+      $("lanes").replaceChildren(...entries.map(([name, lane]) => {
+        const card = document.createElement("article");
+        card.className = "lane-card";
+        const dot = document.createElement("span");
+        dot.className = `lane-dot ${lane.state === "ready" ? "ok" : lane.state === "cooldown" ? "warn" : "busy"}`;
+        dot.setAttribute("aria-hidden", "true");
+        const title = document.createElement("h3");
+        title.textContent = providers[name];
+        const state = document.createElement("p");
+        state.className = "lane-state";
+        state.textContent = ({ ready: "Ready", cooldown: "Cooling down", busy: "Busy" }[lane.state] || lane.state.replace(/_/g, " "));
+        const detail = document.createElement("p");
+        detail.className = "lane-detail muted";
+        const spend = lane.spend;
+        const cost = spend.committed_usd !== undefined && ["gemini", "minimax"].includes(name)
+          ? `$${spend.committed_usd.toFixed(2)}${spend.cap_usd ? ` / $${spend.cap_usd} cap` : ""}`
+          : spend.billing;
+        detail.textContent = [lane.detail, cost, lane.retry_at > Date.now() / 1000 ? `Retry ${new Date(lane.retry_at * 1000).toLocaleTimeString()}` : ""].filter(Boolean).join(" · ");
+        card.append(dot, title, state, detail);
+        return card;
+      }));
+    } catch (_) { $("lanes-summary").textContent = "Health unavailable"; }
+  }
+  async function init() {
+    try {
+      primeSpeechVoices();
+      const micBtn = $("mic");
+      const speakBtn = $("speak");
+      if (micBtn && !window.SpeechRecognition && !window.webkitSpeechRecognition) {
+        micBtn.setAttribute("title", "Use keyboard dictation (mic key on iOS keyboard)");
+      }
+      if (speakBtn && !("speechSynthesis" in window)) speakBtn.hidden = true;
+      csrf = (await api("/api/session")).csrf; current = stored("bob.conversation");
+      await refreshList(); await poll(); $("messages").scrollTop = $("messages").scrollHeight;
+      await refreshPanel(); await refreshLanes(); await loadSong();
+      setInterval(refreshPanel, 8000);
+      setInterval(refreshLanes, 5000);
+      setInterval(poll, 1200);
+      if ("EventSource" in window) {
+        let alignSince = 0;
+        const connectAlign = () => {
+          const source = new EventSource(`/api/alignment/stream?since=${alignSince}`);
+          source.onmessage = (event) => {
+            try {
+              const row = JSON.parse(event.data);
+              if (row.seq) alignSince = Math.max(alignSince, row.seq);
+              if (["chat-turn", "handback-turn", "inbox", "tick"].includes(row.kind)) refreshPanel();
+            } catch (_) { /* ignore */ }
+          };
+          source.onerror = () => {
+            source.close();
+            setTimeout(connectAlign, 5000);
+          };
+        };
+        connectAlign();
+      }
+    } catch (error) { $("notice").textContent = error.message; }
+  }
+  composerState(); init();
+}
+
+
+### FILE webchat/static/style.css
+:root {
+  color-scheme: dark light;
+  font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --bottom-tab-height: 56px;
+  --bg: #0e1412;
+  --surface: #1a2420;
+  --surface-2: #243029;
+  --text: #e9efec;
+  --muted: #9aaea4;
+  --line: #2f4038;
+  --accent: #b8e7ce;
+  --danger: #ffb38a;
+  background: var(--bg);
+  color: var(--text);
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4f7f5;
+    --surface: #ffffff;
+    --surface-2: #e8efe9;
+    --text: #13261c;
+    --muted: #5a6d62;
+    --line: #c5d4cb;
+    --accent: #1f7a52;
+  }
+}
+html { -webkit-text-size-adjust: 100%; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input, textarea, select { font: inherit; }
+button, select { cursor: pointer; }
+button {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 8px 16px;
+}
+button:hover { filter: brightness(1.06); }
+button:disabled { opacity: .5; cursor: wait; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+button.primary { color: #13261c; background: var(--accent); border-color: var(--accent); font-weight: 650; }
+button.quiet { border-color: transparent; background: transparent; color: var(--muted); min-height: 44px; }
+button.icon-btn { min-width: 44px; padding: 8px 12px; font-size: 20px; line-height: 1; }
+button.mic-active { color: #ffd7b1; border-color: #6a4a32; background: #3a2a22; }
+[hidden] { display: none !important; }
+h1, h2, p { margin: 0; }
+
+.app {
+  max-width: 900px;
+  height: 100vh;
+  height: 100dvh;
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
+}
+
+.top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: max(8px, env(safe-area-inset-top)) 0 4px;
+  flex-shrink: 0;
+}
+.identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #6fcf97;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #6fcf97 35%, transparent);
+  transition: background 0.25s ease, box-shadow 0.25s ease;
+}
+.status-dot.busy { background: #f5c26b; box-shadow: 0 0 0 2px color-mix(in srgb, #f5c26b 35%, transparent); }
+.status-dot.warn { background: var(--danger); box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 35%, transparent); }
+.avatar {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  background: var(--accent);
+  color: #163726;
+  font: 700 28px/1 Georgia, serif;
+  padding-bottom: 3px;
+}
+.titles { min-width: 0; }
+h1 { font-size: 18px; letter-spacing: -.35px; }
+.identity p { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 430px) {
+  .identity p { display: none; }
+  .avatar { width: 36px; height: 36px; font-size: 24px; }
+  .top-bar { padding-bottom: 2px; }
+  #messages { padding-top: 4px; }
+}
+.top-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+
+.main-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  animation: fade-in 0.15s ease;
+}
+.main-view[hidden] { display: none !important; }
+#view-chat {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.view-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 2px 16px;
+}
+.view-title { font-size: 22px; font-weight: 600; letter-spacing: -0.4px; margin-bottom: 8px; }
+.view-subtitle { font-size: 15px; font-weight: 600; margin: 16px 0 6px; }
+.view-lead { font-size: 14px; line-height: 1.45; margin-bottom: 10px; }
+.now-line { font-size: 15px; line-height: 1.4; font-weight: 500; margin: 0 0 8px; color: var(--text); }
+.song-versions { list-style: none; padding: 0; margin: 8px 0 12px; font-size: 13px; }
+.song-versions li { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.view-hint { font-size: 12px; line-height: 1.45; margin-top: 12px; }
+.field-label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
+.conductor-status { font-size: 14px; line-height: 1.45; margin: 0 0 10px; }
+.handback-plain { font-size: 13px; line-height: 1.5; }
+.settings-list .settings-group { margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+.settings-group-title { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 10px; }
+#conversations, #song-picker, #conversations-dialog {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 16px;
+}
+#new-chat, .song-new { margin-top: 8px; }
+select option { background: var(--surface-2); color: var(--text); }
+
+#messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 2px 16px;
+  scrollbar-color: #405b4c transparent;
+}
+.welcome { text-align: center; padding: min(14vh, 100px) 16px 20px; color: var(--muted); }
+.welcome h2 { color: var(--text); font-size: 26px; font-weight: 550; letter-spacing: -.6px; margin-bottom: 8px; }
+
+.message { max-width: 90%; width: fit-content; margin-bottom: 18px; animation: fade-in 0.18s ease; }
+.message.user { margin-left: auto; max-width: 83%; }
+.message .body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.message.assistant .body { white-space: normal; }
+.message.assistant .body a { color: var(--accent); text-decoration: underline; }
+.message.assistant .body code { font: 0.92em ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); padding: 2px 5px; border-radius: 6px; }
+.message.assistant .body pre.code-block { margin: 8px 0; padding: 10px; background: var(--bg); border-radius: 10px; overflow-x: auto; white-space: pre; }
+.message.assistant .body ul { margin: 6px 0 6px 1.1em; padding: 0; }
+.message.user .body { border-radius: 18px 18px 4px 18px; padding: 12px 16px; background: color-mix(in srgb, var(--accent) 22%, var(--surface-2)); }
+.message.assistant .body {
+  padding: 12px 14px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px 18px 18px 4px;
+}
+.message .meta { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.message.user .meta { text-align: right; }
+.message.error .body { color: #ffceb2; }
+.message.pending .body {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 80%, var(--bg));
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  animation: pulse-soft 1.4s ease-in-out infinite;
+}
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.72; }
+}
+.attempt { color: #d2bb94; font-size: 12px; margin-top: 7px; }
+.action-card-title { font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.action-card-hint { color: var(--muted); font-size: 11px; margin-bottom: 8px; }
+.action-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.action-approve { flex: 1; min-height: 44px; background: color-mix(in srgb, var(--accent) 35%, var(--surface)); color: var(--text); border-radius: 10px; border: 1px solid var(--line); font-weight: 600; }
+.action-deny { min-height: 44px; padding: 0 14px; background: transparent; color: var(--muted); border-radius: 10px; border: 1px solid var(--line); }
+.message.assistant .body .md-h { margin: 10px 0 6px; font-size: 15px; font-weight: 600; }
+.message.assistant .body ol { margin: 6px 0 6px 1.2em; padding: 0; }
+.message.assistant .body pre.code-block { position: relative; padding-top: 28px; }
+.copy-code { position: absolute; top: 6px; right: 6px; font-size: 11px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); }
+.msg-menu {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.msg-menu button {
+  flex: 1;
+  min-height: 44px;
+  font-size: 13px;
+  border-radius: 10px;
+}
+.action-card { border: 1px solid var(--line); border-radius: 10px; margin-top: 8px; padding: 10px; font-size: 12px; }
+
+.notice { min-height: 20px; color: #ffd7b1; font-size: 13px; margin: 0 0 6px; flex-shrink: 0; }
+.notice:empty { min-height: 0; margin: 0; }
+
+.quick-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 0 2px 2px;
+  flex-shrink: 0;
+  -webkit-overflow-scrolling: touch;
+}
+.quick-chips .chip {
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.quick-chips .chip:active { transform: scale(0.98); }
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  padding: 6px;
+  flex-shrink: 0;
+  margin-bottom: 0;
+  box-shadow: 0 -4px 24px color-mix(in srgb, var(--bg) 70%, transparent);
+}
+.bottom-tabs {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 2px 0 max(4px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 88%, var(--bg));
+  backdrop-filter: saturate(1.2) blur(12px);
+  -webkit-backdrop-filter: saturate(1.2) blur(12px);
+  position: relative;
+  z-index: 60;
+}
+.empty-state { font-size: 14px; line-height: 1.45; padding: 16px 4px; text-align: center; }
+.help-list { margin: 0; padding-left: 1.1em; font-size: 14px; line-height: 1.5; }
+.help-list strong { color: var(--text); font-weight: 600; }
+.job-commit { font-size: 11px; margin: 6px 0 0; }
+.bottom-tab {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 2px;
+}
+.tab-icon { display: flex; align-items: center; justify-content: center; line-height: 0; }
+.tab-icon svg { display: block; }
+.offline-banner {
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--danger) 22%, var(--surface));
+  color: var(--text);
+  border-bottom: 1px solid var(--line);
+}
+.message.assistant .body { color: var(--text); }
+.message.assistant .body strong { color: var(--text); font-weight: 650; }
+.tab-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 390px) {
+  .bottom-tab { font-size: 9px; padding: 3px 1px; }
+  .bottom-tab .tab-icon svg { width: 20px; height: 20px; }
+}
+.bottom-tab.active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+textarea {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  resize: none;
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  outline: 0;
+  min-height: 44px;
+  max-height: 180px;
+  padding: 10px 6px;
+  line-height: 24px;
+  font-size: 16px;
+}
+textarea::placeholder { color: var(--muted); }
+.composer button { flex-shrink: 0; }
+
+.conductor-block, .handback-block { margin-top: 8px; }
+.conductor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.conductor-actions .chip {
+  min-height: 44px;
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.live-jobs { display: grid; gap: 8px; margin-top: 10px; }
+.scores-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin: 0 0 12px; }
+.scores-grid .score-card { background: var(--surface-2); border-radius: 12px; padding: 10px 12px; }
+.scores-grid .score-card strong { display: block; font-size: 18px; margin-top: 4px; }
+.scores-grid .score-card span { font-size: 12px; color: var(--muted); }
+.live-job { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 12px; line-height: 1.4; background: var(--bg); }
+.live-job header { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin-bottom: 4px; color: var(--text); padding: 0; }
+.live-job .stall { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+.live-job .stall.running { color: #8fd4a8; }
+.live-job .stall.stalled { color: var(--danger); }
+.live-job .log-tail { color: var(--muted); margin: 4px 0 0; white-space: pre-wrap; font-size: 11px; }
+.live-job-actions { display: flex; gap: 8px; margin-top: 10px; }
+.live-job-actions button { flex: 1; min-height: 44px; font-size: 13px; border-radius: 10px; }
+#view-song input, #view-song textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 16px;
+}
+#song-lyrics { min-height: 200px; }
+.song-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.upload-label { font-size: 12px; color: var(--muted); }
+#song-player { width: 100%; margin-top: 4px; }
+.lane-cards { display: grid; gap: 10px; }
+.lane-card {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 12px 12px 36px;
+  background: var(--surface);
+}
+.lane-card h3 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+.lane-state { font-size: 12px; text-transform: capitalize; margin: 0 0 4px; color: var(--accent); }
+.lane-detail { font-size: 12px; margin: 0; line-height: 1.4; }
+.lane-dot {
+  position: absolute;
+  left: 12px;
+  top: 14px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.lane-dot.ok { background: #6fcf97; }
+.lane-dot.warn { background: var(--danger); }
+.lane-dot.busy { background: #f5c26b; }
+#provider-choice {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 12px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 16px;
+}
+#chats-dialog select { width: 100%; margin: 12px 0; }
+#chats-dialog .primary { width: 100%; }
+
+.muted { color: var(--muted); }
+dialog { background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 20px; width: min(850px, 94vw); max-height: 85dvh; padding: 24px; }
+dialog::backdrop { background: #070e0bc9; }
+.report-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+h2 { font-size: 20px; }
+#report-date { margin: 10px 0 18px; font-size: 12px; }
+pre { font: 13px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.login-page { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: radial-gradient(ellipse at 50% 25%, #243f30 0, var(--bg) 65%); }
+.login-card { width: 100%; max-width: 400px; padding: 30px 24px; }
+.large { height: 60px; width: 60px; font-size: 44px; border-radius: 20px; margin-bottom: 32px; }
+.eyebrow { color: var(--accent); font-size: 11px; letter-spacing: 2px; margin-bottom: 10px; }
+.login-card h1 { font-size: 36px; margin-bottom: 8px; }
+.login-card form { margin-top: 32px; }
+label { display: block; font-size: 13px; margin-bottom: 8px; color: var(--muted); }
+input { width: 100%; min-height: 50px; border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 12px; padding: 12px; }
+.login-card button { width: 100%; margin-top: 14px; }
+.login-help { margin-top: 24px; color: var(--muted); font-size: 12px; line-height: 1.9; }
+code { overflow-wrap: anywhere; font-size: 11px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+@media (min-width: 720px) {
+  .app { border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+}
+
+
+### FILE webchat/static/index.html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Bob">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <title>Bob · Chat</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="app">
+    <div id="offline-banner" class="offline-banner" role="status" hidden>Reconnecting to the mini…</div>
+    <header class="top-bar">
+      <div class="identity">
+        <span class="status-dot" id="status-dot" aria-hidden="true"></span>
+        <span class="avatar" aria-hidden="true">b</span>
+        <div class="titles">
+          <h1>Bob</h1>
+          <p id="connection">Connected</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button type="button" id="open-chats" class="icon-btn" aria-label="Conversations" title="Conversations">💬</button>
+        <button type="button" id="logout" class="quiet">Log out</button>
+      </div>
+    </header>
+
+    <section id="view-chat" class="main-view active" data-view="chat">
+      <main id="messages" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions text"></main>
+      <div id="notice" class="notice" role="status"></div>
+      <div class="quick-chips" id="quick-chips" role="toolbar" aria-label="Quick actions">
+        <button type="button" class="chip" data-chip="status">Status</button>
+        <button type="button" class="chip" data-chip="round">Start round</button>
+        <button type="button" class="chip" data-chip="council">Ask council</button>
+        <button type="button" class="chip" data-chip="song">New song</button>
+      </div>
+      <form id="composer" class="composer">
+        <label class="sr-only" for="message">Message Bob</label>
+        <button type="button" id="mic" class="quiet icon-btn" aria-label="Voice input" title="Voice input">🎤</button>
+        <textarea id="message" name="message" placeholder="Message Bob…" rows="1" maxlength="6000" required enterkeyhint="send"></textarea>
+        <button type="button" id="speak" class="quiet icon-btn" aria-label="Read last reply aloud" title="Read aloud">🔊</button>
+        <button type="button" id="stop" hidden>Stop</button>
+        <button type="submit" id="send" class="primary">Send <span aria-hidden="true">↑</span></button>
+      </form>
+    </section>
+
+    <section id="view-ops" class="main-view" data-view="ops" hidden>
+      <div class="view-scroll">
+        <h2 class="view-title">Jobs</h2>
+        <p id="now-line" class="now-line" hidden></p>
+        <p id="status-summary" class="view-lead muted"></p>
+        <div id="live-jobs" class="live-jobs" aria-live="polite"></div>
+        <p id="jobs-empty" class="empty-state" hidden>No jobs on screen right now. Tap Start round in chat when you want a builder pass.</p>
+        <div class="conductor-block">
+          <h3 class="view-subtitle">Conductor</h3>
+          <p id="conductor-summary" class="view-lead muted"></p>
+          <p id="conductor-status" class="conductor-status"></p>
+          <div class="conductor-actions" role="toolbar" aria-label="Conductor actions">
+            <button type="button" class="chip" data-conductor="round">Start round</button>
+            <button type="button" class="chip" data-conductor="council">Ask council</button>
+            <button type="button" class="chip" data-conductor="status">Status</button>
+            <button type="button" class="chip" data-conductor="stop">Stop job</button>
+          </div>
+          <p class="view-hint muted">Draft-only. Merge, send, and spend still need your yes in chat.</p>
+        </div>
+        <div class="handback-block">
+          <h3 class="view-subtitle">Handback</h3>
+          <p id="handback-plain" class="handback-plain muted"></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-lanes" class="main-view" data-view="lanes" hidden>
+      <div class="view-scroll">
+        <h2 class="view-title">Models</h2>
+        <p id="lanes-summary" class="view-lead muted"></p>
+        <div id="scores-table" class="scores-grid" aria-label="Latest Web Bob scores"></div>
+        <div id="lanes" class="lane-cards" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section id="view-song" class="main-view" data-view="song" hidden>
+      <div class="view-scroll">
+        <h2 class="view-title">Songs</h2>
+        <label class="field-label" for="song-picker">Your songs</label>
+        <select id="song-picker" aria-label="Song project"></select>
+        <button type="button" id="song-new" class="quiet song-new">New song</button>
+        <label class="field-label" for="song-title">Title</label>
+        <input id="song-title" type="text" placeholder="Working title" maxlength="120">
+        <label class="field-label" for="song-lyrics">Lyrics</label>
+        <textarea id="song-lyrics" placeholder="Verse, chorus, hooks…" rows="10" maxlength="120000"></textarea>
+        <label class="field-label" for="song-chords">Chords</label>
+        <textarea id="song-chords" placeholder="e.g. Am · F · C · G" rows="3" maxlength="120000"></textarea>
+        <label class="field-label" for="song-notes">Style &amp; notes</label>
+        <textarea id="song-notes" placeholder="Tempo, vibe, arrangement ideas" rows="3" maxlength="120000"></textarea>
+        <div class="song-actions">
+          <button type="button" id="song-save" class="primary">Save</button>
+          <button type="button" id="song-coach">Writing tips</button>
+          <button type="button" id="song-demo">Local sketch ($0)</button>
+          <label class="upload-label"><input id="song-upload" type="file" accept="audio/*"> Upload audio</label>
+        </div>
+        <audio id="song-player" controls hidden></audio>
+        <ul id="song-versions" class="song-versions muted" hidden aria-label="Lyric versions"></ul>
+        <p id="song-notice" class="muted"></p>
+      </div>
+    </section>
+
+    <section id="view-settings" class="main-view" data-view="settings" hidden>
+      <div class="view-scroll settings-list">
+        <h2 class="view-title">Settings</h2>
+        <div class="settings-group">
+          <h3 class="settings-group-title">Replies</h3>
+          <label class="field-label" for="provider-choice">Who answers</label>
+          <select id="provider-choice">
+            <option value="auto">Auto · fast for quick asks, Codex/Cursor for heavy work</option>
+            <option value="claude">Claude only · short critique</option>
+          </select>
+        </div>
+        <div class="settings-group">
+          <h3 class="settings-group-title">Chats</h3>
+          <label class="field-label" for="conversations">Active conversation</label>
+          <select id="conversations" aria-label="Conversation"></select>
+          <button type="button" id="new-chat" class="quiet">Start new chat</button>
+        </div>
+        <div class="settings-group">
+          <h3 class="settings-group-title">Voice</h3>
+          <p class="muted view-hint">On iPhone, tap 🎤 and allow the mic, or hold the keyboard mic for dictation. Read-aloud uses your device voices.</p>
+        </div>
+        <div class="settings-group">
+          <h3 class="settings-group-title">Self-improve</h3>
+          <p id="self-improve-status" class="muted">Checking…</p>
+        </div>
+        <div class="settings-group">
+          <h3 class="settings-group-title">What’s new</h3>
+          <p id="changelog-line" class="muted">Loading…</p>
+        </div>
+        <div class="settings-group">
+          <h3 class="settings-group-title">Help</h3>
+          <ul class="help-list muted">
+            <li><strong>Chat</strong> — talk to Bob; quick chips for status, rounds, council, songs.</li>
+            <li><strong>Jobs</strong> — live work on the mini (not old handback text).</li>
+            <li><strong>Songs</strong> — lyrics notebook, local sketch demo, audio upload.</li>
+            <li><strong>Models</strong> — who’s busy, spend meters, latest scores.</li>
+          </ul>
+        </div>
+        <p class="view-hint muted">Drafts stay drafts. Confirm before merge, send, or spend.</p>
+      </div>
+    </section>
+
+    <nav class="bottom-tabs" aria-label="Main">
+      <button type="button" class="bottom-tab active" data-bottom="chat" aria-current="page">
+        <span class="tab-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8z"/></svg></span><span class="tab-label">Chat</span>
+      </button>
+      <button type="button" class="bottom-tab" data-bottom="ops">
+        <span class="tab-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></svg></span><span class="tab-label">Jobs</span>
+      </button>
+      <button type="button" class="bottom-tab" data-bottom="song">
+        <span class="tab-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span><span class="tab-label">Songs</span>
+      </button>
+      <button type="button" class="bottom-tab" data-bottom="lanes">
+        <span class="tab-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></span><span class="tab-label">Models</span>
+      </button>
+      <button type="button" class="bottom-tab" data-bottom="settings">
+        <span class="tab-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.54V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.54 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.54-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.54-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.54V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.54 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.36.6.88 1.08 1.54 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.54 1Z"/></svg></span><span class="tab-label">Settings</span>
+      </button>
+    </nav>
+  </div>
+
+  <dialog id="chats-dialog">
+    <div class="report-heading"><h2>Conversations</h2><button type="button" id="close-chats" aria-label="Close">Close</button></div>
+    <p class="muted sheet-hint">Switch chats here; your draft message is kept on this device.</p>
+    <select id="conversations-dialog" size="8" aria-label="Pick conversation"></select>
+    <button type="button" id="new-chat-dialog" class="primary">New chat</button>
+  </dialog>
+
+  <dialog id="report">
+    <div class="report-heading"><h2 id="report-title"></h2><button type="button" id="close-report" aria-label="Close report">Close</button></div>
+    <p id="report-date" class="muted"></p>
+    <pre id="report-body"></pre>
+  </dialog>
+</body>
+</html>

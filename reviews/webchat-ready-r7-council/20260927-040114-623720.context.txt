@@ -1,0 +1,17 @@
+### FILE reviews/webchat-ready-r7-council/20260927-040000-r7.context.txt
+Web Bob R7 refresh (Cursor lane) — draft branch only, no Grok.
+
+## Changes this round
+1. **Detailed live dashboard:** `build_live_ops()` now attaches structured `events[]` (status, log tail, commit, stall) on each `running_jobs` row so Jobs cards show last-3 log lines without re-parsing handback.
+2. **Models MiniMax cap:** `minimaxCapUsd()` uses explicit null/undefined check (not `|| 59`) so zero cap stays zero.
+3. **Self-improve loop:** `self_improve_status()` parses launchd plist schedule hint; Settings/Jobs panel shows daily tick time.
+4. **Music (no MiniMax music API):** time-signature coach tips (4/4, 3/4, 6/8).
+
+## Tests already green
+- test_webchat.py 67 OK, test_failover.py 23 OK, test_services.py 41 OK
+- bob_parity_eval 22/22
+- live_ready_drill p50 0.966s
+- WEBCHAT_HANDBACK_TAG=r7 handback drill ×2 PASS, isolated, prod_unchanged
+
+## Ask council
+Ship R7 refresh or defer? Rank any fixes. Vote ties per council rules. No merge, no Grok.
