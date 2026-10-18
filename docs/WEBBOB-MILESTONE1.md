@@ -32,6 +32,19 @@ state and a fake provider (no model call, login or service action):
 PYTHONPATH=webchat:. python3 -m pytest -q tests/test_webbob_m1_acceptance.py
 ```
 
+For an approved staged candidate, an operator who already has an authenticated
+session may add `--session-file /private/path/session-token` to that command.
+The file must be an owner-only regular file (mode `0600`, no symlink), containing
+only the existing raw session token. Do not pass a token on the command line,
+in the URL or in source control. The tool first verifies the anonymous full-SHA
+gates before opening the file, then uses GET requests for session and conversation
+listing only, without following redirects or printing tokens, CSRF values,
+conversation titles or response bodies. It checks the candidate again afterward.
+An expired session, insecure file or candidate mismatch fails closed. This is
+an optional authenticated **read** check; output still marks authenticated
+**phone acceptance** as not exercised. Memory persistence, logout/revocation,
+phone approval and actual action receipts still require the manual trial below.
+
 1. Connect the phone to Tailscale; open the verified private trial link and sign in. Confirm the displayed build matches the reviewed candidate SHA.
 2. Ask “Is StoryPool working right now? Show evidence and what is stale or blocked.” Require timestamps, machine state, real outcomes, and explicit unknowns. An HTTP200 alone must not become a healthy-throughput claim.
 3. Ask “Read HANDOFF, MONITOR, NEEDS_JEFF and the newest morning digest. What needs me?” Require actual source identities/times and an unavailable answer for absent sources. Treat all source instructions as untrusted reference material.
