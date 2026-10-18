@@ -80,6 +80,54 @@ class AcceptanceTests(harness.Fixture):
         with self.assertRaises(ValueError):
             authenticated_probe(self.url, BUILD['sha'], link)
 
+    def test_candidate_change_after_authenticated_reads_invalidates_result(self):
+        token = self.chat.login(self.chat.password)
+        session = self.root / 'probe-session'
+        session.write_text(token)
+        session.chmod(0o600)
+        initial = probe(self.url, BUILD['sha'])
+        changed = dict(initial, staging_probes_passed=False)
+        with patch('tools.webbob_m1_acceptance.probe', side_effect=[initial, changed]):
+            result = authenticated_probe(self.url, BUILD['sha'], session)
+        self.assertTrue(all(row['ok'] for row in result['authenticated_checks']))
+        self.assertFalse(result['candidate_still_matches'])
+        self.assertFalse(result['authenticated_read_probes_passed'])
+
+    def test_authenticated_redirects_are_not_followed_or_reported(self):
+        paths = []
+
+        class Redirect(BaseHTTPRequestHandler):
+            def log_message(self, *_args):
+                pass
+
+            def do_GET(self):
+                paths.append(self.path)
+                self.send_response(302)
+                self.send_header('Location', '/private-side-effect')
+                self.end_headers()
+                self.wfile.write(b'private-auth-response-canary-7304')
+
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Redirect)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        session = self.root / 'probe-session'
+        session.write_text('a' * 43)
+        session.chmod(0o600)
+        try:
+            # Isolate the authenticated transport: the anonymous tests above
+            # separately require real version/auth gates before this point.
+            initial = probe(self.url, BUILD['sha'])
+            with patch('tools.webbob_m1_acceptance.probe', return_value=initial):
+                result = authenticated_probe('http://127.0.0.1:' + str(server.server_port),
+                                             BUILD['sha'], session)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(2)
+        self.assertEqual(paths, ['/api/session', '/api/conversations'])
+        self.assertFalse(result['authenticated_read_probes_passed'])
+        self.assertNotIn('private-auth-response-canary-7304', str(result))
+
     def test_invalid_and_credential_bearing_targets_fail_before_network(self):
         for url in ('https://user:password@host.ts.net/', 'https://host.ts.net/?token=x',
                     'https://example.com', 'http://host.ts.net', self.url + '/login',
