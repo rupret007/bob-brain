@@ -15,6 +15,8 @@ import time
 import uuid
 from zoneinfo import ZoneInfo
 
+from webbob.text_validation import reject_unicode_tags
+
 NEEDS_JEFF = "needs Jeff: OAuth consent + scopes"
 READ_TOOLS = {"search_gmail_messages", "get_gmail_message_content", "get_events", "search_drive_files", "get_drive_file_content"}
 WRITE_TOOLS = {"email": "draft_gmail_message", "event": "manage_event"}
@@ -33,6 +35,7 @@ class Workspace:
         self.session, self.account, self.consent_verified = session, account, consent_verified
 
     async def read(self, tool, arguments):
+        reject_unicode_tags((tool, arguments, self.account), WorkspaceError)
         if tool not in READ_TOOLS:
             raise WorkspaceError("read-only tool boundary")
         if not self.consent_verified or self.session is None:
@@ -47,6 +50,7 @@ class Workspace:
         if result.isError:
             raise WorkspaceError("Workspace read failed; check connection/scopes")
         text = "\n".join(c.text for c in result.content if c.type == "text")
+        reject_unicode_tags(text, WorkspaceError)
         return {"source_tool": tool, "source_arguments": arguments, "retrieved_at": time.time(),
                 "text": text[:16000], "truncated": len(text) > 16000,
                 "private": True, "execution_authority": False}
@@ -95,6 +99,7 @@ class Drafts:
             db.close()
 
     def _payload(self, kind, payload):
+        reject_unicode_tags((kind, payload, self.account), WorkspaceError)
         allowed = {"email": {"to", "subject", "body"}, "event": {"calendar_id", "summary", "start_time", "end_time", "timezone"}}
         if kind not in allowed or set(payload) != allowed[kind]:
             raise WorkspaceError("exact supported draft fields required")

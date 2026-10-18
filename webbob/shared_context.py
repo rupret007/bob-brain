@@ -4,6 +4,8 @@ SQLite supplies transactions. Existing memory remains authoritative at import;
 this service never imports conversations or grants execution permission.
 """
 from contextlib import contextmanager
+import base64
+import binascii
 import copy
 from dataclasses import dataclass
 import datetime as dt
@@ -15,8 +17,19 @@ import sqlite3
 import time
 import unicodedata
 
+from webbob.text_validation import reject_unicode_tags
+
 BOTS = {"bob", "webbob", "andrea", "karen"}
 INBOX_CAP = 1000  # Pending notifications per recipient, across all senders.
+# Common Cyrillic lookalikes in Latin guard keywords. This matching-only map
+# supplements NFKC, which leaves cross-script confusables unchanged.
+_FACT_CONFUSABLES = str.maketrans({
+    "А": "A", "а": "a", "В": "B", "Е": "E", "е": "e",
+    "К": "K", "М": "M", "Н": "H", "О": "O", "о": "o",
+    "Р": "P", "р": "p", "С": "C", "с": "c", "Т": "T",
+    "Х": "X", "х": "x", "У": "Y", "у": "y",
+    "І": "I", "і": "i", "Ј": "J", "ј": "j", "Ѕ": "S", "ѕ": "s",
+})
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS facts (
  id TEXT, revision INTEGER, body TEXT, provenance TEXT NOT NULL,
@@ -40,22 +53,75 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _normalize_fact_text(value):
+    reject_unicode_tags(value, ContextError)
+    value = unicodedata.normalize("NFKC", value).translate(_FACT_CONFUSABLES)
+    return "".join(c for c in value
+                   if unicodedata.category(c) != "Cf"
+                   and not unicodedata.category(c).startswith("M"))
+
+
+def _exempt_plain_text(match, encoding_text):
+    """Remove only a format reference, preserving payload labels for the guard."""
+    suffix = match.string[match.end():]
+    # Encoding names use only NFKC and Cf removal, not the guard's broader
+    # confusable/combining-mark normalization. Require the entire suffix.
+    if (match[1] and encoding_text.endswith(suffix)
+            and re.fullmatch(
+                r"(?ai)[ \t]*,[ \t]*(?:UTF-8|UTF8|UTF-16|ASCII|Latin-1|ISO-8859-1)"
+                r"(?:[ \t]+encoded)?\.?\Z", suffix)):
+        return ""
+    # Check the rest of this clause even after an allowed continuation word.
+    clause = re.split(r"[.,;!?]", suffix, maxsplit=1)[0]
+    if re.search(r'[:"(\r\n\u2028\u2029]', clause):
+        return match.group()
+    # Punctuation runs and dashes must not conceal an attribution next door.
+    next_clause = re.search(r"[.,;!?][\s.,;!?\u2013\u2014-]*([^\W\d_]+)", suffix)
+    if next_clause and next_clause[1].lower() in {"from", "quoting", "saying"}:
+        return match.group()
+    at_end = re.fullmatch(r"[ \t]*[.,]?[ \t]*", suffix)
+    if re.match(r"(?i)[ \t]+(?:only|storage|for|in|not|then)\b", suffix):
+        return ""
+    if at_end and (match[1] or re.search(r"(?i)\bin[ \t]+\Z", match.string[:match.start()])):
+        return ""
+    return match.group()
+
+
 def safe_fact(body):
     if not isinstance(body, str) or not 1 <= len(body) <= 1200:
         raise ContextError("fact length must be 1..1200")
     # Enforce exclusions even for mislabeled accepted facts. Normalize common
     # Unicode disguises before checking, while preserving approved stored text.
-    value = unicodedata.normalize("NFKC", body)
-    value = "".join(c for c in value if unicodedata.category(c) != "Cf")
+    value = _normalize_fact_text(body)
     language = re.sub(r"[_-]+", " ", value)
-    if re.search(r"(?i)(-----BEGIN .*PRIVATE KEY|\b(?:sk-|ghp_|github_pat_)[a-z0-9_-]{12,}|"
-                 r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bxox[bpars]-[a-z0-9-]+|"
-                 r"(?:api[_ -]?key|password|secret|bearer|access[_ -]?token)\s*[:=]\s*\S+|"
-                 r"\bbearer\s*[:=]?\s+\S+)", value):
+    credential = re.compile(r"(?i)(-----BEGIN .*PRIVATE KEY|\b(?:sk-|ghp_|github_pat_)[a-z0-9_-]{12,}|"
+                            r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\bxox[bpars]-[a-z0-9-]+|"
+                            r"(?:api[_ -]?key|password|secret|bearer|access[_ -]?token)\s*[:=]\s*\S+|"
+                            r"\bbearer\s*[:=]?\s+\S+)")
+    if credential.search(value):
         raise ContextError("credential-like content forbidden")
-    if re.search(r"(?i)\b(?:sms|imessage|texts?|texted|texting|"
+    # Inspect complete tokens, including short padded credentials. The fact
+    # length limit bounds decoding work without leaving gaps at token lengths.
+    for token in re.findall(r"[A-Za-z0-9+/]+={0,2}", value):
+        try:
+            decoded = base64.b64decode(token, validate=True)
+        except (binascii.Error, ValueError):
+            continue
+        if credential.search(_normalize_fact_text(decoded.decode("utf-8", errors="ignore"))):
+            raise ContextError("credential-like content forbidden")
+    # Exempt only terminal format references or explicit safe continuations.
+    # Check before replacing hyphens so payload delimiters cannot disappear.
+    encoding_text = "".join(c for c in unicodedata.normalize("NFKC", body)
+                            if unicodedata.category(c) != "Cf")
+    text_language = re.sub(
+        r"(?i)\bplain[\s_-]+text\b(?:[ \t]+(files?|formats?|mode)\b)?",
+        lambda match: _exempt_plain_text(match, encoding_text), value)
+    text_language = re.sub(r"[_-]+", " ", text_language)
+    # Stripping invisible separators can join "plain" and "text"; that joined
+    # marker must still be denied instead of losing the text token boundary.
+    if re.search(r"(?i)\b(?:sms|imessage|plaintexts?|texts?|texted|texting|"
                  r"message[ _-]*(?:body|content|transcript))\b|"
-                 r"\btext[ _-]*(?:body|content|message|transcript)\b", language):
+                 r"\btext[ _-]*(?:body|content|message|transcript)\b", text_language):
         raise ContextError("text/SMS content forbidden")
     if re.search(r"(?<!\w)(?:\+?\d[\s().-]*){10,15}(?!\w)|\b\d{3}[ .-]\d{4}\b", value):
         raise ContextError("phone numbers forbidden")
@@ -66,14 +132,22 @@ def safe_fact(body):
         raise ContextError("raw audio content forbidden")
     # Acceptance of a fact is never an approval to send. Conservatively deny
     # approval/action language in either order, including across line breaks.
-    if (re.search(r"(?i)\b(?:approv\w*|authoriz\w*|authoris\w*|consent\w*|permission|"
-                  r"go[ -]?ahead|green[ -]?light|okay|ok|yes|confirm\w*|permit\w*|allow\w*)\b", language)
-            and re.search(r"(?i)\b(?:send\w*|sent|deliver\w*|outbound|publish\w*|post\w*|email\w*)\b", language)):
+    send_action = re.compile(r"(?i)\b(?:send\w*|sent|deliver\w*|outbound|publish\w*|post\w*|"
+                             r"email\w*|message\w*|ship\w*)\b")
+    send_approval = re.compile(r"(?i)\b(?:approv\w*|authoriz\w*|authoris\w*|consent\w*|permission|"
+                                 r"go[ -]?ahead|green[ -]?light|okay|ok|yes|confirm\w*|permit\w*|allow\w*|"
+                                 r"lgtm|jeff said)\b")
+    if send_approval.search(language) and send_action.search(language):
+        raise ContextError("send approval assertions forbidden")
+    if re.search(r"(?i)\b(?:send|message)\s+it\s+to\s+the\s+band\b", language):
+        raise ContextError("send approval assertions forbidden")
+    if re.search(r"(?i)\bgo\s+ahead\s+and\s+message\b", language):
         raise ContextError("send approval assertions forbidden")
     return body
 
 
 def validate_fact(fact):
+    reject_unicode_tags(fact, ContextError)
     if set(fact) != {"id", "body", "classification", "audience", "provenance"}:
         raise ContextError("unexpected fact fields")
     if not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,79}", fact["id"]):

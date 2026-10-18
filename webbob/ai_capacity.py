@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from webbob.shared_context import ContextError, safe_fact
+from webbob.text_validation import reject_unicode_tags
 
 SCHEMA = "ai-capacity/v1"
 MAX_AGE_SECONDS = 15 * 60
@@ -52,6 +53,7 @@ def _row_keys() -> set[str]:
 
 
 def validate_document(data: object) -> dict:
+    reject_unicode_tags(data)
     if not isinstance(data, dict) or data.get("schema") != SCHEMA:
         raise ValueError("invalid ai-capacity document")
     generated_ts = data.get("generated_ts")
@@ -100,6 +102,7 @@ def _read_file(path: Path) -> Optional[dict]:
 
 
 def _safe_capacity_string(value) -> str:
+    reject_unicode_tags(value)
     if not isinstance(value, str) or not value:
         return ""
     try:
@@ -111,6 +114,7 @@ def _safe_capacity_string(value) -> str:
 
 def sanitize_capacity_snapshot(doc: dict) -> dict:
     """Drop credential-like strings from capacity fields exposed via MCP."""
+    reject_unicode_tags(doc)
     out = dict(doc)
     out["host"] = _safe_capacity_string(out.get("host"))
     out["snapshot_note"] = _safe_capacity_string(out.get("snapshot_note"))

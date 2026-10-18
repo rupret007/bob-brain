@@ -1,0 +1,15 @@
+{
+  "trigger": "@andrea",
+  "brain": "webbob",
+  "adapter": "webbob.andrea_replies.AndreaReplies",
+  "fallback": null,
+  "history_scope": "same_thread",
+  "history_limit": 20,
+  "model_surface": ["on_message"],
+  "host_only_surface": ["approve_and_send"],
+  "send_engine": "andrea_existing_fenced_path",
+  "approval": "fresh_jeff_bob_chat_exact_draft_every_send",
+  "standing_permission": false,
+  "automatic_retry": false,
+  "activation": "draft_only_pending_jeff_ok_and_runtime_binding"
+}

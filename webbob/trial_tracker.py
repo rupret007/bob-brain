@@ -2,6 +2,8 @@
 from datetime import date, timedelta
 import re
 
+from webbob.text_validation import reject_unicode_tags
+
 SCENARIOS = ("daily_brief", "current_research", "memory_correction", "draft_approval", "task_followthrough")
 
 
@@ -17,6 +19,7 @@ def trial_template(start_date, webbob_sha):
 
 
 def record_result(trial, day, scenario, bot, *, result, receipt, latency_ms, cost_microdollars, build):
+    reject_unicode_tags((trial, day, scenario, bot, result, receipt, build))
     if result not in {"PASS", "FAIL", "BLOCKED"} or not isinstance(receipt, str) or not 1 <= len(receipt) <= 200:
         raise ValueError("observed result and evidence reference required")
     if bot == "webbob" and build != trial["webbob_sha"]:

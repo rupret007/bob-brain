@@ -1,8 +1,11 @@
 """Validate the minimal coord release-record contract; never approve a release."""
 import re
 
+from webbob.text_validation import reject_unicode_tags
+
 
 def validate_release_record(record):
+    reject_unicode_tags(record)
     required = {"repo", "owner", "claim_id", "pr", "sha", "status", "evidence", "karen_receipt", "jeff_receipt", "handoff"}
     if not isinstance(record, dict) or set(record) != required:
         raise ValueError("complete coord release record required")
