@@ -64,6 +64,28 @@ class SharedChatTests(SharedChatFixture):
         data = (self.folder / 'HANDOFF.md').read_text()
         self.assertEqual(data.count('<!-- committed event race '), 1)
 
+    def test_concurrent_creation_survives_nonexclusive_create_syscall_race(self):
+        real_open = os.open
+
+        def racing_open(path, flags, *args, **kwargs):
+            # Reproduce the macOS CI failure at the syscall boundary. Exclusive
+            # creation and opening an existing file remain independently safe.
+            if path == 'HANDOFF.md' and flags & os.O_CREAT and not flags & os.O_EXCL:
+                raise FileNotFoundError(2, 'Concurrent nonexclusive create', path)
+            return real_open(path, flags, *args, **kwargs)
+
+        def worker(_):
+            return SharedChatContext(self.folder).append(
+                event_id='creation-race', actor='webbob', summary='Synthetic saved decision')
+
+        with patch('shared_chat.os.open', side_effect=racing_open):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                outcomes = list(pool.map(worker, range(16)))
+        self.assertEqual(sum(outcomes), 1)
+        data = (self.folder / 'HANDOFF.md').read_text()
+        self.assertEqual(data.count('<!-- committed event creation-race '), 1)
+        self.assertEqual((self.folder / 'HANDOFF.md').stat().st_mode & 0o777, 0o600)
+
     def test_incomplete_tail_is_never_rewritten_or_counted_as_success(self):
         self.append()
         path = self.folder / 'HANDOFF.md'

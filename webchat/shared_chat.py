@@ -104,7 +104,17 @@ def _directory(path, create=False):
 
 
 def _file(folder, name, flags, mode=0o600):
-    fd = os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, mode, dir_fd=folder)
+    safe_flags = flags | os.O_NOFOLLOW | os.O_NONBLOCK
+    if flags & os.O_CREAT and not flags & os.O_EXCL:
+        # Keep creation atomic when several journal writers arrive together.
+        # In particular, avoid Darwin's concurrent nonexclusive O_CREAT path,
+        # which can report ENOENT even though the pinned directory exists.
+        try:
+            fd = os.open(name, safe_flags | os.O_EXCL, mode, dir_fd=folder)
+        except FileExistsError:
+            fd = os.open(name, safe_flags & ~os.O_CREAT, mode, dir_fd=folder)
+    else:
+        fd = os.open(name, safe_flags, mode, dir_fd=folder)
     info = os.fstat(fd)
     if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid()
             or info.st_mode & 0o077):
