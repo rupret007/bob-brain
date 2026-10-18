@@ -28,7 +28,7 @@ configuration `BOB_SHARED_CONTEXT_DIR`; chat/model input cannot choose it.
 
 | Source | Candidate reader | Limits and freshness |
 | --- | --- | --- |
-| NucBox `~/.local/share/storypool/MONITOR.md`, `NEEDS_JEFF.md`, `PARITY.md` | Fixed SSH read-only pull from `rupret@100.93.165.1`; private local copies beside HANDOFF.md | 64 KiB/file; preserve original mtime; <=15 minutes fresh, otherwise stale. A failed sync preserves the dated previous copy and reports no new copy. |
+| NucBox `~/.local/share/storypool/MONITOR.md`, `NEEDS_JEFF.md`, `PARITY.md` | Fixed SSH read-only pull from `rupret@100.93.165.1`; private local copies beside HANDOFF.md | 64 KiB/copy; growing MONITOR uses the newest complete lines, with an explicit excerpt marker. Preserve original mtime; <=15 minutes fresh, otherwise stale. A failed sync preserves the dated previous copy and reports no new copy. |
 | Mini `100.67.108.113:8790/api/engine` and NucBox `100.93.165.1:8790/api/engine` | Direct fixed GET, no proxies/cookies/auth/redirects | 1 second/request, 64 KiB response, selected operational fields, bounded excerpts. Fetch time does not replace source timestamp; missing/old timestamp means stale. |
 | Conductor morning digest | Operator selects the actual Mini digest path for the read-only sync; copy is `MORNING_DIGEST.md` | 64 KiB, preserve original mtime. Actual path is not known here; missing digest is unavailable. |
 | Mini `chat/HANDOFF.md` | Read newest bounded tail at conversation start; refresh before each provider turn | 16 KiB tail with explicit truncation; source mtime reported. It records history, not a live system check. |
@@ -71,6 +71,17 @@ No source-sync command executes model input, sends messages, changes auth,
 starts services, modifies NucBox files or activates Web Bob. SSH uses BatchMode,
 strict known-host checking and a fixed read-only remote program. Never bypass a
 host-key/login failure; put missing setup in READINESS.md under NEEDS JEFF.
+
+The remote reader accepts only owner-owned regular files with one link and no
+world-write permission. A MONITOR larger than 64 KiB produces a bounded newest
+excerpt instead of becoming unavailable; other oversized source files remain
+unavailable. The Mini reads the newest complete 4,000-byte MONITOR excerpt from
+its private copy, preserves the original timestamp and marks omitted history.
+Split UTF-8 lines are discarded; no complete bounded line means unavailable.
+`test_shared_source_sync.py` executes the actual fixed remote program against
+an isolated home, then uses the real sync and Mini fallback reader. It covers
+growing logs, short remote excerpts, UTF-8 boundaries, stale source dates and
+unsafe files. No SSH session or production sync is implied by those tests.
 
 ## Staging commands (not run against the Mini)
 

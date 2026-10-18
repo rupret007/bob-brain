@@ -9,6 +9,13 @@ Reference: Jeff's `~/.local/share/storypool/parity/GROK_BOT_PARITY_SPEC.md`,
 repo `skills/`, and [memory/integrations design](docs/WEBBOB-MEMORY-INTEGRATIONS-PLAN.md).
 No live switch, sends, merge, tags, releases, main push or test bypass is authorized.
 
+2026-10-18 shared-source repair: the NucBox MONITOR is already larger than
+64 KiB. Its fixed read-only sync now preserves a bounded newest excerpt and
+original source date; the Mini fallback reads the newest lines rather than the
+first historical entries. Actual-reader regression coverage is in
+`webchat/test_shared_source_sync.py`. Production Mini sync, the shared Mini
+journal binding and two-chat pickup remain acceptance gates.
+
 | Priority / surface | Candidate evidence | Remaining acceptance condition |
 | --- | --- | --- |
 | P0: release qualification | #153 reminder-replay fix; 343 baseline tests including imported mutation gates, 347 focused runtime tests and 118 release unit tests passed locally. Unchanged authenticated isolated HTTP reminder save/delivery/cancellation passed with a two-second separate approval delay. | Full local discovery and `release/solo.py check` green on provisioned Mini; exact final SHA CI, Karen PASS, Claude+Codex main >=144 and holdout |

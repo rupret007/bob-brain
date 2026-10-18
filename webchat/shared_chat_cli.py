@@ -26,9 +26,28 @@ for name in ('MONITOR.md', 'NEEDS_JEFF.md', 'PARITY.md'):
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(fd, 'rb') as stream:
             info = os.fstat(stream.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_size > 65536:
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                    or info.st_nlink != 1 or info.st_mode & 0o002):
+                raise OSError('unsafe operational source')
+            clipped = info.st_size > 65536
+            if clipped and name != 'MONITOR.md':
                 raise OSError('not a bounded file')
-            raw = stream.read(65537)
+            marker = b'[Earlier MONITOR.md lines omitted by read-only NucBox sync.]\n'
+            limit = 65536 - len(marker) if clipped else 65536
+            if clipped:
+                stream.seek(-limit, os.SEEK_END)
+            raw = stream.read(limit + 1)
+            if len(raw) > limit:
+                raise ValueError('source changed beyond read bound')
+            if clipped:
+                # Discard the partial first line, including a split UTF-8
+                # character. A growing log remains bounded and current.
+                if b'\n' not in raw:
+                    raise ValueError('no complete bounded log line')
+                raw = raw.partition(b'\n')[2]
+                if not raw:
+                    raise ValueError('no complete bounded log line')
+                raw = marker + raw
         if len(raw) > 65536:
             raise ValueError('too large')
         row.update(state='observed', text=raw.decode('utf-8'), modified=info.st_mtime)
