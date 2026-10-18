@@ -1,7 +1,11 @@
 import importlib.util
+from contextlib import redirect_stdout
+from io import StringIO
+import json
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -99,6 +103,87 @@ class PublicPrivacyTests(unittest.TestCase):
         with patch.object(privacy, "git", side_effect=subprocess.CalledProcessError(1, "git")):
             with self.assertRaises(subprocess.CalledProcessError):
                 privacy.scan("missing", "HEAD")
+
+    def test_report_retains_exact_historical_object_without_source_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            def git(*args):
+                return subprocess.run(["git", "-C", directory, *args], check=True, capture_output=True).stdout.decode().strip()
+            git("init", "-q")
+            git("config", "user.email", "ci@example.invalid")
+            git("config", "user.name", "Privacy test")
+            root = Path(directory)
+            path = "sample" + "@mailhost.org" + ".txt"
+            (root / path).write_text("safe\n")
+            git("add", ".")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+            sensitive = "ghp_" + "c" * 30
+            (root / path).write_text(sensitive + "\n")
+            git("add", ".")
+            git("commit", "-qm", "historical addition")
+            introduced = git("rev-parse", "HEAD")
+            blob = git("rev-parse", "HEAD:" + path)
+            (root / path).write_text("different safe content at the same line\n")
+            git("add", ".")
+            git("commit", "-qm", "remove sensitive value")
+            head = git("rev-parse", "HEAD")
+            actual_git = privacy.git
+            with patch.object(privacy, "git", side_effect=lambda *args: actual_git("-C", directory, *args)):
+                report = privacy.scan_report(base, head)
+                tuples = privacy.scan(base, head)
+            self.assertEqual(report["base"], base)
+            self.assertEqual(report["head"], head)
+            self.assertEqual(report["findings"], [{"path": path, "line": 1,
+                "rule": "credential", "commit": introduced,
+                "comparison_parent": base, "object": blob}])
+            self.assertEqual(tuples, [(path, 1, "credential")])
+            result = subprocess.run([sys.executable, str(SPEC.origin), "--base", base,
+                "--head", head, "--format", "json"], cwd=directory, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            published = json.loads(result.stdout)
+            self.assertEqual(published["findings"][0]["path"], "<sensitive-path-redacted>")
+            self.assertEqual(published["findings"][0]["object"], blob)
+            self.assertNotIn(path, result.stdout + result.stderr)
+            self.assertNotIn(sensitive, result.stdout + result.stderr)
+            self.assertNotIn("different safe content", result.stdout + result.stderr)
+            self.assertNotIn(sensitive, repr(report))
+
+    def test_json_cli_keeps_clean_and_unscannable_exit_statuses(self):
+        with tempfile.TemporaryDirectory() as directory:
+            def git(*args):
+                return subprocess.run(["git", "-C", directory, *args], check=True, capture_output=True).stdout.decode().strip()
+            git("init", "-q")
+            git("config", "user.email", "ci@example.invalid")
+            git("config", "user.name", "Privacy test")
+            (Path(directory) / "safe.txt").write_text("safe\n")
+            git("add", ".")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+            for revision, expected in ((base, 0), ("missing", 2)):
+                with self.subTest(revision=revision):
+                    result = subprocess.run([sys.executable, str(SPEC.origin), "--base", base,
+                        "--head", revision, "--format", "json"], cwd=directory, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, expected)
+                    if expected == 0:
+                        self.assertEqual(json.loads(result.stdout)["findings"], [])
+                    else:
+                        self.assertEqual(result.stdout, "")
+
+    def test_text_redaction_preserves_distinct_finding_count(self):
+        paths = ["one" + "@mailhost.org", "two" + "@mailhost.org"]
+        report = {"schema_version": 1, "base": "a" * 40, "head": "b" * 40,
+                  "findings": [{"path": path, "line": 1, "rule": "credential",
+                                "commit": "b" * 40, "comparison_parent": "a" * 40,
+                                "object": "c" * 40} for path in paths]}
+        output = StringIO()
+        with patch.object(privacy, "scan_report", return_value=report), \
+                patch.object(sys, "argv", ["privacy", "--base", "HEAD"]), \
+                redirect_stdout(output):
+            self.assertEqual(privacy.main(), 1)
+        self.assertIn("2 finding(s)", output.getvalue())
+        self.assertEqual(output.getvalue().count("<sensitive-path-redacted>"), 2)
+        for path in paths:
+            self.assertNotIn(path, output.getvalue())
 
     def test_imported_root_history_scans_secrets_removed_before_merge(self):
         with tempfile.TemporaryDirectory() as directory:

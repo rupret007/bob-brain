@@ -29,7 +29,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: python tools/check_public_privacy.py --base "$BASE_SHA" --head "$HEAD_SHA"
+        run: python tools/check_public_privacy.py --base "$BASE_SHA" --head "$HEAD_SHA" --format json
 
   trusted-public-privacy:
     if: github.event_name == 'pull_request_target'
@@ -54,4 +54,4 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python tools/check_public_privacy.py --base "$BASE_SHA" --head "$HEAD_SHA"
+        run: python tools/check_public_privacy.py --base "$BASE_SHA" --head "$HEAD_SHA" --format json

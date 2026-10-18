@@ -129,12 +129,30 @@ def scan_comparison(base, head):
     return findings
 
 
-def scan(base, head):
+def scan_report(base, head):
     # Inspect every newly reachable commit: removing a secret in a later commit
     # does not remove it from the public repository's history.
     base = git("rev-parse", "--verify", "--end-of-options", base + "^{commit}").decode().strip()
     head = git("rev-parse", "--verify", "--end-of-options", head + "^{commit}").decode().strip()
-    findings = set(scan_comparison(base, head))
+    findings = {}
+    blobs = {}
+
+    def collect(parent, revision):
+        for path, lineno, rule in scan_comparison(parent, revision):
+            key = (revision, path)
+            if key not in blobs:
+                entry = git("ls-tree", "-z", revision, "--", path).split(b"\t", 1)[0].split()
+                if len(entry) != 3:
+                    raise ValueError("missing finding object")
+                blobs[key] = entry[2].decode("ascii")
+            occurrence = (path, lineno, rule, revision, parent, blobs[key])
+            findings[occurrence] = {
+                "path": path, "line": lineno, "rule": rule,
+                "commit": revision, "comparison_parent": parent,
+                "object": blobs[key],
+            }
+
+    collect(base, head)
     commits = git("rev-list", "--reverse", base + ".." + head).decode().splitlines()
     for commit in commits:
         ancestry = git("rev-list", "--parents", "-n", "1", commit).decode().split()
@@ -142,20 +160,42 @@ def scan(base, head):
         # Every root file is an addition: compare with Git's empty tree, using
         # mktree so this also works with the repository's object hash format.
         parent = ancestry[1] if len(ancestry) > 1 else git("mktree").decode().strip()
-        findings.update(scan_comparison(parent, commit))
-    return sorted(findings)
+        collect(parent, commit)
+    return {"schema_version": 1, "base": base, "head": head,
+            "findings": [findings[key] for key in sorted(findings)]}
+
+
+def scan(base, head):
+    report = scan_report(base, head)
+    return sorted({(item["path"], item["line"], item["rule"])
+                   for item in report["findings"]})
+
+
+def safe_report(report):
+    # Paths can themselves contain private values. Only metadata is published;
+    # object IDs let an authorized local reviewer inspect the exact old bytes.
+    return dict(report, findings=[dict(item, path=(
+        "<sensitive-path-redacted>" if line_rules("path.md", item["path"])
+        else item["path"])) for item in report["findings"]])
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True)
     parser.add_argument("--head", default="HEAD")
+    parser.add_argument("--format", choices=("text", "json"), default="text",
+                        help="JSON includes immutable finding provenance, never source values")
     args = parser.parse_args()
     try:
-        findings = scan(args.base, args.head)
+        report = scan_report(args.base, args.head)
     except (subprocess.CalledProcessError, UnicodeError, ValueError):
         print("privacy-check: unable to inspect complete pinned comparison", file=sys.stderr)
         return 2
+    if args.format == "json":
+        print(json.dumps(safe_report(report), sort_keys=True))
+        return 1 if report["findings"] else 0
+    findings = sorted({(item["path"], item["line"], item["rule"])
+                       for item in report["findings"]})
     for path, lineno, rule in findings:
         # JSON escaping prevents crafted names from injecting log annotations.
         safe_path = "<sensitive-path-redacted>" if line_rules("path.md", path) else path
