@@ -149,9 +149,12 @@ def password_at(folder):
 
 
 class Chat(TaskDispatch):
-    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, local_tasks=None, shared_context=None, skills=None):
+    def __init__(self, folder=HERE, root=ROOT, providers=None, texting=None, *, reminder_notifier=None, calendar=None, local_tasks=None, shared_context=None, skills=None, storypool_actions=None):
         self.folder, self.root = folder, root
         self.shared_context = shared_context
+        from storypool_actions import StoryPoolActions, guarded_executor
+        self.storypool_actions = storypool_actions if storypool_actions is not None else StoryPoolActions(
+            folder, execute=guarded_executor(root))
         from skill_runtime import SkillRuntime
         self.skills = skills if skills is not None else SkillRuntime()
         folder.mkdir(parents=True, exist_ok=True)
@@ -763,6 +766,11 @@ class Chat(TaskDispatch):
             if not parse_memory_confirm(text)[0] and not parse_remember(text) and not MEMORY_DISMISS.match(text):
                 conversation.pop("pending_memory", None)
                 conversation.pop("pending_memory_id", None)
+            storypool = self.storypool_actions.handle(raw_text, identifier, request_id, actor=actor,
+                allow_effects=not public_attachments and worker is None and source_voice is None
+                    and self.ledger_root(identifier) == self.root, blocked=bool(intent_state.get("holds")))
+            if storypool is not None:
+                return self.intent_reply(conversation, self.redact(storypool), provider='storypool-controls')
             from memory_removal import handle as memory_removal_turn
             removal = memory_removal_turn(self, conversation, text, request_id, source_voice=source_voice,
                                          provider=provider, worker=worker, attachments=public_attachments)
