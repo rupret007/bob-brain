@@ -14,18 +14,35 @@ StoryPool shared coordination client and a renewed cluster lease. No local
 coordination fallback is used. The bounded allowlist invokes the local service
 manager without a shell and checks its result; application health must still be
 checked in the status view. Controls do not install or deploy Web Bob.
+Maintenance and drain state are checked again after claim renewal, immediately
+before the service request, so a stop arriving during claim or audit work is
+honored. Two regression cases reproduce this race before the repair.
 
 A privacy-safe generic action record is appended through `SharedChatContext`;
 it contains neither a task body nor the approval token. Journal failure prevents
 service execution.
 
-`storypool queue codex task: TASK` demonstrates the same proposal/approval
-boundary, but **does not enqueue or start a task**. The installed StoryPool
-scheduler has no verified generic task-admission adapter here. The response
-explicitly explains this gap, and no legacy next-prompts queue is substituted.
-A production adapter must preserve global/provider pauses, the shared Codex
-75% weekly stop, node/lane guards, per-branch claims, draft-only work and Karen
-review gates. Milestone 1 remains incomplete until that integration is verified.
+`storypool queue codex task: TASK` uses the same proposal/approval boundary.
+The candidate now includes a bounded adapter for a trusted scheduler API, but
+**the installed StoryPool scheduler does not implement that API yet**. The
+normal runtime therefore still reports that no task was queued; it starts no
+worker and substitutes no legacy next-prompts queue. Milestone 1 remains
+incomplete until the actual scheduler integration is implemented and verified.
+
+The adapter loads only the fixed trusted installation file
+`cluster/control_plane/owner_task_scheduler.py`, with `OWNER_TASK_CONTRACT=1`
+and `admit_owner_draft_task(request)`. It rejects symlinks, unsafe ownership or
+permissions, and cached packages outside the trusted installation. The request
+is bounded to `rupret007/bob-brain`, the candidate checkout's full head SHA,
+Codex and a generated draft branch; the raw approval token is never forwarded.
+A valid durable receipt must echo the request identity and declare fresh
+admission with shared quota below 75%, global/provider pauses clear, node and
+lane guards passed, a branch claim, draft-only work, exact-head Karen gates and
+cluster-wide idempotency. These declarations are an API contract to implement
+and review in StoryPool; they are not evidence that a backend exists or has
+passed those gates. Execution must repeat admission checks and hold its lease.
+Local approval consumption and receipt storage prevent retries after an
+ambiguous admission; only a verified durable receipt can claim acceptance.
 
 Offline checks:
 

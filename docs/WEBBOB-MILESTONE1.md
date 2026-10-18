@@ -43,6 +43,14 @@ PYTHONPATH=webchat:. python3 -m pytest -q tests/test_webbob_m1_acceptance.py
 
 Phone network/login reachability is verified, but candidate deployment, authenticated phone acceptance and full final-head Karen/CI remain open. Missing host bindings must be shown as unavailable. Runtime integration tests do not prove production delivery. Keep the PR draft; do not send email/texts, activate Web Bob or infer approval from this document.
 
+The Oct 18 17:17 CT broader check also reproduced an inherited status snapshot
+versus public reply metadata mismatch in
+`test_status_observation.StatusObservationTests.test_snapshot_is_atomic_private_and_immutable_across_retry_and_restart`
+at the unchanged `9acadbe7` baseline. This remains a qualification blocker.
+Media checks additionally need the real local text safety tool; an absent tool
+must continue to reject image uploads. Focused M1 tests do not replace these
+qualification gates or authorize weakening their assertions.
+
 ## Milestone 2 queue
 
 After M1 trial is ready: authenticated email/calendar/text reads and drafts, every send behind fresh exact-message Jeff OK, Andrea reply bindings, and the reviewed Band Desk/Director/Stack Ops runtime skills. Existing candidate libraries and tests are partial evidence; missing account/transport/OAuth bindings remain unavailable until provisioned and verified.
