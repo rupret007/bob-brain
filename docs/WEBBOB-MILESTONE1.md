@@ -29,7 +29,7 @@ The probe itself is tested against the actual Chat HTTP server with temporary
 state and a fake provider (no model call, login or service action):
 
 ```sh
-PYTHONPATH=webchat:. python3 -m pytest -q tests/test_webbob_m1_acceptance.py
+PYTHONPATH=webchat:. python3 -m pytest -q webchat/test_webbob_m1_acceptance.py
 ```
 
 For an approved staged candidate, an operator who already has an authenticated
@@ -58,7 +58,7 @@ Run the independent real Chromium flow against an ephemeral loopback Chat server
 
 ```sh
 BOB_PLAYWRIGHT_MODULE=/path/to/node_modules/playwright \
-PYTHONPATH=webchat:. python3 -m pytest -q tests/test_webbob_m1_phone_browser.py
+PYTHONPATH=webchat:. python3 -m pytest -q webchat/test_webbob_m1_phone_browser.py
 ```
 
 This logs in through the actual UI, explicitly confirms a harmless memory,
