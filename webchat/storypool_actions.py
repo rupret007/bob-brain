@@ -141,6 +141,12 @@ def guarded_executor(root, *, install=None, data=None):
             else:
                 raise RuntimeError('Unsupported host')
             lease.renew()
+            # Claim acquisition, journaling and renewal can block. Honor an
+            # operator stop that arrived while those operations were pending.
+            if (Path(root) / 'conductor' / 'MAINTENANCE').exists():
+                raise RuntimeError('Scheduling paused')
+            if is_draining(root=data):
+                raise RuntimeError('Node draining')
             subprocess.run(args, capture_output=True, timeout=10, check=True)
             subprocess.run(check, capture_output=True, timeout=5, check=True)
             return 'Restart requested and local service manager confirmed ' + service + ' is loaded/active. Check StoryPool status for application health.'
