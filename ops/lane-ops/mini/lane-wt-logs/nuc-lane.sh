@@ -19,6 +19,10 @@ if [ "${1:-}" = "--inner" ]; then
   LG=${LANE_GUARD:-$HOME/bin/lane-guard.sh}; [ -f "$LG" ] && . "$LG"
   PROV=${LANE_PROVIDER:-cursor}; M=$NL_MODEL; EFF=$NL_EFF; TIER=${LANE_TIER:-cheap}
   if ! $SSH true </dev/null 2>/dev/null; then
+    if [ "$PROV" = codex ]; then
+      echo "MINI-CODEX REFUSED" >>$L
+      exit 3
+    fi
     echo "HOLD nucbox unreachable; no Mini fallback (arch-review-2 item 10) $(date)" >>$L
     echo "BLOCKER nucbox unreachable (held, not run on the Mini)" >>$L; exit 1
   fi

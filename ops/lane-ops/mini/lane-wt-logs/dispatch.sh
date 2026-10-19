@@ -6,8 +6,10 @@ active(){ n=0; for s in lane-webjam lane-andrea lane-amv; do screen -ls | grep -
 while true; do
   a=$(active); l=$(load)
   if (( a < 2 )) && (( ${l%.*} < 12 )); then
-    if [[ ! -f ~/lane-wt/logs/turd.resumed ]]; then pkill -CONT -f lane-wt/turdanoid; pkill -CONT -f "run.sh turdanoid"; for p in $(pgrep -f "codex exec.*turdanoid"); do kill -CONT -$(ps -o pgid= -p $p|tr -d ' '); done; touch ~/lane-wt/logs/turd.resumed; echo "$(date) resumed turdanoid load=$l" >> $L
-    elif [[ ! -f ~/lane-wt/logs/amv.started ]]; then screen -dmS lane-amv ~/lane-wt/logs/run.sh amv-70 amv; touch ~/lane-wt/logs/amv.started; echo "$(date) started amv load=$l" >> $L
+    if [[ ! -f ~/lane-wt/logs/turd.resumed || ! -f ~/lane-wt/logs/amv.started ]]; then
+      # Legacy run.sh is a local Codex runner; neither resume nor launch it on the Mini.
+      echo "$(date) MINI-CODEX REFUSED" >> $L
+      exit 3
     fi
   fi
   screen -ls | grep -q "lane-" || { echo "$(date) drained" >> $L; exit 0; }
