@@ -20,8 +20,10 @@ def run(request):
     # lexical matching of the trusted prefix, never where file access occurs.
     actions.files.home_alias = Path(request.get('home_alias', request['home']))
     method, args = request['method'], request['args']
-    if method not in ('handle', 'validate_routine'):
+    if method not in ('handle', 'validate_routine', 'complete_claim'):
         raise LocalTaskError('Unsupported file worker operation.')
+    if method == 'complete_claim':
+        return actions.complete_claim(*args, **request['kwargs'])
     spec = parse(args[0])
     if spec and spec['kind'] == 'search':
         raise LocalTaskError('Web lookups are unavailable in the file worker.')

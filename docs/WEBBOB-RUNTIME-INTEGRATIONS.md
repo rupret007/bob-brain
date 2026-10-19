@@ -73,6 +73,22 @@ An ambiguous/crashed local action remains unconfirmed rather than being read
 again with the same occurrence identity. Results stay private in chat without
 OS alerts. Event titles are displayed as data and never processed as actions.
 
+## Local file approval and worker timeouts
+
+An exact separate `yes wblocal-…` consumes the durable approval in the parent
+before it launches a file worker. The worker checks that conversation and
+approval request, saves its execution claim, then performs the existing bounded
+file operation. Receipt locking still has its existing deadline. Target-file
+I/O stays in the killable interpreter; no threaded-server fork is introduced.
+
+A worker startup failure, timeout or lost result leaves the action unconfirmed
+unless a completed receipt was saved. Repeating an approval, including after
+restart or from another tab, cannot relaunch it. Inspect the target before
+making a new request. Cancelled/expired drafts, holds, private-path exclusions,
+credential refusals and file-fingerprint checks retain their existing rules.
+The deadline tests exercise startup timeout, stalled file I/O, storage/launch
+failure and concurrent real workers using only temporary files.
+
 ## Explicit skills
 
 Select a skill at the start of the current message: `$band-desk`, `Band Desk`,

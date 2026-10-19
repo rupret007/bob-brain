@@ -9,7 +9,15 @@ Reference: Jeff's `~/.local/share/storypool/parity/GROK_BOT_PARITY_SPEC.md`,
 repo `skills/`, and [memory/integrations design](docs/WEBBOB-MEMORY-INTEGRATIONS-PLAN.md).
 No live switch, sends, merge, tags, releases, main push or test bypass is authorized.
 
-The latest CI failure also exposed sub-microsecond timestamp serialization
+The macOS full suite exposed a local-action worker startup timeout before its
+approval claim was saved. Repeating that approval could then mutate the file.
+The parent now saves the consumed approval before worker launch, and the worker
+saves its execution claim before target I/O. Three new regression methods cover
+startup timeout/restart, failed storage/launch and concurrent real workers;
+the original stalled-file test and all consent assertions are retained.
+Final-head platform CI and provisioned Mini acceptance remain required.
+
+The earlier Linux CI failure also exposed sub-microsecond timestamp serialization
 rounding a current engine observation into its own future. Emitted timestamps
 now round down, while actual future and stale sources retain the strict
 freshness rule. Deterministic regression cases cover this Linux clock boundary.
@@ -36,6 +44,7 @@ health or completed-work claim.
 | P0: draft-only/conditional cues | `webchat/approval_language.py`, `personal_drafts.py`, consent fixtures and imported HMAC-bound draft gate | Run the full approval matrix, including “draft only”, “provided I agree”, “show me first”, refusal, edits and restart. Source/journal approval assertions never satisfy consent. |
 | P0: reminders/calendar | Chat JSON `Reminders` selected as the runtime authority. Approved morning calendar reads now use its scheduler/notice IDs and the existing `CalendarActions.read('today')`; five new Chat tests cover consent, restart/DST, holds/cancel, needs-auth and untrusted event titles. Imported SQLite stores are not instantiated. [Runtime guide](docs/WEBBOB-RUNTIME-INTEGRATIONS.md) | Verify live predecessor state compatibility, Google OAuth and real morning reads on Mini. Re-run complete release save/deliver/cancel gate. No automatic migration or second scheduler is installed. |
 | P0: reliable replies | Actual saved-history transport now uses `ChatReplyJournal` for authenticated browser observations of exact saved reply versions. Eight runtime/HTTP cases cover restart, concurrent/lost response replay, changed/long artifacts, private/foreign rows, holds and unavailable storage. Three actual UI-code cases cover visibility, stale DOM, network loss and batch bounds. Original reply retry/uncertainty mutation gates retained. [Guide](docs/WEBBOB-RUNTIME-INTEGRATIONS.md) | Mini Chromium/WebKit rendered-row/reload/timeout acceptance remains. Unacknowledged visibility is unknown; receipt replay never sends or regenerates. Polling uses existing durable request IDs and one display row. |
+| P0: local approval timeout safety | Parent durably consumes exact approval before worker launch; child claims execution before bounded target-file I/O. Startup timeout, stalled I/O, failed storage/launch, concurrent approval and restart are covered in `test_local_tasks.py`. [Guide](docs/WEBBOB-RUNTIME-INTEGRATIONS.md) | Final-head Linux/macOS CI and Mini acceptance. Unconfirmed actions require inspection and a fresh request; repeating the old approval cannot relaunch them. |
 | P0: safety/real outcomes | Existing server-owned action receipts/holds; Unicode-tag rejection imported from #155; shared policy in `shared_chat.RULES` | Same trusted policy in Grok's runner. Full safety suite and final-head Karen. Protect svc-* sessions, auth, Keychain, personal files, rad-dad-show-night and Hang Out; keep destructive action approval, no main/force-push/tags/releases/sudo/merges, no Grok work lanes. |
 | P1: durable owner memory | Existing confirmed `memory_store.py`, project context, memory removal; accepted-fact `webbob.SharedContext` hardening; #130 design | Connect the authoritative Grok owner facts with provenance and forgetting. Add relevant bounded retrieval and exact correction. Do not import transcripts, credentials or send authorization as facts. |
 | P1: GitHub questions/status | Imported `webbob/pr_ops.py` library and existing process/status evidence | P6/P32 runtime issue/PR reads, plus read-only selected repo file/catalog counting per #130; cite fetched data/time and avoid memorized counts. Library status checks are not chat tools. |

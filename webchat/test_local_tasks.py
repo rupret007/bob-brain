@@ -364,6 +364,72 @@ with patch('local_tasks.os.read', side_effect=stalled_read):
         self.assertEqual(self.say('yes ' + row['token'], actions=actions), UNCERTAIN)
         self.assertTrue(self.file.exists())
 
+    def test_worker_startup_timeout_cannot_replay_the_same_approval(self):
+        actions = self.production_actions()
+        self.assertIn('Local draft', self.say('delete file ~/Documents/note.txt',
+                                            rid='draft', actions=actions))
+        with actions.locked() as rows:
+            row, = rows.values()
+        real_popen = subprocess.Popen
+        workers = []
+
+        def delayed_start(_command, **kwargs):
+            # Import/startup can exhaust the deadline before the worker reads
+            # stdin or writes a claim, particularly on macOS under suite load.
+            worker = real_popen([sys.executable, '-c', 'import time; time.sleep(30)'], **kwargs)
+            workers.append(worker)
+            return worker
+
+        with patch('local_tasks.subprocess.Popen', side_effect=delayed_start), \
+                patch('local_tasks.OPERATION_TIMEOUT', 0.1):
+            reply = self.say('yes ' + row['token'], rid='approve', actions=actions)
+        self.assertIn('timed out', reply)
+        self.assertEqual(len(workers), 1)
+        self.assertIsNotNone(workers[0].poll())
+        self.assertEqual(self.file.read_text(), 'original')
+        restored = self.production_actions()
+        self.assertEqual(self.say('yes ' + row['token'], rid='approve', actions=restored), UNCERTAIN)
+        self.assertEqual(self.say('yes ' + row['token'], rid='new-approval', actions=restored), UNCERTAIN)
+        self.assertEqual(self.file.read_text(), 'original')
+
+    def test_approval_storage_or_launch_failure_cannot_execute(self):
+        actions = self.production_actions()
+        self.assertIn('Local draft', self.say('delete file ~/Documents/note.txt',
+                                            rid='draft', actions=actions))
+        with actions.locked() as rows:
+            row, = rows.values()
+        with patch.object(actions, 'save', side_effect=OSError('fixture disk full')), \
+                patch('local_tasks.subprocess.Popen') as spawn:
+            self.assertIn(UNCERTAIN, self.say('yes ' + row['token'], rid='approve', actions=actions))
+        spawn.assert_not_called()
+        self.assertEqual(self.file.read_text(), 'original')
+        with patch('local_tasks.subprocess.Popen', side_effect=OSError('fixture launch failure')) as spawn:
+            self.assertIn(UNCERTAIN, self.say('yes ' + row['token'], rid='approve', actions=actions))
+        self.assertEqual(spawn.call_count, 1)
+        restored = self.production_actions()
+        self.assertEqual(self.say('yes ' + row['token'], actions=restored), UNCERTAIN)
+        self.assertEqual(self.file.read_text(), 'original')
+
+    def test_concurrent_production_approvals_launch_once_and_keep_the_receipt(self):
+        actions, other = self.production_actions(), self.production_actions()
+        self.assertIn('Local draft', self.say('write file ~/Documents/note.txt: replacement',
+                                            rid='draft', actions=actions))
+        with actions.locked() as rows:
+            row, = rows.values()
+        real_popen = subprocess.Popen
+        with patch('local_tasks.subprocess.Popen', wraps=real_popen) as spawn:
+            with concurrent.futures.ThreadPoolExecutor(2) as pool:
+                replies = list(pool.map(lambda action: self.say('yes ' + row['token'],
+                    actions=action), (actions, other)))
+        self.assertEqual(spawn.call_count, 1)
+        receipt = next(reply for reply in replies if reply.startswith('File overwritten:'))
+        self.assertTrue(all(reply in (receipt, UNCERTAIN) for reply in replies))
+        self.assertEqual(self.file.read_text(), 'replacement')
+        self.file.write_text('independently changed after execution')
+        restored = self.production_actions()
+        self.assertEqual(self.say('yes ' + row['token'], actions=restored), receipt)
+        self.assertEqual(self.file.read_text(), 'independently changed after execution')
+
 
 class LocalTaskTests(LocalFixture):
     def test_file_read_list_create_and_terminal_allowlist(self):

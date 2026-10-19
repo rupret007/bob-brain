@@ -376,8 +376,9 @@ class LocalTasks:
         # adapter or caller-selected tool/arguments reach a scheduled action.
         self.read_calendar = read_calendar
         # Explicitly injected file adapters are the in-process test boundary.
-        # Production file work, including receipts and routine validation, runs
-        # in a fresh killable interpreter; never fork the threaded chat server.
+        # Target-file work and routine validation run in a fresh killable
+        # interpreter; never fork the threaded chat server. Approval claims
+        # must be durable before launch, including a worker startup timeout.
         self.isolated_files = files is None and not _worker
 
     def file_worker(self, method, args, kwargs):
@@ -486,7 +487,7 @@ class LocalTasks:
     def receipt(row):
         if row['state'] == 'done':
             return row['receipt']
-        if row['state'] in ('claimed', 'unconfirmed'):
+        if row['state'] in ('claimed', 'executing', 'unconfirmed'):
             return UNCERTAIN
         if row['state'] != 'draft':
             return 'That local draft was cancelled, replaced, or expired. Make a fresh request.'
@@ -516,10 +517,6 @@ class LocalTasks:
             if leading_approval_request(text.strip(), lambda value: (
                     (match := FILE.fullmatch(value)) and match[1].lower() == 'create')):
                 return 'No file changed. Send a new file request when you want it performed.'
-            if self.isolated_files and not SEARCH.fullmatch(text.strip()) and (
-                    CONTROL.fullmatch(text) or FILE.fullmatch(text.strip()) or
-                    LIST.fullmatch(text.strip()) or TERMINAL.fullmatch(text.strip())):
-                return self.file_worker('handle', [text, cid, request_id, intent_state], dict(routine=routine))
             # Consent is the complete issued ASCII message, without trimming
             # padding, substituting whitespace, or folding case.
             control = CONTROL.fullmatch(text)
@@ -527,6 +524,10 @@ class LocalTasks:
                 if routine:
                     raise LocalTaskError('Routine confirmations are not permitted.')
                 return self.control(control[1], control[2], cid, request_id, intent_state)
+            if self.isolated_files and not SEARCH.fullmatch(text.strip()) and (
+                    FILE.fullmatch(text.strip()) or LIST.fullmatch(text.strip()) or
+                    TERMINAL.fullmatch(text.strip())):
+                return self.file_worker('handle', [text, cid, request_id, intent_state], dict(routine=routine))
             if re.match(r'^(?:yes|cancel)\s+wblocal-', text.strip(), re.I):
                 return 'Use the exact confirmation message from the local draft. No action ran.'
             if text.strip().lower() == 'local tasks help':
@@ -601,5 +602,23 @@ class LocalTasks:
                 self.save(rows)
                 return self.receipt(row)
             row.update(state='claimed', approved_request_id=request_id)
+            self.save(rows)
+            if not self.isolated_files:
+                return self.finish(rows, row)
+        # Release the receipt lock before the child takes it. A failed launch,
+        # timeout or lost result leaves this approval consumed, never a draft.
+        return self.file_worker('complete_claim', [token, cid, request_id], {})
+
+    def complete_claim(self, token, cid, request_id):
+        """Private worker continuation of one durably consumed approval."""
+        with self.locked() as rows:
+            row = rows.get(token)
+            if (not row or row['cid'] != cid or row.get('approved_request_id') != request_id):
+                raise LocalTaskError('No matching approved local action.')
+            if row['state'] != 'claimed':
+                return self.receipt(row)
+            # Also consume the continuation before target-file I/O, so a
+            # duplicate worker invocation cannot repeat an uncertain effect.
+            row['state'] = 'executing'
             self.save(rows)
             return self.finish(rows, row)
