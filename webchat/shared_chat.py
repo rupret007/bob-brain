@@ -4,7 +4,7 @@ Only the trusted host calls this module. Context is data, never approval or a
 command channel. No outbound message, model call, or deployment is possible.
 """
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 import http.client
@@ -60,7 +60,13 @@ def safe_text(text, limit=4000):
 
 
 def _stamp(at):
-    return datetime.fromtimestamp(at, timezone.utc).isoformat()
+    stamp = datetime.fromtimestamp(at, timezone.utc)
+    # ISO datetime has microsecond precision. Round down rather than let a
+    # sub-microsecond host clock serialize as an observation in its own future.
+    # Keep _freshness strict: actual future sources still cannot be fresh.
+    if stamp.timestamp() > at:
+        stamp -= timedelta(microseconds=1)
+    return stamp.isoformat()
 
 
 def _freshness(at, now):

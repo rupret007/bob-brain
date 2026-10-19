@@ -153,6 +153,33 @@ class StoryPoolSourcesTests(unittest.TestCase):
                 self.assertEqual(rows['nucbox /api/engine']['freshness'], 'fresh')
                 self.assertIn('source remains available', rows['MONITOR.md']['text'])
 
+    def test_timestamp_serialization_never_creates_a_future_observation(self):
+        from datetime import datetime
+        # Linux clocks can carry sub-microsecond precision; datetime rounds to
+        # microseconds, including across a whole-second boundary.
+        for at in (1792368000.1234567, 1792368000.9999998,
+                   1792368000.123456, -0.0000002):
+            with self.subTest(at=at):
+                observed = datetime.fromisoformat(_stamp(at)).timestamp()
+                self.assertLessEqual(observed, at)
+                self.assertLess(at - observed, 0.0000011)
+
+    def test_submicrosecond_engine_clock_preserves_strict_freshness(self):
+        from datetime import datetime, timezone
+        for now in (1792368000.1234567, 1792368000.9999998):
+            with self.subTest(now=now):
+                def fetch(machine):
+                    # A real future source must still be stale; do not add a
+                    # clock-skew tolerance to hide serialization rounding.
+                    stamp = (_stamp(now) if machine == 'mini' else
+                             datetime.fromtimestamp(now + 1, timezone.utc).isoformat())
+                    return json.dumps({'timestamp': stamp}), False
+                context = SharedChatContext(self.root / 'chat',
+                    clock=lambda: now, fetch_engine=fetch)
+                rows = {row['source']: row for row in context.snapshot()['sources']}
+                self.assertEqual(rows['mini /api/engine']['freshness'], 'fresh')
+                self.assertEqual(rows['nucbox /api/engine']['freshness'], 'stale')
+
 
 if __name__ == '__main__':
     unittest.main()

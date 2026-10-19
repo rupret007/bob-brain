@@ -9,6 +9,14 @@ Reference: Jeff's `~/.local/share/storypool/parity/GROK_BOT_PARITY_SPEC.md`,
 repo `skills/`, and [memory/integrations design](docs/WEBBOB-MEMORY-INTEGRATIONS-PLAN.md).
 No live switch, sends, merge, tags, releases, main push or test bypass is authorized.
 
+The latest CI failure also exposed sub-microsecond timestamp serialization
+rounding a current engine observation into its own future. Emitted timestamps
+now round down, while actual future and stale sources retain the strict
+freshness rule. Deterministic regression cases cover this Linux clock boundary.
+The independent public privacy gate remains failing on inherited findings;
+[the immutable-object inventory and repair constraints](docs/WEBBOB-PRIVACY-REMEDIATION.md)
+do not grant any exemption or establish privacy qualification.
+
 2026-10-18 shared-source repair: the NucBox MONITOR is already larger than
 64 KiB. Its fixed read-only sync now preserves a bounded newest excerpt and
 original source date; the Mini fallback reads the newest lines rather than the
