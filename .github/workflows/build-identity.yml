@@ -6,6 +6,17 @@ on:
       - webchat/build_info.py
       - webchat/test_build_info*.py
       - .github/workflows/build-identity.yml
+  push:
+    branches:
+      - draft/webbob-go-live-20261018
+    paths:
+      - webchat/build_info.py
+      - webchat/test_build_info*.py
+      - .github/workflows/build-identity.yml
+
+concurrency:
+  group: build-identity-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
