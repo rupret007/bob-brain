@@ -1,0 +1,9 @@
+[Unit]
+Description=Bob cluster NATS (127.0.0.1:4222/8232)
+PartOf=bob-cluster.target
+[Service]
+ExecStart=%h/.local/bin/nats-server -c %h/.config/bob-cluster/nats.conf
+Restart=always
+RestartSec=3
+[Install]
+WantedBy=bob-cluster.target

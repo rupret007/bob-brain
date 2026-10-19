@@ -1,0 +1,34 @@
+#!/bin/bash
+# pre-push  (lane-ops v3, arch-review-2 B2 + B6) — runs for every push a NucBox lane makes, whichever provider
+# (Codex, Cursor, Claude, Gemini) runs the git command, because lane-supervise.sh points core.hooksPath here.
+#  1. Fence (B2): refuse unless lane-supervise says this lane still holds its lease (not stopped, heartbeat fresh).
+#  2. No branch deletes and no force pushes (the remote tip must be an ancestor of what we push).
+#  3. gat-policy --push on the pushed range: no skip/only markers, no removed assertions/tests, no runner-config
+#     edits (CI workflow edits are WARN). Before v3 only Gemini's pushes were checked.
+# Then the repo's own pre-push hook runs (chain.sh). Set LANE_PREPUSH_OFF=1 only by hand, never in a lane.
+T=$(dirname "$0")/..
+[ "${LANE_PREPUSH_OFF:-}" = 1 ] && exec "$(dirname "$0")/chain.sh" pre-push "$@"
+if [ -n "${LANE_NAME:-}" ]; then
+  bash "$T/lane-supervise.sh" ok "$LANE_NAME" || { echo "LANE PRE-PUSH refused: lane $LANE_NAME no longer holds its lease" >&2; exit 1; }
+fi
+Z=0000000000000000000000000000000000000000
+input=$(cat); bad=0
+while read -r lref lsha rref rsha; do
+  [ -n "$lref" ] || continue
+  if [ "$lsha" = "$Z" ] || [ "${lsha//0/}" = "" ]; then echo "LANE PRE-PUSH refused: lanes never delete remote branches ($rref)" >&2; bad=1; continue; fi
+  if [ -n "$rsha" ] && [ "${rsha//0/}" != "" ]; then
+    git cat-file -e "$rsha^{commit}" 2>/dev/null || git fetch -q origin "$rsha" 2>/dev/null
+    git merge-base --is-ancestor "$rsha" "$lsha" 2>/dev/null || { echo "LANE PRE-PUSH refused: $rref would be force-pushed" >&2; bad=1; continue; }
+    base=$rsha
+  else
+    base=$(git merge-base "$lsha" origin/HEAD 2>/dev/null || git merge-base "$lsha" origin/main 2>/dev/null || git merge-base "$lsha" origin/master 2>/dev/null)
+    [ -n "$base" ] || { echo "LANE PRE-PUSH WARN: no merge base for new branch $rref; policy skipped" >&2; continue; }
+  fi
+  # Karen #151 N3/N4: --range reads the commits with git itself (-M, --name-status -z, full contents), not a text
+  # patch that user diff config (noprefix, external diff, textconv) or header tricks could distort.
+  if [ "$base" != "$lsha" ]; then
+    python3 "$T/gat-policy.py" --push --range . "$base" "$lsha" >&2 || { echo "LANE PRE-PUSH refused: test-weakening policy (above) for $rref" >&2; bad=1; }
+  fi
+done <<< "$input"
+[ $bad = 0 ] || exit 1
+printf '%s\n' "$input" | "$(dirname "$0")/chain.sh" pre-push "$@"

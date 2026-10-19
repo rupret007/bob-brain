@@ -1,0 +1,5 @@
+[Unit]
+Description=Bob cluster (nats + worker + live)
+Wants=bob-nats.service bob-cluster-worker.service bob-live.service
+[Install]
+WantedBy=default.target

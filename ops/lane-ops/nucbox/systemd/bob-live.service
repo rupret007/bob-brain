@@ -1,0 +1,10 @@
+[Unit]
+Description=Bob live dashboard (127.0.0.1:8787)
+PartOf=bob-cluster.target
+[Service]
+ExecStart=%h/.local/bin/bob-live-run.sh
+Restart=always
+RestartSec=5
+KillMode=control-group
+[Install]
+WantedBy=bob-cluster.target

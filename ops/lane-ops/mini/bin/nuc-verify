@@ -1,0 +1,24 @@
+#!/bin/bash
+# nuc-verify: run tests for the CURRENT Mini worktree (including uncommitted edits) on the NucBox (WSL, 24 GB) instead of the 8 GB Mini.
+# Usage (from inside a worktree): nuc-verify [--class heavy|light] [--timeout SEC] [-- <cmd...>]   default cmd: npm test
+# Copies the tree minus node_modules/.git/test output, runs npm ci + cmd there, streams output, returns the command's exit code.
+# If the NucBox is unreachable in 4 s it runs the command locally (Mini fallback, same as before). Undo: rm ~/bin/nuc-verify.
+set -uo pipefail
+class=heavy; tmo=1500
+while [ $# -gt 0 ] && [ "$1" != "--" ]; do case "$1" in --class) class="$2"; shift 2;; --timeout) tmo="$2"; shift 2;; *) break;; esac; done
+[ "${1:-}" = "--" ] && shift
+[ $# -gt 0 ] || set -- npm test
+K=~/.ssh/nuc_ed25519; H=rupret@nuc-wsl; SSH="ssh -i $K -p 2222 -o BatchMode=yes -o ConnectTimeout=4"
+root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+job="mv-$(basename "$root")-$(date +%H%M%S)-$$"
+if ! $SSH $H true 2>/dev/null; then echo "[nuc-verify] NucBox unreachable, running on the Mini" >&2; cd "$root" && exec "$@"; fi
+rel=$(python3 -c 'import os,sys;print(os.path.relpath(sys.argv[1],sys.argv[2]))' "$(pwd -P)" "$root")
+dest="work/wt/$job"
+$SSH $H "mkdir -p ~/$dest" || exit 70
+rsync -a --delete --exclude node_modules --exclude .git --exclude test-results --exclude playwright-report --exclude coverage --exclude dist -e "$SSH" "$root/" "$H:$dest/" || { echo "[nuc-verify] sync failed, running on the Mini" >&2; cd "$root" && exec "$@"; }
+cmd=$(printf '%q ' "$@")
+echo "[nuc-verify] job $job on NucBox ($class): $*" >&2
+$SSH $H "~/bin/nuc-exec-dir ~/$dest/$rel $job $class $tmo -- bash -lc $(printf '%q' "$cmd")"
+rc=$?
+echo "[nuc-verify] done rc=$rc (result: ~/work/results/$job/result.json on the NucBox)" >&2
+exit $rc
