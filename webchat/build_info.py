@@ -15,8 +15,6 @@ STATIC = CODE_ROOT / "webchat/static"
 def _git(code_root, *args):
     # An inherited Git override must not identify another checkout as this one.
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-    env["GIT_CONFIG_GLOBAL"] = "/dev/null"
-    env["GIT_CONFIG_NOSYSTEM"] = "1"
     return subprocess.check_output(["git", "-C", str(code_root), *args], text=True,
                                    stderr=subprocess.DEVNULL, timeout=5, env=env).strip()
 
