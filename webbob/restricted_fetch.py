@@ -17,6 +17,8 @@ from mcp_server_fetch.server import _is_public_address
 from readabilipy.simple_json import simple_json_from_html_string
 import markdownify
 
+from webbob.text_validation import reject_unicode_tags
+
 MAX_BYTES = 256_000
 USER_AGENT = "WebBobResearch/1.0"
 
@@ -26,6 +28,7 @@ class FetchDenied(ValueError):
 
 
 def validate_url(url):
+    reject_unicode_tags(url, FetchDenied)
     if not isinstance(url, str) or len(url) > 2048 or any(ord(c) < 33 for c in url):
         raise FetchDenied("invalid URL")
     parsed = urlsplit(url)
@@ -106,11 +109,13 @@ async def fetch_page(url):
             if status != 200:
                 raise FetchDenied("page unavailable (HTTP %s)" % status)
     text = body.decode("utf-8", "replace")
+    reject_unicode_tags(text, FetchDenied)
     if "html" in content_type:
         # Reuse the reference server's extraction dependencies in explicit pure
         # Python mode; the Node mode can run npm install during a page fetch.
         content = simple_json_from_html_string(text, use_readability=False)["content"]
         text = markdownify.markdownify(content or "", heading_style=markdownify.ATX)
+    reject_unicode_tags(text, FetchDenied)
     if not text.strip() or text.startswith("<error>"):
         raise FetchDenied("page extraction unavailable")
     return {"url": final_url, "requested_url": url, "text": text[:8000],

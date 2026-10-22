@@ -13,6 +13,8 @@ import sqlite3
 import time
 import uuid
 
+from webbob.text_validation import reject_unicode_tags
+
 
 class GateDenied(ValueError):
     pass
@@ -58,6 +60,7 @@ class ReviewGate:
             db.close()
 
     def request_review(self, repo, pr, sha, scope, evidence):
+        reject_unicode_tags((repo, sha, scope, evidence), GateDenied)
         repo, pr, sha = identity(repo, pr, sha)
         if not scope or not evidence or any(not isinstance(item, str) or len(item) > 300 for item in [scope, *evidence]):
             raise GateDenied("scope and evidence references required")
@@ -84,6 +87,7 @@ class ReviewGate:
             db.execute("UPDATE requests SET delivered=1 WHERE id=?", (request_id,))
 
     def record_verdict(self, payload, authenticated_receipt):
+        reject_unicode_tags((payload, authenticated_receipt), GateDenied)
         required = {"request_id", "repo", "pr", "sha", "scope", "evidence", "verdict", "reviewer", "expires"}
         if set(payload) != required or payload["reviewer"] != "karen" or payload["verdict"] not in {"PASS", "FAIL"}:
             raise GateDenied("independent Karen verdict required")
@@ -155,6 +159,7 @@ class DraftPublisher:
         return receipt
 
     async def publish(self, repo, branch, sha, title, body, approval):
+        reject_unicode_tags((repo, branch, sha, title, body, approval), GateDenied)
         owner, name = repo.split("/", 1)
         identity(repo, 1, sha)
         if not re.fullmatch(r"draft/[A-Za-z0-9_.-]+", branch):

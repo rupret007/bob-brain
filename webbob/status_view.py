@@ -4,11 +4,13 @@ import math
 import time
 
 from webbob.fallback_copy import GROK_STATUS_FOOTER
+from webbob.text_validation import reject_unicode_tags
 
 BOTS = {"bob": "Grok Bot", "webbob": "Web Bob", "andrea": "Andrea", "karen": "Karen"}
 
 
 def status_rows(observations, now=None, max_age=120):
+    reject_unicode_tags(observations)
     now = time.time() if now is None else now
     observations = observations if isinstance(observations, dict) else {}
     rows = []
@@ -39,6 +41,7 @@ def _pct_label(value):
 
 
 def capacity_rows(capacity_doc):
+    reject_unicode_tags(capacity_doc)
     capacity_doc = capacity_doc if isinstance(capacity_doc, dict) else {}
     rows_out = []
     for row in capacity_doc.get("rows") or []:
