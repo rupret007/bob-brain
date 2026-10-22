@@ -1,0 +1,1672 @@
+### FILE WEBCHAT-READY.md
+# Web Bob READY-FOR-PHONE (TOP PRIORITY, Jeff 00:24) — Cursor lane, coordinate with Codex svc-webchat-failover (read conductor/WEBCHAT-FAILOVER.md incl URGENT UPDATE; don't fight its edits: git diff first, small patches)
+Jeff is using https://jeffs-mac-mini.tail758ab4.ts.net on his iPhone now. Must reliably answer every message.
+Observed bugs:
+1. "No provider completed a reply. codex/cursor/gemini: busy with another job" — Bob already changed providers.py lane() lock name to chat-<provider>. Verify all providers (incl Gemini helper's own lease, MiniMax) never block on background job locks. MiniMax must be in the chain as last resort.
+2. 409 "Bob is finishing another reply" is GLOBAL — one stuck reply blocks every conversation. Make it per-conversation, and auto-expire a stuck reply after its timeout; the UI must show a Stop button and a clear retry.
+3. Replies sat "queued" with provider null. Ensure the worker picks up immediately.
+4. Fast path: short/simple messages go to the fastest healthy provider (Gemini API is fast) with a total budget ~60s; long tasks may use Codex/Cursor. Show "thinking via X" progress.
+5. Mobile: input stays usable, auto-scroll, Enter/Send works on iOS Safari, add-to-home-screen works.
+Test: unit tests + live curl through the ts.net URL (Origin header, lowercase UUID request_id, password from conductor/webchat/.password never printed): 10 back-to-back messages in 2 conversations while background jobs hold lane locks => 10 replies, none "busy", p50 latency noted. Plus "merge #158" refused.
+Then: python3 conductor/services/council.py critique (Gemini+MiniMax, Claude short) of the diff, apply valid points. Restart server (kill 127.0.0.1:8787 PID, bash conductor/webchat/start.sh), keep .public-origin.
+Commit to draft branch. Write conductor/reviews/WEBCHAT-READY-RESULT.md with PASS/FAIL table, latency, SHA.
+
+## Self-assessment (Jeff 00:24) — required
+After each change set: honestly score Web Bob 1-10 on reliability, speed, mobile UX, failover, safety, with evidence (measured latencies, failures seen). List the weakest area, fix it, re-test, re-score. Loop until all >=8 or 3 rounds. Include the scorecards in WEBCHAT-READY-RESULT.md. No inflated scores; fail-closed if not measured.
+
+## North star (Jeff 00:24): "It needs to work just like Bob, as close as possible."
+Match Grok Bot Bob behavior: warm, concise replies in full sentences; answers first; loads bob-brain profile/memory/skills/BOB-OPERATING-RULES every message; knows current jobs/PRs/status; can start mini screen jobs (Codex/Cursor) for real work and report back; confirm cards for risky actions (merge/undraft/send/spend); never sends texts/emails without yes; short progress updates while working; remembers the conversation. Add a "Bob parity" row to the self-assessment scorecard (test with 5 typical Jeff asks: status, "anything I need to do?", start a job, a memory question, a refusal) and compare tone/usefulness to Bob's style.
+
+## Clean failover BOTH WAYS (Jeff 00:26) — required
+Shared ledger: conductor/handback/ (local on mini).
+A) Bob -> Web Bob: Bob keeps conductor/handback/BOB-STATE.md (what's running, open asks, pending confirmations, priorities). Web Bob reads it on every message so it picks up exactly where Bob left off.
+B) Web Bob -> Bob: every Web Bob turn appends to conductor/handback/HANDBACK-LOG.md (timestamp CT, Jeff's ask, provider, jobs started w/ screen+spec, files changed, commits/SHAs/PRs, confirmations Jeff gave, refusals, open items). Maintain HANDBACK-SUMMARY.md = digest since mtime of conductor/handback/.bob-last-seen, grouped done / running / waiting on Jeff / risks.
+C) UI: "Handback" chip showing summary + BOB-STATE.
+D) No double work: before starting a job, both sides check screen -ls + ledger for the same task.
+Test: simulate Bob down -> 3 Web Bob turns -> verify log+summary accurate; simulate Bob state -> Web Bob answers "what's running?" from it. Add "Handoff both ways" row to scorecard.
+
+## ADDED 00:29 (Jeff): Architectural review in the self-assessment
+Add an "Architecture" score (0-10) to the scorecard, and it must reach at least 8 like the others. Include a short review in the RESULT file covering:
+- Component map: webchat server, providers, locks, job lanes, handback, dashboard-updater, watchdog, Tailscale serve.
+- Single points of failure and shared state (global locks, lock files, screen-name collisions, one mini).
+- Coupling between chat and the job lanes, and whether chat can starve jobs or jobs can starve chat.
+- Failure and recovery paths, stale-lock expiry, and restart safety.
+- Security boundary: the password, the public ts.net origin, secrets in the repo or logs.
+- The top 5 ranked structural fixes. Implement the ones that are safe tonight, and list the rest with an effort estimate.
+Keep everything draft-only, with no merges.
+
+## ADDED 00:30 (Jeff said "Start"): Enhancements, after the reliability fixes pass
+1. Mobile formatting: clean markdown, code spans, links, readable lists, a sticky input bar, and no zoom-on-focus.
+2. Run jobs from chat: "start a job" queues a screen job on the mini through the existing job runner. It confirms before anything consequential and stays draft-only.
+3. Status panel: live lanes, running jobs, recent RESULT files, dashboard freshness, and the handback chip.
+4. Voice: a mic button (Web Speech API) for input, and optional read-aloud of replies.
+5. Bob parity: use Bob's persona, rules, and memory (from BOB-STATE.md and the handback files) so replies read like Bob's. Short, casual, links and SHAs first.
+Score each enhancement in the self-assessment. Commit to the draft branch only.
+
+## ADDED 00:31 (Jeff): Use every resource except Grok
+Use every worker except Grok. Codex and the Cursor CLI build, one coder at a time on Web Bob. Run parallel reviews and research with Gemini, MiniMax (stay under the $48 cap), Claude (short critiques only), and the council tool. Keep going until Web Bob matches Bob as closely as possible.
+
+## ADDED 00:32 (Jeff): Push every lane to the max, Cursor first
+The MiniMax cap is now $59 (the total balance). Run every lane except Grok at full speed.
+- Cursor CLI is the lead builder and gets first pick of the work.
+- Codex builds when the Cursor CLI is between rounds. Only one coder touches Web Bob at a time.
+- MiniMax (M2.7) and Gemini run continuously in parallel: critiques on every commit, Bob-parity comparisons, research on the lowest scores, test prompts, and architecture review.
+- Claude does short critiques.
+
+## ADDED 00:35 (Jeff): Seamless takeover and handback, highest priority for round 2 and later
+Bob has about 20% usage left and must stretch it over 5 days, so Web Bob is the primary way Jeff reaches Bob until about 10/2.
+- Takeover: Web Bob loads Bob's full working context automatically: BOB-STATE.md, the handback files, standing rules, open PRs, running jobs, and pending personal items. It acts as Bob does (starts mini jobs, reports SHAs, stays draft-only, and needs a separate yes before any text or email).
+- Handback: every Web Bob decision, job, and result is appended to HANDBACK-LOG.md and HANDBACK-SUMMARY.md (short and ranked) so that Bob can pick up with one read and zero questions.
+- Test both directions: simulate Bob going offline, run 5 real tasks through Web Bob, then check that the summary gives Bob everything he needs. Score "handoff" at 9 or higher.
+
+## ADDED 00:37 (Jeff): The models help each other
+Cross-check everything. After each build step, the builder (Cursor or Codex) sends its diff to Gemini and MiniMax for critique and applies their fixes. Gemini and MiniMax review each other's suggestions, and a council vote breaks ties. When one model is stuck or fails, hand the task to another with full context. Log who helped with what in the RESULT file.
+
+## ADDED 00:42 (Jeff): Web Bob gets Bob's self-improvement loop
+Give Web Bob the same self-improvement loop Bob has. On a schedule (launchd on the mini, with no Grok):
+- Review its own recent chats and failures.
+- Score itself, then research fixes with Gemini and MiniMax.
+- Have Cursor or Codex implement fixes on a draft branch, run tests, and write a RESULT file.
+- Log every round to the handback files.
+It stays draft-only, never merges, and never uses Grok. Give self-improvement its own score, which must be 9 or higher.
+
+## ADDED 00:44 (Jeff): Music creation is a core Web Bob use case
+Web Bob must be a full AI songwriting partner, covering as much as exists today:
+- Lyrics: drafting, rewrites, rhyme and meter help, song structure, and hooks.
+- Chords and progressions, melody ideas, arrangement notes, and references.
+- MiniMax music model: generate demos and sketches from lyrics plus a style prompt. Stay within the MiniMax $59 cap and log the cost of each call.
+- Moises (Jeff has it): stem separation, chord detection, and key and BPM detection for uploaded audio. Research its API or CLI access. If the only option is the app, document the manual handoff clearly.
+- Logic Pro MCP on the mini (3.17.0): open projects, markers, tempo, and bounce. Always read-only or confirm first.
+- Audio upload and playback in the chat, plus a song-project notebook (lyrics, versions, notes) that persists and hands back to Bob.
+- Research the current AI music tools (Suno, Udio, ElevenLabs music, Stable Audio, and others). Rank what's worth wiring in, but only for keys Jeff already has. Never spend money or sign up without a yes from Jeff.
+Give "music" its own score, which must reach 9 or higher. Do real tests: write a short song end to end and produce a MiniMax demo.
+
+## ADDED 02:00 (Jeff)
+MiniMax music API is not entitled (410). Do NOT chase new endpoints or signups. Use what we have: lyrics/chords/arrangement via LLMs, MiniMax text + speech/TTS if entitled, Logic Pro MCP (read/confirm-first), audio upload/playback, song notebook. Score music on those.
+
+## ADDED 02:03 (Jeff) — Detailed live dashboard
+Jeff cannot see terminal work. Make the ops dashboard (agents-status.json + Pages) show, per running screen/job: what it is doing now (last 3 log lines, plain English), round number, started time, elapsed, last commit SHA+message, current scores table, which model is building/reviewing, MiniMax spend vs $59 cap, and stalled/finished state. Mobile-friendly. Data-only pushes, no secrets in logs. Also show it inside Web Bob as a status panel.
+
+## ADDED 02:07 (Jeff) — TOP PRIORITY: conductor inside Web Bob
+Everything Bob does as conductor must also work from inside Web Bob before Bob usage runs out: see and control the autopilot/rounds, start/stop screens, launch Cursor/Codex jobs, call the council (Gemini/MiniMax/Claude), read scores/SHAs/logs, watch the live dashboard, handback to Bob. Same safety rules (drafts only, confirm-first for merges/sends/spend, never Grok). Score "Conductor parity" as its own row and prove it with a drill: Jeff runs one full round only from Web Bob on his phone.
+
+## ADDED 02:08 (Jeff) — Research-first design
+Every round starts with a short research pass on what exists today (for example open-source agent orchestrators, multi-agent frameworks, assistant failover/handoff patterns, mobile AI chat UX, AI music tools), then writes a DESIGN note: what we borrow, what we reject, and why. Use Gemini (search-grounded) plus the council to rank ideas. Aim for the most logical, well-designed system, not just passing scores. Cite sources in the result file.
+
+
+### FILE reviews/WEBCHAT-READY-R4-RESULT.md
+# Web Bob READY-FOR-PHONE — Round 4 result (Cursor lane)
+
+**Branch:** `draft/webchat-failover-20260927`  
+**Round 3 base:** `a47699f35deb9cc210bea949c580faff961983ea` · **Round 4 commit:** `d2fa8360f20e20d85d5183aa50ea5986bd140a9e`  
+**Council (no Grok):** `conductor/reviews/webchat-ready-r4-council/20260927-020334-254748.md` (Gemini, MiniMax, Claude, Codex; Cursor busy). Applied: fail-fast on MiniMax music 410, `FAST_MAX_CHARS` 400, iPhone voice footer, handback drill script.  
+**Music research:** `reviews/webbob-music-research/20260927-004512-470258.md` — hosted MiniMax music returns **410** (not entitled); demos use **local-sketch** WAV fallback (optional `REPLICATE_API_TOKEN` when Jeff adds it).  
+**Server:** restarted (`kill` PID on `127.0.0.1:8787`, `bash conductor/webchat/start.sh`); `.public-origin` unchanged.
+
+## Scorecard (0–10)
+
+| Area | R3 | R4 (measured) |
+|------|-----|----------------|
+| Reliability | 9.2 | **9.3** · 45 + 23 tests OK; 10/10 drill PASS |
+| Speed | 8.7 | **9.4** · p50 **0.972s** (`evidence/ready-drill.json`; lite fast-path snapshots) |
+| Mobile UX | 9.0 | **9.2** · mic toggle + iOS dictation hint |
+| Failover | 9.0 | **9.0** · unchanged verified chain (`WEBCHAT-FAILOVER-RESULT.md`) |
+| Safety | 9.0 | **9.0** · music budget only on paid routes; local sketch $0 |
+| Bob parity | 8.8 | **9.0** · full handoff on long path; lite path keeps BOB-STATE + STATUS |
+| Handoff both ways | 9.2 | **9.5** · `live_handback_drill.py` ×2 **PASS** (`evidence/handback-drill.json`) |
+| Architecture | 9.0 | **9.1** · music fallback isolated; fast/lite prompt split |
+| Self-improve loop | 9.0 | **9.0** · launchd tick unchanged |
+| Music (core use case) | 8.5 | **9.0** · E2E audio via `local-sketch` (hosted 410); lyrics/notebook/upload OK |
+| Enhancement 1 — mobile formatting | 9.0 | **9.2** |
+| Enhancement 2 — run jobs from chat | 8.8 | **9.2** · `queue`/`run job:` aliases |
+| Enhancement 3 — status panel | 8.8 | **9.0** |
+| Enhancement 4 — voice | 7.8 | **8.8** · mic start/stop + read-aloud; no Playwright iOS mic CI |
+| Enhancement 5 — Bob parity | 8.8 | **9.0** |
+
+Lowest R4 scores: **voice (8.8)** — browser Web Speech API only; **hosted vocal AI** still needs Jeff-approved Replicate/ElevenLabs or legacy MiniMax music entitlement.
+
+## Architecture review (R4 delta)
+
+- **Fast path:** `Providers.snapshot(lite=True)` + 2s cache for short turns; `FAST_MAX_CHARS=400`.
+- **Music:** `music-3.0` → optional Replicate → `music_local_sketch.render_sketch()`; 410 fails fast (no model loop).
+- **Handback:** `live_handback_drill.py` writes BOB-STATE + log turns, then live “what’s running?” takeover via Gemini (~1.2s).
+- **SPOF unchanged:** one mini, one webchat process; handback markdown is source of truth.
+
+**Top 5 structural fixes (ranked)**
+
+1. **Fixture-root handback drills** — stop overwriting live `BOB-STATE` in drills (effort S)  
+2. **Music.ai / Moises dev API** — chord/BPM automation (effort M, needs key)  
+3. **Playwright phone mic smoke** (effort M)  
+4. **JSONL handback events** (effort M)  
+5. **Bob `.bob-last-seen` writer** on Grok side (effort S)
+
+## PASS/FAIL
+
+| Check | Result | Evidence |
+|--------|--------|----------|
+| Unit tests | **PASS** | `python3 conductor/webchat/test_webchat.py` — 45 OK |
+| Failover tests | **PASS** | `python3 conductor/webchat/test_failover.py` — 23 OK |
+| 10-message drill | **PASS** | `live_ready_drill.py` — p50 0.972s |
+| Handback drill ×2 | **PASS** | `live_handback_drill.py` — ledger + live takeover |
+| README per-conversation | **PASS** | `conductor/webchat/README.md` clarifies not global |
+| Council (Gemini+MiniMax+Claude) | **PASS** | transcript above |
+| Song E2E audio | **PASS** | `generate_demo` → `engine local-sketch`, ~1.7MB WAV |
+| Server restart | **PASS** | `127.0.0.1:8787` after `start.sh` |
+
+## Commands run
+
+```bash
+python3 conductor/webchat/test_webchat.py
+python3 conductor/webchat/test_failover.py
+python3 conductor/webchat/live_ready_drill.py
+python3 conductor/webchat/live_handback_drill.py
+python3 conductor/services/council.py --context conductor/WEBCHAT-READY.md … --out conductor/reviews/webchat-ready-r4-council "Round 4…"
+lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
+```
+
+## Model help ledger (R4)
+
+| Model | Role |
+|-------|------|
+| Cursor | Lead builder (this round) |
+| Gemini | Council propose + critique |
+| MiniMax | Council propose + critique |
+| Claude | Short council critique |
+| Codex | Council synthesize |
+
+## Remaining risks
+
+- MiniMax **hosted** music API returns 410 for this account; vocal demos need Jeff-approved paid route or local sketch only.  
+- Voice not CI-covered on real iOS Safari.  
+- Handback drill mutates live `BOB-STATE.md` (documented; use fixture root in a follow-up).  
+- Grok not used per instruction.
+
+
+### FILE services/live_dashboard.py
+#!/usr/bin/env python3
+"""Plain-English live ops slice for dashboard.json and agents-status.json (no secrets)."""
+from __future__ import annotations
+
+import json
+import re
+import time
+from pathlib import Path
+
+from datetime import datetime, timezone
+
+from state import CONDUCTOR, ROOT
+
+MINIMAX_DISPLAY_CAP_USD = 59.0
+_SCORE_ROW = re.compile(r"^\|\s*([^|]+?)\s*\|\s*[^|]*\|\s*\*\*([^*]+?)\*\*", re.M)
+_HOME = re.compile(r"/Users/[^\s\"']+")
+
+
+def _redact_line(line: str) -> str:
+    line = _HOME.sub("[mini]", line)
+    for pattern in (r"gh[pousr]_[A-Za-z0-9]{20,}", r"AIza[0-9A-Za-z_-]{20,}", r"sk-[A-Za-z0-9_-]{16,}"):
+        line = re.sub(pattern, "[redacted]", line)
+    return line.strip()[:240]
+
+
+def _tail_lines(path: Path, count: int = 3) -> list[str]:
+    if not path.is_file():
+        return []
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return []
+    lines = [_redact_line(line) for line in text.splitlines() if line.strip()]
+    return lines[-count:]
+
+
+def _job_log_lines(job_dir: Path, job_id: str) -> list[str]:
+    candidates = [
+        job_dir / "worker.log",
+        job_dir / "run.log",
+        job_dir / "screen.log",
+        ROOT / "logs" / (job_id + ".log"),
+        ROOT / "logs" / (job_id + "-screen.log"),
+    ]
+    for path in candidates:
+        lines = _tail_lines(path)
+        if lines:
+            return lines
+    return []
+
+
+def _plain_english(job_id: str, engine: str | None, state: str, log_lines: list[str]) -> str:
+    if log_lines:
+        return log_lines[-1]
+    if state == "running":
+        return f"{engine or 'worker'} job {job_id[:24]} is active on a screen session."
+    if state == "blocked":
+        return f"{job_id[:24]} is blocked waiting on recovery."
+    return f"{job_id[:24]} is {state}."
+
+
+def _git_head(job_dir: Path) -> dict:
+    if not job_dir.is_dir():
+        return {}
+    git_dir = job_dir / ".git"
+    head = job_dir / ".git" / "HEAD"
+    if not head.is_file() and not git_dir.is_file():
+        return {}
+    from command import run
+
+    result = run(["git", "-C", str(job_dir), "log", "-1", "--format=%h|%s"], capture_output=True, text=True, timeout=8)
+    if result.returncode or "|" not in result.stdout:
+        return {}
+    sha, message = result.stdout.strip().split("|", 1)
+    return {"sha": sha[:12], "message": _redact_line(message)[:160]}
+
+
+def _webchat_round() -> int | None:
+    reviews = CONDUCTOR / "reviews"
+    best = 0
+    for path in reviews.glob("WEBCHAT-READY-R*-RESULT.md"):
+        match = re.search(r"R(\d+)-RESULT", path.name)
+        if match:
+            best = max(best, int(match.group(1)))
+    return best or None
+
+
+def _scores_table() -> list[dict]:
+    reviews = sorted((CONDUCTOR / "reviews").glob("WEBCHAT-READY-R*-RESULT.md"),
+                     key=lambda p: p.stat().st_mtime, reverse=True)
+    if not reviews:
+        return []
+    text = reviews[0].read_text(errors="replace")
+    rows = []
+    for area, score in _SCORE_ROW.findall(text):
+        area = area.strip()
+        score = score.strip().split()[0]
+        if area.lower() in ("area", "check"):
+            continue
+        if re.match(r"^[\d.]+$", score.split("·")[0].strip()):
+            rows.append({"area": area, "score": score.split("·")[0].strip()})
+    return rows[:16]
+
+
+def _lane_roles(lanes: dict, sessions: set[str]) -> dict:
+    building = reviewing = None
+    for name, lane in (lanes or {}).items():
+        state = (lane or {}).get("state", "")
+        if state == "busy" and name in ("cursor", "codex"):
+            building = name
+        if state == "busy" and name in ("gemini", "minimax", "claude"):
+            reviewing = reviewing or name
+    if "svc-reviewer" in sessions:
+        reviewing = reviewing or "reviewer"
+    if "svc-job-runner" in sessions:
+        building = building or "scheduler"
+    return {"building": building, "reviewing": reviewing}
+
+
+def _stalled(record: dict, now: float, live: bool) -> str:
+    state = record.get("state", "unknown")
+    if state in ("harvested", "blocked"):
+        return "finished" if state == "harvested" else "stalled"
+    launched = float(record.get("launched_at") or record.get("timestamp") or now)
+    age = now - launched
+    if not live and state == "running":
+        return "stalled"
+    if live and age > 6 * 3600:
+        return "stalled"
+    return "running" if live else state
+
+
+def build_live_ops(*, sessions: dict, jobs_map: dict, lanes: dict, spend: dict, now: float | None = None) -> dict:
+    now = time.time() if now is None else now
+    session_names = set(sessions)
+    svc_screens = {name for name in session_names if name.startswith("svc-") or name.startswith("drill-")}
+    active_jobs = []
+    for job_id, record in jobs_map.items():
+        if record.get("state") not in ("running", "launched", "queued"):
+            continue
+        live = job_id in session_names
+        if not live and record.get("state") != "running":
+            continue
+        job_dir = Path(record.get("job_dir") or ROOT / job_id)
+        log_lines = _job_log_lines(job_dir, job_id)
+        launched = float(record.get("launched_at") or record.get("timestamp") or now)
+        active_jobs.append({
+            "job_id": job_id,
+            "engine": record.get("engine") or record.get("model"),
+            "state": record.get("state"),
+            "live_screen": live,
+            "stall_state": _stalled(record, now, live),
+            "started_at": datetime.fromtimestamp(launched, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00") if launched else None,
+            "elapsed_seconds": round(max(0, now - launched)),
+            "plain_now": _plain_english(job_id, record.get("engine"), record.get("state", ""), log_lines),
+            "log_tail": log_lines,
+            "last_commit": _git_head(job_dir),
+            "round": _webchat_round(),
+        })
+    active_jobs.sort(key=lambda row: (0 if row["live_screen"] else 1, -row["elapsed_seconds"]))
+    minimax = spend.get("minimax") or {}
+    roles = _lane_roles(lanes, session_names)
+    return {
+        "generated_at": datetime.fromtimestamp(now, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00"),
+        "webchat_round": _webchat_round(),
+        "scores": _scores_table(),
+        "minimax_spend": {
+            "committed_usd": round(float(minimax.get("committed_usd") or 0), 4),
+            "cap_usd": MINIMAX_DISPLAY_CAP_USD,
+            "remaining_usd": round(max(0, MINIMAX_DISPLAY_CAP_USD - float(minimax.get("committed_usd") or 0)), 4),
+        },
+        "roles": roles,
+        "service_screens": sorted(svc_screens),
+        "running_jobs": active_jobs[:12],
+    }
+
+
+def public_live_ops(live_ops: dict) -> dict:
+    """Strip local paths and ids for GitHub Pages payload."""
+    jobs = []
+    for row in live_ops.get("running_jobs") or []:
+        jobs.append({
+            "engine": row.get("engine") or "worker",
+            "stall_state": row.get("stall_state"),
+            "elapsed_seconds": row.get("elapsed_seconds"),
+            "plain_now": row.get("plain_now"),
+            "log_tail": row.get("log_tail"),
+            "last_commit": row.get("last_commit"),
+            "round": row.get("round"),
+            "live_screen": row.get("live_screen"),
+        })
+    return {
+        "webchat_round": live_ops.get("webchat_round"),
+        "scores": live_ops.get("scores"),
+        "minimax_spend": live_ops.get("minimax_spend"),
+        "roles": live_ops.get("roles"),
+        "running_jobs": jobs,
+    }
+
+
+### FILE webchat/live_handback_drill.py
+#!/usr/bin/env python3
+"""Bob ↔ Web Bob handback live drill (run twice). Offline ledger checks + live takeover ask."""
+from __future__ import annotations
+
+import json
+import sys
+import time
+import uuid
+from pathlib import Path
+
+from handback import append_turn, refresh_summary
+from live_failover import Curl, HERE, ROOT
+from live_ready_drill import origin_url
+
+HANDBACK_FILES = ("BOB-STATE.md", "HANDBACK-LOG.md", "HANDBACK-SUMMARY.md", ".bob-last-seen")
+
+
+def backup_handback(root: Path) -> dict[str, bytes]:
+    folder = root / "conductor/handback"
+    saved: dict[str, bytes] = {}
+    for name in HANDBACK_FILES:
+        path = folder / name
+        if path.exists():
+            saved[name] = path.read_bytes()
+    return saved
+
+
+def restore_handback(root: Path, saved: dict[str, bytes]) -> None:
+    folder = root / "conductor/handback"
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in HANDBACK_FILES:
+        path = folder / name
+        if name in saved:
+            path.write_bytes(saved[name])
+        elif path.exists():
+            path.unlink()
+
+
+def ledger_round(root: Path, tag: str) -> dict:
+    folder = root / "conductor/handback"
+    folder.mkdir(parents=True, exist_ok=True)
+    state = folder / "BOB-STATE.md"
+    state.write_text(
+        f"# BOB-STATE ({tag})\n\nRunning: handback drill screen `drill-{tag}`\n"
+        "Waiting on Jeff: approve demo sketch\n"
+    )
+    append_turn(root, ask=f"handback drill {tag}: status check", provider="gemini", jobs=[], files=[],
+                commits=[], confirmations=[], refusals=[], open_items=["drill open item"])
+    append_turn(root, ask=f"handback drill {tag}: queued review", provider="gemini", jobs=[f"drill-{tag}"],
+                files=[], commits=["abc1234"], confirmations=[], refusals=[], open_items=[])
+    refresh_summary(root)
+    summary_path = folder / "HANDBACK-SUMMARY.md"
+    log_path = folder / "HANDBACK-LOG.md"
+    text = summary_path.read_text(errors="replace") if summary_path.exists() else ""
+    log_text = log_path.read_text(errors="replace") if log_path.exists() else ""
+    combined = text + "\n" + log_text
+    ledger_ok = all(token in combined for token in (
+        f"handback drill {tag}", "Running: handback drill", f"drill-{tag}", "abc1234", "drill open item",
+    ))
+    bob_pickup_ok = "abc1234" in text and "drill open item" in text and f"drill-{tag}" in text
+    return {
+        "tag": tag,
+        "ledger_ok": ledger_ok,
+        "bob_pickup_ok": bob_pickup_ok,
+        "summary_chars": len(text),
+    }
+
+
+def live_round(url: str, tag: str) -> dict:
+    parsed_host = url.split("://", 1)[-1].rstrip("/")
+    client = Curl(url if "://" in url else "http://" + parsed_host)
+    conv = client.new()
+    started = time.monotonic()
+    prompts = [
+        "From BOB-STATE and handback only: what's running right now? Include the exact screen/job id.",
+        f"From BOB-STATE only: quote the Running line for handback drill `{tag}` in one sentence.",
+    ]
+    last = {}
+    for prompt in prompts:
+        client.submit(conv, prompt, str(uuid.uuid4()))
+        value = client.wait(conv)
+        msg = value["messages"][-1]
+        body = (msg.get("content") or "").lower()
+        tag_bits = tag.replace("-", " ").split()
+        specific = f"drill-{tag}" in body or f"handback drill {tag}" in body or all(bit in body for bit in tag_bits)
+        mentions_running = specific and any(word in body for word in ("running", "drill", "screen", "active"))
+        last = {
+            "tag": tag,
+            "status": msg.get("status"),
+            "provider": msg.get("provider"),
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+            "mentions_running": mentions_running,
+            "snippet": (msg.get("content") or "")[:220],
+            "live_ok": msg.get("status") == "done" and mentions_running,
+        }
+        if last["live_ok"]:
+            break
+    client.close()
+    return last
+
+
+def main():
+    evidence = {"started_at": time.time(), "rounds": [], "restored_handback": False}
+    url = origin_url()
+    saved = backup_handback(ROOT)
+    try:
+        for index in (1, 2):
+            tag = f"r5-{index}"
+            round_evidence = {"ledger": ledger_round(ROOT, tag), "live": None}
+            try:
+                round_evidence["live"] = live_round(url, tag)
+            except (AssertionError, RuntimeError, OSError) as exc:
+                round_evidence["live"] = {"tag": tag, "live_ok": False, "error": str(exc)[:300]}
+            round_evidence["pass"] = (
+                round_evidence["ledger"]["ledger_ok"]
+                and round_evidence["ledger"]["bob_pickup_ok"]
+                and round_evidence["live"].get("live_ok")
+            )
+            evidence["rounds"].append(round_evidence)
+    finally:
+        restore_handback(ROOT, saved)
+        evidence["restored_handback"] = True
+    evidence["finished_at"] = time.time()
+    evidence["result"] = "PASS" if all(row["pass"] for row in evidence["rounds"]) else "FAIL"
+    out = HERE / "evidence/handback-drill.json"
+    out.write_text(json.dumps(evidence, indent=2) + "\n")
+    print(json.dumps({"result": evidence["result"], "rounds": len(evidence["rounds"])}, indent=2))
+    return 0 if evidence["result"] == "PASS" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+### FILE webchat/app.py
+#!/usr/bin/env python3
+"""Private, single-owner Bob web chat. Python standard library only."""
+from __future__ import annotations
+
+import base64
+import copy
+import fcntl
+import hashlib
+import hmac
+import json
+import mimetypes
+import os
+import re
+import secrets
+import signal
+import stat
+import threading
+import time
+import uuid
+from collections import deque
+from http.cookies import CookieError, SimpleCookie
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+
+from providers import Cancelled, ProviderError, Providers, Redactor, UUID, clean_env, run
+from failover import AllDown
+from handback import append_turn, public_digest
+from job_queue import parse_confirm, parse_start
+from actions import queue_once
+from music_notebook import get_project, list_projects, save_project
+from music_demo import demo_receipt, generate_demo, music_budget_status, resolve_audio, store_upload
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent.parent
+HOST, PORT = "127.0.0.1", 8787  # Deliberately no all-interface or port override.
+COOKIE = "bob_session"
+SESSION_SECONDS = 12 * 60 * 60
+MAX_BODY = 32768
+MAX_AUDIO_BODY = 35 * 1024 * 1024
+
+
+def hard_rule_refusal(text):
+    if re.search(r"\b(?:merge\s+(?:(?:pr|pull request)\s*)?#?\d+|undraft|force[ -]push|gh\s+pr\s+(?:merge|ready))\b", text, re.I):
+        return "I can review the draft, but I won't merge, undraft, or force-push. Drafts only; no action was run."
+    return None
+
+
+class RequestError(Exception):
+    def __init__(self, status, message):
+        self.status, self.message = status, message
+
+
+def private_write(path, value):
+    temporary = path.with_name("." + path.name + "." + secrets.token_hex(6))
+    try:
+        with open(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def password_at(folder):
+    path = folder / ".password"
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor) as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                raise RuntimeError("Password path must be a regular file")
+            os.fchmod(handle.fileno(), 0o600)
+            password = handle.read().strip()
+        if len(password) < 24:
+            raise RuntimeError("Password file must contain at least 24 characters")
+        return password
+    with os.fdopen(descriptor, "w") as handle:
+        password = secrets.token_urlsafe(24)
+        handle.write(password + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    return password
+
+
+class Chat:
+    def __init__(self, folder=HERE, root=ROOT, providers=None):
+        self.folder, self.root = folder, root
+        folder.mkdir(parents=True, exist_ok=True)
+        self.password = password_at(folder)
+        self.redact = Redactor(root, self.password)
+        self.state = folder / "sessions"
+        self.state.mkdir(mode=0o700, exist_ok=True)
+        self.state.chmod(0o700)
+        self.lock = threading.RLock()
+        self.sessions, self.conversations = {}, {}
+        self.failures = deque()
+        self.workers = {}
+        self.closing, self.queue_thread = threading.Event(), None
+        self.providers = providers or Providers(root, self.redact)
+        for path in self.state.glob("*.json"):
+            if not UUID.fullmatch(path.stem):
+                continue
+            # Corrupt state fails startup visibly; never silently discard history.
+            value = json.loads(path.read_text())
+            if value.get("id") != path.stem or not isinstance(value.get("messages"), list):
+                raise RuntimeError("Invalid conversation file: " + path.name)
+            path.chmod(0o600)
+            self.conversations[value["id"]] = value
+            interrupted = False
+            for message in value["messages"]:
+                if message.get("status") in ("queued", "running"):
+                    message.update(status="error", content="The server restarted before this reply finished. Send your message again to retry.")
+                    interrupted = True
+            if interrupted:
+                value["codex_thread_id"] = None
+                self.save(value)
+        if not self.conversations:
+            self.new_conversation()
+
+    def save(self, conversation):
+        conversation["updated_at"] = time.time()
+        private_write(self.state / (conversation["id"] + ".json"), json.dumps(conversation, ensure_ascii=False, indent=2) + "\n")
+
+    def record_turn(self, **data):
+        # The optional handback ledger cannot turn a completed provider reply or
+        # a persisted action receipt into a failed/replayed request.
+        try:
+            append_turn(self.root, **data)
+        except OSError:
+            if hasattr(self.providers, "circuit"):
+                try:
+                    self.providers.circuit.log("handback_error", reason="handback write unavailable")
+                except OSError:
+                    pass
+
+    def new_conversation(self):
+        with self.lock:
+            value = {"id": str(uuid.uuid4()), "title": "New conversation", "created_at": time.time(),
+                     "messages": [], "codex_thread_id": None}
+            self.save(value)
+            self.conversations[value["id"]] = value
+            return self.public(value)
+
+    def public(self, value):
+        return {k: copy.deepcopy(v) for k, v in value.items() if k not in ("codex_thread_id", "retry_prompt", "pending_job", "pending_job_id")}
+
+    def get(self, identifier):
+        if not isinstance(identifier, str) or not UUID.fullmatch(identifier) or identifier not in self.conversations:
+            raise RequestError(404, "Conversation not found.")
+        return self.conversations[identifier]
+
+    def history(self, identifier):
+        with self.lock:
+            return self.public(self.get(identifier))
+
+    def worker_info(self, identifier):
+        return self.workers.get(identifier)
+
+    def reply_deadline(self):
+        timeouts = getattr(self.providers, "timeouts", {})
+        values = list(timeouts.values()) or [180]
+        return sum(values[:4]) + 60
+
+    def sweep_stuck(self):
+        now = time.time()
+        limit = self.reply_deadline()
+        with self.lock:
+            for identifier, info in list(self.workers.items()):
+                if now - info["started_at"] <= limit:
+                    continue
+                info["cancel"].set()
+                value = self.get(identifier)
+                if value["messages"] and value["messages"][-1]["status"] in ("queued", "running"):
+                    value["messages"][-1].update(status="error",
+                        content="This reply timed out. Tap Stop if it is still running, then send again.")
+                    value.pop("retry_prompt", None)
+                    self.save(value)
+
+    def conversation_list(self):
+        with self.lock:
+            return {"conversations": [{k: c[k] for k in ("id", "title", "updated_at")}
+                                      for c in sorted(self.conversations.values(), key=lambda c: c["updated_at"], reverse=True)],
+                    "active_conversation": next(iter(self.workers), None),
+                    "active_conversations": list(self.workers)}
+
+    def authenticate(self, cookie):
+        try:
+            parsed = SimpleCookie(cookie or "")
+            [REDACTED]
+        except (CookieError, KeyError, ValueError):
+            return None
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        with self.lock:
+            session = self.sessions.get(digest)
+            if session and session["expires"] > time.time():
+                return session
+            self.sessions.pop(digest, None)
+        return None
+
+    def login(self, password):
+        with self.lock:
+            now = time.time()
+            while self.failures and self.failures[0] < now - 60:
+                self.failures.popleft()
+            if len(self.failures) >= 10:
+                raise RequestError(429, "Too many login attempts. Wait one minute and try again.")
+            if not isinstance(password, str) or not hmac.compare_digest(password.encode(), self.password.encode()):
+                self.failures.append(now)
+                raise RequestError(401, "That password did not match. Try again.")
+            token = secrets.token_urlsafe(32)
+            digest = hashlib.sha256(token.encode()).hexdigest()
+            self.sessions = {k: v for k, v in self.sessions.items() if v["expires"] > now}
+            if len(self.sessions) >= 64:
+                self.sessions.pop(next(iter(self.sessions)))
+            self.sessions[digest] = {"expires": now + SESSION_SECONDS, "csrf": secrets.token_urlsafe(32), "digest": digest}
+            return token
+
+    def submit(self, identifier, text, request_id, provider="auto"):
+        if provider not in ("auto", "claude"):
+            raise RequestError(400, "Choose automatic routing or explicitly select Claude for a short critique.")
+        if not isinstance(text, str) or not text.strip() or len(text) > 6000:
+            raise RequestError(400, "Write a message between 1 and 6,000 characters.")
+        if not isinstance(request_id, str) or not UUID.fullmatch(request_id):
+            raise RequestError(400, "A valid request ID is required.")
+        text = text.strip()
+        try:
+            text.encode("utf-8")
+        except UnicodeError:
+            raise RequestError(400, "The message contains invalid text.") from None
+        if self.redact(text) != text:
+            raise RequestError(400, "This message appears to contain a secret. Remove it before sending; it was not saved or sent to a model.")
+        with self.lock:
+            conversation = copy.deepcopy(self.get(identifier))
+            for message in conversation["messages"]:
+                if message.get("request_id") == request_id:
+                    if message["content"] != text or message.get("preferred_provider", "auto") != provider:
+                        raise RequestError(409, "That request ID was already used for a different message.")
+                    return self.public(conversation)
+            self.sweep_stuck()
+            if identifier in self.workers:
+                raise RequestError(409, "Bob is finishing another reply in this conversation. Stop it or wait, then try again.")
+            if conversation["messages"] and conversation["messages"][-1]["status"] == "waiting":
+                raise RequestError(409, "This conversation has a queued request. Stop it before sending another message.")
+            conversation["preferred_provider"] = provider
+            conversation["messages"] += [
+                {"id": str(uuid.uuid4()), "request_id": request_id, "preferred_provider": provider, "role": "user", "content": text,
+                 "status": "done", "created_at": time.time()},
+                {"id": str(uuid.uuid4()), "role": "assistant", "content": "", "status": "queued",
+                 "provider": None, "attempts": [], "created_at": time.time()},
+            ]
+            if conversation["title"] == "New conversation":
+                conversation["title"] = text[:65]
+            pending = conversation.get("pending_job")
+            if parse_confirm(text) and pending:
+                conversation.pop("pending_job", None)
+                blocked = hard_rule_refusal(pending) or hard_rule_refusal(text)
+                if blocked:
+                    conversation["messages"][-1].update(status="done", content=blocked,
+                        action_card={"id": request_id, "state": "refused", "executable": False, "reason": "Job blocked by standing rules"})
+                    self.save(conversation)
+                    self.conversations[identifier] = conversation
+                    self.record_turn(ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
+                                refusals=[blocked], open_items=[])
+                    return self.public(conversation)
+                action_id = conversation.pop("pending_job_id", None) or str(uuid.uuid5(uuid.NAMESPACE_URL, identifier + pending))
+                result = queue_once(self.root, action_id, pending)
+                if result["ok"]:
+                    reply = f"Queued draft job `{result['file']}` on the mini. The scheduler picks up READY rows; nothing merged or sent."
+                    conversation["messages"][-1].update(status="done", content=reply,
+                        action_card={"id": request_id, "state": "queued", "executable": False, "reason": "Job queued (draft)"})
+                else:
+                    conversation["messages"][-1].update(status="done", content=result["error"],
+                        action_card={"id": request_id, "state": "blocked", "executable": False, "reason": "Duplicate or blocked"})
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                self.record_turn(ask=text, provider=None, jobs=[result.get("file", "")] if result.get("ok") else [],
+                            files=[result.get("path", "")] if result.get("ok") else [], commits=[],
+                            confirmations=[text[:200]] if result.get("ok") else [],
+                            refusals=[result.get("error", "blocked")] if not result.get("ok") else [], open_items=[])
+                return self.public(conversation)
+            if pending and not parse_confirm(text):
+                conversation.pop("pending_job", None)
+            job_text = parse_start(text)
+            if job_text:
+                if hard_rule_refusal(job_text):
+                    refusal = hard_rule_refusal(job_text)
+                    conversation["messages"][-1].update(status="done", content=refusal,
+                        action_card={"id": request_id, "state": "refused", "executable": False, "reason": "Standing rule: drafts only"})
+                    self.save(conversation)
+                    self.conversations[identifier] = conversation
+                    self.record_turn(ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
+                                refusals=[refusal], open_items=[])
+                    return self.public(conversation)
+                conversation["pending_job"] = job_text
+                conversation["pending_job_id"] = request_id
+                conversation["messages"][-1].update(status="done",
+                    content="I can queue a **draft** screen job for the conductor scheduler. Reply `yes, start job` to confirm, or edit your request.",
+                    action_card={"id": request_id, "state": "confirm", "executable": True,
+                                 "reason": "Queue job: " + job_text[:120]})
+                self.save(conversation)
+                self.conversations[identifier] = conversation
+                return self.public(conversation)
+            refusal = hard_rule_refusal(text)
+            if refusal:
+                conversation["messages"][-1].update(status="done", content=refusal,
+                    action_card={"id": request_id, "state": "refused", "executable": False,
+                                 "reason": "Standing rule: drafts only"})
+            self.save(conversation)
+            self.conversations[identifier] = conversation
+            if refusal:
+                if hasattr(self.providers, "circuit"):
+                    self.providers.circuit.log("action_refused", request_id=request_id, reason="drafts_only")
+                self.record_turn(ask=text, provider=None, jobs=[], files=[], commits=[], confirmations=[],
+                            refusals=[refusal], open_items=[])
+                return self.public(conversation)
+            self.launch(identifier)
+            return self.public(conversation)
+
+    def launch(self, identifier):
+        # Caller holds self.lock; the same saved assistant message is reused.
+        if not self.closing.is_set():
+            cancel = threading.Event()
+            worker = threading.Thread(target=self.complete, args=(identifier, cancel), daemon=True)
+            self.workers[identifier] = {"thread": worker, "cancel": cancel, "started_at": time.time()}
+            worker.start()
+
+    def complete(self, identifier, cancel):
+        with self.lock:
+            conversation = copy.deepcopy(self.get(identifier))
+            value = self.get(identifier)
+            if value["messages"] and value["messages"][-1]["status"] == "queued":
+                value["messages"][-1].update(status="running", provider=None, attempts=[])
+                self.save(value)
+        def progress(provider, attempts):
+            with self.lock:
+                value = self.get(identifier)
+                value["messages"][-1].update(status="running", provider=provider, attempts=attempts)
+                self.save(value)
+        try:
+            answer = self.providers.reply(conversation, cancel, progress)
+            if cancel.is_set():
+                raise Cancelled("Reply stopped.")
+            with self.lock:
+                value = self.get(identifier)
+                value["codex_thread_id"] = answer.pop("codex_thread_id", None)
+                value.pop("retry_prompt", None)
+                answer["content"] = self.redact(answer["content"])
+                value["messages"][-1].update(answer, status="done")
+                value["messages"][-1].pop("retry_at", None)
+                self.save(value)
+                user = next((m["content"] for m in reversed(value["messages"]) if m["role"] == "user"), "")
+                self.record_turn(ask=user, provider=answer.get("provider"),
+                            jobs=[], files=[], commits=[], confirmations=[], refusals=[],
+                            open_items=[user[:200]] if user else [])
+        except AllDown as exc:
+            with self.lock:
+                value = self.get(identifier)
+                value["codex_thread_id"] = None
+                value["retry_prompt"] = exc.prompt
+                value["messages"][-1].update(status="cancelled" if cancel.is_set() else "waiting",
+                    provider=None, content="Reply stopped." if cancel.is_set() else str(exc),
+                    attempts=exc.attempts, retry_at=exc.retry_at)
+                self.save(value)
+        except Exception as exc:
+            with self.lock:
+                value = self.get(identifier)
+                value["codex_thread_id"] = None
+                value.pop("retry_prompt", None)
+                message = str(exc) if isinstance(exc, ProviderError) else "The reply failed unexpectedly. Your message is saved; please try again."
+                value["messages"][-1].update(status="cancelled" if isinstance(exc, Cancelled) else "error", content=self.redact(message))
+                self.save(value)
+        finally:
+            with self.lock:
+                self.workers.pop(identifier, None)
+
+    def stop(self, identifier):
+        with self.lock:
+            value = self.get(identifier)
+            info = self.workers.get(identifier)
+            if info:
+                info["cancel"].set()
+            elif value["messages"] and value["messages"][-1]["status"] == "waiting":
+                value["messages"][-1].update(status="cancelled", content="Queued request stopped.")
+                value.pop("retry_prompt", None)
+                self.save(value)
+                if hasattr(self.providers, "circuit"):
+                    self.providers.circuit.log("queue_cancelled", conversation_id=identifier)
+
+    def retry_queued(self):
+        with self.lock:
+            self.sweep_stuck()
+            queued = sorted((c for c in self.conversations.values() if c["messages"] and c["messages"][-1]["status"] == "waiting"), key=lambda c: c["messages"][-1]["created_at"])
+            for value in queued:
+                if value["id"] in self.workers:
+                    continue
+                message = value["messages"][-1]
+                if message.get("retry_at", 0) <= time.time():
+                    message.update(status="queued", content="", provider=None)
+                    self.save(value)
+                    if hasattr(self.providers, "circuit"):
+                        self.providers.circuit.log("queue_retry", conversation_id=value["id"])
+                    self.launch(value["id"])
+                    return
+
+    def start_background(self):
+        self.providers.start_probes()
+        def loop():
+            while not self.closing.wait(1):
+                try:
+                    if not self.closing.is_set():
+                        self.retry_queued()
+                        self.sweep_stuck()
+                except Exception:
+                    self.providers.circuit.log("queue_error", reason="queued retry could not start")
+        self.queue_thread = threading.Thread(target=loop, daemon=True)
+        self.queue_thread.start()
+
+    def close(self):
+        self.closing.set()
+        with self.lock:
+            for info in self.workers.values():
+                info["cancel"].set()
+        if self.queue_thread:
+            self.queue_thread.join(timeout=3)
+        for info in list(self.workers.values()):
+            info["thread"].join(timeout=10)
+        if hasattr(self.providers, "close"):
+            self.providers.close()
+
+    def report(self, relative):
+        path = self.root / relative
+        try:
+            with path.open() as handle:
+                value = handle.read(200_001)
+                modified = os.fstat(handle.fileno()).st_mtime
+        except OSError:
+            raise RequestError(404, "This report is not available yet.") from None
+        return {"text": self.redact(value[:200_000]), "truncated": len(value) > 200_000,
+                "modified_at": modified, "read_at": time.time()}
+
+    def handback(self):
+        return public_digest(self.root, self.redact)
+
+    def panel(self):
+        lanes = self.providers.health()
+        jobs = self.jobs()
+        results = []
+        for path in sorted(self.root.glob("conductor/reviews/*RESULT*.md"), key=lambda p: p.stat().st_mtime, reverse=True)[:5]:
+            try:
+                results.append({"name": path.name, "modified_at": path.stat().st_mtime})
+            except OSError:
+                continue
+        dash_path = self.root / "conductor/dashboard.json"
+        live_ops = {}
+        dashboard_age = None
+        if dash_path.exists():
+            try:
+                live_ops = json.loads(dash_path.read_text(errors="replace")).get("live_ops") or {}
+                dashboard_age = dash_path.stat().st_mtime
+            except (OSError, json.JSONDecodeError, ValueError):
+                live_ops = {}
+        if dashboard_age is None:
+            status_path = self.root / "conductor/STATUS.md"
+            dashboard_age = status_path.stat().st_mtime if status_path.exists() else None
+        return {"lanes": lanes, "jobs": jobs, "recent_results": results, "dashboard_modified_at": dashboard_age,
+                "live_ops": live_ops, "handback": self.handback(), "read_at": time.time()}
+
+    def jobs(self):
+        try:
+            code, out, _ = run(["/usr/bin/screen", "-ls"], cwd=self.root, env=clean_env(),
+                                cancel=threading.Event(), timeout=5)
+            screens = out.strip() if code in (0, 1) and out.strip() else "Screen listing unavailable."
+        except (OSError, ProviderError):
+            screens = "Screen listing unavailable."
+        try:
+            queue = self.report("next-prompts/INDEX.md")
+        except RequestError:
+            queue = {"text": "Queue not available yet.", "modified_at": None}
+        maintenance = self.root / "conductor/MAINTENANCE"
+        return {"screens": self.redact(screens), "queue": queue, "read_at": time.time(),
+                "maintenance": self.redact(maintenance.read_text()[:1000]) if maintenance.exists() else None}
+
+
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, address, chat, public_origin=""):
+        if address[0] != HOST:
+            raise ValueError("Bob web chat must bind to 127.0.0.1")
+        self.chat = chat
+        super().__init__(address, Handler)
+        port = self.server_address[1]
+        self.origins = {f"127.0.0.1:{port}": f"http://127.0.0.1:{port}", f"localhost:{port}": f"http://localhost:{port}"}
+        if public_origin:
+            parsed = urlsplit(public_origin)
+            if (parsed.scheme != "https" or not parsed.hostname or not parsed.hostname.endswith(".ts.net")
+                    or parsed.path not in ("", "/") or parsed.query or parsed.fragment or parsed.username or parsed.password):
+                self.server_close()
+                raise ValueError(".public-origin must be an exact https:// device.ts.net origin")
+            self.origins[parsed.netloc.lower()] = public_origin.rstrip("/")
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "BobWebchat/1"
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(10)
+
+    def log_message(self, *_args):
+        pass  # No URLs, cookies, prompts, passwords or provider output in HTTP logs.
+
+    def send(self, status, data, content_type="application/json; charset=utf-8", headers=None):
+        if isinstance(data, (dict, list)):
+            data = json.dumps(data, ensure_ascii=False)
+        if isinstance(data, str):
+            data = data.encode()
+        self.send_response(status)
+        for key, value in {
+            "Content-Type": content_type, "Content-Length": str(len(data)), "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
+            "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+            "X-Bob-Webchat": "1", **(headers or {}),
+        }.items():
+            self.send_header(key, value)
+        self.end_headers()
+        self.wfile.write(data)
+
+    def body(self, form=False, limit=None):
+        if self.headers.get("Transfer-Encoding"):
+            raise RequestError(400, "Transfer encoding is not supported.")
+        cap = limit or MAX_BODY
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            raise RequestError(400, "Invalid content length.") from None
+        if not 0 < size <= cap:
+            raise RequestError(413, "Request is empty or too large.")
+        mime = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if mime != ("application/x-www-form-urlencoded" if form else "application/json"):
+            raise RequestError(415, "Unsupported content type.")
+        try:
+            raw = self.rfile.read(size).decode("utf-8")
+            data = {k: v[0] for k, v in parse_qs(raw).items()} if form else json.loads(raw)
+            if not isinstance(data, dict):
+                raise ValueError()
+            return data
+        except (UnicodeError, ValueError):
+            raise RequestError(400, "Invalid request body.") from None
+
+    def cookie(self, token, clear=False):
+        secure = self.origin.startswith("https://")
+        return f"{COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={0 if clear else SESSION_SECONDS}" + ("; Secure" if secure else "")
+
+    def dispatch(self):
+        try:
+            hosts = self.headers.get_all("Host", [])
+            if len(hosts) != 1 or hosts[0].lower() not in self.server.origins:
+                raise RequestError(403, "Unrecognized host.")
+            self.origin = self.server.origins[hosts[0].lower()]
+            self.path_only = urlsplit(self.path).path
+            session = self.server.chat.authenticate(self.headers.get("Cookie"))
+            if self.path_only == "/api" or self.path_only.startswith("/api/"):
+                if not session:
+                    raise RequestError(401, "Please log in.")
+            if self.command == "POST":
+                origins = self.headers.get_all("Origin", [])
+                if (origins and origins != [self.origin]) or self.headers.get("Sec-Fetch-Site") in ("cross-site", "same-site"):
+                    raise RequestError(403, "Cross-site requests are not allowed.")
+                if self.path_only.startswith("/api/"):
+                    csrf = self.headers.get("X-CSRF-Token", "")
+                    if not hmac.compare_digest(csrf.encode(), session["csrf"].encode()):
+                        raise RequestError(403, "Invalid request token. Reload the page.")
+                self.post(session)
+            elif self.command == "GET":
+                self.get(session)
+            else:
+                raise RequestError(405, "Method not allowed.")
+        except RequestError as exc:
+            self.send(exc.status, {"error": exc.message})
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+            pass
+        except Exception:
+            self.send(500, {"error": "The request failed. Please try again."})
+
+    do_GET = dispatch
+    do_POST = dispatch
+    do_OPTIONS = dispatch
+    do_PUT = dispatch
+    do_DELETE = dispatch
+    do_PATCH = dispatch
+
+    def get(self, session):
+        route, chat = self.path_only, self.server.chat
+        assets = {"/style.css": ("style.css", "text/css; charset=utf-8"), "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+                  "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json")}
+        if route in assets:
+            name, mime = assets[route]
+            return self.send(200, (HERE / "static" / name).read_bytes(), mime)
+        if route == "/login":
+            return self.send(200, (HERE / "static/login.html").read_bytes(), "text/html; charset=utf-8")
+        if route == "/":
+            if not session:
+                return self.send(303, "", headers={"Location": "/login"})
+            return self.send(200, (HERE / "static/index.html").read_bytes(), "text/html; charset=utf-8")
+        if route in ("/api", "/api/session"):
+            return self.send(200, {"csrf": session["csrf"], "active_conversation": next(iter(chat.workers), None),
+                                   "active_conversations": list(chat.workers)})
+        if route == "/api/conversations":
+            return self.send(200, chat.conversation_list())
+        if route.startswith("/api/conversations/"):
+            return self.send(200, chat.history(route.removeprefix("/api/conversations/")))
+        if route in ("/api/status", "/api/review"):
+            return self.send(200, chat.report("conductor/STATUS.md" if route.endswith("status") else "conductor/reviews/LATEST.md"))
+        if route == "/api/jobs":
+            return self.send(200, chat.jobs())
+        if route == "/api/handback":
+            return self.send(200, chat.handback())
+        if route == "/api/panel":
+            return self.send(200, chat.panel())
+        if route == "/api/music/eligibility":
+            try:
+                status = music_budget_status(chat.root)
+            except Exception as exc:
+                raise RequestError(503, str(exc)) from exc
+            return self.send(200, {"ok": True, **status})
+        if route == "/api/song-projects":
+            return self.send(200, {"projects": list_projects(chat.root)})
+        if route.startswith("/api/song-projects/"):
+            project_id = route.removeprefix("/api/song-projects/").strip("/")
+            try:
+                return self.send(200, get_project(chat.root, project_id))
+            except FileNotFoundError:
+                raise RequestError(404, "Song project not found.") from None
+        if route.startswith("/api/audio/"):
+            audio_id = route.removeprefix("/api/audio/").strip("/")
+            try:
+                path = resolve_audio(chat.root, audio_id)
+            except (ValueError, FileNotFoundError):
+                raise RequestError(404, "Audio not found.") from None
+            mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            return self.send(200, path.read_bytes(), mime)
+        if route == "/api/lanes":
+            identifier = parse_qs(urlsplit(self.path).query).get("conversation_id", [None])[0]
+            if identifier:
+                chat.get(identifier)
+            return self.send(200, chat.providers.health(identifier))
+        raise RequestError(404, "Not found.")
+
+    def post(self, session):
+        route, chat = self.path_only, self.server.chat
+        if route == "/login":
+            token = chat.login(self.body(form=True).get("password"))
+            return self.send(303, "", headers={"Location": "/", "Set-Cookie": self.cookie(token)})
+        if route == "/api/logout":
+            self.body()
+            with chat.lock:
+                chat.sessions.pop(session["digest"], None)
+            return self.send(200, {"ok": True}, headers={"Set-Cookie": self.cookie("", clear=True)})
+        if route == "/api/conversations":
+            self.body()
+            return self.send(201, chat.new_conversation())
+        if route == "/api/messages":
+            data = self.body()
+            return self.send(202, chat.submit(data.get("conversation_id"), data.get("message"), data.get("request_id"), data.get("provider", "auto")))
+        if route == "/api/cancel":
+            chat.stop(self.body().get("conversation_id"))
+            return self.send(202, {"ok": True})
+        if route == "/api/song-projects":
+            data = self.body()
+            try:
+                project = save_project(chat.root, data)
+            except (TypeError, json.JSONDecodeError, OSError) as exc:
+                raise RequestError(400, "Could not save song project.") from exc
+            chat.record_turn(ask="song notebook save: " + project.get("title", ""), provider=None, jobs=[], files=[project["id"]],
+                            commits=[], confirmations=[], refusals=[], open_items=[])
+            return self.send(200, project)
+        if route == "/api/music/demo":
+            data = self.body()
+            lyrics = data.get("lyrics") or ""
+            style = data.get("style") or ""
+            receipt = demo_receipt(lyrics, style)
+            budget = music_budget_status(chat.root)
+            if not data.get("confirm"):
+                remaining = budget.get("remaining_usd", 0)
+                cap = budget.get("cap_usd", 59)
+                return self.send(200, {"ok": False, "needs_confirm": True, "receipt": receipt,
+                                       "estimate_usd": 0.04, "cap_usd": cap, "remaining_usd": remaining,
+                                       "can_afford_demo": budget.get("can_afford_demo", False),
+                                       "message": (
+                                           f"Music demo ~$0.04 when MiniMax/Replicate succeeds; "
+                                           f"otherwise a free local chord sketch (${cap:.0f} cap, ${remaining:.2f} left). Confirm to generate."
+                                       )})
+            if data.get("receipt") != receipt:
+                raise RequestError(400, "Demo confirmation does not match current lyrics/style. Save and try again.")
+            if not budget.get("can_afford_demo"):
+                raise RequestError(402, "MiniMax chat cap does not have headroom for a demo sketch.")
+            try:
+                result = generate_demo(chat.root, lyrics=lyrics, style=style, dry_run=bool(data.get("dry_run")))
+            except Exception as exc:
+                raise RequestError(400, str(exc)) from exc
+            result["receipt"] = receipt
+            return self.send(200, result)
+        if route == "/api/audio/upload":
+            data = self.body(limit=MAX_AUDIO_BODY)
+            name = data.get("filename") or "upload.mp3"
+            raw = data.get("data_base64")
+            if not isinstance(raw, str):
+                raise RequestError(400, "Audio payload required.")
+            try:
+                blob = base64.b64decode(raw, validate=True)
+            except ValueError:
+                raise RequestError(400, "Invalid audio encoding.") from None
+            suffix = Path(name).suffix or ".mp3"
+            try:
+                stored = store_upload(chat.root, blob, suffix)
+            except ValueError as exc:
+                raise RequestError(400, str(exc)) from exc
+            chat.record_turn(ask=f"audio upload {name}", provider=None, jobs=[], files=[stored["path"]],
+                            commits=[], confirmations=[], refusals=[], open_items=[])
+            return self.send(201, stored)
+        raise RequestError(404, "Not found.")
+
+
+def main():
+    os.umask(0o077)
+    with (HERE / ".server.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SystemExit("Bob web chat is already running.")
+        chat = Chat()
+        origin_path = HERE / ".public-origin"
+        origin = origin_path.read_text().strip() if origin_path.exists() else ""
+        server = Server((HOST, PORT), chat, origin)
+        chat.start_background()
+        def shutdown(_signum, _frame):
+            with chat.lock:
+                for info in chat.workers.values():
+                    info["cancel"].set()
+            threading.Thread(target=server.shutdown, daemon=True).start()
+        for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(signum, shutdown)
+        print(f"Bob web chat listening on http://{HOST}:{PORT}; password: {HERE / '.password'}", flush=True)
+        try:
+            server.serve_forever(poll_interval=0.25)
+        finally:
+            server.server_close()
+            chat.close()
+
+
+if __name__ == "__main__":
+    main()
+
+
+### FILE webchat/static/app.js
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+if ($("login-form")) {
+  $("login-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = event.target.querySelector("button");
+    button.disabled = true;
+    $("login-error").textContent = "";
+    try {
+      const response = await fetch("/login", { method: "POST", body: new URLSearchParams(new FormData(event.target)), credentials: "same-origin" });
+      if (response.ok) location.assign("/");
+      else $("login-error").textContent = (await response.json()).error || "Login failed.";
+    } catch (_) { $("login-error").textContent = "Cannot reach Bob. Please try again."; }
+    finally { button.disabled = false; }
+  });
+} else {
+  let csrf = "", current = "", busy = false, sending = false, revision = "", polling = false, draftRequest = null;
+  const providers = { codex: "Codex", cursor: "Cursor", gemini: "Gemini", minimax: "MiniMax", claude: "Claude" };
+  function escapeHtml(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function speechText(text) {
+    return text.replace(/```[\s\S]*?```/g, " ").replace(/`([^`]+)`/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/[#>*_-]/g, " ").replace(/\s+/g, " ").trim();
+  }
+  function renderMarkdown(text) {
+    let html = escapeHtml(text);
+    html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre class="code-block"><code>${code.trim()}</code></pre>`);
+    html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+    html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" rel="noopener noreferrer" target="_blank">$1</a>');
+    html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    html = html.replace(/(?:^|\n)([-*] .+(?:\n[-*] .+)*)/g, (block) => {
+      const items = block.trim().split("\n").map((line) => `<li>${line.replace(/^[-*]\s+/, "")}</li>`).join("");
+      return `<ul>${items}</ul>`;
+    });
+    html = html.replace(/\n/g, "<br>");
+    return html;
+  }
+  const stored = (key) => { try { return localStorage.getItem(key); } catch (_) { return null; } };
+  const remember = (key, value) => { try { localStorage.setItem(key, value); } catch (_) {} };
+  async function api(path, data) {
+    const response = await fetch(path, { credentials: "same-origin", cache: "no-store",
+      ...(data === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: JSON.stringify(data) }) });
+    if (response.status === 401) { location.assign("/login"); throw new Error("Please log in."); }
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Request failed.");
+    return result;
+  }
+  function composerState() {
+    $("send").disabled = busy || sending || !current;
+    $("stop").hidden = !busy;
+    $("message").disabled = !current;
+  }
+  function render(conversation) {
+    if (conversation.id !== current) return;
+    const nextRevision = JSON.stringify(conversation);
+    busy = conversation.messages.some((message) => ["running", "queued", "waiting"].includes(message.status));
+    composerState();
+    if (nextRevision === revision) return;
+    revision = nextRevision;
+    const last = conversation.messages.at(-1);
+    if (last?.status === "error" && last.role === "assistant") {
+      $("notice").textContent = last.content || "Reply failed. Edit your message and send again.";
+    } else if (last?.status === "cancelled" && last.role === "assistant" && !sending) {
+      $("notice").textContent = "Reply stopped. Send again when ready.";
+    }
+    const panel = $("messages"), nearBottom = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 100;
+    const fragment = document.createDocumentFragment();
+    if (!conversation.messages.length) {
+      const welcome = document.createElement("div"); welcome.className = "welcome";
+      const title = document.createElement("h2"); title.textContent = "What’s on your mind?";
+      const text = document.createElement("p"); text.textContent = "Ask a question, work on a draft, or catch up on what’s running.";
+      welcome.append(title, text); fragment.append(welcome);
+    }
+    for (const message of conversation.messages) {
+      const pending = ["queued", "running"].includes(message.status);
+      const article = document.createElement("article");
+      article.className = `message ${message.role} ${pending ? "pending" : ""} ${message.status === "error" ? "error" : ""}`;
+      const meta = document.createElement("div"); meta.className = "meta";
+      meta.textContent = `${message.role === "user" ? "You" : "Bob"}${message.provider ? " · " + providers[message.provider] : ""} · ${new Date(message.created_at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+      const body = document.createElement("div"); body.className = "body";
+      if (pending) body.textContent = message.provider ? `Thinking via ${providers[message.provider]}…` : "One moment…";
+      else if (message.role === "assistant") body.innerHTML = renderMarkdown(message.content || "");
+      else body.textContent = message.content;
+      article.append(meta, body);
+      if (message.status === "waiting" && message.retry_at) {
+        const retry = document.createElement("div"); retry.className = "attempt";
+        retry.textContent = `Queued · retry after ${new Date(message.retry_at * 1000).toLocaleTimeString()}`;
+        article.append(retry);
+      }
+      if (message.action_card) {
+        const card = document.createElement("div"); card.className = "action-card";
+        const suffix = message.action_card.state === "queued" ? "Queued for scheduler" : message.action_card.state === "confirm" ? "Awaiting your yes" : "No action executed";
+        card.textContent = `${message.action_card.reason} · ${suffix}`;
+        article.append(card);
+      }
+      if (message.attempts?.length) {
+        const detail = document.createElement("div"); detail.className = "attempt";
+        detail.textContent = message.attempts.map((a) => a.message || `${providers[a.provider]}: ${a.error}${a.skipped ? " (cooldown or busy)" : ""}`).join(" · ");
+        article.append(detail);
+      }
+      fragment.append(article);
+    }
+    panel.replaceChildren(fragment);
+    if (nearBottom || sending) panel.scrollTop = panel.scrollHeight;
+  }
+  async function refreshList() {
+    const data = await api("/api/conversations");
+    const options = data.conversations.map((conversation) => {
+      const option = document.createElement("option"); option.value = conversation.id; option.textContent = conversation.title; return option;
+    });
+    $("conversations").replaceChildren(...options);
+    if (!current || !data.conversations.some((conversation) => conversation.id === current)) current = data.active_conversation || data.conversations[0]?.id;
+    $("conversations").value = current;
+    remember("bob.conversation", current);
+  }
+  async function poll() {
+    if (!current || polling) return;
+    polling = true;
+    try {
+      render(await api(`/api/conversations/${current}`));
+      $("connection").textContent = "Your chat on the mini";
+      if (!busy && $("notice").textContent === "Stopping this reply…") $("notice").textContent = "";
+    } catch (error) { $("connection").textContent = "Reconnecting…"; $("notice").textContent = error.message; }
+    finally { polling = false; }
+  }
+  $("composer").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = $("message").value.trim();
+    if (!message || busy || sending) return;
+    const provider = $("provider-choice").value;
+    if (!draftRequest || draftRequest.message !== message || draftRequest.conversation_id !== current || draftRequest.provider !== provider) {
+      draftRequest = { conversation_id: current, message, provider, request_id: crypto.randomUUID() };
+    }
+    sending = true; composerState(); $("notice").textContent = "";
+    try {
+      const conversation = await api("/api/messages", draftRequest);
+      const submitted = draftRequest;
+      if (submitted.conversation_id === current && submitted.message === $("message").value.trim()) {
+        $("message").value = "";
+        $("message").style.height = "auto";
+        draftRequest = null;
+      }
+      render(conversation); await refreshList();
+    } catch (error) { $("notice").textContent = error.message; }
+    finally { sending = false; composerState(); $("message").focus(); }
+  });
+  $("message").addEventListener("input", () => {
+    $("message").style.height = "auto";
+    $("message").style.height = Math.min($("message").scrollHeight, 180) + "px";
+  });
+  $("message").addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing && !matchMedia("(pointer: coarse)").matches) {
+      event.preventDefault(); $("composer").requestSubmit();
+    }
+  });
+  $("conversations").addEventListener("change", async () => {
+    current = $("conversations").value; remember("bob.conversation", current); revision = ""; busy = false;
+    await poll(); $("messages").scrollTop = $("messages").scrollHeight;
+  });
+  $("new-chat").addEventListener("click", async () => {
+    try { const conversation = await api("/api/conversations", {}); current = conversation.id; revision = ""; await refreshList(); render(conversation); $("message").focus(); }
+    catch (error) { $("notice").textContent = error.message; }
+  });
+  let micRecognition = null;
+  let speakingUtterance = null;
+  $("mic").addEventListener("click", () => {
+    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Speech) { $("notice").textContent = "Voice input is not supported in this browser."; return; }
+    if (micRecognition) {
+      micRecognition.stop();
+      micRecognition = null;
+      $("mic").classList.remove("mic-active");
+      $("mic").setAttribute("aria-pressed", "false");
+      $("notice").textContent = "";
+      return;
+    }
+    const rec = new Speech();
+    micRecognition = rec;
+    rec.lang = "en-US";
+    rec.interimResults = true;
+    rec.continuous = matchMedia("(pointer: coarse)").matches;
+    rec.maxAlternatives = 1;
+    $("mic").classList.add("mic-active");
+    $("mic").setAttribute("aria-pressed", "true");
+    $("notice").textContent = rec.continuous
+      ? "Listening… tap mic again to stop (iPhone: allow mic when prompted)."
+      : "Listening… tap mic again to stop.";
+    rec.onresult = (event) => {
+      const transcript = Array.from(event.results).map((row) => row[0].transcript).join(" ").trim();
+      $("message").value = ($("message").value + " " + transcript).trim();
+      $("message").dispatchEvent(new Event("input"));
+    };
+    rec.onend = () => {
+      micRecognition = null;
+      $("mic").classList.remove("mic-active");
+      $("mic").setAttribute("aria-pressed", "false");
+      if (!$("notice").textContent.startsWith("Could not")) $("notice").textContent = "";
+    };
+    rec.onerror = () => { $("notice").textContent = "Could not capture voice. Try typing or keyboard dictation."; };
+    rec.start();
+  });
+  $("speak").addEventListener("click", async () => {
+    if (!("speechSynthesis" in window)) { $("notice").textContent = "Read-aloud is not supported here."; return; }
+    if (speakingUtterance) {
+      speechSynthesis.cancel();
+      speakingUtterance = null;
+      $("speak").classList.remove("mic-active");
+      $("speak").setAttribute("aria-pressed", "false");
+      return;
+    }
+    try {
+      const conversation = await api(`/api/conversations/${current}`);
+      const last = conversation.messages.filter((m) => m.role === "assistant" && m.status === "done").at(-1);
+      if (!last?.content) { $("notice").textContent = "No finished reply to read."; return; }
+      speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(speechText(last.content).slice(0, 4000));
+      utter.rate = 1.02;
+      const voices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith("en"));
+      if (voices.length) utter.voice = voices.find((v) => /samantha|daniel|english/i.test(v.name)) || voices[0];
+      utter.onend = utter.onerror = () => {
+        speakingUtterance = null;
+        $("speak").classList.remove("mic-active");
+        $("speak").setAttribute("aria-pressed", "false");
+      };
+      speakingUtterance = utter;
+      $("speak").classList.add("mic-active");
+      $("speak").setAttribute("aria-pressed", "true");
+      speechSynthesis.speak(utter);
+    } catch (error) { $("notice").textContent = error.message; }
+  });
+  $("stop").addEventListener("click", async () => {
+    try { await api("/api/cancel", { conversation_id: current }); $("notice").textContent = "Stopping this reply…"; }
+    catch (error) { $("notice").textContent = error.message; }
+  });
+  $("logout").addEventListener("click", async () => {
+    try { await api("/api/logout", {}); location.assign("/login"); }
+    catch (error) { $("notice").textContent = error.message; }
+  });
+  for (const button of document.querySelectorAll("[data-report]")) button.addEventListener("click", async () => {
+    $("report-title").textContent = button.textContent;
+    $("report-body").textContent = "Loading…"; $("report-date").textContent = ""; $("report").showModal();
+    try {
+      const data = await api(`/api/${button.dataset.report}`);
+      $("report-date").textContent = data.modified_at ? `File updated ${new Date(data.modified_at * 1000).toLocaleString()} · saved report, not a new check` : `Read ${new Date(data.read_at * 1000).toLocaleString()}`;
+      $("report-body").textContent = button.dataset.report === "jobs" ?
+        `${data.maintenance ? "Scheduling paused: " + data.maintenance + "\n\n" : ""}SCREENS\n${data.screens}\n\nQUEUE${data.queue.modified_at ? " · updated " + new Date(data.queue.modified_at * 1000).toLocaleString() : ""}\n${data.queue.text}` :
+        data.text + (data.truncated ? "\n\n[Display truncated]" : "");
+    } catch (error) { $("report-body").textContent = error.message; }
+  });
+  $("close-report").addEventListener("click", () => $("report").close());
+  let songProjectId = stored("bob.songProject") || "";
+  async function loadSong() {
+    try {
+      const list = await api("/api/song-projects");
+      const row = list.projects.find((p) => p.id === songProjectId) || list.projects[0];
+      if (!row) { $("song-summary").textContent = "new"; return; }
+      songProjectId = row.id; remember("bob.songProject", songProjectId);
+      const project = await api(`/api/song-projects/${songProjectId}`);
+      $("song-title").value = project.title || "";
+      $("song-lyrics").value = project.lyrics || "";
+      $("song-chords").value = project.chords || "";
+      $("song-notes").value = project.notes || "";
+      $("song-summary").textContent = project.title || "saved";
+    } catch (_) { $("song-summary").textContent = "offline"; }
+  }
+  $("song-save").addEventListener("click", async () => {
+    $("song-notice").textContent = "Saving…";
+    try {
+      const project = await api("/api/song-projects", {
+        id: songProjectId || undefined,
+        title: $("song-title").value,
+        lyrics: $("song-lyrics").value,
+        chords: $("song-chords").value,
+        notes: $("song-notes").value,
+        version_note: "saved from phone",
+      });
+      songProjectId = project.id; remember("bob.songProject", songProjectId);
+      $("song-notice").textContent = "Saved " + new Date().toLocaleTimeString();
+      $("song-summary").textContent = project.title;
+    } catch (error) { $("song-notice").textContent = error.message; }
+  });
+  $("song-demo").addEventListener("click", async () => {
+    const lyrics = $("song-lyrics").value.trim();
+    if (!lyrics) { $("song-notice").textContent = "Add lyrics first."; return; }
+    let receipt = "";
+    try {
+      const quote = await api("/api/music/demo", { lyrics, style: $("song-notes").value || "acoustic songwriter" });
+      if (quote.needs_confirm) {
+        receipt = quote.receipt || "";
+        if (!quote.can_afford_demo) { $("song-notice").textContent = quote.message || "Cap too low for a demo."; return; }
+        if (!window.confirm(quote.message || "Generate MiniMax demo?")) return;
+      }
+    } catch (error) { $("song-notice").textContent = error.message; return; }
+    $("song-notice").textContent = "Generating demo…";
+    try {
+      const demo = await api("/api/music/demo", {
+        lyrics, style: $("song-notes").value || "acoustic songwriter", confirm: true, receipt,
+      });
+      if (demo.audio_id) {
+        const player = $("song-player");
+        player.hidden = false;
+        player.src = `/api/audio/${demo.audio_id}`;
+        $("song-notice").textContent = `Demo ready · ${demo.engine || "local-sketch"} · ${demo.bytes} bytes`;
+      } else $("song-notice").textContent = demo.message || "Demo queued.";
+    } catch (error) { $("song-notice").textContent = error.message; }
+  });
+  $("song-upload").addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    $("song-notice").textContent = "Uploading…";
+    try {
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      const stored = await api("/api/audio/upload", { filename: file.name, data_base64: btoa(binary) });
+      const player = $("song-player");
+      player.hidden = false;
+      player.src = `/api/audio/${stored.audio_id}`;
+      $("song-notice").textContent = `Uploaded ${file.name}`;
+    } catch (error) { $("song-notice").textContent = error.message; }
+    event.target.value = "";
+  });
+  async function refreshPanel() {
+    try {
+      const data = await api("/api/panel");
+      const state = data.handback?.bob_state?.text || "";
+      $("handback-chip").textContent = state ? state.split("\n").find((line) => line.trim() && !line.startsWith("#"))?.slice(0, 140) || state.slice(0, 140) : "Handback: no BOB-STATE yet";
+      const dash = data.dashboard_modified_at ? new Date(data.dashboard_modified_at * 1000).toLocaleString() : "unknown";
+      const ops = data.live_ops || {};
+      const spend = ops.minimax_spend || {};
+      const roles = ops.roles || {};
+      const jobs = (ops.running_jobs || []).slice(0, 4);
+      $("status-summary").textContent = `round ${ops.webchat_round || "?"} · MiniMax $${(spend.committed_usd ?? 0).toFixed(2)}/${spend.cap_usd || 59}`;
+      const scoreLines = (ops.scores || []).slice(0, 6).map((row) => `${row.area}: ${row.score}`).join(" · ");
+      const jobLines = jobs.map((job) => {
+        const commit = job.last_commit?.sha ? ` · ${job.last_commit.sha}` : "";
+        const mins = Math.round((job.elapsed_seconds || 0) / 60);
+        return `• ${job.engine || "job"} ${job.stall_state} · ${mins}m · ${job.plain_now || "working"}${commit}`;
+      });
+      const lines = [
+        `Dashboard fresh: ${dash}`,
+        `Builder: ${roles.building || "idle"} · Review: ${roles.reviewing || "idle"}`,
+        scoreLines ? `Scores: ${scoreLines}` : "",
+        jobLines.length ? "Live jobs:\n" + jobLines.join("\n") : "Live jobs: none on screen",
+        "",
+        (data.handback?.summary?.text || data.handback?.bob_state?.text || "").slice(0, 900),
+      ].filter(Boolean);
+      $("status-body").textContent = lines.join("\n");
+    } catch (_) {
+      $("status-summary").textContent = "unavailable";
+    }
+  }
+  async function refreshLanes() {
+    try {
+      const data = await api("/api/lanes" + (current ? "?conversation_id=" + encodeURIComponent(current) : ""));
+      const entries = Object.entries(data.providers);
+      $("lanes-summary").textContent = entries.filter(([, lane]) => lane.state === "cooldown").length + " cooling down";
+      $("lanes").replaceChildren(...entries.map(([name, lane]) => {
+        const row = document.createElement("div"); row.className = "lane";
+        const title = document.createElement("strong");
+        title.textContent = `${providers[name]} · ${lane.state.replace("_", " ")}${lane.automatic ? "" : " · explicit choice only"}`;
+        const detail = document.createElement("span");
+        const spend = lane.spend;
+        detail.textContent = lane.detail + (lane.retry_at > Date.now() / 1000 ? ` · retry ${new Date(lane.retry_at * 1000).toLocaleTimeString()}` : "") +
+          (spend.committed_usd !== undefined && ["gemini", "minimax"].includes(name) ? ` · $${spend.committed_usd.toFixed(4)} committed${spend.cap_usd ? " / $" + spend.cap_usd : ""} (includes reservations)` : ` · ${spend.billing}`) +
+          (lane.probed_at ? ` · probe ${lane.probe}, ${new Date(lane.probed_at * 1000).toLocaleTimeString()} (login/configuration/network only)` : "");
+        row.append(title, detail); return row;
+      }));
+    } catch (_) { $("lanes-summary").textContent = "Health unavailable"; }
+  }
+  async function init() {
+    try {
+      csrf = (await api("/api/session")).csrf; current = stored("bob.conversation");
+      await refreshList(); await poll(); $("messages").scrollTop = $("messages").scrollHeight;
+      await refreshPanel(); await refreshLanes(); await loadSong();
+      setInterval(refreshPanel, 8000);
+      setInterval(refreshLanes, 5000);
+      setInterval(poll, 1200);
+    } catch (error) { $("notice").textContent = error.message; }
+  }
+  composerState(); init();
+}

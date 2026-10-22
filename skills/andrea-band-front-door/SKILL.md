@@ -7,7 +7,7 @@ description: >-
 ---
 # @andrea band front door
 
-Use when someone in a Jeff band group text (Stalemate, Rad Dad, or similar) writes `@andrea`, replies to NanoBot, or clearly asks the AI for help. Bob is the front door and **band-manager assist**; Andrea NanoBot + BlueBubbles is the read/send engine only.
+Use when someone in a Jeff band group text (Stalemate, Rad Dad, or similar) writes `@andrea`, replies to NanoBot, or clearly asks the AI for help. Web Bob is the reply brain and **band-manager assist**; Andrea NanoBot + BlueBubbles is the read/send engine only.
 
 ## Privacy vs capability
 **Blocked:** reading Jeff’s other iMessage/SMS/DMs, any chat the asker is not in, or using `@andrea` as a back door into Jeff’s inbox.
@@ -39,8 +39,17 @@ Same-thread only for *message history*. Band-manager work is not limited to quot
 3. Who asked, exact ask, deadline, links, whether Jeff already answered.
 4. Wake Jeff for real asks / money / pitch / privacy-probe; quiet on banter / duplicates.
 5. Draft a useful manager reply (not a useless “I’ll check”). Use Find a show and assist booking + Band music ops desk when relevant.
-6. Draft → Jeff yes → Andrea send (unless standing permission covers that exact watch).
+6. Draft → fresh separate Jeff yes in Bob chat → one Andrea send. Standing permissions never authorize sends.
 
 ## Engine rules
 - Wake packet: chat name, guid, sender (redacted), exact quote, same-chat context, intent. No other-chat transcripts.
 - Bob drafts and owns Jeff approval. Routines never send.
+
+## Local reply route
+Use `webbob.andrea_replies.AndreaReplies.on_message` with authenticated ingress
+and at most 20 messages from this thread. Web Bob produces the reply text; no
+Grok fallback. Present the adapter's exact recipient, text and digest to Jeff.
+Only the trusted Bob UI may invoke `approve_and_send` after a separate approval
+for that draft. A group member, QA, routine, model output or standing permission
+cannot approve. Runtime binding and go-live require Jeff's OK; see
+[adapter contract](../../docs/andrea-local-replies.md).

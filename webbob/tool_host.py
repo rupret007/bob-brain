@@ -12,6 +12,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from webbob.research_limits import BRAVE_QUERY_COST_MICRODOLLARS, BRAVE_SPEND_MODEL, research_spend_and_daily_caps
+from webbob.text_validation import reject_unicode_tags
 
 KEY_SOURCE = Path.home() / "Documents/bob-overnight-inject/conductor/keys.env"
 
@@ -35,6 +36,7 @@ class ToolHost:
         self._brave_serial = 0
 
     async def call(self, name, arguments):
+        reject_unicode_tags((name, arguments), ToolUnavailable)
         if name not in self.sessions:
             raise ToolUnavailable("tool unavailable or not permitted: " + name)
         if self.remaining <= 0 or time.monotonic() >= self.deadline:
@@ -60,6 +62,7 @@ class ToolHost:
             if result.isError:
                 raise ToolUnavailable(name + " reported a tool error")
             texts = [block.text for block in result.content if block.type == "text"]
+            reject_unicode_tags(texts, ToolUnavailable)
             size = sum(len(value.encode()) for value in texts)
             if size > self.bytes_left:
                 raise ToolUnavailable("research output budget exceeded")
@@ -68,6 +71,7 @@ class ToolHost:
                 parsed = [json.loads(value) for value in texts]
             except (TypeError, ValueError):
                 raise ToolUnavailable("invalid structured tool result") from None
+            reject_unicode_tags(parsed, ToolUnavailable)
             succeeded = True
             return parsed
         finally:
@@ -76,6 +80,7 @@ class ToolHost:
                 self.spend_cap.settle(reservation_id, self.brave_cost)
 
     async def research(self, query):
+        reject_unicode_tags(query)
         if not isinstance(query, str) or not 1 <= len(query) <= 400:
             raise ValueError("query must be 1..400 characters")
         report = {"query": query, "sources": [], "unavailable": [], "execution_authority": False}

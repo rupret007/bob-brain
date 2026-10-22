@@ -1,6 +1,8 @@
 """Mandatory exact-build parity admission; no partial/waived go-live result."""
 import re
 
+from webbob.text_validation import reject_unicode_tags
+
 CAPABILITIES = ("chat_memory", "shared_memory", "routines", "background_jobs", "github_prs",
                 "workspace", "web_research", "browser_desktop", "files_images", "voice_memos",
                 "widgets_decisions", "message_drafts", "teammate_messages", "ai_capacity")
@@ -18,6 +20,7 @@ class ParityGate:
         self.verify_evidence, self.verify_karen, self.verify_jeff = verify_evidence, verify_karen, verify_jeff
 
     def require(self, sha, evidence, karen_receipt, jeff_receipt):
+        reject_unicode_tags((sha, evidence, karen_receipt, jeff_receipt), GoLiveDenied)
         if not re.fullmatch(r"[a-f0-9]{40}", sha):
             raise GoLiveDenied("exact release SHA required")
         missing = []

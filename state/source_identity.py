@@ -1,0 +1,33 @@
+"""Bound bounded local execution evidence to the code bytes actually inspected."""
+import hashlib
+import json
+from pathlib import Path
+
+PATHS = ('webchat/task_dispatch.py', 'webchat/reply_authority.py', 'webchat/answer_intent.py',
+         'webchat/providers.py', 'state/task_queue.py', 'webchat/self_improvement.py',
+         'webchat/conversation_focus.py', 'services/mini_worker.py', 'services/dispatch_worker.py')
+PATHS += ('state/source_identity.py', 'webchat/improvement_investigation.py')
+PATHS += ('webchat/app.py', 'webchat/chat_intent.py', 'webchat/dispatch_receipts.py')
+PATHS += ('webchat/draft_revision.py',)
+PATHS += ('webchat/capabilities.py', 'state/alignment_events.py', 'state/ledger.py', 'state/bob_sync.py')
+PATHS += ('services/budget.py', 'services/api.py', 'services/web_dispatch.py', 'services/lanes.py',
+          'webchat/failover.py', 'webchat/voice.py')
+PATHS += ('webchat/bob_gaps.py',)
+PATHS += ('webchat/api_call.py',)
+PATHS += ('webchat/receiver_evidence.py',)
+PATHS += ('webchat/project_context.py', 'webchat/memory_store.py')
+PATHS += ('webchat/project_reports.py', 'state/report_contract.py', 'state/report_artifacts.py',
+          'services/subscription_report.py', 'services/command.py')
+PATHS += ('webchat/project_handoffs.py',)
+PATHS += ('webchat/resource_inventory.py',)
+
+
+def fingerprint(root, suite):
+    hashes = {}
+    for relative in (*PATHS, suite):
+        path = Path(root) / relative
+        if path.is_symlink() or path.stat().st_size > 200000:
+            raise ValueError('Execution source unavailable or oversized: ' + relative)
+        hashes[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return dict(suite=suite, source_hashes=hashes,
+                sha256=hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest())

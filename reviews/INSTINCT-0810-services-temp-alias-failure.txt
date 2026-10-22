@@ -1,0 +1,15 @@
+..F..................................................................... [ 54%]
+...........................................................              [100%]
+=================================== FAILURES ===================================
+_ APIWorkerTests.test_frozen_turn_one_reaches_both_api_transports_and_delivers_reports _
+test_api_workers.py:46: in test_frozen_turn_one_reaches_both_api_transports_and_delivers_reports
+    self.frozen_turn_reports(deployed_checkout=False)
+test_api_workers.py:167: in frozen_turn_reports
+    self.assertEqual(Path(row["repo"]), repo)
+E   AssertionError: PosixPath('/private/var/folders/qd/q3p1r3ln62569ybqrs[46 chars]epo') != PosixPath('/var/folders/qd/q3p1r3ln62569ybqrs84wgp400[38 chars]epo')
+----------------------------- Captured stdout call -----------------------------
+2026-09-28T13:22:43+00:00 Web Bob claimed webchat-6b080045a1275b3db339b0044242ac3a worker=gemini group=max-f3cbf7e14947506798be6d523bdfc9a8
+2026-09-28T13:22:43+00:00 Web Bob claimed webchat-9a332cf515155551bcab3beeabbc6cf0 worker=minimax group=max-f3cbf7e14947506798be6d523bdfc9a8
+=========================== short test summary info ============================
+FAILED test_api_workers.py::APIWorkerTests::test_frozen_turn_one_reaches_both_api_transports_and_delivers_reports
+1 failed, 130 passed in 4.45s

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from webbob.ownership import Gate, GateError
 
-ANDREA_RELEASE = "83623dd8"
+ANDREA_RELEASE = "6f1030f9d1b8a8c973ccd3ef4c5cf148669179d1"
 
 
 @dataclass(frozen=True)

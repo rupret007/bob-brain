@@ -1,0 +1,248 @@
+### FILE /tmp/webchat-r17-diff.txt
+diff --git a/conductor/reviews/WEBCHAT-READY-R11-RESULT.md b/conductor/reviews/WEBCHAT-READY-R11-RESULT.md
+index c2813af..a19d1fa 100644
+--- a/conductor/reviews/WEBCHAT-READY-R11-RESULT.md
++++ b/conductor/reviews/WEBCHAT-READY-R11-RESULT.md
+@@ -117,7 +117,7 @@ lsof -ti :8787 | xargs kill; bash conductor/webchat/start.sh
+ | Pre-R11 HEAD | `3ceb09830b68a56365796e0b9ce7c3e15d006adc` |
+ | R11 primary (prior) | `33e666f5879c4f9779761c8463648bd8a5aa93c4` |
+ | **R11 primary (code)** | `f4996b68a3659580e114186b806ef88127815144` |
+-| **Final SHA (this round)** | `7012503b93912edb22fb740259b7a76f51f5ce0f` |
++| **Final SHA (this round)** | `1640db01b75d713337967546e61b48b2997c6cd0` |
+ 
+ ## Remaining risks
+ 
+diff --git a/conductor/webchat/app.py b/conductor/webchat/app.py
+index ec2ceef..b6019dc 100644
+--- a/conductor/webchat/app.py
++++ b/conductor/webchat/app.py
+@@ -826,6 +826,9 @@ class Chat:
+             summary = f"Loop ready ({tick_ok_streak} recent OK tick{'s' if tick_ok_streak != 1 else ''}). " + summary
+         bootstrap = root / "conductor/webchat/bootstrap_self_improve_launchd.sh"
+         install_ready = bool(files_ok and bootstrap.is_file())
++        bootstrap_command = (
++            f"bash {bootstrap.relative_to(root)}" if bootstrap.is_file() else None
++        )
+         return {
+             "launchd_plist": plist.exists(),
+             "tick_script": tick.exists(),
+@@ -842,6 +845,7 @@ class Chat:
+             "tick_ok_streak": tick_ok_streak,
+             "loop_ready": loop_ready,
+             "install_ready": install_ready,
++            "bootstrap_command": bootstrap_command,
+             "summary": summary,
+         }
+ 
+diff --git a/conductor/webchat/music_notebook.py b/conductor/webchat/music_notebook.py
+index d22cbd7..e617b35 100644
+--- a/conductor/webchat/music_notebook.py
++++ b/conductor/webchat/music_notebook.py
+@@ -193,6 +193,12 @@ def try_music_coach_reply(text: str) -> str | None:
+             "Match the mood in the Songs tab — save a version after each pass. "
+             "Local sketch demo ($0) can render a rough MP3 from lyrics + style when you are ready."
+         )
++    if "refrain" in lower and "chorus" not in lower and "hook" not in lower:
++        return (
++            "Refrain polish: keep it to one repeatable line (often the title) with the same rhythm each time. "
++            "Trim extra syllables on beat 1; if the verse is wordy, make the refrain the emotional release. "
++            "Save each pass in Songs → versions so Bob sees what changed ($0)."
++        )
+     if "chorus" in lower or "hook" in lower or "refrain" in lower:
+         return (
+             "Chorus/refrain tip: one clear emotional line, repeat the title, keep lines short for singing. "
+diff --git a/conductor/webchat/ops_panel.py b/conductor/webchat/ops_panel.py
+index 6016ebd..f9675e4 100644
+--- a/conductor/webchat/ops_panel.py
++++ b/conductor/webchat/ops_panel.py
+@@ -133,6 +133,16 @@ def load_live_ops(root: Path, *, max_age: float = LIVE_OPS_MAX_AGE) -> dict:
+     return {"live_ops": {}, "meta": meta}
+ 
+ 
++def _stall_plain(stall: str, live: bool) -> str:
++    if stall == "stalled":
++        return "Stalled — no heartbeat" if live else "Marked stalled"
++    if stall == "running":
++        return "Running normally" if live else "Tracked as running"
++    if stall == "queued":
++        return "Waiting to start"
++    return "Status unknown"
++
++
+ def enrich_live_ops(live_ops: dict) -> dict:
+     """Plain-English display fields for Jobs dashboard (phone)."""
+     if not live_ops:
+@@ -143,6 +153,7 @@ def enrich_live_ops(live_ops: dict) -> dict:
+         live = bool(job.get("live_screen"))
+         stall = job.get("stall_state") or "unknown"
+         state = job.get("state") or ""
++        job["stall_plain"] = _stall_plain(stall, live)
+         if live and stall == "stalled":
+             job["display_state"] = "Stalled on screen"
+         elif live:
+diff --git a/conductor/webchat/static/app.js b/conductor/webchat/static/app.js
+index 0617366..02ce2cf 100644
+--- a/conductor/webchat/static/app.js
++++ b/conductor/webchat/static/app.js
+@@ -24,6 +24,15 @@ if ($("login-form")) {
+     const cap = spend?.cap_usd;
+     return cap === undefined || cap === null ? 59 : cap;
+   }
++  function isQuietHoursCt() {
++    try {
++      const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", hour: "numeric", hour12: false }).formatToParts(new Date());
++      const hour = Number(parts.find((p) => p.type === "hour")?.value ?? 12);
++      return hour >= 23 || hour < 7;
++    } catch (_) {
++      return false;
++    }
++  }
+   function speechText(text) {
+     return text.replace(/```[\s\S]*?```/g, " ").replace(/`([^`]+)`/g, "$1")
+       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1")
+@@ -535,6 +544,10 @@ if ($("login-form")) {
+       const conversation = await api(`/api/conversations/${current}`);
+       const last = conversation.messages.filter((m) => m.role === "assistant" && m.status === "done").at(-1);
+       if (!last?.content) { $("notice").textContent = "No finished reply to read."; return; }
++      if (isQuietHoursCt()) {
++        $("notice").textContent = "Quiet hours (11 PM–7 AM CT) — read-aloud is off. Live call still works.";
++        return;
++      }
+       await ensureSpeechVoices();
+       speechSynthesis.cancel();
+       const utter = new SpeechSynthesisUtterance(speechText(last.content).slice(0, 4000));
+@@ -619,6 +632,7 @@ if ($("login-form")) {
+     if (callSession.busy) return;
+     callSession.busy = true;
+     appendCallLine("you", transcript);
++    const thinkStarted = performance.now();
+     $("call-status").textContent = "Bob is thinking…";
+     speechSynthesis.cancel();
+     try {
+@@ -636,7 +650,8 @@ if ($("login-form")) {
+       const msg = value.messages.find((m) => m.role === "assistant" && m.request_id === requestId);
+       const body = msg?.content || "No reply yet.";
+       appendCallLine("bob", body);
+-      $("call-status").textContent = "Listening… speak anytime (tap End to stop).";
++      const thinkMs = Math.round(performance.now() - thinkStarted);
++      $("call-status").textContent = `Listening… (${thinkMs}ms to reply · speak anytime, tap End to stop)`;
+       await speakCallReply(body);
+     } catch (error) {
+       $("call-status").textContent = error.message || "Call error";
+@@ -876,7 +891,8 @@ if ($("login-form")) {
+     host.hidden = false;
+     const spend = ops.minimax_spend || {};
+     const roles = ops.roles || {};
+-    const jobs = (ops.running_jobs || []).filter((j) => j.live_screen);
++    const allJobs = ops.running_jobs || [];
++    const jobs = allJobs.filter((j) => j.live_screen);
+     const screenCount = ops.service_screen_count;
+     const rows = [
+       ["Now", ops.now_line || "—"],
+@@ -896,8 +912,8 @@ if ($("login-form")) {
+       dd.textContent = value;
+       dl.append(dt, dd);
+     });
+-    if (hostId === "jobs-ops-detail" && jobs.length) {
+-      jobs.slice(0, 4).forEach((job, index) => {
++    if (hostId === "jobs-ops-detail" && allJobs.length) {
++      allJobs.slice(0, 4).forEach((job, index) => {
+         const dt = document.createElement("dt");
+         dt.textContent = `Job ${index + 1}`;
+         const dd = document.createElement("dd");
+@@ -906,7 +922,7 @@ if ($("login-form")) {
+         const sha = job.last_commit?.sha ? ` · ${job.last_commit.sha}` : "";
+         const round = job.round ? ` · round ${job.round}` : "";
+         const elapsed = job.elapsed_seconds != null ? ` · ${Math.round(job.elapsed_seconds / 60)}m elapsed` : "";
+-        const stall = job.stall_state ? ` · ${job.stall_state}` : "";
++        const stall = job.stall_plain ? ` · ${job.stall_plain}` : (job.stall_state ? ` · ${job.stall_state}` : "");
+         const display = job.display_state ? ` · ${job.display_state}` : "";
+         dd.textContent = `${jobHeadline(job)}${round}${elapsed}${stall}${display}${sha}${lines.length ? "\n" + lines.join("\n") : ""}`;
+         dl.append(dt, dd);
+@@ -967,7 +983,7 @@ if ($("login-form")) {
+       const events = (job.events || []).filter((e) => e && (e.text || e.sha || e.state));
+       const stallEvent = events.find((e) => e.kind === "stall");
+       const resolvedStall = stallEvent?.state || job.stall_state || "unknown";
+-      stall.textContent = resolvedStall;
++      stall.textContent = job.stall_plain || (resolvedStall === "stalled" ? "Stalled" : resolvedStall === "running" ? "Running" : resolvedStall);
+       stall.classList.toggle("stalled", resolvedStall === "stalled");
+       stall.classList.toggle("running", resolvedStall !== "stalled");
+       now.textContent = jobHeadline(job);
+@@ -1085,7 +1101,9 @@ if ($("login-form")) {
+         : (si.healthy === false && si.launchd_files_ok ? "Needs a successful tick — check mini bootstrap"
+           : (si.launchd_files_ok ? "Status unknown — refresh Jobs tab" : "Install tick + plist — see mini setup"))));
+       const schedule = si.schedule_hint ? `Schedule: ${si.schedule_hint.replace(/\.$/, "")}` : "";
+-      const bootstrap = si.bootstrap_script ? `One-time on mini: bash ${si.bootstrap_script}` : "";
++      const bootstrap = si.bootstrap_command
++        ? `One-time on mini: ${si.bootstrap_command}`
++        : (si.bootstrap_script ? `One-time on mini: bash ${si.bootstrap_script}` : "");
+       const siLine = [health, streak, loaded, schedule, bootstrap, logFresh, si.summary || ""].filter(Boolean).join(" · ");
+       $("self-improve-status").textContent = siLine;
+       const jobsSi = $("jobs-self-improve-status");
+diff --git a/conductor/webchat/test_webchat.py b/conductor/webchat/test_webchat.py
+index 543beb8..b367723 100644
+--- a/conductor/webchat/test_webchat.py
++++ b/conductor/webchat/test_webchat.py
+@@ -626,6 +626,30 @@ class HandbackJobTests(Fixture):
+         self.assertEqual(out["service_screen_count"], 2)
+         self.assertEqual(out["running_jobs"][0]["display_state"], "Live on screen")
+         self.assertEqual(out["running_jobs"][1]["display_state"], "Marked running; screen unconfirmed")
++        self.assertIn("stall_plain", out["running_jobs"][0])
++        self.assertEqual(out["running_jobs"][0]["stall_plain"], "Running normally")
++
++    def test_self_improve_bootstrap_command(self):
++        launchd = self.root / "conductor/launchd"
++        launchd.mkdir(parents=True, exist_ok=True)
++        (launchd / "com.jeff.bob-webchat-self-improve.plist").write_text("<plist/>")
++        (self.root / "conductor/webchat/self_improve_tick.sh").write_text("#!/bin/bash\n")
++        bootstrap = self.root / "conductor/webchat/bootstrap_self_improve_launchd.sh"
++        bootstrap.write_text("#!/bin/bash\n")
++        status = self.chat.self_improve_status()
++        self.assertTrue(status["install_ready"])
++        self.assertIn("bootstrap_self_improve_launchd.sh", status.get("bootstrap_command") or "")
++
++    def test_quiet_hours_ct(self):
++        from datetime import datetime
++        from zoneinfo import ZoneInfo
++
++        from quiet_hours import in_quiet_hours
++
++        ct = ZoneInfo("America/Chicago")
++        self.assertTrue(in_quiet_hours(datetime(2026, 9, 27, 23, 30, tzinfo=ct)))
++        self.assertTrue(in_quiet_hours(datetime(2026, 9, 27, 6, 0, tzinfo=ct)))
++        self.assertFalse(in_quiet_hours(datetime(2026, 9, 27, 12, 0, tzinfo=ct)))
+ 
+     def test_inbox_message_queues_builder_note(self):
+         request_id = str(uuid.uuid4())
+@@ -831,6 +855,9 @@ class HandbackJobTests(Fixture):
+     def test_music_coach_cheap_reply(self):
+         from music_notebook import try_music_coach_reply
+         self.assertIn("chorus", (try_music_coach_reply("help with chorus hook") or "").lower())
++        refrain_only = (try_music_coach_reply("polish the refrain") or "").lower()
++        self.assertIn("refrain", refrain_only)
++        self.assertIn("versions", refrain_only)
+         self.assertIn("rhyme", (try_music_coach_reply("fix the rhyme scheme") or "").lower())
+         self.assertIn("bridge", (try_music_coach_reply("help with song structure and bridge") or "").lower())
+         self.assertIn("bpm", (try_music_coach_reply("what tempo bpm should I use") or "").lower())
+
+
+### FILE conductor/reviews/WEBCHAT-READY-R17-DESIGN.md
+# Web Bob Round 17 — design note (research-first)
+
+**Borrow**
+- Jeff TOP: bidirectional handback drills ×2 with isolated fixture (`live_handback_drill.py`, `drill_fixture.py`).
+- ADDED 02:03 detailed live dashboard: show tracked + live jobs in Jobs dl grid; `stall_plain` + `display_state` on every card.
+- ADDED 02:51 quiet hours 11 PM–7 AM CT for read-aloud (live call unchanged).
+- Self-improve bootstrap one-liner in panel API (`bootstrap_command`) so Jeff can load launchd without reading paths.
+- ALIGNMENT-DESIGN.md event log + BOB-CATCHUP (unchanged contract).
+
+**Reject**
+- MiniMax music API / signups (Jeff 02:00).
+- Grok as worker.
+- Restart webchat mid-reply (03:40 gentle restarts — single restart end of round only).
+
+**Why**
+- Lowest R16 scores: self-improve (9.44), voice (9.64), mobile formatting / Jobs plain English (9.66).
+- R17 targets dashboard completeness (non-screen jobs in ops detail), self-improve bootstrap clarity, call latency hint, quiet-hours read-aloud guard, refrain-only music coach.
+
+**Sources:** `WEBCHAT-READY.md` ADDED 02:03/02:51/04:18, `WEBCHAT-READY-R16-RESULT.md`, Apple HIG tab bar, MDN Intl timeZone.

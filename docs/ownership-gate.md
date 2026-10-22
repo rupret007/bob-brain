@@ -48,7 +48,7 @@ authorize later publication. Every callback must have a timeout. Effects started
 with a valid lease may finish after its expiry; no successor can acquire until
 the lock is released. Network uncertainty still requires the existing receipts.
 
-The Andrea adapter accepts only historical pinned release `83623dd8`; this checks
+The Andrea adapter accepts only pinned release `6f1030f9d1b8a8c973ccd3ef4c5cf148669179d1`; this checks
 the declared version, not live compatibility. It does not import or edit Andrea.
 All four runtimes must adopt this contract before claiming global exclusion.
 An old writer can still bypass token enforcement; conflicting legacy claims deny

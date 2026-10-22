@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "layout": [
+    {
+      "tag": "iphone-14",
+      "viewport": 844,
+      "messages_px": 643,
+      "messages_ratio": 0.7618483412322274
+    },
+    {
+      "tag": "iphone-14-pro-max",
+      "viewport": 932,
+      "messages_px": 728,
+      "messages_ratio": 0.7814176624936607
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+[
+  {
+    "id": "webjam-ci-160",
+    "project": "WebJam",
+    "kind": "coding",
+    "priority": 0,
+    "pr": 160,
+    "prompt": "Fix red test_art_host_platforms on draft PR #160. Verify the current PR/checks first. Prior evidence: _choice_helper is intentionally blank on non-macOS; the macOS copy lives in _host_reason. Inspect and test the smallest fix in this assigned worktree; commit it and push HEAD to the approved draft PR branch using a normal fast-forward push. Never modify another checkout or discard existing work. Report check results and commit SHA. If test_art_host_platforms is already green, follow the current red checks to their actual failing test and fix that regression instead. Use the same assigned draft PR and preserve other checkouts. Do not stop merely because the historical failure name changed."
+  },
+  {
+    "id": "webjam-ci-159",
+    "project": "WebJam",
+    "kind": "coding",
+    "priority": 1,
+    "pr": 159,
+    "prompt": "Fix the test_art_host_platforms failure on draft PR #159; compare _choice_helper vs _host_reason assertions and test the smallest correct fix. Use only this assigned worktree, commit and push HEAD to the approved draft PR branch normally. Report tests and SHA. If test_art_host_platforms is already green, follow the current red checks to their actual failing test and fix that regression instead. Use the same assigned draft PR and preserve other checkouts. Do not stop merely because the historical failure name changed."
+  },
+  {
+    "id": "webjam-ux-evidence",
+    "project": "WebJam",
+    "kind": "non-coding",
+    "priority": 2,
+    "prompt": "Audit the supplied WebJam onboarding and error copy evidence for novice musicians. Produce specific file/line findings and one scoped follow-on prompt. Work read-only and distinguish observed problems from hypotheses.",
+    "evidence": [
+      "webjam_qt/windows/launch_dialog.py",
+      "tests/test_art_host_platforms.py",
+      "README.md"
+    ]
+  },
+  {
+    "id": "webjam-ux-punchlist",
+    "project": "WebJam",
+    "kind": "non-coding",
+    "priority": 3,
+    "prompt": "Review the existing WebJam UX PUNCHLIST and supplied UI evidence, rank the next actionable items by user impact and effort, and write a scoped implementation proposal. Do not implement it or claim a visual feel check.",
+    "evidence": [
+      "tests/test_art_host_platforms.py",
+      "README.md"
+    ],
+    "conductor_evidence": [
+      "webjam-ux/PUNCHLIST.md"
+    ]
+  },
+  {
+    "id": "storyboard-47-green",
+    "project": "StoryBoard",
+    "kind": "coding",
+    "priority": 0,
+    "pr": 47,
+    "prompt": "Keep draft StoryBoard PR #47 green. Inspect its current checks, reproduce and fix any failures, run relevant checks, and push only a tested commit to the approved draft branch. If already green, report current SHA and checks without inventing work."
+  },
+  {
+    "id": "adoptiq-26-onto-25",
+    "project": "AdoptIQ",
+    "kind": "coding",
+    "priority": 0,
+    "pr": 26,
+    "prompt": "Refresh draft AdoptIQ #26 against #25. Inspect both current heads and ancestry. Rebase locally only if a normal fast-forward push can preserve published history; never force-push or retarget to main before #25 merges. If published history would require rewriting, publish the rebased result as a new draft PR and record the replacement link. Verify relevant tests and report exact SHAs. Never merge a PR. A new draft branch and replacement DRAFT PR are explicitly authorized; the approved push target is the assigned draft/ branch. Preserve any already-tested local replacement, finish tests if needed, push it normally and create the replacement draft PR. Do not ask for approval to publish this authorized draft.",
+    "publish_new_draft": true
+  },
+  {
+    "id": "shelf-10-green",
+    "project": "shelf",
+    "kind": "coding",
+    "priority": 0,
+    "pr": 10,
+    "prompt": "Keep draft shelf PR #10 green. Inspect current checks and fix reproducible failures in this assigned worktree, test and push only to the approved draft branch. If green, report the evidence without unnecessary changes."
+  },
+  {
+    "id": "webjam-ux-implement-top",
+    "project": "WebJam",
+    "kind": "coding",
+    "priority": 5,
+    "prompt": "Implement the highest-impact confirmed unresolved item from the supplied UX PUNCHLIST. Verify it in the assigned worktree first, make one small tested commit, push the assigned draft/ branch normally, and create a DRAFT PR if it needs a new review. Report the real test evidence, SHA and draft link. Never claim a feel check. Use only this worktree and defer if a WebJam coder is already active.",
+    "conductor_evidence": [
+      "webjam-ux/PUNCHLIST.md"
+    ]
+  }
+]

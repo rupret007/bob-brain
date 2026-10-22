@@ -1,0 +1,57 @@
+name: Public repository privacy
+
+on:
+  pull_request:
+  pull_request_target:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  public-privacy:
+    if: github.event_name != 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Privacy scanner regressions
+        run: python -m unittest discover -s tests -p test_public_privacy.py -v
+      - name: Check every addition in the pinned comparison
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python tools/check_public_privacy.py --base "$BASE_SHA" --head "$HEAD_SHA" --format json
+
+  trusted-public-privacy:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # This job never checks out or executes candidate code, tests or workflows.
+      # It becomes available once this workflow/scanner land on the base branch.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fetch candidate objects without checkout
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git fetch --quiet --no-tags --no-recurse-submodules origin "$HEAD_SHA"
+      - name: Run trusted base scanner against pinned candidate objects
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python tools/check_public_privacy.py --base "$BASE_SHA" --head "$HEAD_SHA" --format json

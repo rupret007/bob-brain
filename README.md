@@ -14,3 +14,19 @@ Keep BOB-HANDOFF.md as a linked narrative handoff; it is no longer an alternativ
 to a coord release record. This explicitly supersedes the board's older exclusion
 of Web Bob releases. Web Bob stays draft-only; merges require Karen PASS for the
 current SHA and Jeff's standing approval. See [release contract](docs/release-board.md).
+
+Local StoryPool services (draft, activation needs Jeff):
+
+- [Andrea reply adapter](docs/andrea-local-replies.md): Web Bob drafts @andrea
+  replies; every send requires fresh separate Jeff approval to the exact draft.
+- [$band-desk](skills/band-desk/SKILL.md): on-demand StoryBoard, RadDadSite and
+  Wildflower status.
+- [$director](skills/director/SKILL.md): on-demand music video direction notes.
+- [$stack-ops](skills/stack-ops/SKILL.md): on-demand local stack/dashboard and
+  NEEDS_JEFF observations. `python3 -m webbob.storypool_status` is read-only.
+
+The three skills require explicit invocation and default to read-only work.
+
+The go-live candidate's remaining integration work is tracked in [GAP_LIST.md](GAP_LIST.md).
+[SHARED_CONTEXT.md](SHARED_CONTEXT.md) describes the shared Mini journal and bounded
+live-source readers. These candidate changes do not activate Web Bob or authorize sends.
